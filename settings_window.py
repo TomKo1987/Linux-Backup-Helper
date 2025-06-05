@@ -85,7 +85,8 @@ class SettingsWindow(BaseWindow):
                     None
                 )
                 if entry_obj:
-                    idx = header_combo.findText(entry_obj.header)
+                    header_value = getattr(entry_obj, 'header', entry_obj.details.get('header', ''))
+                    idx = header_combo.findText(header_value)
                     if idx >= 0:
                         header_combo.setCurrentIndex(idx)
 
@@ -223,8 +224,16 @@ class SettingsWindow(BaseWindow):
                     return self.show_message("Duplicate Title", "An entry with this title already exists. Please choose a different title.")
 
                 if edit_mode and entry_obj:
-                    entry_obj.header = header
-                    entry_obj.title = title
+                    if hasattr(entry_obj, 'header'):
+                        entry_obj.header = header
+                    else:
+                        entry_obj.details['header'] = header
+
+                    if hasattr(entry_obj, 'title'):
+                        entry_obj.title = title
+                    else:
+                        entry_obj.details['title'] = title
+
                     new_entry = entry_obj
                 else:
                     new_entry = Options(header, title, source, destination)
@@ -462,8 +471,9 @@ class SettingsWindow(BaseWindow):
 
     def delete_header(self, header, list_widget):
         has_associated_entries = False
-        if hasattr(Options, 'all_entries'):
-            has_associated_entries = any(hasattr(entry, 'header') and entry.header == header for entry in Options.all_entries)
+        if hasattr(Options, 'all_entries') and Options.all_entries:
+            has_associated_entries = any(
+                hasattr(entry, 'header') and entry.header == header for entry in Options.all_entries)
         if has_associated_entries:
             return self.show_message("Cannot Delete Header", "Header has associated entries and cannot be deleted. Remove them first.", QMessageBox.Icon.Warning)
         confirm_box = QMessageBox(QMessageBox.Icon.Question, "Confirm Deletion", f"Are you sure you want to delete header '{header}'?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, self)
@@ -490,6 +500,8 @@ class SettingsWindow(BaseWindow):
         new_header_order, new_header_inactive = [], []
         for i in range(list_widget.count()):
             item_widget = list_widget.itemWidget(list_widget.item(i))
+            if not item_widget:
+                continue
             header_btn = item_widget.findChild(QPushButton)
             if not header_btn:
                 continue
@@ -554,11 +566,17 @@ class SettingsWindow(BaseWindow):
         self.show_message('Success', 'Mount Options successfully saved!')
 
     def _edit_mount_option(self, option=None, parent_dialog=None):
-        if parent_dialog:
-            parent_dialog.close()
         dialog = QDialog(self)
         dialog.setMinimumSize(500, 300)
-        dialog.setWindowTitle(f"Edit Mount Option: {option.get('drive_name','')}" if option and 'drive_name' in option else "New Mount Option")
+        dialog.setWindowTitle(f"Edit Mount Option: {option.get('drive_name', '')}" if option and 'drive_name' in option else "New Mount Option")
+
+        def close_parent_after_show():
+            if parent_dialog:
+                parent_dialog.close()
+
+        dialog.show()
+        close_parent_after_show()
+
         layout = QVBoxLayout(dialog)
         fields = {}
         field_labels = [('drive_name', "Drive Name:"), ('mount_command', "Mount Command:"), ('unmount_command', "Unmount Command:")]
@@ -579,11 +597,14 @@ class SettingsWindow(BaseWindow):
         self.manage_mount_options()
 
     def _delete_mount_option(self, option, parent_dialog=None):
-        confirm = QMessageBox.question(self, "Confirm Deletion", f"Are you sure you want to delete '{option['drive_name']}'?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        drive_name = option.get('drive_name', 'Unknown')
+        confirm = QMessageBox.question(self, "Confirm Deletion", f"Are you sure you want to delete '{drive_name}'?",
+                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if confirm == QMessageBox.StandardButton.Yes:
-            Options.mount_options.remove(option)
-            Options.save_config()
-            self.show_message("Deleted", f"'{option['drive_name']}' successfully deleted!")
+            if option in Options.mount_options:
+                Options.mount_options.remove(option)
+                Options.save_config()
+                self.show_message("Deleted", f"'{drive_name}' successfully deleted!")
             if parent_dialog:
                 parent_dialog.close()
                 self.manage_mount_options()
