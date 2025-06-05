@@ -3,8 +3,11 @@ import json, sys, logging
 from options import Options
 from base_window import BaseWindow
 from global_style import global_style
+from drive_manager import DriveManager
+from settings_window import SettingsWindow
 from file_process import FileProcessDialog
 from PyQt6.QtCore import Qt, pyqtSignal, QCoreApplication, QTimer
+from package_installer_launcher_dialog_thread import PackageInstallerLauncher
 from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QMessageBox, QMainWindow
 
 sys.setrecursionlimit(5000)
@@ -24,7 +27,6 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Backup Helper")
         Options.set_main_window(self)
         self.config = {}
-        from drive_manager import DriveManager
         self.drive_manager = DriveManager()
         self.backup_restore_window = None
         self.settings_window = None
@@ -74,7 +76,6 @@ class MainWindow(QMainWindow):
         self.hide()
 
     def open_settings(self):
-        from settings_window import SettingsWindow
         if self.settings_window:
             self.settings_window.close()
             self.settings_window = None
@@ -83,7 +84,6 @@ class MainWindow(QMainWindow):
         self.hide()
 
     def launch_package_installer(self):
-        from package_installer_launcher_dialog_thread import PackageInstallerLauncher
         self.package_installer_launcher = PackageInstallerLauncher(self)
         self.package_installer_launcher.launch()
 
