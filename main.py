@@ -1,11 +1,15 @@
-import json, sys
 from pathlib import Path
+import json, sys, logging
 from options import Options
+from base_window import BaseWindow
 from global_style import global_style
-from PyQt6.QtCore import Qt, pyqtSignal, QCoreApplication
+from file_process import FileProcessDialog
+from PyQt6.QtCore import Qt, pyqtSignal, QCoreApplication, QTimer
 from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QMessageBox, QMainWindow
 
 sys.setrecursionlimit(5000)
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 Options.load_config(Options.config_file_path)
 Options.mount_drives_on_startup()
@@ -132,7 +136,6 @@ class MainWindow(QMainWindow):
         return dlg.exec() == QMessageBox.StandardButton.Yes
 
 
-from base_window import BaseWindow
 class BackupRestoreWindow(BaseWindow):
     def __init__(self, parent=None, window_type="backup"):
         super().__init__(parent, window_type)
@@ -146,7 +149,7 @@ class BackupRestoreWindow(BaseWindow):
         self.hide()
         selected_items = self._get_selected_items()
         if not selected_items:
-            self._show_error_and_return("Cannot start the process. Nothing selected.")
+            QTimer.singleShot(0, lambda: self._show_error_and_return("Cannot start the process. Nothing selected."))
             return
         paths_to_check = self._extract_paths_to_check(selected_items)
         drives_to_mount = self.drive_manager.check_drives_to_mount(paths_to_check)
@@ -236,7 +239,6 @@ class BackupRestoreWindow(BaseWindow):
         return result
 
 
-from file_process import FileProcessDialog
 # noinspection PyUnresolvedReferences
 class BackupRestoreProcessDialog(FileProcessDialog):
     def __init__(self, parent, checkbox_dirs, operation_type="Backup"):
@@ -246,6 +248,13 @@ class BackupRestoreProcessDialog(FileProcessDialog):
 def main():
     app = QApplication(sys.argv)
     app.setStyleSheet(global_style)
+    def handle_exception(exc_type, exc_value, exc_traceback):
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+        logger.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
+        QMessageBox.critical(None, "Critical Error", f"An unexpected error occurred:\n{exc_value}")
+    sys.excepthook = handle_exception
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
