@@ -152,9 +152,9 @@ class LinuxDistroHelper:
                 return "kernel-default-devel"
             else:
                 return "linux-headers"
-        except (AttributeError, OSError) as e:
+        except (AttributeError, OSError, TypeError) as e:
             print(f"Error detecting kernel headers: {e}")
-            return "linux-headers"
+            return self.kernel_headers if hasattr(self, 'kernel_headers') else "linux-headers"
 
     def get_shell_package_name(self, shell_name):
         shell_map = {"bash": "bash", "zsh": "zsh", "fish": "fish", "elvish": "elvish", "nushell": "nushell", "xonsh": "xonsh",
@@ -162,16 +162,25 @@ class LinuxDistroHelper:
         return shell_map.get(shell_name.lower(), shell_name.lower())
 
     def package_is_installed(self, package):
-        if not package or not isinstance(package, str):
+        if not package or not isinstance(package, str) or not package.strip():
             return False
+
+        package = package.strip()
+        if len(package) > 255 or any(c in package for c in ['/', '\\', ';', '&', '|', '`']):
+            print(f"Invalid package name: {package}")
+            return False
+
         cmd = self.pkg_check_installed(package)
+        if not cmd or not isinstance(cmd, list):
+            return False
+
         try:
-            result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+            result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30, check=False)
             return result.returncode == 0
         except subprocess.TimeoutExpired:
             print(f"Timeout checking package {package}")
             return False
-        except (subprocess.SubprocessError, OSError) as e:
+        except (subprocess.SubprocessError, OSError, ValueError) as e:
             print(f"Error determining if package {package} is installed: {e}")
             return False
 
