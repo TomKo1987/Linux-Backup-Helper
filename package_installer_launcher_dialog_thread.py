@@ -23,6 +23,9 @@ class PackageInstallerLauncher:
         self.package_installer_thread = None
         self.package_installer_dialog = None
         self.sudo_checkbox = None
+        self.distro_helper = LinuxDistroHelper()
+        self.distro_name = self.distro_helper.distro_pretty_name
+        self.session = self.distro_helper.detect_session()
 
     def launch(self):
         if self.parent:
@@ -44,13 +47,19 @@ class PackageInstallerLauncher:
         if self._show_dialog_and_get_result(dialog, content_widget):
             self._handle_dialog_accepted(installer_operations)
 
-    @staticmethod
-    def _create_installer_dialog():
+    def _create_installer_dialog(self):
         dialog = QDialog()
         dialog.setWindowTitle('Package Installer')
         layout = QVBoxLayout()
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
+        yay_info = ""
+        if self.distro_helper.has_aur:
+            yay_info = " | AUR Helper: 'yay' detected" if self.distro_helper.package_is_installed(
+                'yay') else " | AUR Helper: 'yay' not detected"
+        distro_label = QLabel(f"Recognized Linux distribution: {self.distro_name} | Session: {self.session}{yay_info}")
+        distro_label.setStyleSheet("color: lightgreen")
+        content_layout.addWidget(distro_label)
         header_label = QLabel("<span style='font-size: 18px;'>Package Installer will perform the following operations:<br></span>")
         header_label.setTextFormat(Qt.TextFormat.RichText)
         content_layout.addWidget(header_label)
