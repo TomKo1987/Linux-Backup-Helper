@@ -464,19 +464,16 @@ class FileCopyThread(QThread):
         self.total_bytes = total_bytes
         workers = max(1, min(self.num_workers, os.cpu_count() or 4))
         batch_size = max(100, min(500, self.total_files // (workers * 4) or 250))
-        def batch_gen():
-            for i in range(0, len(all_files), batch_size):
-                yield all_files[i:i + batch_size]
-        self.file_batches = batch_gen()
+        self.file_batches = [all_files[i:i + batch_size] for i in range(0, len(all_files), batch_size)]
+        self.batch_index = 0
 
     def get_next_batch(self):
         with QMutexLocker(self.mutex):
-            try:
-                if hasattr(self, 'file_batches') and self.file_batches is not None:
-                    return next(self.file_batches)
-                return None
-            except (StopIteration, AttributeError):
-                return None
+            if hasattr(self, 'file_batches') and self.file_batches and self.batch_index < len(self.file_batches):
+                batch = self.file_batches[self.batch_index]
+                self.batch_index += 1
+                return batch
+            return None
 
     def _should_skip_file(self, file_path):
         file_name = Path(file_path).name
@@ -499,27 +496,37 @@ class FileCopyThread(QThread):
             return
         file_name = Path(source_file).name
         dest_path = Path(dest_file)
+
         if SmbFileHandler.is_smb_path(source_file) or SmbFileHandler.is_smb_path(dest_file):
             if self.cancelled:
                 return
             self.smb_handler.copy_file(source_file, dest_file, lambda success, smb_file_name, size_or_error:
             (self._handle_smb_result(success, source_file, dest_file, smb_file_name, size_or_error) if not self.cancelled else None))
             return
+
         try:
             if not Path(source_file).exists():
                 self.handle_file_error(source_file, "Source file not found")
                 return
+
             src_stat = Path(source_file).stat()
             file_size = src_stat.st_size
+
             if dest_path.exists():
                 dest_stat = dest_path.stat()
                 if src_stat.st_size == dest_stat.st_size and src_stat.st_mtime <= dest_stat.st_mtime:
-                    self._skip_file(source_file, "(Up to date)")
+                    self._update_file_progress(False, source_file, dest_file, file_name, file_size)
                     return
+
             self.fast_copy(source_file, dest_file)
             self._update_file_progress(True, source_file, dest_file, file_name, file_size)
+
         except (OSError, FileNotFoundError) as e:
-            self.handle_file_error(source_file, f"Source error: {e}")
+            error_msg = str(e).lower()
+            if any(pattern.lower() in error_msg for pattern in self.SKIP_PATTERNS):
+                self._skip_file(source_file, "(Protected/locked file)")
+            else:
+                self.handle_file_error(source_file, f"Source error: {e}")
         except Exception as e:
             self.handle_file_error(source_file, str(e))
 
@@ -571,39 +578,18 @@ class FileCopyThread(QThread):
 
     def _update_file_progress(self, should_copy, source_file, dest_file, file_name, file_size):
         try:
-            success = False
-            message = "(Up to date)"
-
-            if should_copy:
-                dest_dir = os.path.dirname(dest_file)
-                if dest_dir and not os.path.exists(dest_dir):
-                    Path(dest_dir).mkdir(parents=True, exist_ok=True)
-                try:
-                    self.fast_copy(source_file, dest_file)
-                    success = True
-                    message = "(Copied successfully)"
-                except OSError as e:
-                    error_msg = str(e)
-                    if "Skipping access-protected file" in error_msg or "Permission denied" in error_msg:
-                        message = "(Protected/locked file)"
-                        should_copy = False
-                    else:
-                        raise
-                except Exception:
-                    raise
-
             self.mutex.lock()
             try:
                 self.processed_files += 1
                 self.processed_bytes += self.file_sizes.get(source_file, file_size)
                 progress = int((self.processed_bytes / self.total_bytes) * 100) if self.total_bytes > 0 else 0
 
-                if should_copy and success:
+                if should_copy:
                     self.file_copied.emit(source_file, dest_file, file_size)
                     self.progress_updated.emit(progress, f"Copying:\n{file_name}")
                 else:
-                    self.file_skipped.emit(source_file, message)
-                    self.progress_updated.emit(progress, f"Skipping {message}:\n{file_name}")
+                    self.file_skipped.emit(source_file, "(Up to date)")
+                    self.progress_updated.emit(progress, f"Skipping (Up to date):\n{file_name}")
             finally:
                 self.mutex.unlock()
         except Exception as e:
@@ -703,7 +689,7 @@ class FileWorkerThread(QThread):
             if batch is None:
                 break
             for source_file, dest_file in batch:
-                if self.main_thread.cancelled or self.isInterruptionRequested() or (self.main_thread.thread and getattr(self.main_thread.thread, 'cancelled', False)):
+                if self.main_thread.cancelled or self.isInterruptionRequested():
                     return
                 try:
                     self.main_thread.copy_file(source_file, dest_file)
@@ -764,26 +750,38 @@ class SmbFileHandler:
     def _mount_smb_share(self, server, share):
         if self.thread and getattr(self.thread, 'cancelled', False):
             raise RuntimeError("Operation cancelled!")
+
         if not server or not share:
             raise ValueError("Server and share must be specified!")
+
         key = (server, share)
         mount_point = tempfile.mkdtemp(prefix=f"smb_{server}_{share}_")
+
         with QMutexLocker(self.mutex):
             if key in self._mounted_shares and os.path.ismount(self._mounted_shares[key]):
                 return self._mounted_shares[key]
+
             self._mounted_shares.pop(key, None)
+
             if key in self._mounting_shares:
                 if key not in self._mount_wait_conditions:
                     self._mount_wait_conditions[key] = QWaitCondition()
                 wait_condition = self._mount_wait_conditions[key]
+
                 wait_count = 0
-                while key in self._mounting_shares and wait_count < 5:
+                while key in self._mounting_shares and wait_count < 10:
                     if self.thread and getattr(self.thread, 'cancelled', False):
                         raise RuntimeError("Operation cancelled during mount wait!")
-                    wait_condition.wait(self.mutex, 1000)
+
+                    wait_condition.wait(self.mutex, 500)
                     wait_count += 1
+
                 if key in self._mounted_shares and os.path.ismount(self._mounted_shares[key]):
                     return self._mounted_shares[key]
+
+                if key in self._mounting_shares:
+                    raise RuntimeError("Mount operation timed out - another thread is still mounting")
+
             self._mounting_shares.add(key)
             if key not in self._mount_wait_conditions:
                 self._mount_wait_conditions[key] = QWaitCondition()
@@ -1036,7 +1034,12 @@ class LogEntryListModel(QAbstractListModel):
         self.setFilter(self.filter)
 
     def sort_entries(self):
+        if not self._entries:
+            return
+
         try:
+            self.beginResetModel()
+
             replaced = []
             for entry, entry_type in zip(self._entries, self._types):
                 e = entry
@@ -1046,43 +1049,44 @@ class LogEntryListModel(QAbstractListModel):
 
             def extract_path(sorted_entry):
                 try:
-                    m = re.match(r"^\d+:<br>'([^']+)'<br>", sorted_entry)
+                    m = re.match(r"^\d+:(?:<br>)?'([^']+)'", sorted_entry)
                     if m:
                         return m.group(1).lower()
-                    m2 = re.match(r"^\d+:\s*'([^']+)'", sorted_entry)
-                    if m2:
-                        return m2.group(1).lower()
-                    idx = sorted_entry.find('/')
-                    if idx != -1:
-                        end = sorted_entry.find('<br>', idx)
-                        if end == -1:
-                            end = sorted_entry.find("'", idx)
-                        if end == -1:
-                            end = sorted_entry.find(' ', idx)
-                        if end == -1:
-                            end = len(sorted_entry)
-                        return sorted_entry[idx:end].lower()
+
+                    lines = sorted_entry.split('<br>' if '<br>' in sorted_entry else '\n')
+                    for line in lines:
+                        if '/' in line and not line.strip().isdigit():
+                            return line.strip().lower()
+
                     return sorted_entry.lower()
                 except Exception as error:
                     print(f"Error in sort_entries: {error}")
                     return sorted_entry.lower()
 
             replaced_sorted = sorted(replaced, key=lambda x: extract_path(x[0]))
+
             new_entries, new_types = [], []
             for i, (entry, entry_type) in enumerate(replaced_sorted):
                 try:
-                    entry = re.sub(r"^\d+:(<br>)?", f"{i + 1}:<br>" if '<br>' in entry else f"{i + 1}:", entry, count=1)
+                    if '<br>' in entry:
+                        entry = re.sub(r"^\d+:<br>", f"{i + 1}:<br>", entry, count=1)
+                    else:
+                        entry = re.sub(r"^\d+:", f"{i + 1}:", entry, count=1)
                 except Exception as e:
                     print(f"Error in sort_entries: {e}")
                     entry = f"{i + 1}: {entry}"
+
                 new_entries.append(entry)
                 new_types.append(entry_type)
 
             self._entries[:] = new_entries
             self._types[:] = new_types
-            self.layoutChanged.emit()
+
+            self.endResetModel()
             self.setFilter(self.filter)
+
         except Exception as e:
+            self.endResetModel()
             print(f"Error in sort_entries: {e}")
 
 
@@ -1122,14 +1126,25 @@ class VirtualLogTabWidget(QWidget):
     def flush_entries(self):
         if not self.pending_entries:
             return
-        start = len(self.entries)
-        entries, types = zip(*self.pending_entries)
-        self.model.beginInsertRows(QModelIndex(), start, start + len(entries) - 1)
-        self.entries.extend(entries)
-        self.entry_types.extend(types)
-        self.model.endInsertRows()
-        self.pending_entries.clear()
-        self.model.setFilter(self.model.filter)
+
+        entries_to_add = self.pending_entries[:100]
+        remaining = self.pending_entries[100:]
+
+        if entries_to_add:
+            start = len(self.entries)
+            entries, types = zip(*entries_to_add)
+
+            self.model.beginInsertRows(QModelIndex(), start, start + len(entries) - 1)
+            self.entries.extend(entries)
+            self.entry_types.extend(types)
+            self.model.endInsertRows()
+
+            self.model.setFilter(self.model.filter)
+
+        self.pending_entries = remaining
+
+        if self.pending_entries:
+            self._flush_timer.start()
 
     def sort_entries(self):
         self.model.sort_entries()
