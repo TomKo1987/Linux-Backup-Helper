@@ -6,7 +6,7 @@ QDialog, QWidget {
 }
 QWidget {
     color: #c0caf5;
-    font-family: "Noto Sans Mono";
+    font-family: "Noto Sans Mono", "DejaVu Sans Mono", "Courier New", monospace;
     font-size: 16px;
 }
 QPushButton, QCheckBox {
@@ -69,7 +69,7 @@ QLabel {
     padding: 5px;
     font-size: 17px;
     qproperty-alignment: 'AlignCenter';
-    font-family: "CaskaydiaCove Nerd Font", "Noto Sans", sans-serif;
+    font-family: "CaskaydiaCove Nerd Font", "Noto Sans", "DejaVu Sans", "Arial", sans-serif;
 }
 QWidget[class="container"] {
     background-color: #222;
@@ -89,7 +89,7 @@ QTextEdit, QListWidget {
     padding: 5px 5px;
     border-radius: 8px;
     font-size: 16px;
-    font-family: "FiraCode Nerd Font Mono", "Noto Sans", sans-serif;
+    font-family: "FiraCode Nerd Font Mono", "DejaVu Sans Mono", "Courier New", monospace;
 }
 QListWidget::item {
     padding: 5px;
@@ -166,7 +166,7 @@ QTabBar::tab {
     border-bottom: none;
     border-top-left-radius: 6px;
     border-top-right-radius: 6px;
-    font-family: "FiraCode Nerd Font Mono", "Noto Sans", sans-serif;
+    font-family: "FiraCode Nerd Font Mono", "DejaVu Sans Mono", "Courier New", monospace;
 }
 QTabBar::tab:selected {
     background-color: #1e1e2e;
