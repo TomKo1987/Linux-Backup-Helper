@@ -256,6 +256,7 @@ class BaseWindow(QDialog):
         return row + 1
 
     def toggle_columns(self):
+        from options import Options
         self.hide()
         self.columns = 4 if self.columns == 2 else 2
         Options.ui_settings[f"{self.window_type}_window_columns"] = self.columns
