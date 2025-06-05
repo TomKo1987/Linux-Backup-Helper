@@ -71,20 +71,21 @@ class BaseWindow(QDialog):
         row = 0
         self.checkbox_dirs.clear()
         from options import Options
-        tooltip_text, tooltip_text_entry_restore, _ = Options.generate_tooltip()
-        tooltip_dict = tooltip_text_entry_restore if self.window_type == "restore" else tooltip_text
 
-        active_headers = (Options.headers if self.window_type == "settings" else [h for h in Options.headers if h not in Options.header_inactive])
+        active_headers = (Options.headers if self.window_type == "settings" else [h for h in Options.headers if
+                                                                                  h not in Options.header_inactive])
 
         filter_key = "no_backup" if self.window_type == "backup" else "no_restore"
 
-        filtered_entries = [e for e in getattr(Options, 'entries_sorted', []) if self.window_type == "settings" or not e.get(filter_key, False)]
+        filtered_entries = [e for e in getattr(Options, 'entries_sorted', []) if
+                            self.window_type == "settings" or not e.get(filter_key, False)]
 
         header_entries = {}
         for header in active_headers:
             entries = [e for e in filtered_entries if e["header"] == header]
             if entries:
                 header_entries[header] = entries
+
         for header, ents in header_entries.items():
             inactive = self.window_type == "settings" and header in Options.header_inactive
             col = 0
@@ -95,15 +96,18 @@ class BaseWindow(QDialog):
             hbox.addWidget(label)
             layout.addLayout(hbox, row, 0, 1, self.columns)
             row += 1
+
             for entry in ents:
                 checkbox = QCheckBox(entry["title"])
                 ch_style = f"{global_style} QCheckBox {{color: {header_color}; font-size: 16px; }} QToolTip {{color: '#07e392';}}"
+
                 if header == "Games" and self.window_type in ("restore", "settings") and sublayout_entries:
                     added = False
                     for i in range(1, 5):
                         key = f'sublayout_games_{i}'
                         if entry["title"] in sublayout_entries[key]:
-                            checkbox.setStyleSheet(f"{global_style} QCheckBox {{color: {header_color}; font-size: 14px;}} QToolTip {{color: '#07e392';}}")
+                            checkbox.setStyleSheet(
+                                f"{global_style} QCheckBox {{color: {header_color}; font-size: 14px;}} QToolTip {{color: '#07e392';}}")
                             sublayout = getattr(self, key, None)
                             if sublayout:
                                 sublayout.addWidget(checkbox)
@@ -116,24 +120,43 @@ class BaseWindow(QDialog):
                     checkbox.setStyleSheet(ch_style)
                     layout.addWidget(checkbox, row, col)
                     col += 1
+
                 checkbox.stateChanged.connect(self.update_select_all_state)
+
                 if col >= self.columns:
                     col = 0
                     row += 1
+
                 if self.window_type != "restore":
                     src, dst = entry.get("source", ""), entry.get("destination", "")
                 else:
                     src, dst = entry.get("destination", ""), entry.get("source", "")
+
                 self.checkbox_dirs.append((checkbox, src, dst, entry["unique_id"]))
-                tip_key = f"{checkbox.text()}_tooltip"
-                if tip_key in tooltip_dict:
-                    checkbox.setToolTip(tooltip_dict[tip_key])
-                    checkbox.setToolTipDuration(600000)
+
+                checkbox.entry_data = entry
+                checkbox.window_type = self.window_type
+                checkbox.enterEvent = lambda event, cb=checkbox: self._setup_tooltip_on_hover(cb, event)
+
             if col != 0:
                 row += 1
             if header == "Games" and self.window_type in ("restore", "settings"):
                 row = self.add_game_sublayouts(layout, row)
         return row
+
+    def _setup_tooltip_on_hover(self, checkbox, event):
+        if not hasattr(checkbox, '_tooltip_set'):
+            from options import Options
+            tooltip_text, tooltip_text_entry_restore, _ = Options.generate_tooltip()
+            tooltip_dict = tooltip_text_entry_restore if checkbox.window_type == "restore" else tooltip_text
+
+            tip_key = f"{checkbox.text()}_tooltip"
+            if tip_key in tooltip_dict:
+                checkbox.setToolTip(tooltip_dict[tip_key])
+                checkbox.setToolTipDuration(600000)
+            checkbox._tooltip_set = True
+
+        super(QCheckBox, checkbox).enterEvent(event)
 
     @staticmethod
     def get_sublayout_entries():
