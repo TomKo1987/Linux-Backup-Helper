@@ -96,13 +96,14 @@ class Options(QObject):
         firewall_pkgs = Options.format_package_list(distro_helper.get_firewall_packages())
         at_pkgs = Options.format_package_list(distro_helper.get_at_packages())
 
-        cron_service = "cronie" if pkg_manager == "pacman" or distro_helper.distro_id in ["fedora", "rhel", "centos"] else "cron"
+        cron_service = "cronie" if pkg_manager == "pacman" or distro_helper.distro_id in ["fedora", "rhel",
+                                                                                          "centos"] else "cron"
 
         return {
             "copy_system_files": "Copy 'System Files' (Using 'sudo cp'.)",
             "update_mirrors": f"Mirror update<br>(Install 'reflector' and get the 10 fastest servers in your country, or worldwide if not detected.)",
             "set_user_shell": "Change shell for current user<br>(Install corresponding package for selected shell and change it for the current user.)",
-            "update_system": f"System update<br>(Using '{pkg_update_cmd}'. {'If \'yay\' is present: using \'yay\' instead.' if distro_helper.has_aur else ''})",
+            "update_system": f"System update<br>(Using 'yay --noconfirm'.)" if distro_helper.package_is_installed('yay') else f"(Using '{pkg_update_cmd}'.)",
             "install_kernel_header": f"Check kernel version and install corresponding headers ({distro_helper.get_kernel_headers_pkg()})",
             "install_essential_packages": f"Install 'Essential Packages' (Using '{pkg_install_cmd}'.)",
             "install_yay": "Install 'yay' (Necessary for 'Additional Packages'.)",
@@ -115,7 +116,8 @@ class Options(QObject):
             "enable_cronie_service": f"Initialize {cron_service}<br>(Install '{cron_pkgs}'. Enable && start '{cron_service}.service'.)",
             "enable_firewall": f"Initialize firewall<br>(Install '{firewall_pkgs}'. Enable && start 'ufw.service' and set to 'deny all by default'.)",
             "remove_orphaned_packages": "Remove orphaned package(s)",
-            "clean_cache": f"Clean cache (For '{pkg_manager}'{' and \'yay\'' if distro_helper.has_aur else ''}.)"}
+            "clean_cache": f"Clean cache (For '{pkg_manager}'{' and \'yay\'' if distro_helper.has_aur else ''}.)"
+        }
 
     @staticmethod
     def format_package_list(pkgs):
