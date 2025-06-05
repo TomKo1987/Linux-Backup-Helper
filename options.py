@@ -61,20 +61,23 @@ class Options(QObject):
 
     @staticmethod
     def mount_drives_on_startup():
-        from drive_manager import DriveManager
         if Options.run_mount_command_on_launch:
+            from drive_manager import DriveManager
             DriveManager().mount_drives_at_launch()
 
     @staticmethod
     def sort_entries():
-        header_order_map = {h: i for i, h in enumerate(Options.header_order)}
-        Options.entries_sorted = sorted([
-            {'header': entry.header, 'title': entry.title, 'source': entry.source, 'destination': entry.destination,
-             **{k: entry.details.get(k, False) for k in ('no_backup', 'no_restore', 'sublayout_games_1', 'sublayout_games_2', 'sublayout_games_3', 'sublayout_games_4')},
-             'unique_id': entry.details.get('unique_id', QUuid.createUuid().toString(QUuid.StringFormat.WithoutBraces))}
-            for entry in Options.all_entries
-        ], key=lambda x: (header_order_map.get(x['header'], 999), x['title'].lower()))
-        return Options.entries_sorted
+        with QMutexLocker(Options._entries_mutex):
+            header_order_map = {h: i for i, h in enumerate(Options.header_order)}
+            Options.entries_sorted = sorted([
+                {'header': entry.header, 'title': entry.title, 'source': entry.source, 'destination': entry.destination,
+                 **{k: entry.details.get(k, False) for k in
+                    ('no_backup', 'no_restore', 'sublayout_games_1', 'sublayout_games_2', 'sublayout_games_3',
+                     'sublayout_games_4')},
+                 'unique_id': entry.details.get('unique_id', QUuid.createUuid().toString(QUuid.StringFormat.WithoutBraces))}
+                for entry in Options.all_entries
+            ], key=lambda x: (header_order_map.get(x['header'], 999), x['title'].lower()))
+            return Options.entries_sorted
 
     @staticmethod
     def delete_entry(entry):
@@ -152,7 +155,13 @@ class Options(QObject):
             header_data = {header: {"inactive": header in Options.header_inactive,
                                     "header_color": Options.header_colors.get(header, '#ffffff')} for header in
                            Options.header_order + Options.header_inactive}
-            mount_options = sorted(Options.mount_options, key=lambda x: x.get("drive_name", ""))
+            mount_options = []
+            if isinstance(Options.mount_options, list):
+                valid_options = []
+                for opt in Options.mount_options:
+                    if isinstance(opt, dict) and opt.get("drive_name"):
+                        valid_options.append(opt)
+                mount_options = sorted(valid_options, key=lambda x: x.get("drive_name", ""))
 
             def sort_if_valid(collection, key=None):
                 if isinstance(collection, list) and all(isinstance(item, str) for item in collection):
