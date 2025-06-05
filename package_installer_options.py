@@ -86,9 +86,9 @@ class PackageInstallerOptions(QDialog):
         yay_info = ""
         if self.distro_helper.has_aur:
             yay_info = " | AUR Helper: 'yay' detected" if self.distro_helper.package_is_installed('yay') else " | AUR Helper: 'yay' not detected"
-        distro_label = QLabel(f"Recognized Linux distribution: {self.distro_name} | Session: {self.session}{yay_info}")
-        distro_label.setStyleSheet("color: lightgreen")
-        layout.addWidget(distro_label)
+        self.distro_label = QLabel(f"Recognized Linux distribution: {self.distro_name} | Session: {self.session}{yay_info}")
+        self.distro_label.setStyleSheet("color: lightgreen")
+        layout.addWidget(self.distro_label)
 
     def _add_button_layouts(self, layout):
         hbox1_buttons = QHBoxLayout()
@@ -183,7 +183,7 @@ class PackageInstallerOptions(QDialog):
                 if install_additional_packages_checkbox.isChecked():
                     install_yay_checkbox.setEnabled(False)
                     install_yay_checkbox.setChecked(True)
-                elif self.distro.supports_aur():
+                elif self.distro_helper.supports_aur():
                     install_yay_checkbox.setEnabled(True)
                     if select_all_checkbox.checkState() == Qt.CheckState.Unchecked:
                         install_yay_checkbox.setChecked(False)
