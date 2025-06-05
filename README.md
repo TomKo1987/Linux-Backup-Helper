@@ -1,8 +1,8 @@
 # Backup Helper
 
-Backup Helper is a graphical Python tool for backups and system management under Linux. The idea behind this project is to automatically configure a newly installed Linux system. Many services and all the packages you need are installed with the click of a button.
+Backup Helper is a graphical Python tool for backups and system management under Linux. The idea behind this project is to automatically configure a newly installed Linux system. Many services and [...]
 
-As this is my first project and I am new to programming, I would be very grateful for feedback and suggestions. I'm still learning and please don't expect everything to be perfect. But at least on my system it runs very fast and smoothly.
+As this is my first project and I am new to programming, I would be very grateful for feedback and suggestions. I'm still learning and please don't expect everything to be perfect. But at least on [...]
 
 ## Features
 
@@ -17,7 +17,7 @@ As this is my first project and I am new to programming, I would be very gratefu
 
 ## Package Installer Usage and Tips
 
-First you can select **System Files** in Package Installer. These files will be copied using `sudo`, for root privilege. If you have System Files selected, Package Installer will copy these first. This allows you to copy files such as `pacman.conf` to `/etc`.
+First you can select **System Files** in Package Installer. These files will be copied using `sudo`, for root privilege. If you have System Files selected, Package Installer will copy these first.[...]
 
 Under **Installer Operations** you can specify how you would like to proceed. Each action is executed one after the other. Uncheck actions to disable them.
 
@@ -36,7 +36,7 @@ Under **Installer Operations** you can specify how you would like to proceed. Ea
 
 - **Essential Packages** will be installed using the default package manager of your distribution.
 - **Additional Packages** provides access to the Arch User Repository. Therefore **yay** must and will be installed.
-- You can also define **Specific Packages**. These packages will be installed (using the default package manager of your distribution) only if the corresponding session has been recognized. Both full desktop environments and window managers such as “Hyprland” and others are supported.
+- You can also define **Specific Packages**. These packages will be installed (using the default package manager of your distribution) only if the corresponding session has been recognized. Both f[...]
 
 
 ## Installation
@@ -94,7 +94,18 @@ Contributions, bug reports, and feature requests are welcome! Please open an iss
 ## Disclaimer
 
 This software is provided "as is", without warranty of any kind. Always test your backup and restore operations carefully.
-# Linux-Backup-Helper
-# Linux-Backup-Helper
-# Linux-Backup-Helper
-# Linux-Backup-Helper
+
+
+---
+
+## Screenshots
+
+![Main Window](images/Main.png)
+![Backup Dialog](images/Backup.png)
+![Copy File Dialog](images/Copy%20File%20Dialog.png)
+![Settings Dialog](images/Settings.png)
+![Package Installer Launcher](images/Package%20Installer%20Launcher.png)
+![Package Installer Dialog](images/Package%20Installer%20Dialog.png)
+![Package Installer Operations](images/Package%20Installer%20Operations.png)
+![Package Installer Options](images/Package%20Installer%20Options.png)
+
