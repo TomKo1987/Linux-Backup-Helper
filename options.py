@@ -39,18 +39,20 @@ class Options(QObject):
 
     def __init__(self, header, title, source, destination, details=None):
         super().__init__()
-        self.header = header
-        self.title = title
+        self.header = str(header) if header else ""
+        self.title = str(title) if title else ""
         self.source = source
         self.destination = destination
-        self.details = details if details else {
-            'no_backup': False,
-            'no_restore': False,
-            'sublayout_games_1': False,
-            'sublayout_games_2': False,
-            'sublayout_games_3': False,
-            'sublayout_games_4': False,
-            'unique_id': QUuid.createUuid().toString(QUuid.StringFormat.WithoutBraces)
+        if details is None:
+            details = {}
+        self.details = {
+            'no_backup': bool(details.get('no_backup', False)),
+            'no_restore': bool(details.get('no_restore', False)),
+            'sublayout_games_1': bool(details.get('sublayout_games_1', False)),
+            'sublayout_games_2': bool(details.get('sublayout_games_2', False)),
+            'sublayout_games_3': bool(details.get('sublayout_games_3', False)),
+            'sublayout_games_4': bool(details.get('sublayout_games_4', False)),
+            'unique_id': details.get('unique_id') or QUuid.createUuid().toString(QUuid.StringFormat.WithoutBraces)
         }
 
     @staticmethod
@@ -96,8 +98,7 @@ class Options(QObject):
         firewall_pkgs = Options.format_package_list(distro_helper.get_firewall_packages())
         at_pkgs = Options.format_package_list(distro_helper.get_at_packages())
 
-        cron_service = "cronie" if pkg_manager == "pacman" or distro_helper.distro_id in ["fedora", "rhel",
-                                                                                          "centos"] else "cron"
+        cron_service = "cronie" if pkg_manager == "pacman" or distro_helper.distro_id in ["fedora", "rhel", "centos"] else "cron"
 
         return {
             "copy_system_files": "Copy 'System Files' (Using 'sudo cp'.)",
@@ -238,8 +239,16 @@ class Options(QObject):
     @staticmethod
     def load_config(file_path):
         try:
+            if not os.path.exists(file_path):
+                print(f"Config file not found: {file_path}")
+                return
+
             with open(file_path, encoding='utf-8') as file:
                 entries_data = json.load(file)
+
+            if not isinstance(entries_data, dict):
+                print("Invalid config format: expected dictionary")
+                return
 
             header_data = entries_data.get('header', {})
             Options.headers = [h for h in Options.header_order]
