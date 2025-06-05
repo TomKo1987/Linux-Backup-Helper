@@ -49,6 +49,19 @@ class LinuxDistroHelper:
             distro_info["id"] = platform.system().lower()
         return distro_info
 
+    @staticmethod
+    def detect_session():
+        from options import SESSIONS
+        for var in ['XDG_CURRENT_DESKTOP', 'XDG_SESSION_DESKTOP', 'DESKTOP_SESSION']:
+            val = os.getenv(var)
+            if val:
+                parts = [p.strip() for p in val.split(':') if p.strip()]
+                for part in parts:
+                    match = next((env for env in SESSIONS if part.lower() == env.lower()), None)
+                    if match:
+                        return match
+        return None
+
     def _setup_commands(self):
         self.pkg_check_installed = lambda pkg: ["pacman", "-Qi", pkg]
         self.pkg_install = "sudo pacman -S --noconfirm {package}"
@@ -149,12 +162,17 @@ class LinuxDistroHelper:
         return shell_map.get(shell_name.lower(), shell_name.lower())
 
     def package_is_installed(self, package):
+        if not package or not isinstance(package, str):
+            return False
         cmd = self.pkg_check_installed(package)
         try:
-            result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
             return result.returncode == 0
-        except Exception as e:
-            print(f"Error determining if package is installed: {e}")
+        except subprocess.TimeoutExpired:
+            print(f"Timeout checking package {package}")
+            return False
+        except (subprocess.SubprocessError, OSError) as e:
+            print(f"Error determining if package {package} is installed: {e}")
             return False
 
     def filter_not_installed(self, packages):
