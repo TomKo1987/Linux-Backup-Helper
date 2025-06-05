@@ -1,4 +1,3 @@
-from options import Options
 from global_style import global_style
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QDialog, QLabel, QGridLayout,
@@ -29,6 +28,7 @@ class BaseWindow(QDialog):
         self.setup_ui()
 
     def setup_ui(self):
+        from options import Options
         Options.sort_entries()
         self.clear_layout_contents()
         key = f"{self.window_type}_window_columns"
@@ -51,6 +51,7 @@ class BaseWindow(QDialog):
         self.selectall = QCheckBox("Select All")
         self.selectall.setStyleSheet(f"{global_style} QCheckBox {{color: '#6ffff5'; font-size: 14px;}}")
         self.selectall.clicked.connect(self.toggle_checkboxes_manually)
+        from options import Options
         config_path_text = str(Options.config_file_path)
         if hasattr(Options, 'text_replacements'):
             for old, new in Options.text_replacements:
@@ -69,6 +70,7 @@ class BaseWindow(QDialog):
     def add_header_checkboxes(self, layout, sublayout_entries=None):
         row = 0
         self.checkbox_dirs.clear()
+        from options import Options
         tooltip_text, tooltip_text_entry_restore, _ = Options.generate_tooltip()
         tooltip_dict = tooltip_text_entry_restore if self.window_type == "restore" else tooltip_text
 
@@ -136,6 +138,7 @@ class BaseWindow(QDialog):
     @staticmethod
     def get_sublayout_entries():
         d = {f'sublayout_games_{i}': [] for i in range(1, 5)}
+        from options import Options
         if hasattr(Options, 'all_entries'):
             for e in Options.all_entries:
                 for i in range(1, 5):
@@ -154,6 +157,7 @@ class BaseWindow(QDialog):
             widget = QWidget()
             setattr(self, f'sublayout_widget_games_{i}', widget)
             ch_layout = QHBoxLayout()
+            from options import Options
             name = Options.sublayout_names.get(key, f'Sublayout Games {i}')
             select_all = QCheckBox(name)
             color = "#7f7f7f" if self.window_type == "settings" and "Games" in Options.header_inactive else Options.header_colors.get("Games", "#ffffff")
