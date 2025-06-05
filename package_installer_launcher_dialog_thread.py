@@ -23,9 +23,9 @@ class PackageInstallerLauncher:
         self.package_installer_thread = None
         self.package_installer_dialog = None
         self.sudo_checkbox = None
-        self.distro_helper = LinuxDistroHelper()
-        self.distro_name = self.distro_helper.distro_pretty_name
-        self.session = self.distro_helper.detect_session()
+        self.distro = LinuxDistroHelper()
+        self.distro_name = self.distro.distro_pretty_name
+        self.session = self.distro.detect_session()
 
     def launch(self):
         if self.parent:
@@ -47,19 +47,13 @@ class PackageInstallerLauncher:
         if self._show_dialog_and_get_result(dialog, content_widget):
             self._handle_dialog_accepted(installer_operations)
 
-    def _create_installer_dialog(self):
+    @staticmethod
+    def _create_installer_dialog():
         dialog = QDialog()
         dialog.setWindowTitle('Package Installer')
         layout = QVBoxLayout()
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
-        yay_info = ""
-        if self.distro_helper.has_aur:
-            yay_info = " | AUR Helper: 'yay' detected" if self.distro_helper.package_is_installed(
-                'yay') else " | AUR Helper: 'yay' not detected"
-        distro_label = QLabel(f"Recognized Linux distribution: {self.distro_name} | Session: {self.session}{yay_info}")
-        distro_label.setStyleSheet("color: lightgreen")
-        content_layout.addWidget(distro_label)
         header_label = QLabel("<span style='font-size: 18px;'>Package Installer will perform the following operations:<br></span>")
         header_label.setTextFormat(Qt.TextFormat.RichText)
         content_layout.addWidget(header_label)
@@ -282,7 +276,7 @@ class PackageInstallerDialog(QDialog):
 
     def _init_attributes(self):
         self.task_status = {}
-        self.task_descriptions = {}
+        self.task_descriptions = []
         self.update_timer = QTimer(self)
         self.timer = QElapsedTimer()
 
@@ -470,6 +464,10 @@ class PackageInstallerDialog(QDialog):
         self._adjust_checklist_height()
 
     def _adjust_checklist_height(self):
+        if self.checklist.count() == 0:
+            self.checklist.setFixedHeight(40)
+            return
+
         total_height = sum(
             self.checklist.sizeHintForRow(i)
             for i in range(self.checklist.count())
@@ -478,7 +476,7 @@ class PackageInstallerDialog(QDialog):
         self.checklist.setFixedHeight(max(total_height, 40))
 
     def update_task_checklist_status(self, task_id, status):
-        if task_id not in self.task_status:
+        if not task_id or task_id not in self.task_status:
             return
 
         self.task_status[task_id] = status
@@ -503,6 +501,9 @@ class PackageInstallerDialog(QDialog):
 
         for i in range(self.checklist.count()):
             item = self.checklist.item(i)
+            if not item:
+                continue
+
             if item.data(Qt.ItemDataRole.UserRole) == task_id:
                 item.setIcon(QIcon.fromTheme(icon_name))
                 item.setForeground(QColor(color))
@@ -560,8 +561,8 @@ class PackageInstallerDialog(QDialog):
         try:
             self.task_descriptions = ast.literal_eval(output)
             self.initialize_checklist()
-        except (SyntaxError, ValueError):
-            pass
+        except (SyntaxError, ValueError) as e:
+            self.outputReceived.emit(f"Error parsing task list: {e}", "error")
 
     def _process_regular_output(self, output: str, message_type: str, cursor: QTextCursor):
         if message_type not in StyleConfig.STYLE_MAP and "<span " not in output:
@@ -598,6 +599,9 @@ class PackageInstallerDialog(QDialog):
 
     def _finalize_text_edit(self, cursor: QTextCursor, html_content: str = None):
         try:
+            if not cursor:
+                cursor = self.text_edit.textCursor()
+
             cursor.movePosition(QTextCursor.MoveOperation.End)
             if html_content:
                 cursor.insertHtml(html_content)
@@ -672,7 +676,6 @@ class PackageInstallerDialog(QDialog):
 
     @staticmethod
     def _format_elapsed_time(elapsed: int) -> str:
-        """Format elapsed time as a readable string."""
         h, remainder = divmod(elapsed, 3600)
         m, s = divmod(remainder, 60)
 
@@ -684,7 +687,6 @@ class PackageInstallerDialog(QDialog):
             return f"\nElapsed time:\n{s:02}s\n"
 
     def update_failed_attempts(self, failed_attempts: int):
-        """Update failed authentication attempts display."""
         if failed_attempts > 0:
             text = f"⚠️ Failed Authentication Attempts: {failed_attempts}"
             self.failed_attempts_label.setText(text)
@@ -693,7 +695,9 @@ class PackageInstallerDialog(QDialog):
             self._enable_close_button()
 
     def keyPressEvent(self, event):
-        """Handle key press events."""
+        if not event:
+            return
+
         key_handlers = {
             Qt.Key.Key_Down: self._handle_down_key,
             Qt.Key.Key_Escape: self._handle_escape_key,
@@ -707,30 +711,23 @@ class PackageInstallerDialog(QDialog):
             super().keyPressEvent(event)
 
     def _handle_down_key(self):
-        """Handle down arrow key press."""
         scrollbar = self.scroll_area.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
         self.ok_button.setFocus()
 
     def _handle_escape_key(self):
-        """Handle escape key press."""
         if self.completed_message_shown:
             self.close()
-        # If not completed, ignore escape key
 
     def closeEvent(self, event):
-        """Handle dialog close event."""
-        # Prevent closing if operation is still in progress
         if not self.completed_message_shown and not self.auth_failed:
             event.ignore()
             return
 
-        # Clean up installer thread
         self._cleanup_installer_thread()
         super().closeEvent(event)
 
     def _cleanup_installer_thread(self):
-        """Clean up the installer thread."""
         if not (hasattr(self, 'installer_thread') and self.installer_thread):
             return
 
@@ -739,9 +736,9 @@ class PackageInstallerDialog(QDialog):
             self.installer_thread.quit()
 
             try:
-                if not self.installer_thread.wait(2000):  # Wait 2 seconds
+                if not self.installer_thread.wait(2000):
                     self.installer_thread.terminate()
-                    self.installer_thread.wait(1000)  # Wait 1 more second
+                    self.installer_thread.wait(1000)
             except RuntimeError as e:
                 print(f"Thread cleanup warning: {e}")
 
@@ -934,10 +931,14 @@ class PackageInstallerThread(QThread):
 
     def _process_command_output(self, process):
         output_buffer, error_buffer = [], []
+
         def read_stream(stream, buffer, name):
             try:
-                for line in iter(stream.readline, ''):
-                    if not line or self.terminated:
+                while True:
+                    if self.terminated:
+                        break
+                    line = stream.readline()
+                    if not line:
                         break
                     line = line.strip()
                     if line:
@@ -945,21 +946,30 @@ class PackageInstallerThread(QThread):
                         self.outputReceived.emit(f"<span>{line}</span>", "subprocess")
             except Exception as error:
                 self.outputReceived.emit(f"<span>Error reading {name} stream: {error}</span>", "error")
-        threads = [threading.Thread(target=read_stream, args=(process.stdout, output_buffer, "stdout"), daemon=True),
-                   threading.Thread(target=read_stream, args=(process.stderr, error_buffer, "stderr"), daemon=True)]
-        for t in threads: t.start()
+
+        threads = [
+            threading.Thread(target=read_stream, args=(process.stdout, output_buffer, "stdout"), daemon=True),
+            threading.Thread(target=read_stream, args=(process.stderr, error_buffer, "stderr"), daemon=True)
+        ]
+
+        for t in threads:
+            t.start()
+
         try:
             process.wait(timeout=600)
-            for t in threads: t.join()
+            for t in threads:
+                t.join(timeout=5)
         except subprocess.TimeoutExpired:
             self.outputReceived.emit("<span>Command Timeout. Process is terminated...</span>", "error")
             process.kill()
             process.wait()
             return False
+
         if process.returncode != 0:
             self.outputReceived.emit(f"<span>Command error: {process.returncode}</span>", "error")
             if error_buffer:
                 self.outputReceived.emit(f"<span>Error details: {' '.join(error_buffer)}</span>", "error")
+
         return process
 
     def start_package_installer(self):
@@ -1043,11 +1053,27 @@ class PackageInstallerThread(QThread):
     def batch_install(self, packages, package_type):
         task_id_map = {"Essential Package": "install_essential_packages", "Additional Package": "install_additional_packages"}
         task_id = task_id_map.get(package_type)
-        pkgs = [p.strip() for p in (packages or []) if isinstance(p, str) and p.strip()]
+
+        if not packages:
+            self.outputReceived.emit(f"No '{package_type}s' specified...", "warning")
+            if task_id:
+                self.taskStatusChanged.emit(task_id, "warning")
+            return True
+
+        pkgs = [p.strip() for p in packages if isinstance(p, str) and p.strip()]
+
+        if not pkgs:
+            self.outputReceived.emit(f"No valid '{package_type}s' found...", "warning")
+            if task_id:
+                self.taskStatusChanged.emit(task_id, "warning")
+            return True
+
         pkgs_to_install = self.distro.filter_not_installed(pkgs)
+
         if not pkgs_to_install:
             self.outputReceived.emit(f"All '{package_type}s' already present...", "success")
-            if task_id: self.taskStatusChanged.emit(task_id, "success")
+            if task_id:
+                self.taskStatusChanged.emit(task_id, "success")
             return True
         if package_type == "Essential Package":
             cmd = self.distro.get_pkg_install_cmd(" ".join(pkgs_to_install))
