@@ -23,9 +23,11 @@ class DriveManager:
     def check_path_requires_mounting(self, path):
         if not path or not isinstance(path, (str, Path)):
             return None
-
+        try:
+            path = str(Path(path).resolve())
+        except (OSError, ValueError):
+            return None
         from options import Options
-
         path = str(path)
         for opt in Options.mount_options:
             if not isinstance(opt, dict):
@@ -80,8 +82,11 @@ class DriveManager:
             return False
         try:
             print(f"Unmounting drive: {name}")
-            subprocess.Popen(cmd, shell=True)
-            return True
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+            return result.returncode == 0
+        except subprocess.TimeoutExpired:
+            self._show_message("Unmount Error", f"Drive '{name}' unmount timed out.", QMessageBox.Icon.Warning, parent)
+            return False
         except Exception as e:
             self._show_message("Unmount Error", f"Drive '{name}' could not be unmounted.\nError: {e}", QMessageBox.Icon.Critical, parent)
             return False
@@ -114,7 +119,6 @@ class DriveManager:
         return success
 
     def mount_drives_at_launch(self):
-        # Import here to avoid circular imports
         from options import Options
         
         if getattr(Options, 'mount_options', None) and getattr(Options, 'run_mount_command_on_launch', False):
