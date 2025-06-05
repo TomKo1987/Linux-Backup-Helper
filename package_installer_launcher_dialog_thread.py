@@ -4,8 +4,8 @@ from sudo_password import SecureString
 from linux_distro_helper import LinuxDistroHelper
 from PyQt6.QtGui import QTextCursor, QColor, QIcon
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, QElapsedTimer, QTimer
-from PyQt6.QtWidgets import (QVBoxLayout, QHBoxLayout, QPushButton, QListWidgetItem, QApplication, QListWidget, QWidget, QCheckBox, QTextEdit, QGraphicsDropShadowEffect, QDialogButtonBox, QDialog, QLabel, QScrollArea)
 import ast, getpass, os, pwd, shutil, socket, subprocess, tempfile, threading, time, urllib.error, urllib.request
+from PyQt6.QtWidgets import (QVBoxLayout, QHBoxLayout, QPushButton, QListWidgetItem, QApplication, QListWidget, QWidget, QCheckBox, QTextEdit, QGraphicsDropShadowEffect, QDialogButtonBox, QDialog, QLabel, QScrollArea)
 
 user = pwd.getpwuid(os.getuid()).pw_name
 home_user = os.getenv("HOME")
@@ -206,168 +206,408 @@ class PackageInstallerLauncher:
         self.package_installer_dialog = None
 
 
+class StyleConfig:
+    FONT_MAIN = "DejaVu Sans Mono"
+    FONT_SUBPROCESS = "Hack"
+
+    COLORS = {
+        'primary': '#7aa2f7',
+        'success': '#8fffab',
+        'warning': '#e0af68',
+        'error': '#ff5555',
+        'info': '#7dcfff',
+        'text': '#c0caf5',
+        'background_primary': '#1a1b26',
+        'background_secondary': '#24283b',
+        'background_gradient_start': '#11141d',
+        'background_gradient_end': '#222a3b',
+        'border': '#414868',
+        'muted': '#7c7c7c'
+    }
+
+    STYLE_MAP = {
+        "operation": (FONT_MAIN, 16, "#6ffff5", 1.2),
+        "info": (FONT_MAIN, 15, "#ceec9e", 1.0),
+        "subprocess": (FONT_SUBPROCESS, 13, "#f9e7ff", 0.6),
+        "success": (FONT_MAIN, 15, "#8fffab", 1.0),
+        "warning": (FONT_MAIN, 15, "#ffaa00", 1.0),
+        "error": (FONT_MAIN, 15, "#ff5555", 1.0)
+    }
+
+    @classmethod
+    def get_style_string(cls, style_name):
+        if style_name not in cls.STYLE_MAP:
+            return ""
+
+        font, size, color, line_height = cls.STYLE_MAP[style_name]
+        return f"font-family: {font}; font-size: {size}px; color: {color}; padding: 5px; line-height: {line_height};"
+
+
+class TaskStatus:
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    SUCCESS = "success"
+    WARNING = "warning"
+    ERROR = "error"
+
+
 # noinspection PyUnresolvedReferences
 class PackageInstallerDialog(QDialog):
     outputReceived = pyqtSignal(str, str)
-    font_main = "DejaVu Sans Mono"
-    font_subprocess = "Hack"
-    STYLE_MAP = {style: f"font-family: {font}; font-size: {size}px; color: {color}; padding: 5px; line-height: {line};" for style, (font, size, color, line) in {
-        "operation": (font_main, 16, "#6ffff5", 1.2), "info": (font_main, 15, "#ceec9e", 1.0), "subprocess": (font_subprocess, 13, "#f9e7ff", 0.6), "success": (font_main, 15, "#8fffab", 1.0),
-        "warning": (font_main, 15, "#ffaa00", 1.0), "error": (font_main, 15, "#ff5555", 1.0)}.items()}
+    DIALOG_SIZE = (1400, 1100)
+    CHECKLIST_WIDTH = 370
+    BUTTON_SIZE = (145, 40)
+    SHADOW_BLUR = 80
+    SHADOW_OFFSET = 15
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
-        self.shadow = QGraphicsDropShadowEffect()
-        self.shadow.setBlurRadius(80)
-        self.shadow.setXOffset(15)
-        self.shadow.setYOffset(15)
-        self.shadow.setColor(QColor(0, 0, 0, 160))
-        self.task_status = {}
-        self.task_descriptions = {}
+        self._init_attributes()
+        self._setup_ui_components()
         self.installer_thread = None
         self.current_task = None
         self.completed_message_shown = False
         self.has_error = False
         self.auth_failed = False
+        self.setup_ui()
+
+    def _init_attributes(self):
+        self.task_status = {}
+        self.task_descriptions = {}
+        self.update_timer = QTimer(self)
+        self.timer = QElapsedTimer()
+
+    def _setup_ui_components(self):
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+        self.setFixedSize(*self.DIALOG_SIZE)
+
+        self.shadow = self._create_shadow_effect()
+
         self.layout = QHBoxLayout(self)
         self.left_panel = QVBoxLayout()
+        self.right_panel = QVBoxLayout()
+
         self.scroll_area = QScrollArea()
         self.text_edit = QTextEdit()
         self.failed_attempts_label = QLabel(self)
-        self.right_panel = QVBoxLayout()
+
         self.checklist_label = QLabel("Pending Operations:")
         self.checklist = QListWidget()
         self.elapsed_time_label = QLabel("\nElapsed time:\n00s\n")
-        self.elapsed_time_label.setGraphicsEffect(self.shadow)
-        self.update_timer = QTimer(self)
-        self.timer = QElapsedTimer()
         self.ok_button = QPushButton("Close")
-        self.ok_button.setFixedSize(145, 40)
-        self.setFixedSize(1400, 1100)
-        self.setup_ui()
+
+    def _create_shadow_effect(self):
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(self.SHADOW_BLUR)
+        shadow.setXOffset(self.SHADOW_OFFSET)
+        shadow.setYOffset(self.SHADOW_OFFSET)
+        shadow.setColor(QColor(0, 0, 0, 160))
+        return shadow
 
     def setup_ui(self):
         self._apply_global_styles()
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.text_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-        self.text_edit.setReadOnly(True)
-        self.text_edit.setHtml("<p style='color: #55ff55; font-size: 20px; text-align: center; margin-top: 25px;'><b>Package Installer</b><br>Initialization completed. Starting Package Installer</span></p>")
-        self.scroll_area.setWidget(self.text_edit)
-        self.left_panel.addWidget(self.scroll_area)
-        border_style = "border-radius: 8px; border-right: 1px solid #7aa2f7; border-top: 1px solid #7aa2f7; border-bottom: 1px solid #7aa2f7; border-left: 4px solid #7aa2f7;"
-        self.checklist_label.setStyleSheet(f"""color: #7dcfff; font-size: 18px; font-weight: bold; padding: 10px; background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #24283b, stop:1 #414868); {border_style}""")
-        self.checklist.setStyleSheet(f"""QListWidget {{background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #24283b, stop:1 #414868); font-size: 15px; padding: 4px; {border_style}}} QListWidget::item {{padding: 4px; border-radius: 4px; border: 1px solid transparent;}}""")
-        self.checklist.setFixedWidth(370)
-        self.update_timer.timeout.connect(self.update_elapsed_time)
-        self.timer.start()
-        self.update_timer.start(1000)
+        self._configure_scroll_area()
+        self._configure_text_edit()
+        self._configure_checklist()
+        self._configure_elapsed_time()
+        self._configure_ok_button()
+        self._setup_timers()
         self._setup_layout()
 
     def _apply_global_styles(self):
-        self.setStyleSheet("""QDialog {background-color: #1a1b26; border-radius: 15px; border: 1px solid #2d2d44;} QScrollArea {background-color: #181b28; border: 1px solid #414868; border-radius: 10px;}
-        QTextEdit {background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #11141d, stop:1 #222a3b); color: #c0caf5; border: none; border-radius: 8px;} QLabel {color: #c0caf5; font-size: 16px;}""")
+        colors = StyleConfig.COLORS
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {colors['background_primary']};
+                border-radius: 15px;
+                border: 1px solid #2d2d44;
+            }}
+            QScrollArea {{
+                background-color: #181b28;
+                border: 1px solid {colors['border']};
+                border-radius: 10px;
+            }}
+            QTextEdit {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                           stop:0 {colors['background_gradient_start']}, 
+                           stop:1 {colors['background_gradient_end']});
+                color: {colors['text']};
+                border: none;
+                border-radius: 8px;
+            }}
+            QLabel {{
+                color: {colors['text']};
+                font-size: 16px;
+            }}
+        """)
+
+    def _configure_scroll_area(self):
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll_area.setWidget(self.text_edit)
+
+    def _configure_text_edit(self):
+        self.text_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.text_edit.setReadOnly(True)
+        self.text_edit.setHtml(
+            "<p style='color: #55ff55; font-size: 20px; text-align: center; margin-top: 25px;'>"
+            "<b>Package Installer</b><br>Initialization completed. Starting Package Installer</p>"
+        )
+
+    def _configure_checklist(self):
+        colors = StyleConfig.COLORS
+        border_style = self._get_border_style()
+
+        self.checklist_label.setStyleSheet(f"""
+            color: {colors['info']};
+            font-size: 18px;
+            font-weight: bold;
+            padding: 10px;
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                       stop:0 {colors['background_secondary']}, 
+                       stop:1 {colors['border']});
+            {border_style}
+        """)
+
+        self.checklist.setStyleSheet(f"""
+            QListWidget {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                           stop:0 {colors['background_secondary']}, 
+                           stop:1 {colors['border']});
+                font-size: 15px;
+                padding: 4px;
+                {border_style}
+            }}
+            QListWidget::item {{
+                padding: 4px;
+                border-radius: 4px;
+                border: 1px solid transparent;
+            }}
+        """)
+        self.checklist.setFixedWidth(self.CHECKLIST_WIDTH)
+
+    def _configure_elapsed_time(self):
+        colors = StyleConfig.COLORS
+        self.elapsed_time_label.setGraphicsEffect(self.shadow)
+        self.elapsed_time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.elapsed_time_label.setStyleSheet(f"""
+            color: {colors['info']};
+            font-size: 17px;
+            {self._get_border_style()}
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                       stop:0 {colors['background_secondary']}, 
+                       stop:1 {colors['border']});
+            text-align: center;
+            font-weight: bold;
+            padding: 3px;
+        """)
+
+    def _configure_ok_button(self):
+        self.ok_button.setFixedSize(*self.BUTTON_SIZE)
+        self.ok_button.clicked.connect(self.accept)
+        self.ok_button.setEnabled(False)
+
+    def _setup_timers(self):
+        self.update_timer.timeout.connect(self.update_elapsed_time)
+        self.timer.start()
+        self.update_timer.start(1000)  # Update every second
 
     def _setup_layout(self):
-        label_border_style = "border-radius: 8px; border-right: 1px solid #7aa2f7; border-top: 1px solid #7aa2f7; border-bottom: 1px solid #7aa2f7; border-left: 4px solid #7aa2f7;"
+        self.left_panel.addWidget(self.scroll_area)
+        self._setup_failed_attempts_label()
+        self.left_panel.addWidget(self.failed_attempts_label)
+
         self.right_panel.addWidget(self.checklist_label)
         self.right_panel.addWidget(self.checklist)
         self.right_panel.addStretch(1)
-        self.elapsed_time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.elapsed_time_label.setStyleSheet(f"""color: #7dcfff; font-size: 17px; {label_border_style} background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #24283b, stop:1 #414868); text-align: center; font-weight: bold; padding: 3px;""")
         self.right_panel.addWidget(self.elapsed_time_label)
         self.right_panel.addStretch(1)
-        self.ok_button.clicked.connect(self.accept)
-        self.ok_button.setEnabled(False)
+
         button_container = QHBoxLayout()
         button_container.addStretch()
         button_container.addWidget(self.ok_button)
         self.right_panel.addLayout(button_container)
-        self.failed_attempts_label.setStyleSheet("""color: #f7768e; font-size: 16px; font-weight: bold; padding: 10px; margin-top: 8px; border-radius: 8px; background-color: rgba(247, 118, 142, 0.15); border-left: 4px solid #f7768e;""")
-        self.left_panel.addWidget(self.failed_attempts_label)
-        self.failed_attempts_label.setVisible(False)
+
         self.layout.addLayout(self.left_panel, 3)
         self.layout.addSpacing(10)
         self.layout.addLayout(self.right_panel, 1)
 
+    def _setup_failed_attempts_label(self):
+        self.failed_attempts_label.setStyleSheet(f"""
+            color: {StyleConfig.COLORS['error']};
+            font-size: 16px;
+            font-weight: bold;
+            padding: 10px;
+            margin-top: 8px;
+            border-radius: 8px;
+            background-color: rgba(247, 118, 142, 0.15);
+            border-left: 4px solid {StyleConfig.COLORS['error']};
+        """)
+        self.failed_attempts_label.setVisible(False)
+
+    @staticmethod
+    def _get_border_style():
+        return f"""
+            border-radius: 8px;
+            border-right: 1px solid {StyleConfig.COLORS['primary']};
+            border-top: 1px solid {StyleConfig.COLORS['primary']};
+            border-bottom: 1px solid {StyleConfig.COLORS['primary']};
+            border-left: 4px solid {StyleConfig.COLORS['primary']};
+        """
+
     def initialize_checklist(self):
         self.checklist.clear()
         self.task_status.clear()
-        cleaned_tasks = [(tid, desc.replace("...", "").replace("with 'yay'", "")) for tid, desc in self.task_descriptions]
+
+        cleaned_tasks = [
+            (tid, desc.replace("...", "").replace("with 'yay'", ""))
+            for tid, desc in self.task_descriptions
+        ]
+
         for task_id, desc in cleaned_tasks:
             item = QListWidgetItem(desc)
             item.setData(Qt.ItemDataRole.UserRole, task_id)
             item.setIcon(QIcon.fromTheme("dialog-question"))
-            item.setForeground(QColor("#7c7c7c"))
+            item.setForeground(QColor(StyleConfig.COLORS['muted']))
             self.checklist.addItem(item)
-            self.task_status[task_id] = "pending"
-        total_height = sum(self.checklist.sizeHintForRow(i) for i in range(self.checklist.count()))
+            self.task_status[task_id] = TaskStatus.PENDING
+
+        self._adjust_checklist_height()
+
+    def _adjust_checklist_height(self):
+        total_height = sum(
+            self.checklist.sizeHintForRow(i)
+            for i in range(self.checklist.count())
+        )
         total_height += 2 * self.checklist.frameWidth()
         self.checklist.setFixedHeight(max(total_height, 40))
 
     def update_task_checklist_status(self, task_id, status):
         if task_id not in self.task_status:
             return
+
         self.task_status[task_id] = status
-        if status in ("error", "warning"):
+
+        if status in (TaskStatus.ERROR, TaskStatus.WARNING):
             self.has_error = True
-        status_config = {"success": ("#8fffab", "dialog-ok-apply"), "error": ("#ff5555", "dialog-error"), "warning": ("#e0af68", "dialog-warning"), "in_progress": ("#7dcfff", "media-playback-start")}
-        if status in status_config:
-            color, icon_name = status_config[status]
-            for i in range(self.checklist.count()):
-                item = self.checklist.item(i)
-                if item.data(Qt.ItemDataRole.UserRole) == task_id:
-                    item.setIcon(QIcon.fromTheme(icon_name))
-                    item.setForeground(QColor(color))
-                    item.setBackground(QColor(*QColor(color).getRgb()[:3], 25))
-                    self.checklist.scrollToItem(item)
-                    break
+
+        self._update_checklist_item_appearance(task_id, status)
+
+    def _update_checklist_item_appearance(self, task_id, status):
+        status_config = {
+            TaskStatus.SUCCESS: (StyleConfig.COLORS['success'], "dialog-ok-apply"),
+            TaskStatus.ERROR: (StyleConfig.COLORS['error'], "dialog-error"),
+            TaskStatus.WARNING: (StyleConfig.COLORS['warning'], "dialog-warning"),
+            TaskStatus.IN_PROGRESS: (StyleConfig.COLORS['info'], "media-playback-start")
+        }
+
+        if status not in status_config:
+            return
+
+        color, icon_name = status_config[status]
+
+        for i in range(self.checklist.count()):
+            item = self.checklist.item(i)
+            if item.data(Qt.ItemDataRole.UserRole) == task_id:
+                item.setIcon(QIcon.fromTheme(icon_name))
+                item.setForeground(QColor(color))
+
+                bg_color = QColor(color)
+                bg_color.setAlpha(25)
+                item.setBackground(bg_color)
+
+                self.checklist.scrollToItem(item)
+                break
 
     def update_operation_dialog(self, output: str, message_type: str = "info"):
         cursor = self.text_edit.textCursor()
-        if "/var/lib/pacman/db.lck" in output:
-            cursor.insertHtml(f"""<hr style='border: none; margin: 10px 20px; border-top: 1px dashed rgba(247, 118, 142, 0.4);'>
-            <div style='padding: 15px; margin: 10px; border-radius: 10px; border-left: 4px solid #f7768e;'><p style='color: #f7768e; font-size: 18px; text-align: center;'><b>⚠️ Installation Aborted</b><br>
-            <span style='font-size: 16px;'>'/var/lib/pacman/db.lck' detected!</span><br><span style='color: #c0caf5; font-size: 14px;'>Remove using: <code>sudo rm -r /var/lib/pacman/db.lck</code></span></p></div>""")
-            self._finalize_text_edit(cursor)
-            self.ok_button.setEnabled(True)
-            self.ok_button.setFocus()
-            self.update_timer.stop()
-            if hasattr(self, 'installer_thread') and self.installer_thread and self.installer_thread.isRunning():
-                self.installer_thread.terminate()
+
+        if self._handle_special_outputs(output, cursor):
             return
-        elif message_type == "finish":
+
+        if message_type == "finish":
             if not self.auth_failed:
                 self._show_completion_message()
             return
-        elif message_type == "task_list":
-            try:
-                self.task_descriptions = ast.literal_eval(output)
-                self.initialize_checklist()
-            except (SyntaxError, ValueError):
-                pass
+
+        if message_type == "task_list":
+            self._handle_task_list(output)
             return
-        if message_type not in self.STYLE_MAP and "<span " not in output:
+
+        self._process_regular_output(output, message_type, cursor)
+
+    def _handle_special_outputs(self, output: str, cursor: QTextCursor) -> bool:
+        if "/var/lib/pacman/db.lck" in output:
+            self._show_database_lock_error(cursor)
+            return True
+        return False
+
+    def _show_database_lock_error(self, cursor: QTextCursor):
+        error_html = f"""
+        <hr style='border: none; margin: 10px 20px; border-top: 1px dashed rgba(247, 118, 142, 0.4);'>
+        <div style='padding: 15px; margin: 10px; border-radius: 10px; border-left: 4px solid {StyleConfig.COLORS["error"]};'>
+            <p style='color: {StyleConfig.COLORS["error"]}; font-size: 18px; text-align: center;'>
+                <b>⚠️ Installation Aborted</b><br>
+                <span style='font-size: 16px;'>'/var/lib/pacman/db.lck' detected!</span><br>
+                <span style='color: {StyleConfig.COLORS["text"]}; font-size: 14px;'>
+                    Remove using: <code>sudo rm -r /var/lib/pacman/db.lck</code>
+                </span>
+            </p>
+        </div>
+        """
+
+        cursor.insertHtml(error_html)
+        self._finalize_text_edit(cursor)
+        self._enable_close_button()
+        self._stop_installation()
+
+    def _handle_task_list(self, output: str):
+        try:
+            self.task_descriptions = ast.literal_eval(output)
+            self.initialize_checklist()
+        except (SyntaxError, ValueError):
+            pass
+
+    def _process_regular_output(self, output: str, message_type: str, cursor: QTextCursor):
+        if message_type not in StyleConfig.STYLE_MAP and "<span " not in output:
             return
-        style = self.STYLE_MAP.get(message_type, "")
-        if message_type == "operation":
-            html_content = f"""<hr style='border: none; margin: 15px 30px; border-top: 1px dashed rgba(111, 255, 245, 0.3);'><div style='padding: 10px; border-radius: 8px; margin: 5px 0;'><p style='{style}'>{output}</p></div><br>"""
-        else:
-            lines = [f"<p style='{style}'>{line}</p>" for line in output.splitlines() if line.strip()]
-            html_content = "\n".join(lines) + "<br>"
+
         if "<span " in output:
             html_content = output
+        else:
+            html_content = self._format_output_as_html(output, message_type)
+
         for old, new in Options.text_replacements:
             html_content = html_content.replace(old, new)
+
         self._finalize_text_edit(cursor, html_content)
 
-    def _finalize_text_edit(self, cursor, html_content=None):
+    @staticmethod
+    def _format_output_as_html(output: str, message_type: str) -> str:
+        style = StyleConfig.get_style_string(message_type)
+
+        if message_type == "operation":
+            return f"""
+            <hr style='border: none; margin: 15px 30px; border-top: 1px dashed rgba(111, 255, 245, 0.3);'>
+            <div style='padding: 10px; border-radius: 8px; margin: 5px 0;'>
+                <p style='{style}'>{output}</p>
+            </div><br>
+            """
+        else:
+            lines = [
+                f"<p style='{style}'>{line}</p>"
+                for line in output.splitlines()
+                if line.strip()
+            ]
+            return "\n".join(lines) + "<br>"
+
+    def _finalize_text_edit(self, cursor: QTextCursor, html_content: str = None):
         try:
             cursor.movePosition(QTextCursor.MoveOperation.End)
             if html_content:
                 cursor.insertHtml(html_content)
             self.text_edit.setTextCursor(cursor)
+
             scrollbar = self.text_edit.verticalScrollBar()
             if scrollbar:
                 scrollbar.setValue(scrollbar.maximum())
@@ -377,73 +617,138 @@ class PackageInstallerDialog(QDialog):
     def _show_completion_message(self):
         if self.completed_message_shown or self.auth_failed:
             return
+
         self.completed_message_shown = True
         self.update_timer.stop()
-        color = "#e0af68" if self.has_error else "#8fffab"
-        summary_text = "Completed with issues" if self.has_error else "Successfully Completed"
-        icon = "⚠️" if self.has_error else "✅"
-        message = f"Package Installer {'completed with warnings/errors' if self.has_error else 'successfully completed all operations<br>'}"
-        r, g, b = (224, 175, 104) if self.has_error else (158, 206, 106)
+
+        is_error = self.has_error
+        color = StyleConfig.COLORS['warning' if is_error else 'success']
+        summary_text = "Completed with issues" if is_error else "Successfully Completed"
+        icon = "⚠️" if is_error else "✅"
+        message = f"Package Installer {'completed with warnings/errors' if is_error else 'successfully completed all operations<br>'}"
+
+        color_obj = QColor(color)
+        r, g, b = color_obj.red(), color_obj.green(), color_obj.blue()
+
         cursor = self.text_edit.textCursor()
-        cursor.insertHtml(f"""<hr style='border: none; margin: 25px 50px; border-top: 2px solid {color};'><div style='text-align: center; padding: 20px; margin: 15px 30px;
-        border-radius: 15px; border: 1px solid rgba({r}, {g}, {b}, 0.3);'><p style='color: {color}; font-size: 20px; font-weight: bold;'>{icon} {summary_text}</p><p style='color: {color}; font-size: 18px;'>{message}</p></div>""")
+        completion_html = f"""
+        <hr style='border: none; margin: 25px 50px; border-top: 2px solid {color};'>
+        <div style='text-align: center; padding: 20px; margin: 15px 30px;
+                    border-radius: 15px; border: 1px solid rgba({r}, {g}, {b}, 0.3);'>
+            <p style='color: {color}; font-size: 20px; font-weight: bold;'>{icon} {summary_text}</p>
+            <p style='color: {color}; font-size: 18px;'>{message}</p>
+        </div>
+        """
+        cursor.insertHtml(completion_html)
+
+        self._enable_close_button()
+        self._update_checklist_label_completion(icon, summary_text, color, r, g, b)
+        self.text_edit.setTextCursor(cursor)
+
+    def _enable_close_button(self):
         self.ok_button.setEnabled(True)
         self.ok_button.setFocus()
+
+    def _stop_installation(self):
+        self.update_timer.stop()
+        if hasattr(self, 'installer_thread') and self.installer_thread and self.installer_thread.isRunning():
+            self.installer_thread.terminate()
+
+    def _update_checklist_label_completion(self, icon: str, summary_text: str, color: str, r: int, g: int, b: int):
         self.checklist_label.setText(f"{icon} {summary_text}")
-        base_style = f"""color: {color}; font-size: 18px; font-weight: bold; padding: 10px; background-color: rgba({r}, {g}, {b}, 0.15); border-radius: 8px; border-right: 1px solid #7aa2f7; border-top: 1px solid #7aa2f7; border-bottom: 1px solid #7aa2f7; border-left: 4px solid #7aa2f7;"""
-        self.checklist_label.setStyleSheet(base_style)
-        self.text_edit.setTextCursor(cursor)
+        completion_style = f"""
+            color: {color};
+            font-size: 18px;
+            font-weight: bold;
+            padding: 10px;
+            background-color: rgba({r}, {g}, {b}, 0.15);
+            {self._get_border_style()}
+        """
+        self.checklist_label.setStyleSheet(completion_style)
 
     def update_elapsed_time(self):
         try:
             elapsed = max(0, int(self.timer.elapsed() / 1000))
-            h, remainder = divmod(elapsed, 3600)
-            m, s = divmod(remainder, 60)
-            if h:
-                time_text = f"\nElapsed time:\n{h:02}h {m:02}m {s:02}s\n"
-            elif m:
-                time_text = f"\nElapsed time:\n{m:02}m {s:02}s\n"
-            else:
-                time_text = f"\nElapsed time:\n{s:02}s\n"
+            time_text = self._format_elapsed_time(elapsed)
             self.elapsed_time_label.setText(time_text)
         except Exception as e:
             print(f"Error in update_elapsed_time: {e}")
             self.elapsed_time_label.setText("\nElapsed time:\n--\n")
 
-    def update_failed_attempts(self, failed_attempts):
+    @staticmethod
+    def _format_elapsed_time(elapsed: int) -> str:
+        """Format elapsed time as a readable string."""
+        h, remainder = divmod(elapsed, 3600)
+        m, s = divmod(remainder, 60)
+
+        if h:
+            return f"\nElapsed time:\n{h:02}h {m:02}m {s:02}s\n"
+        elif m:
+            return f"\nElapsed time:\n{m:02}m {s:02}s\n"
+        else:
+            return f"\nElapsed time:\n{s:02}s\n"
+
+    def update_failed_attempts(self, failed_attempts: int):
+        """Update failed authentication attempts display."""
         if failed_attempts > 0:
             text = f"⚠️ Failed Authentication Attempts: {failed_attempts}"
             self.failed_attempts_label.setText(text)
             self.failed_attempts_label.setVisible(True)
             self.auth_failed = True
-            self.ok_button.setEnabled(True)
-            self.failed_attempts_label.setStyleSheet("""color: #f7768e; font-size: 16px; font-weight: bold; padding: 12px; margin-top: 10px; border-radius: 8px; background-color: rgba(247, 118, 142, 0.15);
-            border-left: 4px solid #f7768e; border-bottom: 1px solid rgba(247, 118, 142, 0.3);""")
+            self._enable_close_button()
 
     def keyPressEvent(self, event):
-        key_map = {Qt.Key.Key_Down: lambda: (self.scroll_area.verticalScrollBar().setValue(self.scroll_area.verticalScrollBar().maximum()), self.ok_button.setFocus()),
-                   Qt.Key.Key_Escape: lambda: (event.ignore() if not self.completed_message_shown else self.close()), Qt.Key.Key_Tab: self.focusNextChild}
-        handler = key_map.get(event.key())
+        """Handle key press events."""
+        key_handlers = {
+            Qt.Key.Key_Down: self._handle_down_key,
+            Qt.Key.Key_Escape: self._handle_escape_key,
+            Qt.Key.Key_Tab: self.focusNextChild
+        }
+
+        handler = key_handlers.get(event.key())
         if handler:
             handler()
         else:
             super().keyPressEvent(event)
 
+    def _handle_down_key(self):
+        """Handle down arrow key press."""
+        scrollbar = self.scroll_area.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+        self.ok_button.setFocus()
+
+    def _handle_escape_key(self):
+        """Handle escape key press."""
+        if self.completed_message_shown:
+            self.close()
+        # If not completed, ignore escape key
+
     def closeEvent(self, event):
+        """Handle dialog close event."""
+        # Prevent closing if operation is still in progress
         if not self.completed_message_shown and not self.auth_failed:
             event.ignore()
             return
-        if hasattr(self, 'installer_thread') and self.installer_thread:
-            if self.installer_thread.isRunning():
-                self.installer_thread.terminated = True
-                self.installer_thread.quit()
-                try:
-                    if not self.installer_thread.wait(2000):
-                        self.installer_thread.terminate()
-                        self.installer_thread.wait(1000)
-                except RuntimeError as e:
-                    print(f"Thread cleanup warning: {e}")
+
+        # Clean up installer thread
+        self._cleanup_installer_thread()
         super().closeEvent(event)
+
+    def _cleanup_installer_thread(self):
+        """Clean up the installer thread."""
+        if not (hasattr(self, 'installer_thread') and self.installer_thread):
+            return
+
+        if self.installer_thread.isRunning():
+            self.installer_thread.terminated = True
+            self.installer_thread.quit()
+
+            try:
+                if not self.installer_thread.wait(2000):  # Wait 2 seconds
+                    self.installer_thread.terminate()
+                    self.installer_thread.wait(1000)  # Wait 1 more second
+            except RuntimeError as e:
+                print(f"Thread cleanup warning: {e}")
 
 
 # noinspection PyUnresolvedReferences
