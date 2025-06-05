@@ -72,6 +72,8 @@ class SettingsWindow(BaseWindow):
 
             header_combo = QComboBox()
             header_combo.setStyleSheet("color: #ffffff; background-color: #555582; padding: 5px 5px;")
+            if not hasattr(Options, 'headers') or not Options.headers:
+                Options.headers = ['Default']
             header_combo.addItems(Options.headers)
             header_combo.setMaximumHeight(field_height)
 
@@ -218,8 +220,7 @@ class SettingsWindow(BaseWindow):
                     if not edit_mode or entry.title.lower() != title_checkbox.lower()
                 }
                 if title.lower() in existing_titles:
-                    return self.show_message("Duplicate Title",
-                                             "An entry with this title already exists. Please choose a different title.")
+                    return self.show_message("Duplicate Title", "An entry with this title already exists. Please choose a different title.")
 
                 if edit_mode and entry_obj:
                     entry_obj.header = header
@@ -232,8 +233,7 @@ class SettingsWindow(BaseWindow):
                 for entry_key, entry_cb in checkboxes.items():
                     new_entry.details[entry_key] = entry_cb.isChecked()
 
-                self.show_message("Success",
-                                  f"Entry '{new_entry.title}' successfully {'updated' if edit_mode else 'added'}!")
+                self.show_message("Success", f"Entry '{new_entry.title}' successfully {'updated' if edit_mode else 'added'}!")
                 dialog.accept()
                 return None
 
@@ -313,6 +313,8 @@ class SettingsWindow(BaseWindow):
         return entries_list
 
     def header_settings(self):
+        if not hasattr(Options, 'sublayout_names'):
+            Options.sublayout_names = {}
         self.hide()
         dialog = QDialog(self)
         dialog.setMinimumSize(850, 950)
@@ -356,6 +358,10 @@ class SettingsWindow(BaseWindow):
     def create_header_list_item(self, header, list_widget):
         item_widget = QWidget()
         item_layout = QHBoxLayout(item_widget)
+        if not hasattr(Options, 'header_colors'):
+            Options.header_colors = {}
+        if not hasattr(Options, 'header_inactive'):
+            Options.header_inactive = []
         header_color = Options.header_colors.get(header, '#ffffff')
         darker = self.darken_color(header_color)
         btn_style = "color: black; font-weight: bold; font-size: 17px;"
@@ -479,6 +485,8 @@ class SettingsWindow(BaseWindow):
         return None
 
     def save_header_options(self, list_widget):
+        if not hasattr(Options, 'all_entries'):
+            Options.all_entries = []
         new_header_order, new_header_inactive = [], []
         for i in range(list_widget.count()):
             item_widget = list_widget.itemWidget(list_widget.item(i))
@@ -504,6 +512,10 @@ class SettingsWindow(BaseWindow):
         self.show()
 
     def manage_mount_options(self):
+        if not hasattr(Options, 'mount_options'):
+            Options.mount_options = []
+        if not hasattr(Options, 'run_mount_command_on_launch'):
+            Options.run_mount_command_on_launch = False
         self.hide()
         self.mount_options_dialog = QDialog(self)
         dialog = self.mount_options_dialog
