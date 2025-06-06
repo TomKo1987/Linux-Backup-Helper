@@ -1,15 +1,19 @@
 from pathlib import Path
 from options import Options, SESSIONS
 from sudo_password import SecureString
+from drive_manager import DriveManager
 from linux_distro_helper import LinuxDistroHelper
 from PyQt6.QtGui import QTextCursor, QColor, QIcon
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, QElapsedTimer, QTimer
-import ast, getpass, os, pwd, shutil, socket, subprocess, tempfile, threading, time, urllib.error, urllib.request
+import ast, getpass, os, pwd, shutil, socket, subprocess, tempfile, threading, time, urllib.error, urllib.request, logging, queue
 from PyQt6.QtWidgets import (QVBoxLayout, QHBoxLayout, QPushButton, QListWidgetItem, QApplication, QListWidget, QWidget, QCheckBox, QTextEdit, QGraphicsDropShadowEffect, QDialogButtonBox, QDialog, QLabel, QScrollArea)
 
 user = pwd.getpwuid(os.getuid()).pw_name
 home_user = os.getenv("HOME")
 home_config = Path(home_user).joinpath(".config")
+
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
 
 
 # noinspection PyUnresolvedReferences
@@ -17,15 +21,14 @@ class PackageInstallerLauncher:
     def __init__(self, parent=None):
         self.parent = parent
         self.config = getattr(parent, 'config', {}) if parent else {}
-        from drive_manager import DriveManager
         self.drive_manager = DriveManager()
         self.failed_attempts = getattr(parent, 'failed_attempts', 0)
         self.package_installer_thread = None
         self.package_installer_dialog = None
         self.sudo_checkbox = None
-        self.distro = LinuxDistroHelper()
-        self.distro_name = self.distro.distro_pretty_name
-        self.session = self.distro.detect_session()
+        self.distro_helper = LinuxDistroHelper()
+        self.distro_name = self.distro_helper.distro_pretty_name
+        self.session = self.distro_helper.detect_session()
 
     def launch(self):
         if self.parent:
@@ -47,13 +50,18 @@ class PackageInstallerLauncher:
         if self._show_dialog_and_get_result(dialog, content_widget):
             self._handle_dialog_accepted(installer_operations)
 
-    @staticmethod
-    def _create_installer_dialog():
+    def _create_installer_dialog(self):
         dialog = QDialog()
         dialog.setWindowTitle('Package Installer')
         layout = QVBoxLayout()
         content_widget = QWidget()
+        yay_info = ""
+        if self.distro_helper.has_aur:
+            yay_info = " | AUR Helper: 'yay' detected" if self.distro_helper.package_is_installed('yay') else " | AUR Helper: 'yay' not detected"
+        self.distro_label = QLabel(f"Recognized Linux distribution: {self.distro_name} | Session: {self.session}{yay_info}")
+        self.distro_label.setStyleSheet("color: lightgreen")
         content_layout = QVBoxLayout(content_widget)
+        content_layout.addWidget(self.distro_label)
         header_label = QLabel("<span style='font-size: 18px;'>Package Installer will perform the following operations:<br></span>")
         header_label.setTextFormat(Qt.TextFormat.RichText)
         content_layout.addWidget(header_label)
@@ -611,7 +619,7 @@ class PackageInstallerDialog(QDialog):
             if scrollbar:
                 scrollbar.setValue(scrollbar.maximum())
         except Exception as e:
-            print(f"Text edit update failed: {e}")
+            logger.exception(f"Text edit update failed: {e}")
 
     def _show_completion_message(self):
         if self.completed_message_shown or self.auth_failed:
@@ -671,7 +679,7 @@ class PackageInstallerDialog(QDialog):
             time_text = self._format_elapsed_time(elapsed)
             self.elapsed_time_label.setText(time_text)
         except Exception as e:
-            print(f"Error in update_elapsed_time: {e}")
+            logger.error(f"Error in update_elapsed_time: {e}")
             self.elapsed_time_label.setText("\nElapsed time:\n--\n")
 
     @staticmethod
@@ -740,7 +748,7 @@ class PackageInstallerDialog(QDialog):
                     self.installer_thread.terminate()
                     self.installer_thread.wait(1000)
             except RuntimeError as e:
-                print(f"Thread cleanup warning: {e}")
+                logger.warning(f"Thread cleanup warning: {e}")
 
 
 # noinspection PyUnresolvedReferences
@@ -762,6 +770,7 @@ class PackageInstallerThread(QThread):
         self.task_status = {}
         self._installed_packages_cache = {}
         self.distro = LinuxDistroHelper()
+        self.package_cache = PackageCache(self.distro)
 
     def run(self):
         self.started.emit()
@@ -889,28 +898,37 @@ class PackageInstallerThread(QThread):
             return False
 
     def cleanup_temp_files(self):
-        if not self.temp_dir or not Path(self.temp_dir).exists():
+        if not self.temp_dir:
             return
-        try:
-            for filename in ('sudo_pass', 'askpass.sh'):
-                file_path = Path(self.temp_dir, filename)
-                if file_path.exists():
-                    try:
+
+        temp_path = Path(self.temp_dir)
+        if not temp_path.exists():
+            return
+
+        sensitive_files = ['sudo_pass', 'askpass.sh']
+        for filename in sensitive_files:
+            file_path = temp_path / filename
+            if file_path.exists():
+                try:
+                    file_size = file_path.stat().st_size
+                    for _ in range(3):
                         with open(file_path, 'wb') as f:
-                            f.write(os.urandom(3072))
-                        file_path.unlink()
-                    except Exception as e:
-                        self.outputReceived.emit(f"Error securely removing {filename}: {e}", "warning")
-            for file_path in Path(self.temp_dir).glob('*'):
-                if file_path.is_file():
-                    try:
-                        file_path.unlink()
-                    except Exception as e:
-                        self.outputReceived.emit(f"Error removing temporary file {file_path}: {e}", "warning")
-            shutil.rmtree(self.temp_dir, ignore_errors=True)
-            self.temp_dir = self.askpass_script_path = None
+                            f.write(os.urandom(max(file_size, 1024)))
+                            f.flush()
+                            os.fsync(f.fileno())
+                    file_path.unlink()
+                except Exception as e:
+                    logger.warning(f"Secure deletion failed for {filename}: {e}")
+
+        if 'SUDO_PASSWORD_FILE' in os.environ:
+            del os.environ['SUDO_PASSWORD_FILE']
+
+        try:
+            shutil.rmtree(temp_path, ignore_errors=True)
+            self.temp_dir = None
+            self.askpass_script_path = None
         except Exception as e:
-            self.outputReceived.emit(f"Error cleaning up temporary files: {e}", "warning")
+            logger.warning(f"Temp directory cleanup failed: {e}")
 
     def run_sudo_command(self, command):
         if self.terminated:
@@ -930,45 +948,49 @@ class PackageInstallerThread(QThread):
             return False
 
     def _process_command_output(self, process):
-        output_buffer, error_buffer = [], []
+        output_queue = queue.Queue()
 
-        def read_stream(stream, buffer, name):
+        def read_stream_safe(stream, stream_name):
             try:
-                while True:
+                for line in iter(stream.readline, ''):
                     if self.terminated:
-                        break
-                    line = stream.readline()
-                    if not line:
                         break
                     line = line.strip()
                     if line:
-                        buffer.append(line)
-                        self.outputReceived.emit(f"<span>{line}</span>", "subprocess")
-            except Exception as error:
-                self.outputReceived.emit(f"<span>Error reading {name} stream: {error}</span>", "error")
+                        output_queue.put(('output', line))
+            except Exception as e:
+                output_queue.put(('error', f"Error reading {stream_name}: {e}"))
+            finally:
+                output_queue.put(('done', stream_name))
 
         threads = [
-            threading.Thread(target=read_stream, args=(process.stdout, output_buffer, "stdout"), daemon=True),
-            threading.Thread(target=read_stream, args=(process.stderr, error_buffer, "stderr"), daemon=True)
+            threading.Thread(target=read_stream_safe, args=(process.stdout, "stdout"), daemon=True),
+            threading.Thread(target=read_stream_safe, args=(process.stderr, "stderr"), daemon=True)
         ]
 
         for t in threads:
             t.start()
 
+        streams_done = 0
+        while streams_done < 2:
+            try:
+                msg_type, content = output_queue.get(timeout=1)
+                if msg_type == 'output':
+                    self.outputReceived.emit(f"<span>{content}</span>", "subprocess")
+                elif msg_type == 'error':
+                    self.outputReceived.emit(f"<span>{content}</span>", "error")
+                elif msg_type == 'done':
+                    streams_done += 1
+            except queue.Empty:
+                if self.terminated:
+                    break
+
         try:
             process.wait(timeout=600)
-            for t in threads:
-                t.join(timeout=5)
         except subprocess.TimeoutExpired:
-            self.outputReceived.emit("<span>Command Timeout. Process is terminated...</span>", "error")
+            self.outputReceived.emit("<span>Command Timeout. Terminating...</span>", "error")
             process.kill()
-            process.wait()
             return False
-
-        if process.returncode != 0:
-            self.outputReceived.emit(f"<span>Command error: {process.returncode}</span>", "error")
-            if error_buffer:
-                self.outputReceived.emit(f"<span>Error details: {' '.join(error_buffer)}</span>", "error")
 
         return process
 
@@ -1041,17 +1063,28 @@ class PackageInstallerThread(QThread):
     def install_package_generic(self, package, package_type=None):
         type_str = package_type or "package"
         self.outputReceived.emit(f"Installing '{type_str}': '{package}'...", "info")
-        if self.distro.package_is_installed(package):
+
+        if self.package_cache.is_installed(package):
             self.outputReceived.emit(f"'{package}' already present...", "success")
             return True
+
         cmd = self.distro.get_pkg_install_cmd(package)
         result = self.run_sudo_command(cmd.split())
-        success = result and result.returncode == 0 and self.distro.package_is_installed(package)
-        self.outputReceived.emit(f"'{package}' {'successfully installed' if success else 'failed to install'}...", "success" if success else "error")
+        success = result and result.returncode == 0
+
+        if success:
+            self.package_cache.mark_installed(package)
+            self.outputReceived.emit(f"'{package}' successfully installed...", "success")
+        else:
+            self.outputReceived.emit(f"'{package}' failed to install...", "error")
+
         return success
 
     def batch_install(self, packages, package_type):
-        task_id_map = {"Essential Package": "install_essential_packages", "Additional Package": "install_additional_packages"}
+        task_id_map = {
+            "Essential Package": "install_essential_packages",
+            "Additional Package": "install_additional_packages"
+        }
         task_id = task_id_map.get(package_type)
 
         if not packages:
@@ -1060,14 +1093,11 @@ class PackageInstallerThread(QThread):
                 self.taskStatusChanged.emit(task_id, "warning")
             return True
 
+        def package_batches(pkg_list, size):
+            for i in range(0, len(pkg_list), size):
+                yield pkg_list[i:i + size]
+
         pkgs = [p.strip() for p in packages if isinstance(p, str) and p.strip()]
-
-        if not pkgs:
-            self.outputReceived.emit(f"No valid '{package_type}s' found...", "warning")
-            if task_id:
-                self.taskStatusChanged.emit(task_id, "warning")
-            return True
-
         pkgs_to_install = self.distro.filter_not_installed(pkgs)
 
         if not pkgs_to_install:
@@ -1075,26 +1105,48 @@ class PackageInstallerThread(QThread):
             if task_id:
                 self.taskStatusChanged.emit(task_id, "success")
             return True
-        if package_type == "Essential Package":
-            cmd = self.distro.get_pkg_install_cmd(" ".join(pkgs_to_install))
-        else:
-            cmd = f"yay -S --noconfirm {' '.join(pkgs_to_install)}"
-        self.run_sudo_command(cmd.split())
-        failed = []
-        installed = []
-        for pkg in pkgs_to_install:
-            if self.distro.package_is_installed(pkg):
-                installed.append(pkg)
+
+        total_failed = []
+        total_installed = []
+
+        batch_size = 25
+
+        for batch in package_batches(pkgs_to_install, batch_size):
+            if self.terminated:
+                break
+
+            self.outputReceived.emit(f"Installing {len(batch)} package(s): {', '.join(batch)}...", "info")
+
+            if package_type == "Essential Package":
+                cmd = self.distro.get_pkg_install_cmd(" ".join(batch))
             else:
-                failed.append(pkg)
-        if failed:
-            self.outputReceived.emit(f"Warning: Failed to install the following '{package_type}s': {', '.join(failed)}", "warning")
-        if installed:
-            self.outputReceived.emit(f"Successfully installed {len(installed)} of {len(pkgs_to_install)} '{package_type}s':\n{', '.join(f'\'{pkg}\'' for pkg in installed)}", "success")
+                cmd = f"yay -S --noconfirm {' '.join(batch)}"
+
+            self.run_sudo_command(cmd.split())
+
+            for pkg in batch:
+                if self.package_cache.is_installed(pkg):
+                    total_installed.append(pkg)
+                else:
+                    total_failed.append(pkg)
+
+        if total_failed:
+            self.outputReceived.emit(
+                f"Warning: Failed to install {len(total_failed)} '{package_type}s': {', '.join(total_failed)}",
+                "warning"
+            )
+
+        if total_installed:
+            self.outputReceived.emit(
+                f"Successfully installed {len(total_installed)} of {len(pkgs_to_install)} '{package_type}s'",
+                "success"
+            )
+
         if task_id:
-            status = "success" if not failed else "warning" if installed else "error"
+            status = "success" if not total_failed else "warning" if total_installed else "error"
             self.taskStatusChanged.emit(task_id, status)
-        return not failed
+
+        return not total_failed
 
     def update_mirrors(self, task_id):
         if self.distro.distro_id != "arch":
@@ -1353,3 +1405,32 @@ class PackageInstallerThread(QThread):
                 success = False
         self.taskStatusChanged.emit(task_id, "success" if success else "error")
         return success
+
+
+class PackageCache:
+    def __init__(self, distro_helper):
+        self.distro = distro_helper
+        self._cache = {}
+        self._cache_timestamp = 0
+        self._cache_duration = 300
+
+    def is_installed(self, package):
+        current_time = time.time()
+
+        if current_time - self._cache_timestamp > self._cache_duration:
+            self._cache.clear()
+            self._cache_timestamp = current_time
+
+        if package not in self._cache:
+            self._cache[package] = self.distro.package_is_installed(package)
+
+        return self._cache[package]
+
+    def mark_installed(self, package):
+        self._cache[package] = True
+
+    def invalidate(self, package=None):
+        if package:
+            self._cache.pop(package, None)
+        else:
+            self._cache.clear()
