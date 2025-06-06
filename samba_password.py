@@ -1,7 +1,10 @@
 from keyring import errors
 from keyring.backends import SecretService
-import os, json, subprocess, getpass, keyring
+import os, json, subprocess, getpass, keyring, logging
 from PyQt6.QtWidgets import QDialog, QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout, QMessageBox, QCheckBox, QErrorMessage
+
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
 
 
 # noinspection PyUnresolvedReferences
@@ -120,10 +123,10 @@ class SambaPasswordManager:
             for entry in entries:
                 if entry.startswith("smb-"):
                     self.kwallet_entry = entry
-                    print(f"Found KWallet entry: {entry}")
+                    logger.info(f"Found KWallet entry: {entry}")
                     return entry
         except Exception as e:
-            print(f"Failed to list KWallet entries: {e}")
+            logger.exception(f"Failed to list KWallet entries: {e}")
         return None
 
     def _get_password_from_kwallet(self):
@@ -138,7 +141,7 @@ class SambaPasswordManager:
             credentials = json.loads(raw)
             return credentials.get("login"), credentials.get("password")
         except Exception as e:
-            print(f"Failed to retrieve password from KWallet: {e}")
+            logger.exception(f"Failed to retrieve password from KWallet: {e}")
             return None, None
 
     def _save_password_to_kwallet(self, username, password):
@@ -150,24 +153,24 @@ class SambaPasswordManager:
             data = json.dumps({"login": username, "password": password})
             with subprocess.Popen(["kwallet-query", "--write-password", entry, self.kwallet_wallet], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as proc:
                 proc.communicate(input=data.encode(), timeout=2)
-            print(f"Saved samba credentials to KWallet entry: {entry}")
+            logger.info(f"Saved samba credentials to KWallet entry: {entry}")
         except Exception as e:
-            print(f"Failed to save credentials to KWallet: {type(e).__name__}")
+            logger.exception(f"Failed to save credentials to KWallet: {type(e).__name__}")
 
     def get_samba_credentials(self):
-        print("get_samba_credentials was called")
+        logger.info("get_samba_credentials was called")
         username, password = self._get_password_from_kwallet()
         if password:
-            print("Retrieved samba password from KWallet")
+            logger.info("Retrieved samba password from KWallet")
             return username, password
         try:
             username = os.getlogin()
             password = keyring.get_password(self.keyring_service, username)
             if password:
-                print("Retrieved samba password from system keyring")
+                logger.info("Retrieved samba password from system keyring")
                 return username, password
         except Exception as e:
-            print(f"Failed to retrieve from keyring: {e}")
+            logger.exception(f"Failed to retrieve from keyring: {e}")
         return None, None
 
     def save_samba_credentials(self, username, password):
@@ -177,16 +180,16 @@ class SambaPasswordManager:
         else:
             try:
                 keyring.set_password(self.keyring_service, username, password)
-                print("Saved samba password to system keyring")
+                logger.info("Saved samba password to system keyring")
             except Exception as e:
-                print(f"Failed to save to keyring: {e}")
+                logger.exception(f"Failed to save to keyring: {e}")
 
     def delete_samba_credentials(self, username):
         success = True
         try:
             keyring.delete_password(self.keyring_service, username)
-            print(f"Deleted samba password for {username} from keyring")
+            logger.info(f"Deleted samba password for {username} from keyring")
         except Exception as e:
-            print(f"Failed to delete from keyring for {username}: {e}")
+            logger.exception(f"Failed to delete from keyring for {username}: {e}")
             success = False
         return success
