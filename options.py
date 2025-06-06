@@ -1,10 +1,13 @@
 from pathlib import Path
-import json, os, tempfile, functools, pwd
 from linux_distro_helper import LinuxDistroHelper
+import json, os, tempfile, functools, pwd, logging
 from PyQt6.QtCore import QObject, pyqtSignal, QMutex, QMutexLocker, QUuid
 
 user = pwd.getpwuid(os.getuid()).pw_name
 home_user = os.getenv("HOME")
+
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
 
 MAX_MOUNT_OPTIONS = 3
 SESSIONS = ["GNOME", "KDE", "XFCE", "LXQt", "LXDE", "Cinnamon", "Mate", "Deepin", "Budgie", "Enlightenment",
@@ -67,17 +70,26 @@ class Options(QObject):
 
     @staticmethod
     def sort_entries():
-        with QMutexLocker(Options._entries_mutex):
-            header_order_map = {h: i for i, h in enumerate(Options.header_order)}
-            Options.entries_sorted = sorted([
-                {'header': entry.header, 'title': entry.title, 'source': entry.source, 'destination': entry.destination,
-                 **{k: entry.details.get(k, False) for k in
-                    ('no_backup', 'no_restore', 'sublayout_games_1', 'sublayout_games_2', 'sublayout_games_3',
-                     'sublayout_games_4')},
-                 'unique_id': entry.details.get('unique_id', QUuid.createUuid().toString(QUuid.StringFormat.WithoutBraces))}
-                for entry in Options.all_entries
-            ], key=lambda x: (header_order_map.get(x['header'], 999), x['title'].lower()))
-            return Options.entries_sorted
+        try:
+            with QMutexLocker(Options._entries_mutex):
+                header_order_map = {h: i for i, h in enumerate(Options.header_order)}
+                Options.entries_sorted = sorted([
+                    {
+                        'header': entry.header,
+                        'title': entry.title,
+                        'source': entry.source,
+                        'destination': entry.destination,
+                        **{k: entry.details.get(k, False) for k in
+                           ('no_backup', 'no_restore', 'sublayout_games_1', 'sublayout_games_2', 'sublayout_games_3', 'sublayout_games_4')},
+                        'unique_id': entry.details.get('unique_id', QUuid.createUuid().toString(QUuid.StringFormat.WithoutBraces))
+                    }
+                    for entry in Options.all_entries
+                ], key=lambda x: (header_order_map.get(x['header'], 999), x['title'].lower()))
+        except Exception as e:
+            logger.error(f"Error in sort_entries: {e}")
+            Options.entries_sorted = []
+
+        return Options.entries_sorted
 
     @staticmethod
     def delete_entry(entry):
@@ -94,6 +106,7 @@ class Options(QObject):
         pkg_manager = "pacman" if "pacman" in pkg_install_cmd else (
             "apt" if "apt" in pkg_install_cmd else ("dnf" if "dnf" in pkg_install_cmd else "zypper"))
 
+        session = distro_helper.detect_session()
         printer_pkgs = Options.format_package_list(distro_helper.get_printer_packages())
         samba_pkgs = Options.format_package_list(distro_helper.get_samba_packages())
         bluetooth_pkgs = Options.format_package_list(distro_helper.get_bluetooth_packages())
@@ -112,7 +125,7 @@ class Options(QObject):
             "install_essential_packages": f"Install 'Essential Packages' (Using '{pkg_install_cmd}'.)",
             "install_yay": "Install 'yay' (Necessary for 'Additional Packages'.)",
             "install_additional_packages": "Install 'Additional Packages' ('yay' needed.)",
-            "install_specific_packages": f"Install 'Specific Packages' for current session (Using '{pkg_install_cmd}'.)",
+            "install_specific_packages": f"Install 'Specific Packages' for {session}<br>(Using '{pkg_install_cmd}'.)",
             "enable_printer_support": f"Initialize printer support<br>(Install '{printer_pkgs}'.<br>Enable && start 'cups.service'.)",
             "enable_samba_network_filesharing": f"Initialize samba (Network filesharing via samba)<br>(Install '{samba_pkgs}'. Enable && start 'smb.service'.)",
             "enable_bluetooth_service": f"Initialize bluetooth<br>(Install '{bluetooth_pkgs}'. Enable && start 'bluetooth.service'.)",
@@ -143,7 +156,7 @@ class Options(QObject):
                 try:
                     config_dir.mkdir(parents=True, exist_ok=True)
                 except OSError as e:
-                    print(f"Error creating config directory: {e}")
+                    logger.error(f"Error creating config directory: {e}")
                     return False
 
                 for entry in Options.all_entries:
@@ -228,12 +241,12 @@ class Options(QObject):
                     try:
                         Options.main_window.settings_changed.emit()
                     except Exception as e:
-                        print(f"Error emitting settings_changed signal: {e}")
+                        logger.error(f"Error emitting settings_changed signal: {e}")
                 return True
 
             except Exception as e:
                 error_type = "replacing" if "replace" in str(e) else "writing"
-                print(f"Error {error_type} config file: {e}")
+                logger.error(f"Error {error_type} config file: {e}")
                 if temp_path:
                     try:
                         os.unlink(temp_path)
@@ -242,21 +255,21 @@ class Options(QObject):
                 return False
 
         except Exception as e:
-            print(f"Critical error in save_config: {e}")
+            logger.critical(f"Critical error in save_config: {e}")
             return False
 
     @staticmethod
     def load_config(file_path):
         try:
             if not os.path.exists(file_path):
-                print(f"Config file not found: {file_path}")
+                logger.warning(f"Config file not found: {file_path}")
                 return
 
             with open(file_path, encoding='utf-8') as file:
                 entries_data = json.load(file)
 
             if not isinstance(entries_data, dict):
-                print("Invalid config format: expected dictionary")
+                logger.warning("Invalid config format: expected dictionary")
                 return
 
             header_data = entries_data.get('header', {})
@@ -320,9 +333,9 @@ class Options(QObject):
 
         except (IOError, json.JSONDecodeError) as e:
             error_type = "JSON decoding" if isinstance(e, json.JSONDecodeError) else "loading"
-            print(f"Error {error_type} entries from {file_path}: {e}")
+            logger.error(f"Error {error_type} entries from {file_path}: {e}")
         except Exception as e:
-            print(f"Unexpected error loading config: {e}")
+            logger.error(f"Unexpected error loading config: {e}")
 
     @staticmethod
     def generate_tooltip():
