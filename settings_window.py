@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (QMessageBox, QDialog, QVBoxLayout, QLabel, QFormLay
 class SettingsWindow(BaseWindow):
     def __init__(self, parent=None):
         super().__init__(parent, "settings")
+        self._color_cache = {}
         self.mount_options_dialog = None
 
     def get_checked_entries(self):
@@ -258,23 +259,33 @@ class SettingsWindow(BaseWindow):
         checked_entries = self.get_checked_entries()
         if not checked_entries:
             return self.show_message("Delete Entry Error", "Nothing selected or selected items cannot be deleted.")
+
         titles = [entry_data[0].text() for entry_data in checked_entries]
         checked_titles_quoted = [f"'{title}'" for title in titles]
         confirm_message = "Are you sure you want to delete " + self.format_list_message(checked_titles_quoted, "?")
-        confirm_box = QMessageBox(QMessageBox.Icon.Question, "Confirm Deletion", confirm_message, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, self)
+
+        confirm_box = QMessageBox(QMessageBox.Icon.Question, "Confirm Deletion", confirm_message,
+                                  QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, self)
         confirm_box.setDefaultButton(QMessageBox.StandardButton.No)
+
         if confirm_box.exec() == QMessageBox.StandardButton.Yes:
+            self.hide()
             entries_to_delete = []
             for checked_entry in checked_entries:
                 if hasattr(Options, 'all_entries'):
-                    entry_obj = next((e for e in Options.all_entries if hasattr(e, 'details') and e.details.get('unique_id') == checked_entry[3]), None)
+                    entry_obj = next((e for e in Options.all_entries
+                                      if hasattr(e, 'details') and e.details.get('unique_id') == checked_entry[3]),
+                                     None)
                     if entry_obj:
                         entries_to_delete.append(entry_obj)
+
             for entry_obj in entries_to_delete:
                 if hasattr(Options, 'delete_entry'):
                     Options.delete_entry(entry_obj)
-            self.hide()
+
             Options.save_config()
+            self.settings_changed.emit()
+
             info_message = self.format_list_message(checked_titles_quoted, " successfully deleted!")
             self.show_message("Success", info_message)
             self.show()
@@ -372,7 +383,11 @@ class SettingsWindow(BaseWindow):
         if not hasattr(Options, 'header_inactive'):
             Options.header_inactive = []
         header_color = Options.header_colors.get(header, '#ffffff')
-        darker = self.darken_color(header_color)
+        if not hasattr(self, '_color_cache'):
+            pass
+        if header_color not in self._color_cache:
+            self._color_cache[header_color] = self.darken_color(header_color)
+        darker = self._color_cache[header_color]
         btn_style = "color: black; font-weight: bold; font-size: 17px;"
         color_btn = QPushButton(header)
         color_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
