@@ -1,9 +1,16 @@
-import subprocess, platform, os
+import subprocess, platform, os, logging, re, concurrent.futures
+
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
+
 
 class LinuxDistroHelper:
     def __init__(self):
-        self.distro_id = self._detect_distro_id()
-        self.kernel_headers = ""
+        info = self._detect_distro_info()
+        self.distro_id = info["id"]
+        self.distro_name = info["name"]
+        self.distro_pretty_name = info["pretty_name"]
+
         self.pkg_check_installed = None
         self.pkg_install = ""
         self.pkg_update = ""
@@ -12,25 +19,9 @@ class LinuxDistroHelper:
         self.find_orphans = ""
         self.install_yay = ""
         self.has_aur = False
-        self._setup_commands()
-        info = self._detect_distro_info()
-        self.distro_id = info["id"]
-        self.distro_name = info["name"]
-        self.distro_pretty_name = info["pretty_name"]
+        self.kernel_headers = ""
 
-    @staticmethod
-    def _detect_distro_id():
-        distro_id = "unknown"
-        try:
-            with open("/etc/os-release") as f:
-                for line in f:
-                    if line.startswith("ID="):
-                        distro_id = line.strip().split("=")[1].strip('"').lower()
-                        break
-        except Exception as e:
-            print(f"Error in _detect_distro_id: {e}")
-            distro_id = platform.system().lower()
-        return distro_id
+        self._setup_commands()
 
     @staticmethod
     def _detect_distro_info():
@@ -39,13 +30,13 @@ class LinuxDistroHelper:
             with open("/etc/os-release") as f:
                 for line in f:
                     if line.startswith("ID="):
-                        distro_info["id"] = line.strip().split("=")[1].strip('"').lower()
+                        distro_info["id"] = line.strip().split("=", 1)[1].strip('"').lower()
                     elif line.startswith("NAME="):
-                        distro_info["name"] = line.strip().split("=")[1].strip('"')
+                        distro_info["name"] = line.strip().split("=", 1)[1].strip('"')
                     elif line.startswith("PRETTY_NAME="):
-                        distro_info["pretty_name"] = line.strip().split("=")[1].strip('"')
+                        distro_info["pretty_name"] = line.strip().split("=", 1)[1].strip('"')
         except Exception as e:
-            print(f"Error in _detect_distro_info: {e}")
+            logger.error(f"Error when reading /etc/os-release: {e}")
             distro_info["id"] = platform.system().lower()
         return distro_info
 
@@ -55,52 +46,60 @@ class LinuxDistroHelper:
         for var in ['XDG_CURRENT_DESKTOP', 'XDG_SESSION_DESKTOP', 'DESKTOP_SESSION']:
             val = os.getenv(var)
             if val:
-                parts = [p.strip() for p in val.split(':') if p.strip()]
-                for part in parts:
-                    match = next((env for env in SESSIONS if part.lower() == env.lower()), None)
+                for part in val.split(':'):
+                    match = next((env for env in SESSIONS if part.strip().lower() == env.lower()), None)
                     if match:
                         return match
         return None
 
     def _setup_commands(self):
-        self.pkg_check_installed = lambda pkg: ["pacman", "-Qi", pkg]
-        self.pkg_install = "sudo pacman -S --noconfirm {package}"
-        self.pkg_update = "sudo pacman -Syu --noconfirm"
-        self.pkg_remove = "sudo pacman -R --noconfirm {package}"
-        self.pkg_clean_cache = "sudo pacman -Scc --noconfirm"
-        self.find_orphans = "pacman -Qdtq"
-        self.install_yay = "git clone https://aur.archlinux.org/yay.git && cd yay && makepkg -si --noconfirm"
-        self.has_aur = True
-        self.kernel_headers = "linux-headers"
+        distro = self.distro_id
 
-        if self.distro_id in ["debian", "ubuntu"]:
+        if distro == "arch" or distro == "manjaro":
+            self.pkg_check_installed = lambda pkg: ["pacman", "-Qi", pkg]
+            self.pkg_install = "sudo pacman -S --noconfirm {package}"
+            self.pkg_update = "sudo pacman -Syu --noconfirm"
+            self.pkg_remove = "sudo pacman -R --noconfirm {package}"
+            self.pkg_clean_cache = "sudo pacman -Scc --noconfirm"
+            self.find_orphans = "pacman -Qdtq"
+            self.install_yay = "git clone https://aur.archlinux.org/yay.git && cd yay && makepkg -si --noconfirm"
+            self.has_aur = True
+            self.kernel_headers = "linux-headers"
+
+        elif distro in ["debian", "ubuntu", "pop", "mint", "elementary"]:
+            self.pkg_check_installed = lambda pkg: ["dpkg", "-s", pkg]
             self.pkg_install = "sudo apt-get install -y {package}"
             self.pkg_update = "sudo apt-get update && sudo apt-get upgrade -y"
             self.pkg_remove = "sudo apt-get remove -y {package}"
-            self.pkg_clean_cache = "sudo apt-get clean"
-            self.find_orphans = "deborphan"
+            self.pkg_clean_cache = "sudo apt-get clean && sudo apt-get autoremove -y"
+            self.find_orphans = "apt list --installed | grep -v -e \"automatic\" | cut -d'/' -f1"
             self.install_yay = "echo 'AUR/yay is not supported on Debian/Ubuntu'"
             self.has_aur = False
-            self.pkg_check_installed = lambda pkg: ["dpkg", "-s", pkg]
             try:
                 kernel_version = subprocess.check_output(["uname", "-r"], text=True).strip()
                 self.kernel_headers = f"linux-headers-{kernel_version}"
             except Exception as e:
-                print(f"Error in _setup_commands:{e}")
+                logger.error(f"Error when determining the kernel version: {e}")
                 self.kernel_headers = "linux-headers-generic"
 
-        elif self.distro_id in ["fedora", "rhel", "centos"]:
+        elif distro in ["fedora", "rhel", "centos", "rocky", "almalinux"]:
+            self.pkg_check_installed = lambda pkg: ["rpm", "-q", pkg]
             self.pkg_install = "sudo dnf install -y {package}"
             self.pkg_update = "sudo dnf upgrade -y"
             self.pkg_remove = "sudo dnf remove -y {package}"
-            self.pkg_clean_cache = "sudo dnf clean all"
+            self.pkg_clean_cache = "sudo dnf clean all && sudo dnf autoremove -y"
             self.find_orphans = "dnf repoquery --extras"
             self.install_yay = "echo 'AUR/yay is not supported on Fedora/CentOS/RHEL'"
             self.has_aur = False
-            self.pkg_check_installed = lambda pkg: ["rpm", "-q", pkg]
-            self.kernel_headers = "kernel-devel"
+            try:
+                kernel_version = subprocess.check_output(["uname", "-r"], text=True).strip()
+                self.kernel_headers = f"kernel-devel-{kernel_version}"
+            except Exception as e:
+                logger.error(f"Error when determining the kernel version: {e}")
+                self.kernel_headers = "kernel-devel"
 
-        elif self.distro_id in ["opensuse", "suse"]:
+        elif distro in ["opensuse", "opensuse-leap", "opensuse-tumbleweed", "suse"]:
+            self.pkg_check_installed = lambda pkg: ["rpm", "-q", pkg]
             self.pkg_install = "sudo zypper install -y {package}"
             self.pkg_update = "sudo zypper update -y"
             self.pkg_remove = "sudo zypper remove -y {package}"
@@ -108,124 +107,125 @@ class LinuxDistroHelper:
             self.find_orphans = "zypper packages --orphaned"
             self.install_yay = "echo 'AUR/yay is not supported on openSUSE/SUSE'"
             self.has_aur = False
-            self.pkg_check_installed = lambda pkg: ["rpm", "-q", pkg]
-            self.kernel_headers = "kernel-devel"
+            self.kernel_headers = "kernel-default-devel"
 
-    def get_pkg_install_cmd(self, package):
-        return self.pkg_install.format(package=package)
-
-    def get_pkg_update_cmd(self):
-        return self.pkg_update
-
-    def get_pkg_remove_cmd(self, package):
-        return self.pkg_remove.format(package=package)
-
-    def get_clean_cache_cmd(self):
-        return self.pkg_clean_cache
-
-    def get_find_orphans_cmd(self):
-        return self.find_orphans
-
-    def get_install_yay_cmd(self):
-        return self.install_yay
-
-    def supports_aur(self):
-        return self.has_aur
-
-    def get_kernel_headers_pkg(self):
-        try:
-            kernel_version = os.uname().release
-            if self.distro_id == "arch":
-                if "lts" in kernel_version.lower():
-                    return "linux-lts-headers"
-                elif "zen" in kernel_version.lower():
-                    return "linux-zen-headers"
-                elif "hardened" in kernel_version.lower():
-                    return "linux-hardened-headers"
-                else:
-                    return "linux-headers"
-            elif self.distro_id in ["debian", "ubuntu"]:
-                return f"linux-headers-{kernel_version}"
-            elif self.distro_id in ["fedora", "rhel", "centos"]:
-                return f"kernel-devel-{kernel_version}"
-            elif self.distro_id in ["opensuse", "suse"]:
-                return "kernel-default-devel"
-            else:
-                return "linux-headers"
-        except (AttributeError, OSError, TypeError) as e:
-            print(f"Error detecting kernel headers: {e}")
-            return self.kernel_headers if hasattr(self, 'kernel_headers') else "linux-headers"
-
-    def get_shell_package_name(self, shell_name):
-        shell_map = {"bash": "bash", "zsh": "zsh", "fish": "fish", "elvish": "elvish", "nushell": "nushell", "xonsh": "xonsh",
-                     "ngs": "ngs", "pwsh": "powershell" if self.distro_id in ["debian", "ubuntu"] else "pwsh"}
-        return shell_map.get(shell_name.lower(), shell_name.lower())
+        else:
+            logger.warning(f"Unknown distribution: {distro}, using generic commands")
+            self.pkg_check_installed = lambda pkg: ["which", pkg]
+            self.pkg_install = "echo 'Package manager not detected for {package}'"
+            self.pkg_update = "echo 'Update command not available'"
+            self.pkg_remove = "echo 'Remove command not available'"
+            self.pkg_clean_cache = "echo 'Clean cache command not available'"
+            self.find_orphans = "echo 'Find orphans command not available'"
+            self.install_yay = "echo 'AUR/yay is not supported on this distribution'"
+            self.has_aur = False
+            self.kernel_headers = "linux-headers"
 
     def package_is_installed(self, package):
         if not package or not isinstance(package, str) or not package.strip():
             return False
-
-        package = package.strip()
-        if len(package) > 255 or any(c in package for c in ['/', '\\', ';', '&', '|', '`']):
-            print(f"Invalid package name: {package}")
-            return False
-
-        cmd = self.pkg_check_installed(package)
-        if not cmd or not isinstance(cmd, list):
+        if not re.match(r'^[a-zA-Z0-9._+-]+$', package) or len(package) > 255:
+            logger.warning(f"Invalid package name: {package}")
             return False
 
         try:
-            result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30, check=False)
+            result = subprocess.run(
+                self.pkg_check_installed(package),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+                check=False
+            )
             return result.returncode == 0
         except subprocess.TimeoutExpired:
-            print(f"Timeout checking package {package}")
-            return False
-        except (subprocess.SubprocessError, OSError, ValueError) as e:
-            print(f"Error determining if package {package} is installed: {e}")
-            return False
+            logger.warning(f"Timeout when checking package: {package}")
+        except Exception as e:
+            logger.error(f"Error when checking {package}: {e}")
+        return False
 
     def filter_not_installed(self, packages):
-        return [pkg for pkg in packages if not self.package_is_installed(pkg)]
+        if not packages:
+            return []
+
+        if len(packages) <= 10:
+            return [pkg for pkg in packages if not self.package_is_installed(pkg)]
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            results = list(executor.map(self.package_is_installed, packages))
+
+        return [pkg for pkg, is_installed in zip(packages, results) if not is_installed]
+
+    def get_kernel_headers_pkg(self):
+        try:
+            kernel_version = os.uname().release
+            if self.distro_id in ["arch", "manjaro"]:
+                if "lts" in kernel_version:
+                    return "linux-lts-headers"
+                elif "zen" in kernel_version:
+                    return "linux-zen-headers"
+                elif "hardened" in kernel_version:
+                    return "linux-hardened-headers"
+                else:
+                    return "linux-headers"
+            elif self.distro_id in ["debian", "ubuntu", "pop", "mint", "elementary"]:
+                return f"linux-headers-{kernel_version}"
+            elif self.distro_id in ["fedora", "rhel", "centos", "rocky", "almalinux"]:
+                return f"kernel-devel-{kernel_version}"
+            elif self.distro_id in ["opensuse", "opensuse-leap", "opensuse-tumbleweed", "suse"]:
+                return "kernel-default-devel"
+        except Exception as e:
+            logger.error(f"Error when determining the kernel header: {e}")
+        return self.kernel_headers
+
+    def get_shell_package_name(self, shell_name):
+        shell_map = {
+            "bash": "bash", "zsh": "zsh", "fish": "fish", "elvish": "elvish",
+            "nushell": "nushell", "xonsh": "xonsh", "ngs": "ngs",
+            "pwsh": "powershell" if self.distro_id in ["debian", "ubuntu", "pop", "mint", "elementary"] else "pwsh"
+        }
+        return shell_map.get(shell_name.lower(), shell_name.lower())
 
     def get_printer_packages(self):
         base_packages = ["cups", "ghostscript"]
 
-        if self.distro_id in ["debian", "ubuntu"]:
+        if self.distro_id in ["debian", "ubuntu", "pop", "mint", "elementary"]:
             return base_packages + ["system-config-printer", "printer-driver-gutenprint"]
-        elif self.distro_id in ["fedora", "rhel", "centos"]:
+        elif self.distro_id in ["fedora", "rhel", "centos", "rocky", "almalinux"]:
             return base_packages + ["system-config-printer", "gutenprint"]
-        elif self.distro_id in ["opensuse", "suse"]:
+        elif self.distro_id in ["opensuse", "opensuse-leap", "opensuse-tumbleweed", "suse"]:
+            return base_packages + ["system-config-printer", "gutenprint"]
+        elif self.distro_id in ["arch", "manjaro"]:
             return base_packages + ["system-config-printer", "gutenprint"]
         else:
             return base_packages + ["system-config-printer", "gutenprint"]
 
     def get_samba_packages(self):
-        if self.distro_id in ["debian", "ubuntu"]:
+        if self.distro_id in ["debian", "ubuntu", "pop", "mint", "elementary"]:
             return ["gvfs-backends", "samba", "samba-common-bin"]
-        elif self.distro_id in ["fedora", "rhel", "centos"]:
+        elif self.distro_id in ["fedora", "rhel", "centos", "rocky", "almalinux"]:
             return ["gvfs-smb", "samba", "samba-common"]
-        elif self.distro_id in ["opensuse", "suse"]:
+        elif self.distro_id in ["opensuse", "opensuse-leap", "opensuse-tumbleweed", "suse"]:
+            return ["gvfs-smb", "samba"]
+        elif self.distro_id in ["arch", "manjaro"]:
             return ["gvfs-smb", "samba"]
         else:
             return ["gvfs-smb", "samba"]
 
     def get_bluetooth_packages(self):
-        if self.distro_id in ["debian", "ubuntu"]:
-            return ["bluez", "bluez-tools"]
-        elif self.distro_id in ["fedora", "rhel", "centos"]:
-            return ["bluez", "bluez-tools"]
-        elif self.distro_id in ["opensuse", "suse"]:
-            return ["bluez", "bluez-tools"]
-        else:
+        if self.distro_id in ["arch", "manjaro"]:
             return ["bluez", "bluez-utils"]
+        else:
+            return ["bluez", "bluez-tools"]
 
     def get_cron_packages(self):
-        if self.distro_id in ["debian", "ubuntu"]:
+        if self.distro_id in ["debian", "ubuntu", "pop", "mint", "elementary"]:
             return ["cron"]
-        elif self.distro_id in ["fedora", "rhel", "centos"]:
+        elif self.distro_id in ["fedora", "rhel", "centos", "rocky", "almalinux"]:
             return ["cronie", "cronie-anacron"]
-        elif self.distro_id in ["opensuse", "suse"]:
+        elif self.distro_id in ["opensuse", "opensuse-leap", "opensuse-tumbleweed", "suse"]:
             return ["cron"]
+        elif self.distro_id in ["arch", "manjaro"]:
+            return ["cronie"]
         else:
             return ["cronie"]
 
@@ -236,3 +236,21 @@ class LinuxDistroHelper:
     @staticmethod
     def get_at_packages():
         return ["at"]
+
+    def get_pkg_install_cmd(self, package):
+        return self.pkg_install.format(package=package)
+
+    def get_pkg_remove_cmd(self, package):
+        return self.pkg_remove.format(package=package)
+
+    def get_pkg_update_cmd(self):
+        return self.pkg_update
+
+    def get_clean_cache_cmd(self):
+        return self.pkg_clean_cache
+
+    def get_find_orphans_cmd(self):
+        return self.find_orphans
+
+    def supports_aur(self):
+        return self.has_aur
