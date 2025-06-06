@@ -3,11 +3,14 @@ from options import Options
 from PyQt6.QtGui import QColor
 from global_style import global_style
 from samba_password import SambaPasswordManager
-import os, re, time, shutil, psutil, tempfile, subprocess
+import os, re, time, shutil, psutil, tempfile, subprocess, logging
 from PyQt6.QtCore import (QThread, QTimer, QElapsedTimer, QMutex, QMutexLocker, QWaitCondition, QDateTime, pyqtSignal,
                           QAbstractListModel, QModelIndex, Qt, QVariant, QCoreApplication)
 from PyQt6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar, QTabWidget, QPushButton,
                              QDialogButtonBox, QInputDialog, QLineEdit, QMessageBox, QListView, QGraphicsDropShadowEffect)
+
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
 
 
 # noinspection PyUnresolvedReferences
@@ -343,7 +346,7 @@ class FileProcessDialog(QDialog):
                 if not self.thread.wait(100):
                     self.thread.terminate()
                     if not self.thread.wait(100):
-                        print("WARNING: Thread could not be terminated")
+                        logger.warning("WARNING: Thread could not be terminated")
                 event.accept()
             else:
                 event.ignore()
@@ -404,7 +407,7 @@ class FileCopyThread(QThread):
             for worker in self.worker_threads:
                 worker.wait()
         except Exception as e:
-            print(f"Error in file copy thread: {e}")
+            logger.error(f"Error in file copy thread: {e}")
         finally:
             self.operation_completed.emit()
 
@@ -570,7 +573,7 @@ class FileCopyThread(QThread):
             else:
                 return Path(file_path).stat().st_size
         except Exception as e:
-            print(f"Error getting file size for {file_path}: {e}")
+            logger.error(f"Error getting file size for {file_path}: {e}")
             if self._smb_handler:
                 self.file_error.emit(file_path, str(f"File size cannot be determined. {e}"))
                 self.smb_error_cancel.emit()
@@ -659,7 +662,7 @@ class FileCopyThread(QThread):
             try:
                 self._smb_handler.force_cleanup()
             except Exception as e:
-                print(f"Warning during SMB cleanup: {e}")
+                logger.warning(f"Warning during SMB cleanup: {e}")
             finally:
                 self._smb_handler = None
                 self._smb_credentials = None
@@ -834,7 +837,7 @@ class SmbFileHandler:
             subprocess.run(cmd, input=f"{sudo_password}\n" if sudo_password else None, capture_output=True, text=True)
             os.rmdir(mount_point)
         except Exception as e:
-            print(f"Warning: Could not unmount {mount_point}: {e}")
+            logger.warning(f"Warning: Could not unmount {mount_point}: {e}")
 
     def _smb_path_to_local(self, smb_path):
         server, share, path = self.parse_smb_url(smb_path)
@@ -927,7 +930,7 @@ class SmbFileHandler:
             try:
                 return os.path.isdir(self._smb_path_to_local(path))
             except Exception as e:
-                print(f"Error in is_directory: {e}")
+                logger.error(f"Error in is_directory: {e}")
                 return False
         return Path(path).is_dir()
 
@@ -942,7 +945,7 @@ class SmbFileHandler:
                 return sum(f.stat().st_size for f in Path(local_path).rglob('*') if f.is_file())
             return 0
         except Exception as e:
-            print(f"Error in get_smb_file_size: {e}")
+            logger.error(f"Error in get_smb_file_size: {e}")
             return 0
 
     def list_smb_directory(self, path):
@@ -952,7 +955,7 @@ class SmbFileHandler:
             local_path = self._smb_path_to_local(path)
             return [f for f in os.listdir(local_path) if not f.startswith('.')] if os.path.isdir(local_path) else []
         except Exception as e:
-            print(f"Error in list_smb_directory: {e}")
+            logger.error(f"Error in list_smb_directory: {e}")
             return []
 
     def cleanup(self):
@@ -961,13 +964,13 @@ class SmbFileHandler:
                 time.sleep(0.5)
                 self._unmount_smb_share(mount_point, self._sudo_password)
             except Exception as e:
-                print(f"Cleanup warning: {e}")
+                logger.warning(f"Cleanup warning: {e}")
                 try:
                     subprocess.run(['sudo', 'umount', '-l', mount_point], timeout=1, capture_output=True)
                     if os.path.exists(mount_point):
                         os.rmdir(mount_point)
                 except Exception as e:
-                    print(f"Cleanup warning: {e}")
+                    logger.warning(f"Cleanup warning: {e}")
         self._mounted_shares.clear()
         self._mounting_shares.clear()
         self._mount_wait_conditions.clear()
@@ -980,7 +983,7 @@ class SmbFileHandler:
                     if os.path.exists(mount_point):
                         os.rmdir(mount_point)
                 except Exception as e:
-                    print(f"Force cleanup error (ignored): {e}")
+                    logger.exception(f"Force cleanup error (ignored): {e}")
             self._mounted_shares.clear()
             self._mounting_shares.clear()
             with QMutexLocker(self.mutex):
@@ -988,7 +991,7 @@ class SmbFileHandler:
                     condition.wakeAll()
             self._mount_wait_conditions.clear()
         except Exception as e:
-            print(f"Force cleanup error (ignored): {e}")
+            logger.exception(f"Force cleanup error (ignored): {e}")
 
 
 class LogEntryListModel(QAbstractListModel):
@@ -1060,7 +1063,7 @@ class LogEntryListModel(QAbstractListModel):
 
                     return sorted_entry.lower()
                 except Exception as error:
-                    print(f"Error in sort_entries: {error}")
+                    logger.error(f"Error in sort_entries: {error}")
                     return sorted_entry.lower()
 
             replaced_sorted = sorted(replaced, key=lambda x: extract_path(x[0]))
@@ -1073,7 +1076,7 @@ class LogEntryListModel(QAbstractListModel):
                     else:
                         entry = re.sub(r"^\d+:", f"{i + 1}:", entry, count=1)
                 except Exception as e:
-                    print(f"Error in sort_entries: {e}")
+                    logger.error(f"Error in sort_entries: {e}")
                     entry = f"{i + 1}: {entry}"
 
                 new_entries.append(entry)
@@ -1087,7 +1090,7 @@ class LogEntryListModel(QAbstractListModel):
 
         except Exception as e:
             self.endResetModel()
-            print(f"Error in sort_entries: {e}")
+            logger.exception(f"Error in sort_entries: {e}")
 
 
 # noinspection PyUnresolvedReferences
