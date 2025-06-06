@@ -5,7 +5,7 @@ from base_window import BaseWindow
 from global_style import global_style
 from drive_manager import DriveManager
 from settings_window import SettingsWindow
-from file_process import FileProcessDialog
+from file_process import FileProcessDialog, SmbFileHandler
 from PyQt6.QtCore import Qt, pyqtSignal, QCoreApplication, QTimer
 from package_installer_launcher_dialog_thread import PackageInstallerLauncher
 from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QMessageBox, QMainWindow
@@ -43,7 +43,7 @@ class MainWindow(QMainWindow):
             with open(Options.config_file_path, 'r') as file:
                 self.config = json.load(file)
         except (FileNotFoundError, json.JSONDecodeError) as e:
-            print(f"Error loading config: {e}")
+            logger.warning(f"Error loading config: {e}")
             self.config = {}
 
     def init_ui(self):
@@ -139,7 +139,6 @@ class MainWindow(QMainWindow):
 class BackupRestoreWindow(BaseWindow):
     def __init__(self, parent=None, window_type="backup"):
         super().__init__(parent, window_type)
-        from drive_manager import DriveManager
         self.drive_manager = DriveManager()
 
     def _get_selected_items(self):
@@ -186,7 +185,6 @@ class BackupRestoreWindow(BaseWindow):
 
     @staticmethod
     def _check_path_exists(path):
-        from file_process import SmbFileHandler
         if SmbFileHandler.is_smb_path(path):
             return True
         else:
