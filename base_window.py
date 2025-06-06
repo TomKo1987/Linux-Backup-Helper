@@ -1,3 +1,4 @@
+from options import Options
 from global_style import global_style
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QDialog, QLabel, QGridLayout,
@@ -28,7 +29,8 @@ class BaseWindow(QDialog):
         self.setup_ui()
 
     def setup_ui(self):
-        from options import Options
+        if hasattr(self.__class__, "_tooltip_cache"):
+            self.__class__._tooltip_cache = None
         Options.sort_entries()
         self.clear_layout_contents()
         key = f"{self.window_type}_window_columns"
@@ -51,7 +53,6 @@ class BaseWindow(QDialog):
         self.selectall = QCheckBox("Select All")
         self.selectall.setStyleSheet(f"{global_style} QCheckBox {{color: '#6ffff5'; font-size: 14px;}}")
         self.selectall.clicked.connect(self.toggle_checkboxes_manually)
-        from options import Options
         config_path_text = str(Options.config_file_path)
         if hasattr(Options, 'text_replacements'):
             for old, new in Options.text_replacements:
@@ -70,7 +71,6 @@ class BaseWindow(QDialog):
     def add_header_checkboxes(self, layout, sublayout_entries=None):
         row = 0
         self.checkbox_dirs.clear()
-        from options import Options
 
         active_headers = (Options.headers if self.window_type == "settings" else [h for h in Options.headers if
                                                                                   h not in Options.header_inactive])
@@ -146,10 +146,15 @@ class BaseWindow(QDialog):
 
     def _setup_tooltip_on_hover(self, checkbox, event):
         if not hasattr(checkbox, '_tooltip_set'):
-            from options import Options
-            tooltip_text, tooltip_text_entry_restore, _ = Options.generate_tooltip()
-            tooltip_dict = tooltip_text_entry_restore if checkbox.window_type == "restore" else tooltip_text
+            if not hasattr(self.__class__, '_tooltip_cache') or not self.__class__._tooltip_cache:
+                tooltip_text, tooltip_text_entry_restore, _ = Options.generate_tooltip()
+                self.__class__._tooltip_cache = {
+                    'backup': tooltip_text,
+                    'restore': tooltip_text_entry_restore,
+                    'settings': tooltip_text,
+                }
 
+            tooltip_dict = self.__class__._tooltip_cache.get(checkbox.window_type, {})
             tip_key = f"{checkbox.text()}_tooltip"
             if tip_key in tooltip_dict:
                 checkbox.setToolTip(tooltip_dict[tip_key])
@@ -161,7 +166,6 @@ class BaseWindow(QDialog):
     @staticmethod
     def get_sublayout_entries():
         d = {f'sublayout_games_{i}': [] for i in range(1, 5)}
-        from options import Options
         if hasattr(Options, 'all_entries'):
             for e in Options.all_entries:
                 for i in range(1, 5):
@@ -180,7 +184,6 @@ class BaseWindow(QDialog):
             widget = QWidget()
             setattr(self, f'sublayout_widget_games_{i}', widget)
             ch_layout = QHBoxLayout()
-            from options import Options
             name = Options.sublayout_names.get(key, f'Sublayout Games {i}')
             select_all = QCheckBox(name)
             color = "#7f7f7f" if self.window_type == "settings" and "Games" in Options.header_inactive else Options.header_colors.get("Games", "#ffffff")
@@ -256,13 +259,14 @@ class BaseWindow(QDialog):
         return row + 1
 
     def toggle_columns(self):
-        from options import Options
-        self.hide()
-        self.columns = 4 if self.columns == 2 else 2
-        Options.ui_settings[f"{self.window_type}_window_columns"] = self.columns
-        Options.save_config()
-        self.setup_ui()
-        self.show()
+        new_columns = 4 if self.columns == 2 else 2
+        if new_columns != self.columns:
+            self.setVisible(False)
+            self.columns = new_columns
+            Options.ui_settings[f"{self.window_type}_window_columns"] = self.columns
+            Options.save_config()
+            self.setup_ui()
+            self.setVisible(True)
 
     def adjust_window_size(self):
         self.content_widget.adjustSize()
@@ -273,15 +277,19 @@ class BaseWindow(QDialog):
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
-    @staticmethod
-    def _clear_layout(layout):
+    def _clear_layout(self, layout):
+        if layout is None:
+            return
+        items = []
         while layout.count():
-            item = layout.takeAt(0)
+            items.append(layout.takeAt(0))
+        for item in items:
             widget = item.widget()
             if widget:
+                widget.setParent(None)
                 widget.deleteLater()
             elif item.layout():
-                BaseWindow._clear_layout(item.layout())
+                self._clear_layout(item.layout())
 
     def clear_layout_contents(self):
         self._clear_layout(self.top_controls)
