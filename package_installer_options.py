@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from PyQt6.QtCore import Qt
 from global_style import global_style
@@ -6,6 +7,9 @@ from options import Options, SESSIONS, USER_SHELL
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout, QLabel, QPushButton, QWidget,
                              QComboBox, QCheckBox, QListWidget, QListWidgetItem, QScrollArea, QDialogButtonBox, QMessageBox,
                              QFileDialog, QInputDialog, QLineEdit, QApplication, QSizePolicy)
+
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
 
 
 # noinspection PyUnresolvedReferences
@@ -428,7 +432,7 @@ class PackageInstallerOptions(QDialog):
                     Options.system_files.append({'source': source, 'destination': destination})
                     added_files.append(Path(file).name)
             except Exception as file_error:
-                print(f"Error when processing the file {file}: {file_error}")
+                logger.error(f"Error when processing the file {file}: {file_error}")
                 continue
 
         self._handle_added_files_result(added_files)
