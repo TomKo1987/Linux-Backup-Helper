@@ -14,7 +14,7 @@ QPushButton, QCheckBox {
     outline: none;
     text-align: center;
     padding: 5px;
-    font-size: 15px;
+    font-size: 16px;
     font: bold;
     color: #ffffff;
 }
