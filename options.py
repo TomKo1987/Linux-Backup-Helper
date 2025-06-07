@@ -1,13 +1,19 @@
 from pathlib import Path
 from linux_distro_helper import LinuxDistroHelper
-import json, os, tempfile, functools, pwd, logging
+import json, os, tempfile, functools, pwd, logging.handlers
 from PyQt6.QtCore import QObject, pyqtSignal, QMutex, QMutexLocker, QUuid
 
 user = pwd.getpwuid(os.getuid()).pw_name
 home_user = os.getenv("HOME")
 
-logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 MAX_MOUNT_OPTIONS = 3
 SESSIONS = ["GNOME", "KDE", "XFCE", "LXQt", "LXDE", "Cinnamon", "Mate", "Deepin", "Budgie", "Enlightenment",
