@@ -1,11 +1,17 @@
 from pathlib import Path
-import subprocess, pwd, os, logging
+import subprocess, pwd, os, logging.handlers
 from PyQt6.QtWidgets import QMessageBox, QCheckBox
 
 user = pwd.getpwuid(os.getuid()).pw_name
 
-logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 
 class DriveManager:
