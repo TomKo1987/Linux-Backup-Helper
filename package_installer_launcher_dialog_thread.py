@@ -5,15 +5,21 @@ from drive_manager import DriveManager
 from linux_distro_helper import LinuxDistroHelper
 from PyQt6.QtGui import QTextCursor, QColor, QIcon
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, QElapsedTimer, QTimer
-import ast, getpass, os, pwd, shutil, socket, subprocess, tempfile, threading, time, urllib.error, urllib.request, logging, queue
+import ast, getpass, os, pwd, shutil, socket, subprocess, tempfile, threading, time, urllib.error, urllib.request, queue, logging.handlers
 from PyQt6.QtWidgets import (QVBoxLayout, QHBoxLayout, QPushButton, QListWidgetItem, QApplication, QListWidget, QWidget, QCheckBox, QTextEdit, QGraphicsDropShadowEffect, QDialogButtonBox, QDialog, QLabel, QScrollArea)
 
 user = pwd.getpwuid(os.getuid()).pw_name
 home_user = os.getenv("HOME")
 home_config = Path(home_user).joinpath(".config")
 
-logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 
 # noinspection PyUnresolvedReferences
@@ -487,6 +493,10 @@ class PackageInstallerDialog(QDialog):
         if not task_id or task_id not in self.task_status:
             return
 
+        old_status = self.task_status.get(task_id)
+        if old_status == status:
+            return
+
         self.task_status[task_id] = status
 
         if status in (TaskStatus.ERROR, TaskStatus.WARNING):
@@ -618,6 +628,7 @@ class PackageInstallerDialog(QDialog):
             scrollbar = self.text_edit.verticalScrollBar()
             if scrollbar:
                 scrollbar.setValue(scrollbar.maximum())
+
         except Exception as e:
             logger.exception(f"Text edit update failed: {e}")
 
@@ -712,9 +723,9 @@ class PackageInstallerDialog(QDialog):
             Qt.Key.Key_Tab: self.focusNextChild
         }
 
-        handler = key_handlers.get(event.key())
-        if handler:
-            handler()
+        key_handler = key_handlers.get(event.key())
+        if key_handler:
+            key_handler()
         else:
             super().keyPressEvent(event)
 
@@ -867,7 +878,8 @@ class PackageInstallerThread(QThread):
         try:
             env = os.environ.copy()
             env['SUDO_ASKPASS'] = self.askpass_script_path
-            process = subprocess.run(['sudo', '-A', 'echo', 'Sudo access successfully verified...'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, timeout=0.2)
+            process = subprocess.run(['sudo', '-A', 'echo', 'Sudo access successfully verified...'],
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, timeout=0.2)
             if process.stdout:
                 self.outputReceived.emit(process.stdout.strip(), "success")
             if process.stderr:
@@ -910,14 +922,16 @@ class PackageInstallerThread(QThread):
             file_path = temp_path / filename
             if file_path.exists():
                 try:
-                    file_size = file_path.stat().st_size
-                    for _ in range(3):
+                    file_size = max(file_path.stat().st_size, 4096)
+                    patterns = [b'\x00', b'\xFF', os.urandom(1024)[:1]]
+                    for pattern in patterns:
                         with open(file_path, 'wb') as f:
-                            f.write(os.urandom(max(file_size, 1024)))
+                            for _ in range(0, file_size, len(pattern)):
+                                f.write(pattern * (len(pattern) if file_size - _ >= len(pattern) else file_size - _))
                             f.flush()
                             os.fsync(f.fileno())
                     file_path.unlink()
-                except Exception as e:
+                except (OSError, IOError) as e:
                     logger.warning(f"Secure deletion failed for {filename}: {e}")
 
         if 'SUDO_PASSWORD_FILE' in os.environ:
@@ -927,7 +941,7 @@ class PackageInstallerThread(QThread):
             shutil.rmtree(temp_path, ignore_errors=True)
             self.temp_dir = None
             self.askpass_script_path = None
-        except Exception as e:
+        except (OSError, shutil.Error) as e:
             logger.warning(f"Temp directory cleanup failed: {e}")
 
     def run_sudo_command(self, command):
@@ -972,9 +986,13 @@ class PackageInstallerThread(QThread):
             t.start()
 
         streams_done = 0
+        timeout_counter = 0
+        max_idle_time = 300
+
         while streams_done < 2:
             try:
                 msg_type, content = output_queue.get(timeout=1)
+                timeout_counter = 0
                 if msg_type == 'output':
                     self.outputReceived.emit(f"<span>{content}</span>", "subprocess")
                 elif msg_type == 'error':
@@ -982,11 +1000,12 @@ class PackageInstallerThread(QThread):
                 elif msg_type == 'done':
                     streams_done += 1
             except queue.Empty:
-                if self.terminated:
+                timeout_counter += 1
+                if self.terminated or timeout_counter > max_idle_time:
                     break
 
         try:
-            process.wait(timeout=600)
+            process.wait(timeout=1800)
         except subprocess.TimeoutExpired:
             self.outputReceived.emit("<span>Command Timeout. Terminating...</span>", "error")
             process.kill()
@@ -1032,32 +1051,51 @@ class PackageInstallerThread(QThread):
             self.outputReceived.emit("No 'System Files' to copy", "warning")
             self.taskStatusChanged.emit(task_id, "warning")
             return True
+
         for src, dest in files:
             if not Path(src).exists():
                 self.outputReceived.emit(f"Source file does not exist: '{src}'", "error")
                 success = False
                 continue
+
             dest_dir = Path(dest).parent
             if not dest_dir.exists() and not self._create_directory(dest_dir):
                 success = False
                 continue
-            filename = os.path.basename(src)
+
+            src_path = Path(src)
+            is_dir = src_path.is_dir()
+            filename = src_path.name
+
             self.outputReceived.emit(f"Copying: '{src}'", "info")
-            cmd = ['sudo', 'cp', '-r'] if Path(src).is_dir() else ['sudo', 'cp']
+            cmd = ['sudo', 'cp', '-r'] if is_dir else ['sudo', 'cp']
             cmd.extend([str(src), str(dest)])
             result = self.run_sudo_command(cmd)
+
             if result and result.returncode == 0:
-                self.outputReceived.emit(f"Successfully copied: '{filename}' to '{dest}'", "success")
+                label = src if is_dir else filename
+                self.outputReceived.emit(f"Successfully copied: '{label}' to '{dest}'", "success")
             else:
                 self.outputReceived.emit(f"Error copying: '{filename}'", "error")
                 success = False
+
         self.taskStatusChanged.emit(task_id, "success" if success else "error")
         return success
 
     def _create_directory(self, dest_dir):
-        result = self.run_sudo_command(['sudo', 'mkdir', '-p', str(dest_dir)])
+        try:
+            dest_path = Path(dest_dir).resolve()
+            if not str(dest_path).startswith('/'):
+                self.outputReceived.emit(f"Invalid destination path: '{dest_dir}'", "error")
+                return False
+        except (OSError, ValueError) as e:
+            self.outputReceived.emit(f"Path resolution error: {e}", "error")
+            return False
+
+        result = self.run_sudo_command(['sudo', 'mkdir', '-p', str(dest_path)])
         success = result and result.returncode == 0
-        self.outputReceived.emit(f"{'Created' if success else 'Error creating'} directory: '{dest_dir}'", "info" if success else "error")
+        self.outputReceived.emit(f"{'Created' if success else 'Error creating'} directory: '{dest_path}'",
+                                 "info" if success else "error")
         return success
 
     def install_package_generic(self, package, package_type=None):
@@ -1097,7 +1135,15 @@ class PackageInstallerThread(QThread):
             for i in range(0, len(pkg_list), size):
                 yield pkg_list[i:i + size]
 
-        pkgs = [p.strip() for p in packages if isinstance(p, str) and p.strip()]
+        pkgs = []
+        for p in packages:
+            if isinstance(p, str) and p.strip():
+                pkg_name = p.strip()
+                if all(c.isalnum() or c in '-_.' for c in pkg_name):
+                    pkgs.append(pkg_name)
+                else:
+                    self.outputReceived.emit(f"Invalid package name skipped: '{pkg_name}'", "warning")
+
         pkgs_to_install = self.distro.filter_not_installed(pkgs)
 
         if not pkgs_to_install:
@@ -1109,7 +1155,7 @@ class PackageInstallerThread(QThread):
         total_failed = []
         total_installed = []
 
-        batch_size = 25
+        batch_size = 15 if package_type == "Essential Package" else 25
 
         for batch in package_batches(pkgs_to_install, batch_size):
             if self.terminated:
@@ -1120,13 +1166,14 @@ class PackageInstallerThread(QThread):
             if package_type == "Essential Package":
                 cmd = self.distro.get_pkg_install_cmd(" ".join(batch))
             else:
-                cmd = f"yay -S --noconfirm {' '.join(batch)}"
+                cmd = f"yay -S --noconfirm --needed {' '.join(batch)}"
 
             self.run_sudo_command(cmd.split())
 
             for pkg in batch:
                 if self.package_cache.is_installed(pkg):
                     total_installed.append(pkg)
+                    self.package_cache.mark_installed(pkg)
                 else:
                     total_failed.append(pkg)
 
@@ -1413,6 +1460,7 @@ class PackageCache:
         self._cache = {}
         self._cache_timestamp = 0
         self._cache_duration = 300
+        self._max_cache_size = 1000
 
     def is_installed(self, package):
         current_time = time.time()
@@ -1420,6 +1468,10 @@ class PackageCache:
         if current_time - self._cache_timestamp > self._cache_duration:
             self._cache.clear()
             self._cache_timestamp = current_time
+        elif len(self._cache) > self._max_cache_size:
+            keys_to_remove = list(self._cache.keys())[:len(self._cache) // 2]
+            for key in keys_to_remove:
+                self._cache.pop(key, None)
 
         if package not in self._cache:
             self._cache[package] = self.distro.package_is_installed(package)
