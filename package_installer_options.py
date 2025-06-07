@@ -1,4 +1,4 @@
-import logging
+import logging.handlers
 from pathlib import Path
 from PyQt6.QtCore import Qt
 from global_style import global_style
@@ -8,8 +8,14 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QFo
                              QComboBox, QCheckBox, QListWidget, QListWidgetItem, QScrollArea, QDialogButtonBox, QMessageBox,
                              QFileDialog, QInputDialog, QLineEdit, QApplication, QSizePolicy)
 
-logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 
 # noinspection PyUnresolvedReferences
@@ -379,6 +385,89 @@ class PackageInstallerOptions(QDialog):
 
         return file_source, file_destination
 
+    @staticmethod
+    def _apply_text_replacements(text):
+        for old_text, new_text in Options.text_replacements:
+            text = text.replace(old_text, new_text)
+        return text
+
+    def add_system_files(self):
+        self.close_current_dialog()
+        try:
+            box = QMessageBox(self)
+            box.setWindowTitle("Add 'System Files'")
+            box.setText("Would you like to add a single file or an entire directory?")
+            file_button = box.addButton("File", QMessageBox.ButtonRole.YesRole)
+            dir_button = box.addButton("Directory", QMessageBox.ButtonRole.NoRole)
+            cancel_button = box.addButton(QMessageBox.StandardButton.Cancel)
+
+            box.exec()
+
+            clicked_button = box.clickedButton()
+
+            if clicked_button == cancel_button:
+                return
+
+            if clicked_button == file_button:
+                files, _ = QFileDialog.getOpenFileNames(self, "Select 'System File'")
+                if not files:
+                    return
+                sources = files
+            else:
+                directory = QFileDialog.getExistingDirectory(self, "Select 'System Directory'")
+                if not directory:
+                    return
+                sources = [directory]
+
+            destination_dir = QFileDialog.getExistingDirectory(self, "Select Destination Directory")
+            if not destination_dir:
+                return
+
+            self._process_new_system_files(sources, destination_dir)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"An error occurred when adding the System File: {str(e)}", QMessageBox.StandardButton.Ok)
+
+    def _process_new_system_files(self, sources, destination_dir):
+        if not hasattr(Options, 'system_files') or Options.system_files is None:
+            Options.system_files = []
+        elif not isinstance(Options.system_files, list):
+            Options.system_files = []
+
+        added_items = []
+        for source in sources:
+            try:
+                source_path = Path(source)
+                source_str = str(source)
+
+                if source_path.is_file():
+                    destination = str(Path(destination_dir) / source_path.name)
+                    item_name = source_path.name
+                else:
+                    destination = str(Path(destination_dir) / source_path.name)
+                    item_name = f"{source_path.name}/ (directory)"
+
+                if not any(isinstance(item, dict) and str(item.get('source', '')) == source_str for item in
+                           Options.system_files):
+                    Options.system_files.append({'source': source_str, 'destination': destination})
+                    added_items.append(item_name)
+            except Exception as file_error:
+                logger.error(f"Error when processing {source}: {file_error}")
+                continue
+
+        self._handle_added_files_result(added_items)
+
+    def _handle_added_files_result(self, added_items):
+        if added_items:
+            Options.save_config()
+            item_list = '\n'.join(added_items)
+            msg = (f"The following items have been successfully added:\n{item_list}"
+                   if len(added_items) > 1 else f"'{added_items[0]}' was successfully added!")
+            QMessageBox.information(self, "'System Files'", msg, QMessageBox.StandardButton.Ok)
+            self.edit_system_files()
+        else:
+            QMessageBox.information(self, "No changes", "No new items have been added.", QMessageBox.StandardButton.Ok)
+
     def _create_file_list_widget(self, file_source, file_destination):
         item_text = f"{file_source}  --->  {file_destination}"
         display_text = self._apply_text_replacements(item_text)
@@ -393,60 +482,6 @@ class PackageInstallerOptions(QDialog):
         list_widget.setMaximumHeight(40)
 
         return list_widget
-
-    @staticmethod
-    def _apply_text_replacements(text):
-        for old_text, new_text in Options.text_replacements:
-            text = text.replace(old_text, new_text)
-        return text
-
-    def add_system_files(self):
-        self.close_current_dialog()
-        try:
-            files, _ = QFileDialog.getOpenFileNames(self, "Select 'System File'")
-            if not files:
-                return
-
-            destination_dir = QFileDialog.getExistingDirectory(self, "Select Destination Directory")
-            if not destination_dir:
-                return
-
-            self._process_new_system_files(files, destination_dir)
-
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"An error occurred when adding the 'System File': {str(e)}", QMessageBox.StandardButton.Ok)
-
-    def _process_new_system_files(self, files, destination_dir):
-        if not hasattr(Options, 'system_files') or Options.system_files is None:
-            Options.system_files = []
-        elif not isinstance(Options.system_files, list):
-            Options.system_files = []
-
-        added_files = []
-        for file in files:
-            try:
-                source = str(file)
-                destination = str(Path(destination_dir).joinpath(Path(file).name))
-
-                if not any(isinstance(item, dict) and str(item.get('source', '')) == source for item in Options.system_files):
-                    Options.system_files.append({'source': source, 'destination': destination})
-                    added_files.append(Path(file).name)
-            except Exception as file_error:
-                logger.error(f"Error when processing the file {file}: {file_error}")
-                continue
-
-        self._handle_added_files_result(added_files)
-
-    def _handle_added_files_result(self, added_files):
-        if added_files:
-            Options.save_config()
-            file_list = '\n'.join(added_files)
-            msg = (f"The following files have been successfully added:\n{file_list}"
-                   if len(added_files) > 1 else f"'{added_files[0]}' was successfully added!")
-            QMessageBox.information(self, "'System File'", msg, QMessageBox.StandardButton.Ok)
-            self.edit_system_files()
-        else:
-            QMessageBox.information(self, "No changes", "No new files have been added.", QMessageBox.StandardButton.Ok)
 
     @staticmethod
     def _create_package_list_widget(packages, is_specific=False):
