@@ -1,6 +1,6 @@
 from pathlib import Path
-import json, sys, logging
 from options import Options
+import json, sys, logging.handlers
 from base_window import BaseWindow
 from global_style import global_style
 from drive_manager import DriveManager
@@ -11,8 +11,14 @@ from package_installer_launcher_dialog_thread import PackageInstallerLauncher
 from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QMessageBox, QMainWindow
 
 sys.setrecursionlimit(5000)
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 Options.load_config(Options.config_file_path)
 Options.mount_drives_on_startup()
@@ -70,6 +76,7 @@ class MainWindow(QMainWindow):
     def start_backup_restoring(self, window_type):
         if self.backup_restore_window:
             self.backup_restore_window.close()
+            self.backup_restore_window.deleteLater()
             self.backup_restore_window = None
         self.backup_restore_window = BackupRestoreWindow(self, window_type)
         self.backup_restore_window.show()
@@ -77,8 +84,10 @@ class MainWindow(QMainWindow):
 
     def open_settings(self):
         if self.settings_window:
-            self.settings_window.close()
-            self.settings_window = None
+            if self.settings_window:
+                self.settings_window.close()
+                self.settings_window.deleteLater()
+                self.settings_window = None
         self.settings_window = SettingsWindow(self)
         self.settings_window.show()
         self.hide()
