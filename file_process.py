@@ -3,14 +3,20 @@ from options import Options
 from PyQt6.QtGui import QColor
 from global_style import global_style
 from samba_password import SambaPasswordManager
-import os, re, time, shutil, psutil, tempfile, subprocess, logging
+import os, re, time, shutil, psutil, tempfile, subprocess, logging.handlers
 from PyQt6.QtCore import (QThread, QTimer, QElapsedTimer, QMutex, QMutexLocker, QWaitCondition, QDateTime, pyqtSignal,
                           QAbstractListModel, QModelIndex, Qt, QVariant, QCoreApplication)
 from PyQt6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar, QTabWidget, QPushButton,
                              QDialogButtonBox, QInputDialog, QLineEdit, QMessageBox, QListView, QGraphicsDropShadowEffect)
 
-logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 
 # noinspection PyUnresolvedReferences
