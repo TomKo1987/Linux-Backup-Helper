@@ -1,6 +1,6 @@
 from pathlib import Path
-import subprocess, pwd, os, logging.handlers
 from PyQt6.QtWidgets import QMessageBox, QCheckBox
+import subprocess, pwd, os, logging.handlers, shlex
 
 user = pwd.getpwuid(os.getuid()).pw_name
 
@@ -36,6 +36,9 @@ class DriveManager:
         try:
             if isinstance(path, str):
                 if not path.strip():
+                    return None
+                if any(char in path for char in ['..', ';', '|', '&']):
+                    logger.warning(f"Suspicious path detected: {path}")
                     return None
                 path_str = str(Path(path).expanduser().resolve())
             else:
@@ -77,6 +80,29 @@ class DriveManager:
                         drives.append(drive)
         return drives
 
+    @staticmethod
+    def _validate_mount_command(cmd):
+        if not cmd or not cmd.strip():
+            return False, "Empty command"
+
+        dangerous_patterns = [';', '&&', '||', '|', '$(', '`', '>', '<', '&']
+        if any(pattern in cmd for pattern in dangerous_patterns):
+            return False, "Contains dangerous characters"
+
+        try:
+            tokens = shlex.split(cmd)
+            if not tokens:
+                return False, "No valid tokens"
+
+            allowed_commands = ['mount', 'sudo', 'udisksctl']
+            if not any(tokens[0].endswith(allowed_cmd) for allowed_cmd in allowed_commands):
+                return False, f"Command not allowed: {tokens[0]}"
+
+        except ValueError as e:
+            return False, f"Invalid command syntax: {e}"
+
+        return True, ""
+
     def mount_drive(self, drive, parent=None, remember_unmount=True):
         if not isinstance(drive, dict):
             return False
@@ -85,13 +111,16 @@ class DriveManager:
         cmd = drive.get('mount_command', '')
 
         if not name or not cmd or not isinstance(name, str) or not isinstance(cmd, str):
-            self._show_message("Mount Error", "Invalid drive configuration: missing or invalid name/command", QMessageBox.Icon.Warning, parent)
+            self._show_message("Mount Error", "Invalid drive configuration: missing or invalid name/command",
+                               QMessageBox.Icon.Warning, parent)
             logger.warning(f"[mount_drive] Invalid drive configuration for drive: {drive}")
             return False
 
-        if len(cmd.strip()) == 0 or cmd.strip().startswith(';') or '&&' in cmd or '||' in cmd:
-            self._show_message("Mount Error", f"Invalid mount command for drive '{name}'", QMessageBox.Icon.Warning, parent)
-            logger.warning(f"[mount_drive] Suspicious or malformed mount command for drive '{name}': {cmd}")
+        is_valid, error_msg = self._validate_mount_command(cmd)
+        if not is_valid:
+            self._show_message("Mount Error", f"Invalid mount command for drive '{name}': {error_msg}",
+                               QMessageBox.Icon.Warning, parent)
+            logger.warning(f"[mount_drive] Invalid mount command for drive '{name}': {error_msg}")
             return False
 
         try:
@@ -149,6 +178,7 @@ class DriveManager:
             checkbox = QCheckBox("Unmount drive when finished")
             checkbox.setChecked(True)
             msg.setCheckBox(checkbox)
+            # noinspection PyUnresolvedReferences
             if msg.exec() != QMessageBox.StandardButton.Yes:
                 logger.info(f"[mount_required_drives] User declined to mount drive '{name}'")
                 self._show_message("Operation Cancelled", f"Cannot continue without mounting drive '{name}'.", QMessageBox.Icon.Information, parent)
