@@ -143,9 +143,13 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         try:
-            drives = [f"'{opt.get('drive_name')}'" for opt in Options.mount_options if opt.get('drive_name')]
-            text = f"Exit without unmounting drive{'s' if len(drives) > 1 else ''} {' & '.join(drives)}?" \
-                if Options.run_mount_command_on_launch and drives else "Are you sure you want to exit?"
+            drives = [f"'{opt.get('drive_name')}'" for opt in Options.mount_options
+                      if opt.get('drive_name')]
+            text = (f"Exit without unmounting drive{'s' if len(drives) > 1 else ''} "
+                    f"{' & '.join(drives)}?"
+                    if Options.run_mount_command_on_launch and drives
+                    else "Are you sure you want to exit?")
+
             if self._confirm_dialog("Exit Confirmation", text):
                 event.accept()
                 QCoreApplication.exit(0)
@@ -154,6 +158,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"Error in closeEvent: {e}")
             event.accept()
+            QCoreApplication.exit(0)
 
     def _confirm_dialog(self, title, text):
         dlg = QMessageBox(self)
@@ -213,10 +218,14 @@ class BackupRestoreWindow(BaseWindow):
 
     @staticmethod
     def _check_path_exists(path):
-        if SmbFileHandler.is_smb_path(path):
-            return True
-        else:
-            return Path(path).exists()
+        try:
+            if SmbFileHandler.is_smb_path(path):
+                return True
+            else:
+                return Path(path).exists()
+        except (OSError, ValueError, TypeError) as e:
+            logger.warning(f"Error checking path existence for '{path}': {e}")
+            return False
 
     def _separate_processable_items(self, selected_items):
         processable = []
