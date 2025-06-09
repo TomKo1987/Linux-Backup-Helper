@@ -154,22 +154,28 @@ class BaseWindow(QDialog):
 
     def _setup_tooltip_on_hover(self, checkbox, event):
         if not hasattr(checkbox, '_tooltip_set'):
-            if not self._tooltip_cache:  # Verwende Instanz-Cache
-                tooltip_text, tooltip_text_entry_restore, _ = Options.generate_tooltip()
-                self._tooltip_cache = {
-                    'backup': tooltip_text,
-                    'restore': tooltip_text_entry_restore,
-                    'settings': tooltip_text,
-                }
+            try:
+                if not self._tooltip_cache:
+                    tooltip_text, tooltip_text_entry_restore, _ = Options.generate_tooltip()
+                    self._tooltip_cache = {
+                        'backup': tooltip_text,
+                        'restore': tooltip_text_entry_restore,
+                        'settings': tooltip_text,
+                    }
 
-            tooltip_dict = self._tooltip_cache.get(checkbox.window_type, {})
-            tip_key = f"{checkbox.text()}_tooltip"
-            if tip_key in tooltip_dict:
-                checkbox.setToolTip(tooltip_dict[tip_key])
-                checkbox.setToolTipDuration(600000)
-            checkbox._tooltip_set = True
+                tooltip_dict = self._tooltip_cache.get(checkbox.window_type, {})
+                tip_key = f"{checkbox.text()}_tooltip"
+                if tip_key in tooltip_dict:
+                    checkbox.setToolTip(tooltip_dict[tip_key])
+                    checkbox.setToolTipDuration(600000)
+                checkbox._tooltip_set = True
+            except (AttributeError, KeyError) as e:
+                pass
 
-        super(QCheckBox, checkbox).enterEvent(event)
+        try:
+            super(QCheckBox, checkbox).enterEvent(event)
+        except AttributeError:
+            pass
 
     @staticmethod
     def get_sublayout_entries():
@@ -375,8 +381,10 @@ class BaseWindow(QDialog):
     def showEvent(self, event):
         super().showEvent(event)
         for cb, *_ in self.checkbox_dirs:
-            cb.setChecked(False)
-        self.selectall.setFocus()
+            if cb.isChecked():
+                cb.setChecked(False)
+        if hasattr(self, 'selectall') and self.selectall.isVisible():
+            self.selectall.setFocus()
 
     def go_back(self):
         self.close()
