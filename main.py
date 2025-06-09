@@ -20,9 +20,6 @@ if not logger.handlers:
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
-Options.load_config(Options.config_file_path)
-Options.mount_drives_on_startup()
-
 
 # noinspection PyUnresolvedReferences
 class MainWindow(QMainWindow):
@@ -75,22 +72,39 @@ class MainWindow(QMainWindow):
 
     def start_backup_restoring(self, window_type):
         if self.backup_restore_window:
-            self.backup_restore_window.close()
-            self.backup_restore_window.deleteLater()
-            self.backup_restore_window = None
-        self.backup_restore_window = BackupRestoreWindow(self, window_type)
-        self.backup_restore_window.show()
-        self.hide()
+            try:
+                self.backup_restore_window.close()
+                self.backup_restore_window.deleteLater()
+            except RuntimeError:
+                pass
+            finally:
+                self.backup_restore_window = None
+
+        try:
+            self.backup_restore_window = BackupRestoreWindow(self, window_type)
+            self.backup_restore_window.show()
+            self.hide()
+        except Exception as e:
+            logger.error(f"Error creating backup/restore window: {e}")
+            QMessageBox.critical(self, "Error", f"Could not open window: {e}")
 
     def open_settings(self):
         if self.settings_window:
-            if self.settings_window:
+            try:
                 self.settings_window.close()
                 self.settings_window.deleteLater()
+            except RuntimeError:
+                pass
+            finally:
                 self.settings_window = None
-        self.settings_window = SettingsWindow(self)
-        self.settings_window.show()
-        self.hide()
+
+        try:
+            self.settings_window = SettingsWindow(self)
+            self.settings_window.show()
+            self.hide()
+        except Exception as e:
+            logger.error(f"Error creating Settings Window: {e}")
+            QMessageBox.critical(self, "Error", f"Could not open window: {e}")
 
     def launch_package_installer(self):
         self.package_installer_launcher = PackageInstallerLauncher(self)
@@ -128,13 +142,18 @@ class MainWindow(QMainWindow):
             QCoreApplication.exit(0)
 
     def closeEvent(self, event):
-        drives = [f"'{opt.get('drive_name')}'" for opt in Options.mount_options]
-        text = f"Exit without unmounting drive{'s' if len(drives) > 1 else ''} {' & '.join(drives)}?" if Options.run_mount_command_on_launch and drives else "Are you sure you want to exit?"
-        if self._confirm_dialog("Exit Confirmation", text):
+        try:
+            drives = [f"'{opt.get('drive_name')}'" for opt in Options.mount_options if opt.get('drive_name')]
+            text = f"Exit without unmounting drive{'s' if len(drives) > 1 else ''} {' & '.join(drives)}?" \
+                if Options.run_mount_command_on_launch and drives else "Are you sure you want to exit?"
+            if self._confirm_dialog("Exit Confirmation", text):
+                event.accept()
+                QCoreApplication.exit(0)
+            else:
+                event.ignore()
+        except Exception as e:
+            logger.error(f"Error in closeEvent: {e}")
             event.accept()
-            QCoreApplication.exit(0)
-        else:
-            event.ignore()
 
     def _confirm_dialog(self, title, text):
         dlg = QMessageBox(self)
@@ -255,15 +274,23 @@ class BackupRestoreProcessDialog(FileProcessDialog):
 def main():
     app = QApplication(sys.argv)
     app.setStyleSheet(global_style)
+
     def handle_exception(exc_type, exc_value, exc_traceback):
         if issubclass(exc_type, KeyboardInterrupt):
             sys.__excepthook__(exc_type, exc_value, exc_traceback)
             return
         logger.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
         QMessageBox.critical(None, "Critical Error", f"An unexpected error occurred:\n{exc_value}")
+
     sys.excepthook = handle_exception
+
+    Options.load_config(Options.config_file_path)
+
     window = MainWindow()
     window.show()
+
+    Options.mount_drives_on_startup()
+
     sys.exit(app.exec())
 
 
