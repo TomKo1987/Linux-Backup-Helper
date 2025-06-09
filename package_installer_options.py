@@ -317,7 +317,10 @@ class PackageInstallerOptions(QDialog):
         height = 0
 
         for i in range(listwidget.count()):
-            text = listwidget.item(i).text()
+            item = listwidget.item(i)
+            if item is None:
+                continue
+            text = item.text()
             line_widths = [fm.horizontalAdvance(line) for line in text.splitlines()]
             max_width = max(max_width, max(line_widths, default=0) + extra)
             height += fm.lineSpacing() * (len(text.splitlines()) or 1) + 6
@@ -712,6 +715,9 @@ class PackageInstallerOptions(QDialog):
 
     def _get_specific_packages_from_widgets(self):
         packages = []
+        if not hasattr(self, 'specific_packages_widgets'):
+            return packages
+
         for widget in self.specific_packages_widgets:
             if isinstance(widget, QListWidget):
                 for i in range(widget.count()):
@@ -736,7 +742,11 @@ class PackageInstallerOptions(QDialog):
         try:
             current_type = option_type or self.current_option_type
             if current_type == "installer_operations":
-                updated_list = [option_key for checkbox, option_key in self.installer_operations_widgets if checkbox.isChecked()]
+                if not hasattr(self, 'installer_operations_widgets'):
+                    QMessageBox.warning(self, "Error", "No installer operations widgets found.")
+                    return False
+                updated_list = [option_key for checkbox, option_key in self.installer_operations_widgets if
+                                checkbox.isChecked()]
             else:
                 widget_list = getattr(self, f"{current_type}_widgets", [])
                 updated_list = self._get_checked_items(widget_list, current_type)
