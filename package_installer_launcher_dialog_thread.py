@@ -923,16 +923,25 @@ class PackageInstallerThread(QThread):
             if file_path.exists():
                 try:
                     file_size = max(file_path.stat().st_size, 4096)
-                    patterns = [b'\x00', b'\xFF', os.urandom(1024)[:1]]
+                    patterns = [b'\x00' * 1024, b'\xFF' * 1024, os.urandom(1024)]
+
                     for pattern in patterns:
                         with open(file_path, 'wb') as f:
-                            for _ in range(0, file_size, len(pattern)):
-                                f.write(pattern * (len(pattern) if file_size - _ >= len(pattern) else file_size - _))
+                            for offset in range(0, file_size, len(pattern)):
+                                remaining = min(len(pattern), file_size - offset)
+                                f.write(pattern[:remaining])
                             f.flush()
                             os.fsync(f.fileno())
+
                     file_path.unlink()
+                    logger.info(f"Securely deleted {filename}")
+
                 except (OSError, IOError) as e:
                     logger.warning(f"Secure deletion failed for {filename}: {e}")
+                    try:
+                        file_path.unlink()
+                    except (OSError, IOError) as e:
+                        logger.warning(f"Secure deletion failed for {filename}: {e}")
 
         if 'SUDO_PASSWORD_FILE' in os.environ:
             del os.environ['SUDO_PASSWORD_FILE']
@@ -941,12 +950,12 @@ class PackageInstallerThread(QThread):
             shutil.rmtree(temp_path, ignore_errors=True)
             self.temp_dir = None
             self.askpass_script_path = None
-        except (OSError, shutil.Error) as e:
+        except Exception as e:
             logger.warning(f"Temp directory cleanup failed: {e}")
 
     def run_sudo_command(self, command):
         if self.terminated:
-            return False
+            return None
         try:
             env = os.environ.copy()
             env['SUDO_ASKPASS'] = self.askpass_script_path
@@ -955,11 +964,12 @@ class PackageInstallerThread(QThread):
                     command.insert(1, '-A')
                 elif command[0] == 'yay' and not any(arg.startswith('--sudoflags=') for arg in command):
                     command.insert(1, '--sudoflags=-A')
+
             process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, bufsize=4096)
             return self._process_command_output(process)
         except Exception as e:
             self.outputReceived.emit(f"<span>Error during command execution: {e}</span>", "error")
-            return False
+            return None
 
     def _process_command_output(self, process):
         output_queue = queue.Queue()
@@ -972,8 +982,8 @@ class PackageInstallerThread(QThread):
                     line = line.strip()
                     if line:
                         output_queue.put(('output', line))
-            except Exception as e:
-                output_queue.put(('error', f"Error reading {stream_name}: {e}"))
+            except Exception as error:
+                output_queue.put(('error', f"Error reading {stream_name}: {error}"))
             finally:
                 output_queue.put(('done', stream_name))
 
@@ -1005,13 +1015,28 @@ class PackageInstallerThread(QThread):
                     break
 
         try:
-            process.wait(timeout=1800)
-        except subprocess.TimeoutExpired:
-            self.outputReceived.emit("<span>Command Timeout. Terminating...</span>", "error")
-            process.kill()
-            return False
+            return_code = process.poll()
+            if return_code is None:
+                try:
+                    return_code = process.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    self.outputReceived.emit("<span>Command Timeout. Terminating...</span>", "error")
+                    process.kill()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.terminate()
+                    return None
 
-        return process
+            class MockProcess:
+                def __init__(self, returncode):
+                    self.returncode = returncode
+
+            return MockProcess(return_code)
+
+        except Exception as e:
+            self.outputReceived.emit(f"<span>Error waiting for process: {e}</span>", "error")
+            return None
 
     def start_package_installer(self):
         for task_id, (description, function) in self.enabled_tasks.items():
@@ -1459,30 +1484,38 @@ class PackageCache:
         self.distro = distro_helper
         self._cache = {}
         self._cache_timestamp = 0
-        self._cache_duration = 300
+        self._cache_duration = 600
         self._max_cache_size = 1000
+        self._lock = threading.Lock()
 
     def is_installed(self, package):
         current_time = time.time()
 
-        if current_time - self._cache_timestamp > self._cache_duration:
-            self._cache.clear()
-            self._cache_timestamp = current_time
-        elif len(self._cache) > self._max_cache_size:
-            keys_to_remove = list(self._cache.keys())[:len(self._cache) // 2]
-            for key in keys_to_remove:
-                self._cache.pop(key, None)
+        with self._lock:
+            if current_time - self._cache_timestamp > self._cache_duration:
+                self._cache.clear()
+                self._cache_timestamp = current_time
+            elif len(self._cache) > self._max_cache_size:
+                keys_to_remove = list(self._cache.keys())[:len(self._cache) // 2]
+                for key in keys_to_remove:
+                    self._cache.pop(key, None)
 
-        if package not in self._cache:
-            self._cache[package] = self.distro.package_is_installed(package)
+            if package not in self._cache:
+                try:
+                    self._cache[package] = self.distro.package_is_installed(package)
+                except Exception as e:
+                    logger.warning(f"Package check failed for {package}: {e}")
+                    return False
 
-        return self._cache[package]
+            return self._cache[package]
 
     def mark_installed(self, package):
-        self._cache[package] = True
+        with self._lock:
+            self._cache[package] = True
 
     def invalidate(self, package=None):
-        if package:
-            self._cache.pop(package, None)
-        else:
-            self._cache.clear()
+        with self._lock:
+            if package:
+                self._cache.pop(package, None)
+            else:
+                self._cache.clear()
