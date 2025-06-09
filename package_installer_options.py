@@ -330,8 +330,10 @@ class PackageInstallerOptions(QDialog):
         content_widget = QWidget()
         grid_layout = QGridLayout(content_widget)
 
-        system_files = Options.system_files or []
+        self.system_files_widgets = []
+        self.original_system_files = []
 
+        system_files = Options.system_files or []
 
         self._create_system_file_widgets(system_files, grid_layout)
 
@@ -438,7 +440,12 @@ class PackageInstallerOptions(QDialog):
         for source in sources:
             try:
                 source_path = Path(source)
-                source_str = str(source)
+
+                if not source_path.exists():
+                    logger.warning(f"Source path does not exist: {source}")
+                    continue
+
+                source_str = str(source_path.resolve())
 
                 if source_path.is_file():
                     destination = str(Path(destination_dir) / source_path.name)
@@ -447,8 +454,7 @@ class PackageInstallerOptions(QDialog):
                     destination = str(Path(destination_dir) / source_path.name)
                     item_name = f"{source_path.name}/ (directory)"
 
-                if not any(isinstance(item, dict) and str(item.get('source', '')) == source_str for item in
-                           Options.system_files):
+                if not any(isinstance(item, dict) and str(item.get('source', '')) == source_str for item in Options.system_files):
                     Options.system_files.append({'source': source_str, 'destination': destination})
                     added_items.append(item_name)
             except Exception as file_error:
@@ -512,6 +518,11 @@ class PackageInstallerOptions(QDialog):
 
         Options.load_config(Options.config_file_path)
         packages = getattr(Options, option_type, [])
+
+        if not isinstance(packages, list):
+            packages = []
+            setattr(Options, option_type, packages)
+
         package_widgets = self._create_package_list_widget(packages, is_specific)
 
         for index, widget in enumerate(package_widgets):
@@ -633,7 +644,13 @@ class PackageInstallerOptions(QDialog):
         form_layout.addRow("Package Name:", package_input)
         session_combo = QComboBox()
         session_combo.setStyleSheet("color: #ffffff; background-color: #555582; padding: 5px 5px;")
-        session_combo.addItems(SESSIONS)
+
+        if SESSIONS:
+            session_combo.addItems(SESSIONS)
+        else:
+            session_combo.addItem("No sessions available")
+            session_combo.setEnabled(False)
+
         session_combo.setFixedHeight(field_height)
         form_layout.addRow("Session:", session_combo)
         layout.addLayout(form_layout)
@@ -649,8 +666,13 @@ class PackageInstallerOptions(QDialog):
             if not package_name:
                 QMessageBox.warning(self, "Missing Information", "Package name is required.", QMessageBox.StandardButton.Ok)
                 return
+
+            if not hasattr(Options, 'specific_packages') or Options.specific_packages is None:
+                Options.specific_packages = []
+
             new_package = {'package': package_name, 'session': session}
-            exists = any(isinstance(pkg, dict) and pkg.get('package') == package_name and pkg.get('session') == session for pkg in Options.specific_packages)
+            exists = any(isinstance(pkg, dict) and pkg.get('package') == package_name and pkg.get('session') == session for pkg
+                in Options.specific_packages)
             if not exists:
                 Options.specific_packages.append(new_package)
                 Options.save_config()
