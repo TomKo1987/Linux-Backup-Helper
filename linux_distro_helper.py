@@ -130,7 +130,7 @@ class LinuxDistroHelper:
     def package_is_installed(self, package):
         if not package or not isinstance(package, str) or not package.strip():
             return False
-        if not re.match(r'^[a-zA-Z0-9._+-]+$', package) or len(package) > 255:
+        if not re.match(r'^[a-zA-Z0-9._+:-]+$', package) or len(package) > 255:
             logger.warning(f"Invalid package name: {package}")
             return False
 
@@ -145,9 +145,13 @@ class LinuxDistroHelper:
             return result.returncode == 0
         except subprocess.TimeoutExpired:
             logger.warning(f"Timeout when checking package: {package}")
+            return False
+        except FileNotFoundError:
+            logger.warning(f"Package manager command not found when checking {package}")
+            return False
         except Exception as e:
             logger.error(f"Error when checking {package}: {e}")
-        return False
+            return False
 
     def filter_not_installed(self, packages):
         if not packages or not isinstance(packages, (list, tuple)):
@@ -172,11 +176,11 @@ class LinuxDistroHelper:
         try:
             kernel_version = os.uname().release
             if self.distro_id in ["arch", "manjaro"]:
-                if "lts" in kernel_version:
+                if any(variant in kernel_version.lower() for variant in ["lts"]):
                     return "linux-lts-headers"
-                elif "zen" in kernel_version:
+                elif any(variant in kernel_version.lower() for variant in ["zen"]):
                     return "linux-zen-headers"
-                elif "hardened" in kernel_version:
+                elif any(variant in kernel_version.lower() for variant in ["hardened"]):
                     return "linux-hardened-headers"
                 else:
                     return "linux-headers"
