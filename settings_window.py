@@ -610,7 +610,7 @@ class SettingsWindow(BaseWindow):
 
         self.mount_options_dialog = QDialog(self)
         dialog = self.mount_options_dialog
-        dialog.setMinimumSize(500, 300)
+        dialog.setMinimumSize(550, 300)
         dialog.setWindowTitle("Mount Options")
         layout = QVBoxLayout(dialog)
 
