@@ -79,23 +79,27 @@ class Options(QObject):
         try:
             with QMutexLocker(Options._entries_mutex):
                 header_order_map = {h: i for i, h in enumerate(Options.header_order)}
-                Options.entries_sorted = sorted([
+                sorted_entries = sorted([
                     {
                         'header': entry.header,
                         'title': entry.title,
                         'source': entry.source,
                         'destination': entry.destination,
                         **{k: entry.details.get(k, False) for k in
-                           ('no_backup', 'no_restore', 'sublayout_games_1', 'sublayout_games_2', 'sublayout_games_3', 'sublayout_games_4')},
+                           ('no_backup', 'no_restore', 'sublayout_games_1', 'sublayout_games_2',
+                            'sublayout_games_3', 'sublayout_games_4')},
                         'unique_id': entry.details.get('unique_id', QUuid.createUuid().toString(QUuid.StringFormat.WithoutBraces))
                     }
                     for entry in Options.all_entries
                 ], key=lambda x: (header_order_map.get(x['header'], 999), x['title'].lower()))
+
+                Options.entries_sorted = sorted_entries
+                return sorted_entries
         except Exception as e:
             logger.error(f"Error in sort_entries: {e}")
-            Options.entries_sorted = []
-
-        return Options.entries_sorted
+            with QMutexLocker(Options._entries_mutex):
+                Options.entries_sorted = []
+            return []
 
     @staticmethod
     def delete_entry(entry):
@@ -172,14 +176,13 @@ class Options(QObject):
                         Options.header_order.append(entry.header)
 
             header_data = {header: {"inactive": header in Options.header_inactive,
-                                    "header_color": Options.header_colors.get(header, '#ffffff')} for header in
-                           Options.header_order + Options.header_inactive}
+                                    "header_color": Options.header_colors.get(header, '#ffffff')}
+                           for header in Options.header_order + Options.header_inactive}
+
             mount_options = []
             if isinstance(Options.mount_options, list):
-                valid_options = []
-                for opt in Options.mount_options:
-                    if isinstance(opt, dict) and opt.get("drive_name"):
-                        valid_options.append(opt)
+                valid_options = [opt for opt in Options.mount_options if
+                                 isinstance(opt, dict) and opt.get("drive_name")]
                 mount_options = sorted(valid_options, key=lambda x: x.get("drive_name", ""))
 
             def sort_if_valid(collection, key=None):
@@ -189,15 +192,13 @@ class Options(QObject):
 
             essential_packages = sort_if_valid(Options.essential_packages)
             additional_packages = sort_if_valid(Options.additional_packages)
-            specific_packages = []
-            if isinstance(Options.specific_packages, list) and all(
-                    isinstance(item, dict) for item in Options.specific_packages):
-                specific_packages = sorted(Options.specific_packages,
-                                           key=lambda x: (x.get('package', ''), x.get('session', '')))
+            specific_packages = sorted(Options.specific_packages,
+                                       key=lambda x: (x.get('package', ''), x.get('session', ''))) \
+                if isinstance(Options.specific_packages, list) and all(
+                isinstance(item, dict) for item in Options.specific_packages) else []
 
-            system_files = []
-            if isinstance(Options.system_files, list) and all(isinstance(item, dict) for item in Options.system_files):
-                system_files = Options.system_files
+            system_files = Options.system_files if isinstance(Options.system_files, list) and all(
+                isinstance(item, dict) for item in Options.system_files) else []
 
             entries_data = {
                 "mount_options": mount_options,
@@ -221,17 +222,13 @@ class Options(QObject):
                     "source": [str(src) for src in (e.source if isinstance(e.source, list) else [e.source])],
                     "destination": [str(dest) for dest in
                                     (e.destination if isinstance(e.destination, list) else [e.destination])],
-                    "details": {
-                        **{k: e.details.get(k, False) for k in
-                           ('no_backup', 'no_restore', 'sublayout_games_1', 'sublayout_games_2', 'sublayout_games_3',
-                            'sublayout_games_4')},
-                        "unique_id": e.details.get('unique_id',
-                                                   QUuid.createUuid().toString(QUuid.StringFormat.WithoutBraces))
-                    }
+                    "details": {**{k: e.details.get(k, False) for k in
+                                   ('no_backup', 'no_restore', 'sublayout_games_1', 'sublayout_games_2',
+                                    'sublayout_games_3', 'sublayout_games_4')},
+                                "unique_id": e.details.get('unique_id', QUuid.createUuid().toString(QUuid.StringFormat.WithoutBraces))}
                 }
                 entries_data["entries"].append(entry)
 
-            temp_path = None
             try:
                 with tempfile.NamedTemporaryFile(dir=config_dir, delete=False, mode='w', encoding='utf-8') as temp_file:
                     temp_path = temp_file.name
@@ -249,19 +246,11 @@ class Options(QObject):
                     except Exception as e:
                         logger.error(f"Error emitting settings_changed signal: {e}")
                 return True
-
             except Exception as e:
-                error_type = "replacing" if "replace" in str(e) else "writing"
-                logger.error(f"Error {error_type} config file: {e}")
-                if temp_path:
-                    try:
-                        os.unlink(temp_path)
-                    except OSError:
-                        pass
+                logger.error(f"Error writing or replacing config file: {e}")
                 return False
-
         except Exception as e:
-            logger.critical(f"Critical error in save_config: {e}")
+            logger.error(f"Unexpected error while saving config: {e}")
             return False
 
     @staticmethod
