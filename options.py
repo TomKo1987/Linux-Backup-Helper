@@ -78,6 +78,10 @@ class Options(QObject):
     def sort_entries():
         try:
             with QMutexLocker(Options._entries_mutex):
+                if not Options.all_entries:
+                    Options.entries_sorted = []
+                    return []
+
                 header_order_map = {h: i for i, h in enumerate(Options.header_order)}
                 sorted_entries = sorted([
                     {
@@ -86,11 +90,11 @@ class Options(QObject):
                         'source': entry.source,
                         'destination': entry.destination,
                         **{k: entry.details.get(k, False) for k in
-                           ('no_backup', 'no_restore', 'sublayout_games_1', 'sublayout_games_2',
-                            'sublayout_games_3', 'sublayout_games_4')},
+                           ('no_backup', 'no_restore', 'sublayout_games_1', 'sublayout_games_2', 'sublayout_games_3', 'sublayout_games_4')},
                         'unique_id': entry.details.get('unique_id', QUuid.createUuid().toString(QUuid.StringFormat.WithoutBraces))
                     }
                     for entry in Options.all_entries
+                    if hasattr(entry, 'header') and hasattr(entry, 'title') and hasattr(entry, 'details')
                 ], key=lambda x: (header_order_map.get(x['header'], 999), x['title'].lower()))
 
                 Options.entries_sorted = sorted_entries
@@ -160,18 +164,24 @@ class Options(QObject):
 
     @staticmethod
     def save_config():
+        config_dir = Path(Options.config_file_path).parent
+
+        try:
+            config_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            logger.error(f"Error creating config directory: {e}")
+            return False
+
         try:
             with QMutexLocker(Options._entries_mutex):
-                config_dir = Path(Options.config_file_path).parent
-                try:
-                    config_dir.mkdir(parents=True, exist_ok=True)
-                except OSError as e:
-                    logger.error(f"Error creating config directory: {e}")
-                    return False
-
                 for entry in Options.all_entries:
+                    if not hasattr(entry, 'details') or not isinstance(entry.details, dict):
+                        logger.warning(f"Invalid entry detected: {entry}")
+                        continue
+
                     if not entry.details.get('unique_id'):
                         entry.details['unique_id'] = QUuid.createUuid().toString(QUuid.StringFormat.WithoutBraces)
+
                     if entry.header not in Options.header_order:
                         Options.header_order.append(entry.header)
 
@@ -192,10 +202,8 @@ class Options(QObject):
 
             essential_packages = sort_if_valid(Options.essential_packages)
             additional_packages = sort_if_valid(Options.additional_packages)
-            specific_packages = sorted(Options.specific_packages,
-                                       key=lambda x: (x.get('package', ''), x.get('session', ''))) \
-                if isinstance(Options.specific_packages, list) and all(
-                isinstance(item, dict) for item in Options.specific_packages) else []
+            specific_packages = sorted(Options.specific_packages, key=lambda x: (x.get('package', ''), x.get('session', ''))) \
+                if isinstance(Options.specific_packages, list) and all(isinstance(item, dict) for item in Options.specific_packages) else []
 
             system_files = Options.system_files if isinstance(Options.system_files, list) and all(
                 isinstance(item, dict) for item in Options.system_files) else []
@@ -251,7 +259,7 @@ class Options(QObject):
                 return False
         except Exception as e:
             logger.error(f"Unexpected error while saving config: {e}")
-            return False
+        return False
 
     @staticmethod
     def load_config(file_path):
