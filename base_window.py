@@ -1,8 +1,12 @@
+import logging.handlers
 from options import Options
 from global_style import global_style
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QDialog, QLabel, QGridLayout,
                              QScrollArea, QCheckBox, QSpacerItem, QSizePolicy)
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 # noinspection PyUnresolvedReferences
@@ -14,6 +18,7 @@ class BaseWindow(QDialog):
         self.window_type = window_type
         self.setWindowTitle({"backup": "Create Backup", "restore": "Restore Backup", "settings": "Settings"}.get(window_type, "Window"))
         self._last_entries_hash = None
+        self._last_ui_state = None
         self.content_widget = None
         self._tooltip_cache = None
         self.main_layout = QVBoxLayout(self)
@@ -31,27 +36,48 @@ class BaseWindow(QDialog):
         self.setup_ui()
 
     def setup_ui(self):
-        if hasattr(self, '_last_entries_hash'):
+        if hasattr(self, '_last_entries_hash') and hasattr(self, '_last_ui_state'):
             current_hash = hash(str(getattr(Options, 'entries_sorted', [])))
-            if current_hash != self._last_entries_hash:
-                self._tooltip_cache = None
-                self._last_entries_hash = current_hash
+            current_ui_state = (
+                self.window_type,
+                Options.ui_settings.get(f"{self.window_type}_window_columns", 2),
+                len(Options.header_order),
+                len(Options.header_inactive)
+            )
+
+            if (current_hash == self._last_entries_hash and
+                    current_ui_state == self._last_ui_state):
+                return
+
+            self._last_entries_hash = current_hash
+            self._last_ui_state = current_ui_state
         else:
             self._tooltip_cache = None
             self._last_entries_hash = hash(str(getattr(Options, 'entries_sorted', [])))
+            self._last_ui_state = (
+                self.window_type,
+                Options.ui_settings.get(f"{self.window_type}_window_columns", 2),
+                len(Options.header_order),
+                len(Options.header_inactive)
+            )
+
         Options.sort_entries()
         self.clear_layout_contents()
+
         key = f"{self.window_type}_window_columns"
         self.columns = 4 if Options.ui_settings.get(key, 2) == 4 else 2
         self.create_top_controls(f"{2 if self.columns == 4 else 4} Columns")
+
         self.content_widget = QWidget()
         layout = QGridLayout(self.content_widget)
+
         if self.window_type in ("restore", "settings"):
             sublayout_entries = self.get_sublayout_entries()
             self.setup_sublayouts(sublayout_entries)
             row_counter = self.add_header_checkboxes(layout, sublayout_entries)
         else:
             row_counter = self.add_header_checkboxes(layout)
+
         self.add_control_buttons(layout, row_counter)
         self.scroll_area.setWidget(self.content_widget)
         self.adjust_window_size()
@@ -153,24 +179,37 @@ class BaseWindow(QDialog):
         return row
 
     def _setup_tooltip_on_hover(self, checkbox, event):
-        if not hasattr(checkbox, '_tooltip_set'):
+        if hasattr(checkbox, '_tooltip_set') and checkbox._tooltip_set:
             try:
-                if not self._tooltip_cache:
-                    tooltip_text, tooltip_text_entry_restore, _ = Options.generate_tooltip()
-                    self._tooltip_cache = {
-                        'backup': tooltip_text,
-                        'restore': tooltip_text_entry_restore,
-                        'settings': tooltip_text,
-                    }
-
-                tooltip_dict = self._tooltip_cache.get(checkbox.window_type, {})
-                tip_key = f"{checkbox.text()}_tooltip"
-                if tip_key in tooltip_dict:
-                    checkbox.setToolTip(tooltip_dict[tip_key])
-                    checkbox.setToolTipDuration(600000)
-                checkbox._tooltip_set = True
-            except (AttributeError, KeyError) as e:
+                super(QCheckBox, checkbox).enterEvent(event)
+            except AttributeError:
                 pass
+            return
+
+        try:
+            if not self._tooltip_cache:
+                tooltip_text, tooltip_text_entry_restore, installer_tooltips = Options.generate_tooltip()
+                self._tooltip_cache = {
+                    'backup': tooltip_text,
+                    'restore': tooltip_text_entry_restore,
+                    'settings': tooltip_text,
+                    'installer': installer_tooltips
+                }
+
+            tooltip_dict = self._tooltip_cache.get(checkbox.window_type, {})
+            tip_key = f"{checkbox.text()}_tooltip"
+
+            if tip_key in tooltip_dict:
+                checkbox.setToolTip(tooltip_dict[tip_key])
+                checkbox.setToolTipDuration(600000)
+                checkbox._tooltip_set = True
+            else:
+                checkbox.setToolTip("No detailed information available")
+                checkbox._tooltip_set = True
+
+        except Exception as e:
+            logger.warning(f"Error setting tooltip: {e}")
+            checkbox._tooltip_set = True
 
         try:
             super(QCheckBox, checkbox).enterEvent(event)
@@ -179,15 +218,32 @@ class BaseWindow(QDialog):
 
     @staticmethod
     def get_sublayout_entries():
-        d = {f'sublayout_games_{i}': [] for i in range(1, 5)}
-        if hasattr(Options, 'all_entries'):
-            for e in Options.all_entries:
-                if hasattr(e, 'details'):
-                    for i in range(1, 5):
-                        key = f'sublayout_games_{i}'
-                        if e.details.get(key, False):
-                            d[key].append(getattr(e, 'title', ''))
-        return d
+        sublayout_entries = {f'sublayout_games_{i}': [] for i in range(1, 5)}
+
+        try:
+            if not hasattr(Options, 'all_entries') or not Options.all_entries:
+                return sublayout_entries
+
+            for entry in Options.all_entries:
+                if not (hasattr(entry, 'details') and hasattr(entry, 'title')):
+                    continue
+
+                if not isinstance(entry.details, dict):
+                    continue
+
+                title = getattr(entry, 'title', '')
+                if not title:
+                    continue
+
+                for i in range(1, 5):
+                    key = f'sublayout_games_{i}'
+                    if entry.details.get(key, False):
+                        sublayout_entries[key].append(title)
+
+        except Exception as e:
+            logger.warning(f"Error getting sublayout entries: {e}")
+
+        return sublayout_entries
 
     def setup_sublayouts(self, sublayout_entries):
         for i in range(1, 5):
@@ -295,14 +351,24 @@ class BaseWindow(QDialog):
     def _clear_layout(self, layout):
         if layout is None:
             return
+
         while layout.count():
             item = layout.takeAt(0)
+            if item is None:
+                continue
+
             widget = item.widget()
             if widget:
-                widget.setParent(None)
-                widget.deleteLater()
+                try:
+                    widget.blockSignals(True)
+                    widget.clearFocus()
+                    widget.setParent(None)
+                    widget.deleteLater()
+                except Exception as e:
+                    logger.warning(f"Error cleaning up widget: {e}")
             elif item.layout():
                 self._clear_layout(item.layout())
+                item.layout().deleteLater()
 
     def clear_layout_contents(self):
         self._clear_layout(self.top_controls)
@@ -322,18 +388,23 @@ class BaseWindow(QDialog):
         if not self.checkbox_dirs:
             return
 
-        all_checked = True
-        for cb, *_ in self.checkbox_dirs:
-            if cb != self.selectall and not cb.isChecked():
-                all_checked = False
-                break
+        try:
+            regular_checkboxes = [cb for cb, *_ in self.checkbox_dirs if cb != self.selectall and cb.isVisible()]
 
-        self.selectall.blockSignals(True)
-        self.selectall.setChecked(all_checked)
-        self.selectall.blockSignals(False)
+            if not regular_checkboxes:
+                return
 
-        if self.window_type in ("restore", "settings"):
-            self.update_game_sublayout_states()
+            all_checked = all(cb.isChecked() for cb in regular_checkboxes)
+
+            self.selectall.blockSignals(True)
+            self.selectall.setChecked(all_checked)
+            self.selectall.blockSignals(False)
+
+            if self.window_type in ("restore", "settings"):
+                self.update_game_sublayout_states()
+
+        except Exception as e:
+            logger.warning(f"Error updating select all state: {e}")
 
     def toggle_checkboxes_manually(self):
         is_checked = self.selectall.isChecked()
@@ -362,20 +433,31 @@ class BaseWindow(QDialog):
             self.update_select_all_state()
 
     def keyPressEvent(self, event):
-        key = event.key()
-        fw = self.focusWidget()
-        if key in (Qt.Key.Key_Enter, Qt.Key.Key_Return) and isinstance(fw, QCheckBox):
-            fw.toggle()
-            if fw == self.selectall:
-                self.toggle_checkboxes_manually()
-            elif self.window_type in ("restore", "settings"):
-                for i in range(1, 5):
-                    if fw == getattr(self, f'select_all_games_{i}', None):
-                        self._toggle_sublayout_checkboxes(getattr(self, f'sublayout_games_{i}'), fw)
-                        break
-        elif key == Qt.Key.Key_Escape:
-            self.go_back()
-        else:
+        try:
+            key = event.key()
+            fw = self.focusWidget()
+
+            if key in (Qt.Key.Key_Enter, Qt.Key.Key_Return) and isinstance(fw, QCheckBox):
+                fw.toggle()
+
+                if fw == self.selectall:
+                    self.toggle_checkboxes_manually()
+                elif self.window_type in ("restore", "settings"):
+                    for i in range(1, 5):
+                        select_all_games = getattr(self, f'select_all_games_{i}', None)
+                        if fw == select_all_games:
+                            sublayout = getattr(self, f'sublayout_games_{i}', None)
+                            if sublayout:
+                                self._toggle_sublayout_checkboxes(sublayout, fw)
+                            break
+
+            elif key == Qt.Key.Key_Escape:
+                self.go_back()
+            else:
+                super().keyPressEvent(event)
+
+        except Exception as e:
+            logger.warning(f"Error in keyPressEvent: {e}")
             super().keyPressEvent(event)
 
     def showEvent(self, event):
@@ -390,6 +472,20 @@ class BaseWindow(QDialog):
         self.close()
 
     def closeEvent(self, event):
-        if self.parent():
-            self.parent().show()
-        super().closeEvent(event)
+        try:
+            self._tooltip_cache = None
+
+            for cb, *_ in self.checkbox_dirs:
+                if hasattr(cb, '_tooltip_set'):
+                    delattr(cb, '_tooltip_set')
+                cb.blockSignals(True)
+
+            self.clear_layout_contents()
+
+            if self.parent():
+                self.parent().show()
+
+        except Exception as e:
+            logger.warning(f"Error in closeEvent: {e}")
+        finally:
+            super().closeEvent(event)
