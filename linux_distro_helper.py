@@ -150,16 +150,23 @@ class LinuxDistroHelper:
         return False
 
     def filter_not_installed(self, packages):
-        if not packages:
+        if not packages or not isinstance(packages, (list, tuple)):
             return []
 
-        if len(packages) <= 10:
-            return [pkg for pkg in packages if not self.package_is_installed(pkg)]
+        valid_packages = [pkg for pkg in packages if pkg and isinstance(pkg, str) and pkg.strip()]
+        if not valid_packages:
+            return []
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-            results = list(executor.map(self.package_is_installed, packages))
+        if len(valid_packages) <= 10:
+            return [pkg for pkg in valid_packages if not self.package_is_installed(pkg)]
 
-        return [pkg for pkg, is_installed in zip(packages, results) if not is_installed]
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+                results = list(executor.map(self.package_is_installed, valid_packages))
+            return [pkg for pkg, is_installed in zip(valid_packages, results) if not is_installed]
+        except Exception as e:
+            logger.error(f"Error in concurrent package checking: {e}")
+            return [pkg for pkg in valid_packages if not self.package_is_installed(pkg)]
 
     def get_kernel_headers_pkg(self):
         try:
