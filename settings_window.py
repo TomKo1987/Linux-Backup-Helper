@@ -378,35 +378,45 @@ class SettingsWindow(BaseWindow):
     def create_header_list_item(self, header, list_widget):
         item_widget = QWidget()
         item_layout = QHBoxLayout(item_widget)
+
         if not hasattr(Options, 'header_colors'):
             Options.header_colors = {}
         if not hasattr(Options, 'header_inactive'):
             Options.header_inactive = []
-        header_color = Options.header_colors.get(header, '#ffffff')
+
         if not hasattr(self, '_color_cache'):
-            pass
+            self._color_cache = {}
+
+        header_color = Options.header_colors.get(header, '#ffffff')
+
         if header_color not in self._color_cache:
             self._color_cache[header_color] = self.darken_color(header_color)
         darker = self._color_cache[header_color]
+
         btn_style = "color: black; font-weight: bold; font-size: 17px;"
         color_btn = QPushButton(header)
         color_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         color_btn.setFixedHeight(26)
         color_btn.setStyleSheet(f"QPushButton {{{btn_style} background-color: {darker};}}")
         color_btn.clicked.connect(lambda _, h=header: self.choose_color(h))
+
         inactive_cb = QCheckBox("Inactive")
         inactive_cb.setObjectName("inactive_checkbox")
         inactive_cb.setStyleSheet("margin-left: 10px;")
         inactive_cb.setChecked(header in Options.header_inactive)
+
         def update_inactive(checked):
             color_btn.setEnabled(not checked)
             bg = "gray" if checked else darker
-            color_btn.setStyleSheet(f"QPushButton {{{btn_style} background-color: {bg}; padding: 0 10;}}")
+            color_btn.setStyleSheet(f"QPushButton {{{btn_style} background-color: {bg}; padding: 0 10px;}}")
+
         inactive_cb.stateChanged.connect(update_inactive)
         update_inactive(inactive_cb.isChecked())
+
         del_btn = QPushButton("Delete Header")
         del_btn.setStyleSheet("margin-left: 10px;")
         del_btn.clicked.connect(lambda _, h=header: self.delete_header(h, list_widget))
+
         item_layout.addWidget(color_btn)
         item_layout.addWidget(inactive_cb)
         item_layout.addWidget(del_btn)
@@ -543,35 +553,47 @@ class SettingsWindow(BaseWindow):
             Options.mount_options = []
         if not hasattr(Options, 'run_mount_command_on_launch'):
             Options.run_mount_command_on_launch = False
+
         self.hide()
+
+        if hasattr(self, 'mount_options_dialog') and self.mount_options_dialog:
+            self.mount_options_dialog.close()
+            self.mount_options_dialog = None
+
         self.mount_options_dialog = QDialog(self)
         dialog = self.mount_options_dialog
         dialog.setMinimumSize(500, 300)
         dialog.setWindowTitle("Mount Options")
         layout = QVBoxLayout(dialog)
+
         for option in Options.mount_options:
             btn_layout = QHBoxLayout()
-            drive_btn = QPushButton(option['drive_name'])
+            drive_btn = QPushButton(option.get('drive_name', 'Unknown'))  # Fix: get() verwenden
             drive_btn.clicked.connect(lambda _, opt=option: self._edit_mount_option(opt, dialog))
             delete_btn = QPushButton("Delete")
             delete_btn.clicked.connect(lambda _, opt=option: self._delete_mount_option(opt, dialog))
             btn_layout.addWidget(drive_btn, 3)
             btn_layout.addWidget(delete_btn, 1)
             layout.addLayout(btn_layout)
+
         layout.addStretch(1)
+
         if Options.mount_options:
             mount_cb = QCheckBox("Mount drives at startup and unmount at shutdown")
             mount_cb.setStyleSheet("color: #6ffff5;")
             mount_cb.setChecked(Options.run_mount_command_on_launch)
             mount_cb.toggled.connect(self._toggle_auto_mount)
             layout.addWidget(mount_cb)
+
         if len(Options.mount_options) < 3:
             add_btn = QPushButton("New Mount Option")
             add_btn.clicked.connect(lambda: self._edit_mount_option({}, dialog))
             layout.addWidget(add_btn)
+
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(dialog.accept)
         layout.addWidget(close_btn)
+
         dialog.exec()
         self.show()
 
@@ -581,25 +603,38 @@ class SettingsWindow(BaseWindow):
         self.show_message('Success', 'Mount Options successfully saved!')
 
     def _edit_mount_option(self, option=None, parent_dialog=None):
+        if option is None:
+            option = {}
+
         dialog = QDialog(self)
         dialog.setMinimumSize(500, 300)
-        dialog.setWindowTitle(f"Edit Mount Option: {option.get('drive_name', '')}" if option and 'drive_name' in option else "New Mount Option")
+        title = f"Edit Mount Option: {option.get('drive_name', '')}" if option.get('drive_name') else "New Mount Option"
+        dialog.setWindowTitle(title)
 
-        def close_parent_after_show():
-            if parent_dialog:
-                parent_dialog.close()
+        def close_parent_safely():
+            if parent_dialog and hasattr(parent_dialog, 'close'):
+                try:
+                    parent_dialog.close()
+                except RuntimeError:
+                    pass
 
         dialog.show()
-        close_parent_after_show()
+        close_parent_safely()
 
         layout = QVBoxLayout(dialog)
         fields = {}
-        field_labels = [('drive_name', "Drive Name:"), ('mount_command', "Mount Command:"), ('unmount_command', "Unmount Command:")]
+        field_labels = [
+            ('drive_name', "Drive Name:"),
+            ('mount_command', "Mount Command:"),
+            ('unmount_command', "Unmount Command:")
+        ]
+
         for field, label in field_labels:
             layout.addWidget(QLabel(label))
-            value = option.get(field, "") if option else ""
+            value = option.get(field, "")
             fields[field] = QLineEdit(value)
             layout.addWidget(fields[field])
+
         btn_layout = QHBoxLayout()
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(dialog.close)
@@ -608,6 +643,7 @@ class SettingsWindow(BaseWindow):
         btn_layout.addWidget(close_btn)
         btn_layout.addWidget(save_btn)
         layout.addLayout(btn_layout)
+
         dialog.exec()
         self.manage_mount_options()
 
