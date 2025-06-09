@@ -40,7 +40,8 @@ class SettingsWindow(BaseWindow):
     def entry_dialog(self, edit_mode=False):
         checked_entries = self.get_checked_entries()
         if edit_mode and not checked_entries:
-            return self.show_message("Entry Editor Error", "Nothing selected or selected items cannot be edited.")
+            self.show_message("Entry Editor Error", "Nothing selected or selected items cannot be edited.")
+            return
 
         self.hide()
         entries_to_process = checked_entries if edit_mode else [None]
@@ -137,6 +138,9 @@ class SettingsWindow(BaseWindow):
                 'no_restore': 'No Restoring'
             }
 
+            if not hasattr(Options, 'sublayout_names'):
+                Options.sublayout_names = {}
+
             for i in range(1, 5):
                 key = f'sublayout_games_{i}'
                 name = Options.sublayout_names.get(key, f'Sublayout Games {i}')
@@ -214,7 +218,8 @@ class SettingsWindow(BaseWindow):
                     destination = self.destination_edit.text().strip()
 
                 if not all([title, source, destination]):
-                    return self.show_message("Error", "All fields must be filled in to add a new entry.")
+                    self.show_message("Error", "All fields must be filled in to add a new entry.")
+                    return
 
                 existing_titles = {
                     entry.title.lower()
@@ -222,7 +227,8 @@ class SettingsWindow(BaseWindow):
                     if not edit_mode or entry.title.lower() != title_checkbox.lower()
                 }
                 if title.lower() in existing_titles:
-                    return self.show_message("Duplicate Title", "An entry with this title already exists. Please choose a different title.")
+                    self.show_message("Duplicate Title", "An entry with this title already exists. Please choose a different title.")
+                    return
 
                 if edit_mode and entry_obj:
                     if hasattr(entry_obj, 'header'):
@@ -237,6 +243,8 @@ class SettingsWindow(BaseWindow):
 
                     new_entry = entry_obj
                 else:
+                    if not hasattr(Options, 'all_entries'):
+                        Options.all_entries = []
                     new_entry = Options(header, title, source, destination)
                     Options.all_entries.append(new_entry)
 
@@ -245,7 +253,6 @@ class SettingsWindow(BaseWindow):
 
                 self.show_message("Success", f"Entry '{new_entry.title}' successfully {'updated' if edit_mode else 'added'}!")
                 dialog.accept()
-                return None
 
             button_box.accepted.connect(save_entry)
             button_box.rejected.connect(dialog.reject)
@@ -253,12 +260,12 @@ class SettingsWindow(BaseWindow):
 
         Options.save_config()
         self.show()
-        return None
 
     def delete_entry(self):
         checked_entries = self.get_checked_entries()
         if not checked_entries:
-            return self.show_message("Delete Entry Error", "Nothing selected or selected items cannot be deleted.")
+            self.show_message("Delete Entry Error", "Nothing selected or selected items cannot be deleted.")
+            return
 
         titles = [entry_data[0].text() for entry_data in checked_entries]
         checked_titles_quoted = [f"'{title}'" for title in titles]
@@ -289,8 +296,6 @@ class SettingsWindow(BaseWindow):
             info_message = self.format_list_message(checked_titles_quoted, " successfully deleted!")
             self.show_message("Success", info_message)
             self.show()
-            return None
-        return None
 
     def select_directory(self, line_edit):
         directory = QFileDialog.getExistingDirectory(self, "Select Directory")
@@ -322,9 +327,10 @@ class SettingsWindow(BaseWindow):
 
     def save_config_from_editor(self, text_edit, entries_list, field):
         new_entries = text_edit.toPlainText().splitlines()
-        if not isinstance(entries_list, list):
+        if entries_list is None or not isinstance(entries_list, list):
             new_value = new_entries[0] if new_entries else ""
-            text_edit.setPlainText(new_value)
+            if new_value is not None:
+                text_edit.setPlainText(new_value)
             return new_value
         entries_list.clear()
         entries_list.extend(new_entries)
@@ -346,6 +352,10 @@ class SettingsWindow(BaseWindow):
         list_widget.setDragEnabled(True)
         list_widget.setAcceptDrops(True)
         list_widget.setDefaultDropAction(Qt.DropAction.MoveAction)
+
+        if not hasattr(Options, 'header_order'):
+            Options.header_order = []
+
         header_order = getattr(Options, 'header_order', [])
         for header in list(header_order):
             item_widget = self.create_header_list_item(header, list_widget)
@@ -354,17 +364,21 @@ class SettingsWindow(BaseWindow):
             list_widget.addItem(item)
             list_widget.setItemWidget(item, item_widget)
         layout.addWidget(list_widget)
-        layout.addWidget(QLabel("Click and hold headers to move them.\nCreating header 'Games' provides access to sublayouts for this header."))
+        layout.addWidget(QLabel(
+            "Click and hold headers to move them.\nCreating header 'Games' provides access to sublayouts for this header."))
         new_header_button = QPushButton("New Header")
         new_header_button.clicked.connect(lambda: self.add_new_header(list_widget))
         layout.addWidget(new_header_button)
-        sublayout_buttons = [QPushButton(f"Name Sublayout-Games {i}:\n{Options.sublayout_names.get(f'sublayout_games_{i}', f'Sublayout Games {i}')}") for i in range(1, 5)]
+        sublayout_buttons = [QPushButton(
+            f"Name Sublayout-Games {i}:\n{Options.sublayout_names.get(f'sublayout_games_{i}', f'Sublayout Games {i}')}")
+                             for i in range(1, 5)]
         for i, btn in enumerate(sublayout_buttons, 1):
             btn.clicked.connect(lambda _, num=i: self.prompt_for_name(dialog, num))
         for i in range(0, 4, 2):
             hbox = QHBoxLayout()
             hbox.addWidget(sublayout_buttons[i])
-            hbox.addWidget(sublayout_buttons[i + 1])
+            if i + 1 < len(sublayout_buttons):
+                hbox.addWidget(sublayout_buttons[i + 1])
             layout.addLayout(hbox)
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         button_box.button(QDialogButtonBox.StandardButton.Save).setText("Save")
@@ -441,14 +455,25 @@ class SettingsWindow(BaseWindow):
     def handle_new_header(self, input_field, dialog, list_widget):
         new_header = input_field.text().strip()
         if not new_header:
-            return None
+            return
+
+        if not hasattr(Options, 'header_colors'):
+            Options.header_colors = {}
+
         if new_header in Options.header_colors:
-            return self.show_message("Duplicate Header", "Header already exists. Please choose a different name.")
+            self.show_message("Duplicate Header", "Header already exists. Please choose a different name.")
+            return
+
         dialog.accept()
         color_dialog = QColorDialog(self)
         if color_dialog.exec() != QColorDialog.DialogCode.Accepted:
-            return None
+            return
+
         Options.header_colors[new_header] = color_dialog.currentColor().name()
+
+        if not hasattr(Options, 'header_order'):
+            Options.header_order = []
+
         item_widget = self.create_header_list_item(new_header, list_widget)
         item = QListWidgetItem()
         item.setSizeHint(item_widget.sizeHint())
@@ -457,7 +482,6 @@ class SettingsWindow(BaseWindow):
         Options.header_order.append(new_header)
         Options.save_config()
         self.show_message("Success", "Header successfully created!")
-        return None
 
     def prompt_for_name(self, parent_dialog, sublayout_num):
         name, ok = QInputDialog.getText(parent_dialog, "Enter Name", "   Enter name for sublayout:   ")
@@ -492,7 +516,8 @@ class SettingsWindow(BaseWindow):
         for child in self.findChildren(QPushButton):
             if child.text() == header:
                 color = Options.header_colors.get(header, '#ffffff')
-                child.setStyleSheet(f"color: black; font-weight: bold; font-size: 20px; background-color: {self.darken_color(color)};")
+                child.setStyleSheet(
+                    f"color: black; font-weight: bold; font-size: 20px; background-color: {self.darken_color(color)};")
 
     def delete_header(self, header, list_widget):
         has_associated_entries = False
@@ -500,28 +525,46 @@ class SettingsWindow(BaseWindow):
             has_associated_entries = any(
                 hasattr(entry, 'header') and entry.header == header for entry in Options.all_entries)
         if has_associated_entries:
-            return self.show_message("Cannot Delete Header", "Header has associated entries and cannot be deleted. Remove them first.", QMessageBox.Icon.Warning)
-        confirm_box = QMessageBox(QMessageBox.Icon.Question, "Confirm Deletion", f"Are you sure you want to delete header '{header}'?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, self)
+            self.show_message("Cannot Delete Header",
+                              "Header has associated entries and cannot be deleted. Remove them first.",
+                              QMessageBox.Icon.Warning)
+            return
+
+        confirm_box = QMessageBox(QMessageBox.Icon.Question, "Confirm Deletion",
+                                  f"Are you sure you want to delete header '{header}'?",
+                                  QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, self)
         confirm_box.setDefaultButton(QMessageBox.StandardButton.No)
         if confirm_box.exec() == QMessageBox.StandardButton.Yes:
+            if not hasattr(Options, 'header_colors'):
+                Options.header_colors = {}
+            if not hasattr(Options, 'header_order'):
+                Options.header_order = []
+            if not hasattr(Options, 'header_inactive'):
+                Options.header_inactive = []
+
             Options.header_colors.pop(header, None)
             if header in Options.header_order:
                 Options.header_order.remove(header)
             if header in Options.header_inactive:
                 Options.header_inactive.remove(header)
+
             for i in range(list_widget.count()):
                 item_widget = list_widget.itemWidget(list_widget.item(i))
-                if item_widget.findChild(QPushButton).text() == header:
+                if item_widget and item_widget.findChild(QPushButton) and item_widget.findChild(
+                        QPushButton).text() == header:
                     list_widget.takeItem(i)
                     break
             Options.save_config()
             self.show_message("Success", f"Header '{header}' has been successfully deleted!")
-            return None
-        return None
 
     def save_header_options(self, list_widget):
         if not hasattr(Options, 'all_entries'):
             Options.all_entries = []
+        if not hasattr(Options, 'header_order'):
+            Options.header_order = []
+        if not hasattr(Options, 'header_inactive'):
+            Options.header_inactive = []
+
         new_header_order, new_header_inactive = [], []
         for i in range(list_widget.count()):
             item_widget = list_widget.itemWidget(list_widget.item(i))
@@ -540,7 +583,7 @@ class SettingsWindow(BaseWindow):
         for entry in Options.all_entries:
             entry.details['inactive'] = entry.header in new_header_inactive
         Options.save_config()
-        self.show_message("Success", "Settings successfully saved!")
+        self.show_message("Success", "Header-Settings successfully saved!")
 
     def open_samba_password_dialog(self):
         self.hide()
@@ -557,8 +600,13 @@ class SettingsWindow(BaseWindow):
         self.hide()
 
         if hasattr(self, 'mount_options_dialog') and self.mount_options_dialog:
-            self.mount_options_dialog.close()
-            self.mount_options_dialog = None
+            try:
+                if hasattr(self.mount_options_dialog, 'close'):
+                    self.mount_options_dialog.close()
+            except (RuntimeError, AttributeError):
+                pass
+            finally:
+                self.mount_options_dialog = None
 
         self.mount_options_dialog = QDialog(self)
         dialog = self.mount_options_dialog
@@ -568,7 +616,7 @@ class SettingsWindow(BaseWindow):
 
         for option in Options.mount_options:
             btn_layout = QHBoxLayout()
-            drive_btn = QPushButton(option.get('drive_name', 'Unknown'))  # Fix: get() verwenden
+            drive_btn = QPushButton(option.get('drive_name', 'Unknown'))
             drive_btn.clicked.connect(lambda _, opt=option: self._edit_mount_option(opt, dialog))
             delete_btn = QPushButton("Delete")
             delete_btn.clicked.connect(lambda _, opt=option: self._delete_mount_option(opt, dialog))
