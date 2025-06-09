@@ -1,6 +1,6 @@
 from pathlib import Path
 from PyQt6.QtWidgets import QMessageBox, QCheckBox
-import subprocess, pwd, os, logging.handlers, shlex
+import subprocess, pwd, os, logging.handlers, shlex, threading
 
 user = pwd.getpwuid(os.getuid()).pw_name
 
@@ -17,6 +17,7 @@ if not logger.handlers:
 class DriveManager:
     def __init__(self):
         self.drives_to_unmount = []
+        self._lock = threading.Lock()
 
     @staticmethod
     def is_drive_mounted(opt):
@@ -47,8 +48,12 @@ class DriveManager:
             logger.exception(f"[check_path_requires_mounting] Error resolving path '{path}': {e}")
             return None
 
-        from options import Options
-        if not hasattr(Options, 'mount_options') or not Options.mount_options:
+        try:
+            from options import Options
+            if not hasattr(Options, 'mount_options') or not Options.mount_options:
+                return None
+        except ImportError:
+            logger.warning("Could not import Options module")
             return None
 
         for opt in Options.mount_options:
@@ -138,15 +143,16 @@ class DriveManager:
                 self._show_message("Mount Error", f"Drive '{name}' could not be mounted.", QMessageBox.Icon.Warning, parent)
                 return False
             if remember_unmount and drive.get('unmount_command'):
-                self.drives_to_unmount.append(drive)
+                with self._lock:
+                    self.drives_to_unmount.append(drive)
             return True
         except subprocess.TimeoutExpired:
             logger.error(f"[mount_drive] Mount command for drive '{name}' timed out.")
-            self._show_message("Mount Error", f"Mount command for drive '{name}' timed out.", QMessageBox.Icon.Warning, parent)
-            return False
-        except Exception as e:
-            logger.exception(f"[mount_drive] Unexpected error while mounting drive '{name}': {e}")
-            self._show_message("Mount Error", f"Drive '{name}' could not be mounted.\nError: {str(e)[:200]}", QMessageBox.Icon.Critical, parent)
+            try:
+                subprocess.run(['pkill', '-f', shlex.quote(cmd)], timeout=5)
+            except Exception as e:
+                logger.exception(f"[mount_drive] Unexpected error mounting drive '{name}': {e}")
+                self._show_message("Mount Error", f"Unexpected error mounting drive '{name}': {e}", QMessageBox.Icon.Critical, parent)
             return False
 
     def unmount_drive(self, drive, parent=None):
@@ -190,12 +196,17 @@ class DriveManager:
 
     def unmount_drives(self, parent=None):
         success = True
-        for drive in self.drives_to_unmount:
+        with self._lock:
+            drives_to_process = self.drives_to_unmount.copy()
+
+        for drive in drives_to_process:
             if not self.unmount_drive(drive, parent):
                 success = False
+
         if success:
             logger.info("[unmount_drives] All drives unmounted successfully. Clearing unmount list.")
-            self.drives_to_unmount.clear()
+            with self._lock:
+                self.drives_to_unmount.clear()
         return success
 
     def mount_drives_at_launch(self):
