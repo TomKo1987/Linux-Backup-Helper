@@ -343,8 +343,9 @@ class FileProcessDialog(QDialog):
 
     def closeEvent(self, event):
         if self.thread and self.thread.isRunning():
-            confirm_box = QMessageBox(QMessageBox.Icon.Question, "Confirm Close", f"The {self.operation_type} process is still running. Are you sure you want to close?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, self)
+            confirm_box = QMessageBox(QMessageBox.Icon.Question, "Confirm Close",
+                                      f"The {self.operation_type} process is still running. Are you sure you want to close?",
+                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, self)
             confirm_box.setDefaultButton(QMessageBox.StandardButton.No)
             if confirm_box.exec() == QMessageBox.StandardButton.Yes:
                 self.cancelled = True
@@ -356,6 +357,7 @@ class FileProcessDialog(QDialog):
                 event.accept()
             else:
                 event.ignore()
+                return
         event.accept()
 
 
@@ -580,8 +582,8 @@ class FileCopyThread(QThread):
                 return Path(file_path).stat().st_size
         except Exception as e:
             logger.error(f"Error getting file size for {file_path}: {e}")
-            if self._smb_handler:
-                self.file_error.emit(file_path, str(f"File size cannot be determined. {e}"))
+            if self._smb_handler and SmbFileHandler.is_smb_path(file_path):
+                self.file_error.emit(file_path, f"File size cannot be determined. {e}")
                 self.smb_error_cancel.emit()
             return 0
 
@@ -764,7 +766,6 @@ class SmbFileHandler:
             raise ValueError("Server and share must be specified!")
 
         key = (server, share)
-        mount_point = tempfile.mkdtemp(prefix=f"smb_{server}_{share}_")
 
         with QMutexLocker(self.mutex):
             if key in self._mounted_shares and os.path.ismount(self._mounted_shares[key]):
@@ -794,18 +795,24 @@ class SmbFileHandler:
             self._mounting_shares.add(key)
             if key not in self._mount_wait_conditions:
                 self._mount_wait_conditions[key] = QWaitCondition()
+
+        mount_point = tempfile.mkdtemp(prefix=f"smb_{server}_{share}_")
+
         try:
             if self.thread and getattr(self.thread, 'cancelled', False):
                 raise RuntimeError("Operation cancelled before mount")
+
             self.initialize()
             username, password = self._smb_credentials[:2]
             domain = self._smb_credentials[2] if len(self._smb_credentials) > 2 else None
+
             cmd = ['sudo', 'mount.cifs', f'//{server}/{share}', mount_point]
             opts = [f'username={username}', f'password={password}']
             if domain:
                 opts.append(f'domain={domain}')
             opts += ['uid=1000', 'gid=1000', 'iocharset=utf8']
             cmd.extend(['-o', ','.join(opts)])
+
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
             if proc.returncode == 0:
                 with QMutexLocker(self.mutex):
@@ -813,15 +820,20 @@ class SmbFileHandler:
             else:
                 if self.thread and getattr(self.thread, 'cancelled', False):
                     raise RuntimeError("Operation cancelled")
+
                 sudo_password = self._get_sudo_password()
                 cmd = ['sudo', '-S', 'mount.cifs', f'//{server}/{share}', mount_point, '-o', ','.join(opts)]
                 proc_2 = subprocess.run(cmd, input=f"{sudo_password}\n", capture_output=True, text=True, timeout=10)
                 if proc_2.returncode != 0:
-                    os.rmdir(mount_point)
+                    if os.path.exists(mount_point):
+                        os.rmdir(mount_point)
                     raise RuntimeError(f"Mount failed: {proc_2.stderr}")
+
                 with QMutexLocker(self.mutex):
                     self._mounted_shares[key] = mount_point
+
             return mount_point
+
         except subprocess.TimeoutExpired:
             if os.path.exists(mount_point):
                 os.rmdir(mount_point)
@@ -838,12 +850,33 @@ class SmbFileHandler:
 
     @staticmethod
     def _unmount_smb_share(mount_point, sudo_password=None):
+        if not mount_point or not os.path.exists(mount_point):
+            return
+
         try:
-            cmd = ['sudo', '-S', 'umount', mount_point] if sudo_password else ['sudo', 'umount', mount_point]
-            subprocess.run(cmd, input=f"{sudo_password}\n" if sudo_password else None, capture_output=True, text=True)
-            os.rmdir(mount_point)
+            cmd = ['sudo', 'umount', mount_point]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+
+            if result.returncode != 0 and sudo_password:
+                cmd = ['sudo', '-S', 'umount', mount_point]
+                result = subprocess.run(cmd, input=f"{sudo_password}\n", capture_output=True, text=True, timeout=5)
+
+            if result.returncode != 0:
+                cmd = ['sudo', 'umount', '-l', mount_point]
+                subprocess.run(cmd, capture_output=True, text=True, timeout=3)
+
         except Exception as e:
             logger.warning(f"Warning: Could not unmount {mount_point}: {e}")
+            try:
+                subprocess.run(['sudo', 'umount', '-l', mount_point], timeout=3, capture_output=True)
+            except Exception as e:
+                logger.warning(f"Warning: Could not unmount {mount_point}: {e}")
+        finally:
+            try:
+                if os.path.exists(mount_point) and not os.listdir(mount_point):
+                    os.rmdir(mount_point)
+            except Exception as e:
+                logger.warning(f"Could not remove mount point {mount_point}: {e}")
 
     def _smb_path_to_local(self, smb_path):
         server, share, path = self.parse_smb_url(smb_path)
@@ -1106,14 +1139,18 @@ class VirtualLogTabWidget(QWidget):
         self.entries = []
         self.entry_types = []
         self.pending_entries = []
+        self._mutex = QMutex()
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
+
         search_label = QLabel("Search:")
         search_label.setStyleSheet("color: #e0e0e0;")
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("Filter entries...")
         layout.addWidget(search_label)
         layout.addWidget(self.search_box)
+
         self.model = LogEntryListModel(self.entries, self.entry_types)
         self.list_view = QListView()
         self.list_view.setModel(self.model)
@@ -1121,23 +1158,29 @@ class VirtualLogTabWidget(QWidget):
         self.list_view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.list_view.setWordWrap(True)
         layout.addWidget(self.list_view)
+
         self.search_box.textChanged.connect(self.model.setFilter)
+
         self._flush_timer = QTimer(self)
         self._flush_timer.setInterval(300)
+        self._flush_timer.setSingleShot(True)
         self._flush_timer.timeout.connect(self.flush_entries)
-        self._flush_timer.start()
 
     def add_entry(self, entry, entry_type):
-        self.pending_entries.append((entry, entry_type))
+        with QMutexLocker(self._mutex):
+            self.pending_entries.append((entry, entry_type))
+
         if not self._flush_timer.isActive():
             self._flush_timer.start()
 
     def flush_entries(self):
-        if not self.pending_entries:
-            return
+        with QMutexLocker(self._mutex):
+            if not self.pending_entries:
+                return
 
-        entries_to_add = self.pending_entries[:100]
-        remaining = self.pending_entries[100:]
+            entries_to_add = self.pending_entries[:100]
+            self.pending_entries = self.pending_entries[100:]
+            has_remaining = bool(self.pending_entries)
 
         if entries_to_add:
             start = len(self.entries)
@@ -1150,9 +1193,7 @@ class VirtualLogTabWidget(QWidget):
 
             self.model.setFilter(self.model.filter)
 
-        self.pending_entries = remaining
-
-        if self.pending_entries:
+        if has_remaining:
             self._flush_timer.start()
 
     def sort_entries(self):
