@@ -59,13 +59,7 @@ Under **Installer Operations** you can specify how you would like to proceed. Ea
     python -m main
     ```
 
-4. **(Optional) Install as a CLI command:**
-    ```sh
-    pip install -e .
-    main
-    ```
-
-5. **(Optional) Build a standalone binary with PyInstaller:**
+4. **(Optional) Build a standalone binary with PyInstaller:**
     ```sh
     pyinstaller --onefile main.py
     ```
@@ -108,4 +102,3 @@ This software is provided "as is", without warranty of any kind. Always test you
 ![Package Installer Dialog](images/Package%20Installer%20Dialog.png)
 ![Package Installer Operations](images/Package%20Installer%20Operations.png)
 ![Package Installer Options](images/Package%20Installer%20Options.png)
-
