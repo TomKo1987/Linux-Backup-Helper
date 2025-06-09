@@ -55,7 +55,7 @@ class SudoPasswordDialog(QDialog):
             self.info_label.setStyleSheet("color: red; font-style: italic; font-weight: bold;")
         else:
             msg = f"Note: For security, only one authentication attempt will be made.\nFailed attempts: {self.failed_attempts}"
-            self.info_label.setStyleSheet("color: #6b811b; font-style: italic; font-weight: normal;")
+            self.info_label.setStyleSheet("color: #666; font-style: italic; font-weight: normal;")
         self.info_label.setText(msg)
         self.adjustSize()
 
