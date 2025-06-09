@@ -26,12 +26,12 @@ class SambaPasswordDialog(QDialog):
         try:
             current_user = os.getlogin()
         except OSError:
-            current_user = getpass.getuser() if hasattr(__builtins__, 'getpass') else "user"
+            current_user = getpass.getuser()
         try:
             username, password = self.samba_password_manager.get_samba_credentials()
             if password:
                 keyring_source = "KWallet" if self.samba_password_manager.kwallet_entry else "system keyring"
-                self.password_from_keyring = self.samba_password_manager.kwallet_entry is None
+                self.password_from_keyring = self.samba_password_manager.kwallet_entry is not None
                 info_text = f"(Password extracted from {keyring_source}.)"
                 self.has_existing_credentials = True
             else:
@@ -61,12 +61,13 @@ class SambaPasswordDialog(QDialog):
             credentials_available_label = QLabel("Credentials already available.\nNo need to save again unless you want to change them.")
             credentials_available_label.setStyleSheet("color: lightgreen;")
             layout.addWidget(credentials_available_label)
+        else:
             self.delete_button = QPushButton("Delete credentials")
             self.delete_button.clicked.connect(self.del_samba_credentials)
             button_box.addWidget(self.delete_button)
         self.save_button.setText("Update credentials") if self.has_existing_credentials else self.save_button.setText("Save")
         button_box.addWidget(self.save_button)
-        self.setMinimumSize(475, 325)
+        self.setMinimumSize(575, 375)
         layout.addWidget(self.username_label)
         layout.addWidget(self.username_field)
         layout.addWidget(self.password_label)
@@ -124,7 +125,8 @@ class SambaPasswordManager:
         if self.kwallet_entry:
             return self.kwallet_entry
         try:
-            result = subprocess.run(["kwallet-query", "--list-entries", self.kwallet_wallet], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=2)
+            result = subprocess.run(["kwallet-query", "--list-entries", self.kwallet_wallet],
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=2)
             entries = result.stdout.strip().splitlines()
             for entry in entries:
                 if entry.startswith("smb-"):
@@ -140,7 +142,8 @@ class SambaPasswordManager:
         if not entry:
             return None, None
         try:
-            result = subprocess.run(["kwallet-query", "--read-password", entry, self.kwallet_wallet], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=2)
+            result = subprocess.run(["kwallet-query", "--read-password", entry, self.kwallet_wallet],
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=2)
             raw = result.stdout.strip()
             if not raw:
                 return None, None
@@ -157,7 +160,8 @@ class SambaPasswordManager:
             self.kwallet_entry = entry
         try:
             data = json.dumps({"login": username, "password": password})
-            with subprocess.Popen(["kwallet-query", "--write-password", entry, self.kwallet_wallet], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as proc:
+            with subprocess.Popen(["kwallet-query", "--write-password", entry, self.kwallet_wallet],
+                                  stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as proc:
                 proc.communicate(input=data.encode(), timeout=2)
             logger.info(f"Saved samba credentials to KWallet entry: {entry}")
         except Exception as e:
@@ -170,7 +174,10 @@ class SambaPasswordManager:
             logger.info("Retrieved samba password from KWallet")
             return username, password
         try:
-            username = os.getlogin()
+            try:
+                username = os.getlogin()
+            except OSError:
+                username = getpass.getuser()
             password = keyring.get_password(self.keyring_service, username)
             if password:
                 logger.info("Retrieved samba password from system keyring")
@@ -192,9 +199,21 @@ class SambaPasswordManager:
 
     def delete_samba_credentials(self, username):
         success = True
+        entry = self._find_kwallet_entry()
+        if entry:
+            try:
+                subprocess.run(["kwallet-query", "--delete-entry", entry, self.kwallet_wallet],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
+                logger.info(f"Deleted KWallet entry: {entry}")
+                self.kwallet_entry = None
+            except Exception as e:
+                logger.exception(f"Failed to delete from KWallet: {e}")
+                success = False
         try:
             keyring.delete_password(self.keyring_service, username)
             logger.info(f"Deleted samba password for {username} from keyring")
+        except keyring.errors.PasswordDeleteError:
+            logger.warning(f"No such password in keyring for {username}; nothing to delete.")
         except Exception as e:
             logger.exception(f"Failed to delete from keyring for {username}: {e}")
             success = False
