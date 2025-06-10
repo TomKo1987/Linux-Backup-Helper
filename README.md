@@ -18,6 +18,7 @@ As this is my first project and I am new to programming, I would be very gratefu
 ## Package Installer Usage and Tips
 
 First you can select **System Files** in Package Installer. These files will be copied using `sudo`, for root privilege. If you have System Files selected, Package Installer will copy these first.
+This allows you to copy files such as 'pacman.conf' or 'smb.conf' to '/etc/'.
 
 Under **Installer Operations** you can specify how you would like to proceed. Each action is executed one after the other. Uncheck actions to disable them.
 
