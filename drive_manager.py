@@ -7,7 +7,7 @@ user = pwd.getpwuid(os.getuid()).pw_name
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-if not logger.handlers:
+if not logger.hasHandlers():
     handler = logging.StreamHandler()
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
     handler.setFormatter(formatter)
@@ -38,7 +38,8 @@ class DriveManager:
             if isinstance(path, str):
                 if not path.strip():
                     return None
-                if any(char in path for char in ['..', ';', '|', '&']):
+                suspicious_patterns = ['..', ';', '|', '&', '$(', '`', '<', '>', '\x00']
+                if any(pattern in path for pattern in suspicious_patterns):
                     logger.warning(f"Suspicious path detected: {path}")
                     return None
                 path_str = str(Path(path).expanduser().resolve())
@@ -149,10 +150,14 @@ class DriveManager:
         except subprocess.TimeoutExpired:
             logger.error(f"[mount_drive] Mount command for drive '{name}' timed out.")
             try:
-                subprocess.run(['pkill', '-f', shlex.quote(cmd)], timeout=5)
-            except Exception as e:
-                logger.exception(f"[mount_drive] Unexpected error mounting drive '{name}': {e}")
-                self._show_message("Mount Error", f"Unexpected error mounting drive '{name}': {e}", QMessageBox.Icon.Critical, parent)
+                subprocess.run(['pkill', '-f', shlex.quote(cmd)], timeout=5, check=False)
+            except Exception as kill_error:
+                logger.warning(f"[mount_drive] Could not kill mount process: {kill_error}")
+            self._show_message("Mount Error", f"Mount command for drive '{name}' timed out.", QMessageBox.Icon.Warning, parent)
+            return False
+        except Exception as e:
+            logger.exception(f"[mount_drive] Unexpected error mounting drive '{name}': {e}")
+            self._show_message("Mount Error", f"Unexpected error mounting drive '{name}': {e}", QMessageBox.Icon.Critical, parent)
             return False
 
     def unmount_drive(self, drive, parent=None):
@@ -203,9 +208,9 @@ class DriveManager:
             if not self.unmount_drive(drive, parent):
                 success = False
 
-        if success:
-            logger.info("[unmount_drives] All drives unmounted successfully. Clearing unmount list.")
-            with self._lock:
+        with self._lock:
+            if success:
+                logger.info("[unmount_drives] All drives unmounted successfully. Clearing unmount list.")
                 self.drives_to_unmount.clear()
         return success
 
