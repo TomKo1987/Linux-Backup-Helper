@@ -42,30 +42,9 @@ class BaseWindow(QDialog):
         self.setup_ui()
 
     def setup_ui(self):
-        if hasattr(self, '_last_entries_hash') and hasattr(self, '_last_ui_state'):
-            current_hash = hash(str(getattr(Options, 'entries_sorted', [])))
-            current_ui_state = (
-                self.window_type,
-                Options.ui_settings.get(f"{self.window_type}_window_columns", 2),
-                len(Options.header_order),
-                len(Options.header_inactive)
-            )
-
-            if (current_hash == self._last_entries_hash and
-                    current_ui_state == self._last_ui_state):
-                return
-
-            self._last_entries_hash = current_hash
-            self._last_ui_state = current_ui_state
-        else:
-            self._tooltip_cache = None
-            self._last_entries_hash = hash(str(getattr(Options, 'entries_sorted', [])))
-            self._last_ui_state = (
-                self.window_type,
-                Options.ui_settings.get(f"{self.window_type}_window_columns", 2),
-                len(Options.header_order),
-                len(Options.header_inactive)
-            )
+        self._last_entries_hash = None
+        self._last_ui_state = None
+        self._tooltip_cache = None
 
         Options.sort_entries()
         self.clear_layout_contents()
@@ -87,6 +66,14 @@ class BaseWindow(QDialog):
         self.add_control_buttons(layout, row_counter)
         self.scroll_area.setWidget(self.content_widget)
         self.adjust_window_size()
+
+        self._last_entries_hash = hash(str(getattr(Options, 'entries_sorted', [])))
+        self._last_ui_state = (
+            self.window_type,
+            Options.ui_settings.get(f"{self.window_type}_window_columns", 2),
+            len(Options.header_order),
+            len(Options.header_inactive)
+        )
 
     def create_top_controls(self, column_text):
         self._clear_layout(self.top_controls)
@@ -154,7 +141,7 @@ class BaseWindow(QDialog):
                                 added = True
                             break
                     if not added:
-                        checkbox.setStyleSheet(ch_style)  
+                        checkbox.setStyleSheet(ch_style)
                         layout.addWidget(checkbox, row, col)
                         col += 1
                 else:
