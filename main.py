@@ -4,8 +4,8 @@ import json, sys, logging.handlers
 from base_window import BaseWindow
 from global_style import global_style
 from drive_manager import DriveManager
+from file_process import SmbFileHandler
 from settings_window import SettingsWindow
-from file_process import FileProcessDialog, SmbFileHandler
 from PyQt6.QtCore import Qt, pyqtSignal, QCoreApplication, QTimer
 from package_installer_launcher_dialog_thread import PackageInstallerLauncher
 from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QMessageBox, QMainWindow
@@ -14,7 +14,7 @@ sys.setrecursionlimit(5000)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-if not logger.handlers:
+if not logger.hasHandlers():
     handler = logging.StreamHandler()
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
     handler.setFormatter(formatter)
@@ -74,12 +74,14 @@ class MainWindow(QMainWindow):
         if self.backup_restore_window:
             try:
                 self.backup_restore_window.close()
+            except RuntimeError:
+                pass
+            try:
                 self.backup_restore_window.deleteLater()
             except RuntimeError:
                 pass
             finally:
                 self.backup_restore_window = None
-
         try:
             self.backup_restore_window = BackupRestoreWindow(self, window_type)
             self.backup_restore_window.show()
@@ -92,12 +94,14 @@ class MainWindow(QMainWindow):
         if self.settings_window:
             try:
                 self.settings_window.close()
+            except RuntimeError:
+                pass
+            try:
                 self.settings_window.deleteLater()
             except RuntimeError:
                 pass
             finally:
                 self.settings_window = None
-
         try:
             self.settings_window = SettingsWindow(self)
             self.settings_window.show()
@@ -197,7 +201,8 @@ class BackupRestoreWindow(BaseWindow):
             return
         processable_checkbox_dirs = self._get_processable_checkbox_dirs()
         operation_type = "Backup" if self.window_type == "backup" else "Restore"
-        dialog = BackupRestoreProcessDialog(self, processable_checkbox_dirs, operation_type=operation_type)
+        from file_process import FileProcessDialog
+        dialog = FileProcessDialog(self, processable_checkbox_dirs, operation_type=operation_type)
         dialog.exec()
         self.show()
         self.drive_manager.unmount_drives()
@@ -272,12 +277,6 @@ class BackupRestoreWindow(BaseWindow):
             if source_exists:
                 result.append((checkbox, source_dirs, dest_dirs, label))
         return result
-
-
-# noinspection PyUnresolvedReferences
-class BackupRestoreProcessDialog(FileProcessDialog):
-    def __init__(self, parent, checkbox_dirs, operation_type="Backup"):
-        super().__init__(parent, checkbox_dirs, operation_type)
 
 
 def main():
