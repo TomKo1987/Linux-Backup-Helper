@@ -8,6 +8,12 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QP
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+if not logger.hasHandlers():
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
 
 # noinspection PyUnresolvedReferences
 class BaseWindow(QDialog):
@@ -225,13 +231,10 @@ class BaseWindow(QDialog):
                 return sublayout_entries
 
             for entry in Options.all_entries:
-                if not (hasattr(entry, 'details') and hasattr(entry, 'title')):
+                if not hasattr(entry, 'details') or not isinstance(entry.details, dict):
                     continue
 
-                if not isinstance(entry.details, dict):
-                    continue
-
-                title = getattr(entry, 'title', '')
+                title = entry.title if hasattr(entry, 'title') else entry.details.get('title', '')
                 if not title:
                     continue
 
@@ -352,11 +355,15 @@ class BaseWindow(QDialog):
         if layout is None:
             return
 
+        # Optimiert: Sammle alle Items zuerst
+        items = []
         while layout.count():
             item = layout.takeAt(0)
-            if item is None:
-                continue
+            if item is not None:
+                items.append(item)
 
+        # Dann bereinige sie
+        for item in items:
             widget = item.widget()
             if widget:
                 try:
@@ -368,7 +375,11 @@ class BaseWindow(QDialog):
                     logger.warning(f"Error cleaning up widget: {e}")
             elif item.layout():
                 self._clear_layout(item.layout())
-                item.layout().deleteLater()
+                try:
+                    item.layout().deleteLater()
+                except Exception as e:
+                    logger.warning(f"Error cleaning up widget: {e}")
+                    pass
 
     def clear_layout_contents(self):
         self._clear_layout(self.top_controls)
@@ -389,7 +400,14 @@ class BaseWindow(QDialog):
             return
 
         try:
-            regular_checkboxes = [cb for cb, *_ in self.checkbox_dirs if cb != self.selectall and cb.isVisible()]
+            regular_checkboxes = []
+            for cb, *_ in self.checkbox_dirs:
+                if cb != self.selectall and cb.isVisible() and not cb.isHidden():
+                    try:
+                        cb.isChecked()
+                        regular_checkboxes.append(cb)
+                    except (RuntimeError, AttributeError):
+                        continue
 
             if not regular_checkboxes:
                 return
@@ -462,11 +480,14 @@ class BaseWindow(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        for cb, *_ in self.checkbox_dirs:
-            if cb.isChecked():
-                cb.setChecked(False)
-        if hasattr(self, 'selectall') and self.selectall.isVisible():
-            self.selectall.setFocus()
+        try:
+            for cb, *_ in self.checkbox_dirs:
+                if cb.isChecked():
+                    cb.setChecked(False)
+            if hasattr(self, 'selectall') and self.selectall and self.selectall.isVisible():
+                self.selectall.setFocus()
+        except (RuntimeError, AttributeError) as e:
+            logger.warning(f"Error in showEvent: {e}")
 
     def go_back(self):
         self.close()
