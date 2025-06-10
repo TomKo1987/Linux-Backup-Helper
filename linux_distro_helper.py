@@ -3,11 +3,13 @@ import subprocess, platform, os, logging.handlers, re, concurrent.futures
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-if not logger.handlers:
+if not logger.hasHandlers():
     handler = logging.StreamHandler()
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
     handler.setFormatter(formatter)
     logger.addHandler(handler)
+
+PACKAGE_NAME_REGEX = re.compile(r'^[a-zA-Z0-9._+:-]+$')
 
 
 class LinuxDistroHelper:
@@ -130,7 +132,7 @@ class LinuxDistroHelper:
     def package_is_installed(self, package):
         if not package or not isinstance(package, str) or not package.strip():
             return False
-        if not re.match(r'^[a-zA-Z0-9._+:-]+$', package) or len(package) > 255:
+        if not PACKAGE_NAME_REGEX.match(package) or len(package) > 255:
             logger.warning(f"Invalid package name: {package}")
             return False
 
@@ -166,8 +168,20 @@ class LinuxDistroHelper:
 
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-                results = list(executor.map(self.package_is_installed, valid_packages))
-            return [pkg for pkg, is_installed in zip(valid_packages, results) if not is_installed]
+                future_to_pkg = {executor.submit(self.package_is_installed, pkg): pkg for pkg in valid_packages}
+                results = []
+                for future in concurrent.futures.as_completed(future_to_pkg, timeout=30):
+                    pkg = future_to_pkg[future]
+                    try:
+                        is_installed = future.result()
+                        results.append((pkg, is_installed))
+                    except Exception as e:
+                        logger.warning(f"Error checking package {pkg}: {e}")
+                        results.append((pkg, False))
+                return [pkg for pkg, is_installed in results if not is_installed]
+        except concurrent.futures.TimeoutError:
+            logger.error("Timeout in concurrent package checking, falling back to sequential")
+            return [pkg for pkg in valid_packages if not self.package_is_installed(pkg)]
         except Exception as e:
             logger.error(f"Error in concurrent package checking: {e}")
             return [pkg for pkg in valid_packages if not self.package_is_installed(pkg)]
