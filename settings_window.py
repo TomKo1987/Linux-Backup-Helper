@@ -217,15 +217,19 @@ class SettingsWindow(BaseWindow):
                     source = self.source_edit.text().strip()
                     destination = self.destination_edit.text().strip()
 
-                if not all([title, source, destination]):
+                if not all([title, source, destination]) or not title.strip():
                     self.show_message("Error", "All fields must be filled in to add a new entry.")
                     return
 
-                existing_titles = {
-                    entry.title.lower()
-                    for entry in getattr(Options, 'all_entries', [])
-                    if not edit_mode or entry.title.lower() != title_checkbox.lower()
-                }
+                existing_titles = set()
+                for entry in getattr(Options, 'all_entries', []):
+                    try:
+                        entry_title = entry.title if hasattr(entry, 'title') else entry.details.get('title', '')
+                        if entry_title and (not edit_mode or entry_title.lower() != title_checkbox.lower()):
+                            existing_titles.add(entry_title.lower())
+                    except (AttributeError, TypeError):
+                        continue
+
                 if title.lower() in existing_titles:
                     self.show_message("Duplicate Title", "An entry with this title already exists. Please choose a different title.")
                     return
@@ -566,22 +570,37 @@ class SettingsWindow(BaseWindow):
             Options.header_inactive = []
 
         new_header_order, new_header_inactive = [], []
+
         for i in range(list_widget.count()):
             item_widget = list_widget.itemWidget(list_widget.item(i))
             if not item_widget:
                 continue
+
             header_btn = item_widget.findChild(QPushButton)
             if not header_btn:
                 continue
-            header = header_btn.text()
+
+            header = header_btn.text().strip()
+            if not header:
+                continue
+
             new_header_order.append(header)
             cb = item_widget.findChild(QCheckBox, "inactive_checkbox")
             if cb and cb.isChecked():
                 new_header_inactive.append(header)
+
         Options.header_order = new_header_order
         Options.header_inactive = new_header_inactive
+
         for entry in Options.all_entries:
-            entry.details['inactive'] = entry.header in new_header_inactive
+            try:
+                if hasattr(entry, 'details') and isinstance(entry.details, dict):
+                    entry_header = entry.header if hasattr(entry, 'header') else entry.details.get('header', '')
+                    entry.details['inactive'] = entry_header in new_header_inactive
+            except (AttributeError, TypeError) as e:
+                logger.warning(f"Error updating entry inactive status: {e}")
+                continue
+
         Options.save_config()
         self.show_message("Success", "Header-Settings successfully saved!")
 
@@ -601,7 +620,7 @@ class SettingsWindow(BaseWindow):
 
         if hasattr(self, 'mount_options_dialog') and self.mount_options_dialog:
             try:
-                if hasattr(self.mount_options_dialog, 'close'):
+                if not self.mount_options_dialog.isHidden():
                     self.mount_options_dialog.close()
             except (RuntimeError, AttributeError):
                 pass
@@ -610,6 +629,8 @@ class SettingsWindow(BaseWindow):
 
         self.mount_options_dialog = QDialog(self)
         dialog = self.mount_options_dialog
+
+        dialog.finished.connect(lambda: setattr(self, 'mount_options_dialog', None))
         dialog.setMinimumSize(550, 300)
         dialog.setWindowTitle("Mount Options")
         layout = QVBoxLayout(dialog)
