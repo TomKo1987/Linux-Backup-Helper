@@ -154,7 +154,7 @@ class BaseWindow(QDialog):
                                 added = True
                             break
                     if not added:
-                        checkbox.setStyleSheet(ch_style)  # Diese Zeile hinzufügen
+                        checkbox.setStyleSheet(ch_style)  
                         layout.addWidget(checkbox, row, col)
                         col += 1
                 else:
