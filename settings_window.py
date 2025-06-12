@@ -1,3 +1,4 @@
+import logging.handlers
 from options import Options
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
@@ -7,6 +8,15 @@ from package_installer_options import PackageInstallerOptions
 from PyQt6.QtWidgets import (QMessageBox, QDialog, QVBoxLayout, QLabel, QFormLayout, QComboBox, QLineEdit, QPushButton,
                              QSizePolicy, QHBoxLayout, QWidget, QCheckBox, QGridLayout, QDialogButtonBox, QColorDialog,
                              QFileDialog, QTextEdit, QListWidget, QListWidgetItem, QInputDialog)
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+if not logger.hasHandlers():
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 
 # noinspection PyUnresolvedReferences
@@ -176,7 +186,7 @@ class SettingsWindow(BaseWindow):
                     checkboxes[entry_key].setEnabled(not disabled)
 
             def make_sublayout_handler(num):
-                def handler(state):
+                def entry_handler(state):
                     if state == Qt.CheckState.Checked:
                         checkboxes['no_restore'].blockSignals(True)
                         checkboxes['no_restore'].setChecked(False)
@@ -195,7 +205,7 @@ class SettingsWindow(BaseWindow):
                             if entry_i != num:
                                 checkboxes[f'sublayout_games_{entry_i}'].setEnabled(True)
 
-                return handler
+                return entry_handler
 
             checkboxes['no_restore'].stateChanged.connect(update_restore)
             for i in range(1, 5):
@@ -630,7 +640,11 @@ class SettingsWindow(BaseWindow):
         self.mount_options_dialog = QDialog(self)
         dialog = self.mount_options_dialog
 
-        dialog.finished.connect(lambda: setattr(self, 'mount_options_dialog', None))
+        def cleanup_dialog():
+            if hasattr(self, 'mount_options_dialog'):
+                self.mount_options_dialog = None
+
+        dialog.finished.connect(cleanup_dialog)
         dialog.setMinimumSize(550, 300)
         dialog.setWindowTitle("Mount Options")
         layout = QVBoxLayout(dialog)
@@ -663,8 +677,10 @@ class SettingsWindow(BaseWindow):
         close_btn.clicked.connect(dialog.accept)
         layout.addWidget(close_btn)
 
-        dialog.exec()
-        self.show()
+        try:
+            dialog.exec()
+        finally:
+            self.show()
 
     def _toggle_auto_mount(self, checked):
         Options.run_mount_command_on_launch = checked
@@ -681,10 +697,11 @@ class SettingsWindow(BaseWindow):
         dialog.setWindowTitle(title)
 
         def close_parent_safely():
-            if parent_dialog and hasattr(parent_dialog, 'close'):
+            if parent_dialog:
                 try:
-                    parent_dialog.close()
-                except RuntimeError:
+                    if hasattr(parent_dialog, 'close') and not parent_dialog.isHidden():
+                        parent_dialog.close()
+                except (RuntimeError, AttributeError):
                     pass
 
         dialog.show()
@@ -714,7 +731,8 @@ class SettingsWindow(BaseWindow):
         layout.addLayout(btn_layout)
 
         dialog.exec()
-        self.manage_mount_options()
+        if not dialog.result() == QDialog.DialogCode.Rejected:
+            self.manage_mount_options()
 
     def _delete_mount_option(self, option, parent_dialog=None):
         drive_name = option.get('drive_name', 'Unknown')
