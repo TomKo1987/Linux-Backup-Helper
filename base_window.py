@@ -42,6 +42,18 @@ class BaseWindow(QDialog):
         self.setup_ui()
 
     def setup_ui(self):
+        current_entries_hash = hash(str(getattr(Options, 'entries_sorted', [])))
+        current_ui_state = (
+            self.window_type,
+            Options.ui_settings.get(f"{self.window_type}_window_columns", 2),
+            len(getattr(Options, 'header_order', [])),
+            len(getattr(Options, 'header_inactive', []))
+        )
+
+        if (self._last_entries_hash == current_entries_hash and
+                self._last_ui_state == current_ui_state):
+            return
+
         self._last_entries_hash = None
         self._last_ui_state = None
         self._tooltip_cache = None
@@ -193,16 +205,14 @@ class BaseWindow(QDialog):
             tooltip_dict = self._tooltip_cache.get(checkbox.window_type, {})
             tip_key = f"{checkbox.text()}_tooltip"
 
-            if tip_key in tooltip_dict:
-                checkbox.setToolTip(tooltip_dict[tip_key])
-                checkbox.setToolTipDuration(600000)
-                checkbox._tooltip_set = True
-            else:
-                checkbox.setToolTip("No detailed information available")
-                checkbox._tooltip_set = True
+            tooltip_content = tooltip_dict.get(tip_key, "No detailed information available")
+            checkbox.setToolTip(tooltip_content)
+            checkbox.setToolTipDuration(600000)
+            checkbox._tooltip_set = True
 
         except Exception as e:
             logger.warning(f"Error setting tooltip: {e}")
+            checkbox.setToolTip("No detailed information available")
             checkbox._tooltip_set = True
 
         try:
@@ -343,20 +353,20 @@ class BaseWindow(QDialog):
         if layout is None:
             return
 
-        # Optimiert: Sammle alle Items zuerst
-        items = []
+        items_to_clean = []
         while layout.count():
             item = layout.takeAt(0)
             if item is not None:
-                items.append(item)
+                items_to_clean.append(item)
 
-        # Dann bereinige sie
-        for item in items:
+        for item in items_to_clean:
             widget = item.widget()
             if widget:
                 try:
                     widget.blockSignals(True)
                     widget.clearFocus()
+                    if hasattr(widget, 'enterEvent'):
+                        widget.enterEvent = None
                     widget.setParent(None)
                     widget.deleteLater()
                 except Exception as e:
@@ -366,14 +376,25 @@ class BaseWindow(QDialog):
                 try:
                     item.layout().deleteLater()
                 except Exception as e:
-                    logger.warning(f"Error cleaning up widget: {e}")
-                    pass
+                    logger.warning(f"Error cleaning up layout: {e}")
 
     def clear_layout_contents(self):
+        self._tooltip_cache = None
+
+        for cb, *_ in self.checkbox_dirs:
+            if hasattr(cb, '_tooltip_set'):
+                delattr(cb, '_tooltip_set')
+            if hasattr(cb, 'enterEvent'):
+                cb.enterEvent = None
+            cb.blockSignals(True)
+
         self._clear_layout(self.top_controls)
+
         if self.scroll_area.widget():
             old_widget = self.scroll_area.takeWidget()
-            old_widget.deleteLater()
+            if old_widget:
+                old_widget.deleteLater()
+
         self.content_widget = None
         self.checkbox_dirs.clear()
 
@@ -487,6 +508,12 @@ class BaseWindow(QDialog):
             for cb, *_ in self.checkbox_dirs:
                 if hasattr(cb, '_tooltip_set'):
                     delattr(cb, '_tooltip_set')
+                if hasattr(cb, 'enterEvent'):
+                    cb.enterEvent = None
+                if hasattr(cb, 'entry_data'):
+                    delattr(cb, 'entry_data')
+                if hasattr(cb, 'window_type'):
+                    delattr(cb, 'window_type')
                 cb.blockSignals(True)
 
             self.clear_layout_contents()
