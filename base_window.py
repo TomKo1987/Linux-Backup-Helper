@@ -22,7 +22,8 @@ class BaseWindow(QDialog):
     def __init__(self, parent=None, window_type="base"):
         super().__init__(parent)
         self.window_type = window_type
-        self.setWindowTitle({"backup": "Create Backup", "restore": "Restore Backup", "settings": "Settings"}.get(window_type, "Window"))
+        self.setWindowTitle(
+            {"backup": "Create Backup", "restore": "Restore Backup", "settings": "Settings"}.get(window_type, "Window"))
         self._last_entries_hash = None
         self._last_ui_state = None
         self.content_widget = None
@@ -111,11 +112,13 @@ class BaseWindow(QDialog):
         row = 0
         self.checkbox_dirs.clear()
 
-        active_headers = (Options.headers if self.window_type == "settings" else [h for h in Options.headers if h not in Options.header_inactive])
+        active_headers = (Options.headers if self.window_type == "settings" else [h for h in Options.headers if
+                                                                                  h not in Options.header_inactive])
 
         filter_key = "no_backup" if self.window_type == "backup" else "no_restore"
 
-        all_filtered_entries = [e for e in getattr(Options, 'entries_sorted', []) if self.window_type == "settings" or not e.get(filter_key, False)]
+        all_filtered_entries = [e for e in getattr(Options, 'entries_sorted', []) if
+                                self.window_type == "settings" or not e.get(filter_key, False)]
 
         header_entries = {}
         for entry in all_filtered_entries:
@@ -258,9 +261,13 @@ class BaseWindow(QDialog):
             ch_layout = QHBoxLayout()
             name = Options.sublayout_names.get(key, f'Sublayout Games {i}')
             select_all = QCheckBox(name)
-            color = "#7f7f7f" if self.window_type == "settings" and "Games" in Options.header_inactive else Options.header_colors.get("Games", "#ffffff")
+            color = "#7f7f7f" if self.window_type == "settings" and "Games" in Options.header_inactive else Options.header_colors.get(
+                "Games", "#ffffff")
             select_all.setStyleSheet(f"{global_style} QCheckBox {{color: {color}; font-size: 15px;}}")
-            select_all.clicked.connect(lambda checked, idx=i: self._toggle_sublayout_checkboxes(getattr(self, f'sublayout_games_{idx}'), getattr(self, f'select_all_games_{idx}')))
+            select_all.clicked.connect(lambda checked, idx=i: self._toggle_sublayout_checkboxes(
+                getattr(self, f'sublayout_games_{idx}'),
+                getattr(self, f'select_all_games_{idx}')
+            ))
             setattr(self, f'select_all_games_{i}', select_all)
             ch_layout.addStretch(1)
             ch_layout.addWidget(select_all)
@@ -270,18 +277,23 @@ class BaseWindow(QDialog):
             widget.setStyleSheet("background-color: #2c2f41;")
 
     def add_game_sublayouts(self, layout, row):
-        sublayouts = [(getattr(self, f'sublayout_widget_games_{i}', None), getattr(self, f'sublayout_games_{i}', None)) for i in range(1, 5)]
+        sublayouts = [(getattr(self, f'sublayout_widget_games_{i}', None), getattr(self, f'sublayout_games_{i}', None))
+                      for i in range(1, 5)]
         sublayouts = [(w, l) for w, l in sublayouts if l]
-        def add_spacer(l):
-            if l: l.addItem(QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding))
+
+        def add_spacer(layout_obj):
+            if layout_obj:
+                layout_obj.addItem(QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding))
+
         if not sublayouts:
             return row
+
         if self.columns == 4:
             pairs = [(0, 2), (2, 4)]
             for j, (start, end) in enumerate(pairs):
                 if len(sublayouts) > start:
                     for idx in range(start, min(end, len(sublayouts))):
-                        layout.addWidget(sublayouts[idx][0], row, (idx-start)*2, 1, 2)
+                        layout.addWidget(sublayouts[idx][0], row, (idx - start) * 2, 1, 2)
                         add_spacer(sublayouts[idx][1])
                     row += 1
         else:
@@ -301,7 +313,7 @@ class BaseWindow(QDialog):
             close_btn = QPushButton("Close", self)
             close_btn.clicked.connect(self.go_back)
             layout.addWidget(btn, row, 0, 1, self.columns)
-            layout.addWidget(close_btn, row+1, 0, 1, self.columns)
+            layout.addWidget(close_btn, row + 1, 0, 1, self.columns)
         elif self.window_type == "settings":
             buttons = [('package_installer_settings_button', "Package Installer Options", self.installer_options),
                        ('add_entry_button', "New Entry", lambda: self.entry_dialog(edit_mode=False)),
@@ -318,7 +330,8 @@ class BaseWindow(QDialog):
             layout.addWidget(self.package_installer_settings_button, row, 0, 1, self.columns)
             row += 1
             hbox = QHBoxLayout()
-            for btn in [self.add_entry_button, self.entry_editor_button, self.delete_button, self.header_settings_button]:
+            for btn in [self.add_entry_button, self.entry_editor_button, self.delete_button,
+                        self.header_settings_button]:
                 hbox.addWidget(btn)
             layout.addLayout(hbox, row, 0, 1, self.columns)
             row += 1
@@ -344,8 +357,12 @@ class BaseWindow(QDialog):
         self.content_widget.adjustSize()
         screen = QApplication.primaryScreen().availableGeometry()
         size = self.content_widget.sizeHint()
-        margin = (self.main_layout.contentsMargins().top() + self.main_layout.contentsMargins().bottom() + self.main_layout.spacing() + self.top_controls.sizeHint().height() + 20)
-        self.resize(min(size.width() + 165, screen.width()), min(size.height() + margin, screen.height()))
+        margin = (self.main_layout.contentsMargins().top() +
+                  self.main_layout.contentsMargins().bottom() +
+                  self.main_layout.spacing() +
+                  self.top_controls.sizeHint().height() + 20)
+        self.resize(min(size.width() + 165, screen.width()),
+                    min(size.height() + margin, screen.height()))
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
@@ -454,9 +471,10 @@ class BaseWindow(QDialog):
             checked = select_all_checkbox.isChecked()
             for i in range(layout.count()):
                 item = layout.itemAt(i)
-                cb = item.widget()
-                if cb and isinstance(cb, QCheckBox) and cb != select_all_checkbox:
-                    self._set_checkbox_checked(cb, checked)
+                if item:
+                    cb = item.widget()
+                    if cb and isinstance(cb, QCheckBox) and cb != select_all_checkbox:
+                        self._set_checkbox_checked(cb, checked)
             self.update_select_all_state()
 
     def keyPressEvent(self, event):
@@ -491,8 +509,11 @@ class BaseWindow(QDialog):
         super().showEvent(event)
         try:
             for cb, *_ in self.checkbox_dirs:
-                if cb.isChecked():
-                    cb.setChecked(False)
+                try:
+                    if cb.isChecked():
+                        cb.setChecked(False)
+                except (RuntimeError, AttributeError):
+                    continue
             if hasattr(self, 'selectall') and self.selectall and self.selectall.isVisible():
                 self.selectall.setFocus()
         except (RuntimeError, AttributeError) as e:
@@ -506,15 +527,18 @@ class BaseWindow(QDialog):
             self._tooltip_cache = None
 
             for cb, *_ in self.checkbox_dirs:
-                if hasattr(cb, '_tooltip_set'):
-                    delattr(cb, '_tooltip_set')
-                if hasattr(cb, 'enterEvent'):
-                    cb.enterEvent = None
-                if hasattr(cb, 'entry_data'):
-                    delattr(cb, 'entry_data')
-                if hasattr(cb, 'window_type'):
-                    delattr(cb, 'window_type')
-                cb.blockSignals(True)
+                try:
+                    if hasattr(cb, '_tooltip_set'):
+                        delattr(cb, '_tooltip_set')
+                    if hasattr(cb, 'enterEvent'):
+                        cb.enterEvent = None
+                    if hasattr(cb, 'entry_data'):
+                        delattr(cb, 'entry_data')
+                    if hasattr(cb, 'window_type'):
+                        delattr(cb, 'window_type')
+                    cb.blockSignals(True)
+                except (RuntimeError, AttributeError):
+                    continue
 
             self.clear_layout_contents()
 
