@@ -73,13 +73,12 @@ class MainWindow(QMainWindow):
     def start_backup_restoring(self, window_type):
         if self.backup_restore_window:
             try:
-                self.backup_restore_window.close()
-            except RuntimeError:
-                pass
-            try:
+                if not self.backup_restore_window.isVisible():
+                    self.backup_restore_window.close()
                 self.backup_restore_window.deleteLater()
-            except RuntimeError:
-                pass
+                self.backup_restore_window = None
+            except (RuntimeError, AttributeError):
+                self.backup_restore_window = None
             finally:
                 self.backup_restore_window = None
         try:
@@ -117,11 +116,17 @@ class MainWindow(QMainWindow):
     def on_settings_changed(self):
         self.load_config()
         self.set_exit_button()
-        if self.backup_restore_window:
-            self.backup_restore_window.settings_changed.emit()
-        if self.settings_window:
-            self.settings_window.settings_changed.emit()
-        if self.package_installer_launcher:
+        if self.backup_restore_window and hasattr(self.backup_restore_window, 'settings_changed'):
+            try:
+                self.backup_restore_window.settings_changed.emit()
+            except RuntimeError:
+                pass
+        if self.settings_window and hasattr(self.settings_window, 'settings_changed'):
+            try:
+                self.settings_window.settings_changed.emit()
+            except RuntimeError:
+                pass
+        if self.package_installer_launcher and hasattr(self.package_installer_launcher, 'config'):
             self.package_installer_launcher.config = self.config
 
     def keyPressEvent(self, event):
@@ -147,8 +152,12 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         try:
-            drives = [f"'{opt.get('drive_name')}'" for opt in Options.mount_options
-                      if opt.get('drive_name')]
+            drives = []
+            if hasattr(Options, 'mount_options') and Options.mount_options:
+                drives = [f"'{opt.get('drive_name', 'Unknown')}'"
+                          for opt in Options.mount_options
+                          if isinstance(opt, dict) and opt.get('drive_name')]
+
             text = (f"Exit without unmounting drive{'s' if len(drives) > 1 else ''} "
                     f"{' & '.join(drives)}?"
                     if Options.run_mount_command_on_launch and drives
