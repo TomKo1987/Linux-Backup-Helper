@@ -88,10 +88,10 @@ class DriveManager:
 
     @staticmethod
     def _validate_mount_command(cmd):
-        if not cmd or not cmd.strip():
-            return False, "Empty command"
+        if not cmd or not isinstance(cmd, str) or not cmd.strip():
+            return False, "Empty or invalid command"
 
-        dangerous_patterns = [';', '&&', '||', '|', '$(', '`', '>', '<', '&']
+        dangerous_patterns = [';', '&&', '||', '|', '$(', '`', '>', '<', '&', '\n', '\r', '\x00']
         if any(pattern in cmd for pattern in dangerous_patterns):
             return False, "Contains dangerous characters"
 
@@ -100,12 +100,23 @@ class DriveManager:
             if not tokens:
                 return False, "No valid tokens"
 
-            allowed_commands = ['mount', 'sudo', 'udisksctl']
-            if not any(tokens[0].endswith(allowed_cmd) for allowed_cmd in allowed_commands):
-                return False, f"Command not allowed: {tokens[0]}"
+            allowed_commands = ['mount', 'umount', 'udisksctl']
+            base_cmd = os.path.basename(tokens[0])
+
+            if base_cmd == 'sudo' and len(tokens) > 1:
+                base_cmd = os.path.basename(tokens[1])
+
+            if base_cmd not in allowed_commands:
+                return False, f"Command not allowed: {base_cmd}"
+
+            suspicious_args = ['--exec', '--command', '-c', '--eval']
+            if any(arg in tokens for arg in suspicious_args):
+                return False, "Contains suspicious arguments"
 
         except ValueError as e:
             return False, f"Invalid command syntax: {e}"
+        except Exception as e:
+            return False, f"Command validation error: {e}"
 
         return True, ""
 
