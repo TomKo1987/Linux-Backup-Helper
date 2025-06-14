@@ -130,10 +130,15 @@ class LinuxDistroHelper:
             self.kernel_headers = "linux-headers"
 
     def package_is_installed(self, package):
-        if not package or not isinstance(package, str) or not package.strip():
+        if not package or not isinstance(package, str):
             return False
-        if not PACKAGE_NAME_REGEX.match(package) or len(package) > 255:
-            logger.warning(f"Invalid package name: {package}")
+
+        package = package.strip()
+        if not package or len(package) > 255:
+            return False
+
+        if not PACKAGE_NAME_REGEX.match(package):
+            logger.warning(f"Invalid package name format: {package}")
             return False
 
         try:
@@ -141,18 +146,18 @@ class LinuxDistroHelper:
                 self.pkg_check_installed(package),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                timeout=10,
+                timeout=15,
                 check=False
             )
             return result.returncode == 0
         except subprocess.TimeoutExpired:
             logger.warning(f"Timeout when checking package: {package}")
             return False
-        except FileNotFoundError:
-            logger.warning(f"Package manager command not found when checking {package}")
+        except (FileNotFoundError, OSError) as e:
+            logger.warning(f"System command error when checking {package}: {e}")
             return False
         except Exception as e:
-            logger.error(f"Error when checking {package}: {e}")
+            logger.error(f"Unexpected error when checking {package}: {e}")
             return False
 
     def filter_not_installed(self, packages):
@@ -163,25 +168,27 @@ class LinuxDistroHelper:
         if not valid_packages:
             return []
 
-        if len(valid_packages) <= 10:
+        if len(valid_packages) <= 5:
             return [pkg for pkg in valid_packages if not self.package_is_installed(pkg)]
 
+        max_workers = min(4, len(valid_packages) // 2 + 1)
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-                future_to_pkg = {executor.submit(self.package_is_installed, pkg): pkg for pkg in valid_packages}
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_pkg = {executor.submit(self.package_is_installed, pkg): pkg
+                                 for pkg in valid_packages}
                 results = []
-                for future in concurrent.futures.as_completed(future_to_pkg, timeout=30):
+
+                for future in concurrent.futures.as_completed(future_to_pkg, timeout=45):
                     pkg = future_to_pkg[future]
                     try:
-                        is_installed = future.result()
+                        is_installed = future.result(timeout=5)
                         results.append((pkg, is_installed))
-                    except Exception as e:
+                    except (concurrent.futures.TimeoutError, Exception) as e:
                         logger.warning(f"Error checking package {pkg}: {e}")
                         results.append((pkg, False))
+
                 return [pkg for pkg, is_installed in results if not is_installed]
-        except concurrent.futures.TimeoutError:
-            logger.error("Timeout in concurrent package checking, falling back to sequential")
-            return [pkg for pkg in valid_packages if not self.package_is_installed(pkg)]
+
         except Exception as e:
             logger.error(f"Error in concurrent package checking: {e}")
             return [pkg for pkg in valid_packages if not self.package_is_installed(pkg)]
