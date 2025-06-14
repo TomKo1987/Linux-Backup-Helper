@@ -240,8 +240,9 @@ class SettingsWindow(BaseWindow):
                     except (AttributeError, TypeError):
                         continue
 
-                if title.lower() in existing_titles:
-                    self.show_message("Duplicate Title", "An entry with this title already exists. Please choose a different title.")
+                if title and title.lower() in existing_titles:
+                    self.show_message("Duplicate Title",
+                                      "An entry with this title already exists. Please choose a different title.")
                     return
 
                 if edit_mode and entry_obj:
@@ -608,7 +609,7 @@ class SettingsWindow(BaseWindow):
                     entry_header = entry.header if hasattr(entry, 'header') else entry.details.get('header', '')
                     entry.details['inactive'] = entry_header in new_header_inactive
             except (AttributeError, TypeError) as e:
-                logger.warning(f"Error updating entry inactive status: {e}")
+                logger.warning(f"Error updating entry inactive status for entry {getattr(entry, 'title', 'unknown')}: {e}")
                 continue
 
         Options.save_config()
@@ -634,8 +635,7 @@ class SettingsWindow(BaseWindow):
                     self.mount_options_dialog.close()
             except (RuntimeError, AttributeError):
                 pass
-            finally:
-                self.mount_options_dialog = None
+            self.mount_options_dialog = None
 
         self.mount_options_dialog = QDialog(self)
         dialog = self.mount_options_dialog
@@ -679,8 +679,12 @@ class SettingsWindow(BaseWindow):
 
         try:
             dialog.exec()
+        except Exception as e:
+            logger.error(f"Error in mount options dialog: {e}")
         finally:
             self.show()
+            if hasattr(self, 'mount_options_dialog'):
+                self.mount_options_dialog = None
 
     def _toggle_auto_mount(self, checked):
         Options.run_mount_command_on_launch = checked
@@ -704,8 +708,13 @@ class SettingsWindow(BaseWindow):
                 except (RuntimeError, AttributeError):
                     pass
 
-        dialog.show()
-        close_parent_safely()
+        try:
+            dialog.show()
+            close_parent_safely()
+        except Exception as e:
+            logger.error(f"Error showing mount options dialog: {e}")
+            if parent_dialog:
+                parent_dialog.show()
 
         layout = QVBoxLayout(dialog)
         fields = {}
@@ -751,7 +760,7 @@ class SettingsWindow(BaseWindow):
         new_option = {field: fields[field].text().strip() for field in ['drive_name', 'mount_command', 'unmount_command']}
         field_labels = {'drive_name': 'Drive Name', 'mount_command': 'Mount Command', 'unmount_command': 'Unmount Command'}
         for field, label in field_labels.items():
-            if not new_option[field]:
+            if not new_option[field] or not new_option[field].strip():
                 self.show_message("Incomplete Fields", f"{label} is required.")
                 return
         for field, label in field_labels.items():
