@@ -141,6 +141,11 @@ class LinuxDistroHelper:
             logger.warning(f"Invalid package name format: {package}")
             return False
 
+        dangerous_chars = [';', '&', '|', '`', '$', '(', ')', '<', '>', '\n', '\r']
+        if any(char in package for char in dangerous_chars):
+            logger.warning(f"Dangerous characters in package name: {package}")
+            return False
+
         try:
             result = subprocess.run(
                 self.pkg_check_installed(package),
@@ -164,30 +169,38 @@ class LinuxDistroHelper:
         if not packages or not isinstance(packages, (list, tuple)):
             return []
 
-        valid_packages = [pkg for pkg in packages if pkg and isinstance(pkg, str) and pkg.strip()]
+        valid_packages = [
+            pkg.strip() for pkg in packages
+            if pkg and isinstance(pkg, str) and pkg.strip() and len(pkg.strip()) <= 255
+        ]
+
         if not valid_packages:
             return []
 
-        if len(valid_packages) <= 5:
+        if len(valid_packages) <= 3:
             return [pkg for pkg in valid_packages if not self.package_is_installed(pkg)]
 
-        max_workers = min(4, len(valid_packages) // 2 + 1)
+        max_workers = min(3, max(1, len(valid_packages) // 3))
+
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                future_to_pkg = {executor.submit(self.package_is_installed, pkg): pkg
-                                 for pkg in valid_packages}
-                results = []
+                future_to_pkg = {
+                    executor.submit(self.package_is_installed, pkg): pkg
+                    for pkg in valid_packages
+                }
 
-                for future in concurrent.futures.as_completed(future_to_pkg, timeout=45):
+                not_installed = []
+                for future in concurrent.futures.as_completed(future_to_pkg, timeout=60):
                     pkg = future_to_pkg[future]
                     try:
-                        is_installed = future.result(timeout=5)
-                        results.append((pkg, is_installed))
-                    except (concurrent.futures.TimeoutError, Exception) as e:
+                        is_installed = future.result(timeout=10)
+                        if not is_installed:
+                            not_installed.append(pkg)
+                    except Exception as e:
                         logger.warning(f"Error checking package {pkg}: {e}")
-                        results.append((pkg, False))
+                        not_installed.append(pkg)
 
-                return [pkg for pkg, is_installed in results if not is_installed]
+                return not_installed
 
         except Exception as e:
             logger.error(f"Error in concurrent package checking: {e}")
