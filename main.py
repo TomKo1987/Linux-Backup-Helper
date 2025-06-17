@@ -245,17 +245,13 @@ class BackupRestoreWindow(BaseWindow):
         processable = []
         unprocessable = []
         label_to_title = {entry.get('unique_id'): entry.get('title') for entry in Options.entries_sorted}
+
         for source_dirs, dest_dirs, label in selected_items:
-            sources = source_dirs if isinstance(source_dirs, list) else [source_dirs]
-            source_exists = False
-            for src in sources:
-                if self._check_path_exists(src):
-                    source_exists = True
-                    break
-            if source_exists:
+            if self._has_existing_source(source_dirs):
                 processable.append((source_dirs, dest_dirs, label))
             else:
                 unprocessable.append(label_to_title.get(label, label))
+
         return processable, unprocessable
 
     def _show_error_and_return(self, message):
@@ -275,17 +271,13 @@ class BackupRestoreWindow(BaseWindow):
     def _get_processable_checkbox_dirs(self):
         result = []
         for checkbox, source_dirs, dest_dirs, label in self.checkbox_dirs:
-            if not checkbox.isChecked():
-                continue
-            sources = source_dirs if isinstance(source_dirs, list) else [source_dirs]
-            source_exists = False
-            for src in sources:
-                if self._check_path_exists(src):
-                    source_exists = True
-                    break
-            if source_exists:
+            if checkbox.isChecked() and self._has_existing_source(source_dirs):
                 result.append((checkbox, source_dirs, dest_dirs, label))
         return result
+
+    def _has_existing_source(self, source_dirs):
+        sources = source_dirs if isinstance(source_dirs, list) else [source_dirs]
+        return any(self._check_path_exists(src) for src in sources)
 
 
 def main():
