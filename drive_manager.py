@@ -1,6 +1,6 @@
 from pathlib import Path
 from PyQt6.QtWidgets import QMessageBox, QCheckBox
-import subprocess, pwd, os, logging.handlers, shlex, threading
+import subprocess, pwd, os, logging.handlers, shlex, threading, time
 
 user = pwd.getpwuid(os.getuid()).pw_name
 
@@ -38,37 +38,51 @@ class DriveManager:
             if isinstance(path, str):
                 if not path.strip():
                     return None
-                suspicious_patterns = ['..', ';', '|', '&', '$(', '`', '<', '>', '\x00']
+
+                suspicious_patterns = ['..', ';', '|', '&', '$(', '`', '<', '>', '\x00', '\n', '\r']
                 if any(pattern in path for pattern in suspicious_patterns):
                     logger.warning(f"Suspicious path detected: {path}")
                     return None
-                path_str = str(Path(path).expanduser().resolve())
+
+                try:
+                    path_obj = Path(path).expanduser()
+                    path_str = str(path_obj.resolve())
+                except (OSError, RuntimeError) as e:
+                    logger.debug(f"Could not resolve path {path}, using as-is: {e}")
+                    path_str = str(Path(path).expanduser())
             else:
                 path_str = str(path.resolve())
+
         except (OSError, ValueError, RuntimeError) as e:
-            logger.exception(f"[check_path_requires_mounting] Error resolving path '{path}': {e}")
+            logger.warning(f"Error processing path '{path}': {e}")
             return None
 
         try:
             from options import Options
             if not hasattr(Options, 'mount_options') or not Options.mount_options:
                 return None
-        except ImportError:
-            logger.warning("Could not import Options module")
+        except (ImportError, AttributeError) as e:
+            logger.warning(f"Could not access Options.mount_options: {e}")
             return None
 
         for opt in Options.mount_options:
             if not isinstance(opt, dict):
                 continue
-            name = opt.get('drive_name', '')
-            if not name or not isinstance(name, str):
+
+            name = opt.get('drive_name')
+            if not name or not isinstance(name, str) or not name.strip():
                 continue
 
-            if (f"/run/media/{user}/{name}" in path_str or
-                    f"/media/{user}/{name}" in path_str or
-                    f"/mnt/{name}" in path_str):
+            mount_paths = [
+                f"/run/media/{user}/{name}",
+                f"/media/{user}/{name}",
+                f"/mnt/{name}"
+            ]
+
+            if any(mount_path in path_str for mount_path in mount_paths):
                 if not self.is_drive_mounted(opt):
                     return opt
+
         return None
 
     def check_drives_to_mount(self, paths_to_check):
@@ -122,53 +136,81 @@ class DriveManager:
 
     def mount_drive(self, drive, parent=None, remember_unmount=True):
         if not isinstance(drive, dict):
+            logger.error("[mount_drive] Drive parameter is not a dictionary")
             return False
 
-        name = drive.get('drive_name', '')
-        cmd = drive.get('mount_command', '')
+        name = drive.get('drive_name', '').strip()
+        cmd = drive.get('mount_command', '').strip()
 
-        if not name or not cmd or not isinstance(name, str) or not isinstance(cmd, str):
-            self._show_message("Mount Error", "Invalid drive configuration: missing or invalid name/command",
-                               QMessageBox.Icon.Warning, parent)
-            logger.warning(f"[mount_drive] Invalid drive configuration for drive: {drive}")
+        if not name or not cmd:
+            error_msg = "Invalid drive configuration: missing name or command"
+            self._show_message("Mount Error", error_msg, QMessageBox.Icon.Warning, parent)
+            logger.warning(f"[mount_drive] {error_msg} for drive: {drive}")
             return False
 
         is_valid, error_msg = self._validate_mount_command(cmd)
         if not is_valid:
-            self._show_message("Mount Error", f"Invalid mount command for drive '{name}': {error_msg}",
-                               QMessageBox.Icon.Warning, parent)
-            logger.warning(f"[mount_drive] Invalid mount command for drive '{name}': {error_msg}")
+            full_error = f"Invalid mount command for drive '{name}': {error_msg}"
+            self._show_message("Mount Error", full_error, QMessageBox.Icon.Warning, parent)
+            logger.warning(f"[mount_drive] {full_error}")
             return False
+
+        if self.is_drive_mounted(drive):
+            logger.info(f"[mount_drive] Drive '{name}' is already mounted")
+            return True
 
         try:
             logger.info(f"[mount_drive] Mounting drive '{name}' with command: {cmd}")
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=False, timeout=30)
+
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=45
+            )
+
             if result.returncode != 0:
-                error_msg = f"Drive '{name}' could not be mounted.\nReturn code: {result.returncode}"
+                error_msg = f"Drive '{name}' could not be mounted (exit code: {result.returncode})"
                 if result.stderr:
-                    error_msg += f"\nError: {result.stderr[:200]}"
+                    error_msg += f"\nError: {result.stderr[:300]}"
                 logger.error(f"[mount_drive] {error_msg}")
                 self._show_message("Mount Error", error_msg, QMessageBox.Icon.Warning, parent)
                 return False
+
+            time.sleep(0.5)
+
             if not self.is_drive_mounted(drive):
-                logger.warning(f"[mount_drive] Drive '{name}' did not appear as mounted after mount command.")
-                self._show_message("Mount Error", f"Drive '{name}' could not be mounted.", QMessageBox.Icon.Warning, parent)
+                error_msg = f"Drive '{name}' mount command succeeded but drive not detected as mounted"
+                logger.warning(f"[mount_drive] {error_msg}")
+                self._show_message("Mount Error", error_msg, QMessageBox.Icon.Warning, parent)
                 return False
+
             if remember_unmount and drive.get('unmount_command'):
                 with self._lock:
-                    self.drives_to_unmount.append(drive)
+                    if drive not in self.drives_to_unmount:
+                        self.drives_to_unmount.append(drive)
+
+            logger.info(f"[mount_drive] Successfully mounted drive '{name}'")
             return True
+
         except subprocess.TimeoutExpired:
-            logger.error(f"[mount_drive] Mount command for drive '{name}' timed out.")
+            error_msg = f"Mount command for drive '{name}' timed out after 45 seconds"
+            logger.error(f"[mount_drive] {error_msg}")
+
             try:
-                subprocess.run(['pkill', '-f', shlex.quote(cmd)], timeout=5, check=False)
+                subprocess.run(['pkill', '-f', cmd[:50]], timeout=10, check=False)
             except Exception as kill_error:
                 logger.warning(f"[mount_drive] Could not kill mount process: {kill_error}")
-            self._show_message("Mount Error", f"Mount command for drive '{name}' timed out.", QMessageBox.Icon.Warning, parent)
+
+            self._show_message("Mount Error", error_msg, QMessageBox.Icon.Warning, parent)
             return False
+
         except Exception as e:
-            logger.exception(f"[mount_drive] Unexpected error mounting drive '{name}': {e}")
-            self._show_message("Mount Error", f"Unexpected error mounting drive '{name}': {e}", QMessageBox.Icon.Critical, parent)
+            error_msg = f"Unexpected error mounting drive '{name}': {str(e)[:200]}"
+            logger.exception(f"[mount_drive] {error_msg}")
+            self._show_message("Mount Error", error_msg, QMessageBox.Icon.Critical, parent)
             return False
 
     def unmount_drive(self, drive, parent=None):
