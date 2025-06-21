@@ -39,8 +39,28 @@ Under **Installer Operations** you can specify how you would like to proceed. Ea
 - **Additional Packages** provides access to the Arch User Repository. Therefore **yay** must and will be installed.
 - You can also define **Specific Packages**. These packages will be installed (using the default package manager of your distribution) only if the corresponding session has been recognized. Both full desktop environments and window managers such as “Hyprland” and others are supported.
 
-
 ## Installation
+
+After cloning the repository, run the following commands in your terminal:
+
+```bash
+chmod +x install.sh
+./install.sh
+```
+
+This will automatically install all required system and Python dependencies, including `inxi`.
+
+---
+
+**install.sh**
+
+You will find an `install.sh` script in the root of the repository.  
+This script will:
+
+- Check if `inxi` is installed, and install it if necessary (for Debian/Ubuntu, Fedora, or Arch-based systems).
+- Install all Python dependencies listed in `requirements.txt`.
+
+---
 
 1. **Clone the repository:**
     ```sh    
@@ -69,7 +89,7 @@ Under **Installer Operations** you can specify how you would like to proceed. Ea
 
 - Linux (tested on Arch Linux, should work on most distributions)
 - Python 3.9+
-- PyQt6, keyring, psutil
+- PyQt6, keyring, psutil, inxi
 
 ## Usage
 
