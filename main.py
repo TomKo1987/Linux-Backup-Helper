@@ -6,6 +6,7 @@ from global_style import global_style
 from drive_manager import DriveManager
 from file_process import SmbFileHandler
 from settings_window import SettingsWindow
+from system_info_window import SystemInfoWindow
 from PyQt6.QtCore import Qt, pyqtSignal, QCoreApplication, QTimer
 from package_installer_launcher_dialog_thread import PackageInstallerLauncher
 from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QMessageBox, QMainWindow
@@ -31,6 +32,7 @@ class MainWindow(QMainWindow):
         Options.set_main_window(self)
         self.config = {}
         self.drive_manager = DriveManager()
+        self.system_info_window = None
         self.backup_restore_window = None
         self.settings_window = None
         self.package_installer_launcher = None
@@ -54,8 +56,11 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(central_widget)
         self.setMinimumSize(400, 300)
         button_height = 50
-        buttons = [("Create Backup", lambda: self.start_backup_restoring("backup")), ("Restore Backup", lambda: self.start_backup_restoring("restore")),
-                   ("Package Installer", self.launch_package_installer), ("Settings", self.open_settings)]
+        buttons = [("Create Backup", lambda: self.start_backup_restoring("backup")),
+                   ("Restore Backup", lambda: self.start_backup_restoring("restore")),
+                   ("Package Installer", self.launch_package_installer),
+                   ("System Info", self.open_system_info),
+                   ("Settings", self.open_settings)]
         for text, callback in buttons:
             btn = QPushButton(text)
             btn.setFixedHeight(button_height)
@@ -69,6 +74,25 @@ class MainWindow(QMainWindow):
 
     def set_exit_button(self):
         self.btn_exit.setText("Unmount and Exit" if Options.run_mount_command_on_launch and Options.mount_options else "Exit")
+
+    def open_system_info(self):
+        if self.system_info_window:
+            try:
+                if not self.system_info_window.isVisible():
+                    self.system_info_window.close()
+                self.system_info_window.deleteLater()
+                self.system_info_window = None
+            except (RuntimeError, AttributeError):
+                self.system_info_window = None
+            finally:
+                self.system_info_window = None
+        try:
+            self.system_info_window = SystemInfoWindow(self)
+            self.system_info_window.show()
+            self.hide()
+        except Exception as e:
+            logger.error(f"Error creating backup/restore window: {e}")
+            QMessageBox.critical(self, "Error", f"Could not open window: {e}")
 
     def start_backup_restoring(self, window_type):
         if self.backup_restore_window:
