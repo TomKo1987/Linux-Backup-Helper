@@ -41,6 +41,16 @@ Under **Installer Operations** you can specify how you would like to proceed. Ea
 
 ## Installation
 
+**install.sh**
+
+You will find an `install.sh` script in the root of the repository.  
+This script will:
+
+- Check if `inxi` is installed, and install it if necessary (for Debian/Ubuntu, Fedora, or Arch-based systems).
+- Install all Python dependencies listed in `requirements.txt`.
+
+---
+
 After cloning the repository, run the following commands in your terminal:
 
 ```bash
@@ -74,16 +84,6 @@ This will automatically install all required system and Python dependencies, inc
     ```sh
     pyinstaller --onefile main.py
     ```
-
-**install.sh**
-
-You will find an `install.sh` script in the root of the repository.  
-This script will:
-
-- Check if `inxi` is installed, and install it if necessary (for Debian/Ubuntu, Fedora, or Arch-based systems).
-- Install all Python dependencies listed in `requirements.txt`.
-
----
 
 ## Requirements
 
