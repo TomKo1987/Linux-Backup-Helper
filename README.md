@@ -41,27 +41,6 @@ Under **Installer Operations** you can specify how you would like to proceed. Ea
 
 ## Installation
 
-After cloning the repository, run the following commands in your terminal:
-
-```bash
-chmod +x install.sh
-./install.sh
-```
-
-This will automatically install all required system and Python dependencies, including `inxi`.
-
----
-
-**install.sh**
-
-You will find an `install.sh` script in the root of the repository.  
-This script will:
-
-- Check if `inxi` is installed, and install it if necessary (for Debian/Ubuntu, Fedora, or Arch-based systems).
-- Install all Python dependencies listed in `requirements.txt`.
-
----
-
 1. **Clone the repository:**
     ```sh    
     git clone https://github.com/TomKo1987/Linux-Backup-Helper.git
@@ -84,6 +63,27 @@ This script will:
     ```sh
     pyinstaller --onefile main.py
     ```
+
+After cloning the repository, run the following commands in your terminal:
+
+```bash
+chmod +x install.sh
+./install.sh
+```
+
+This will automatically install all required system and Python dependencies, including `inxi`.
+
+---
+
+**install.sh**
+
+You will find an `install.sh` script in the root of the repository.  
+This script will:
+
+- Check if `inxi` is installed, and install it if necessary (for Debian/Ubuntu, Fedora, or Arch-based systems).
+- Install all Python dependencies listed in `requirements.txt`.
+
+---
 
 ## Requirements
 
