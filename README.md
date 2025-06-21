@@ -99,6 +99,7 @@ This software is provided "as is", without warranty of any kind. Always test you
 ![Backup Dialog](images/Backup.png)
 ![Copy File Dialog](images/Copy%20File%20Dialog.png)
 ![Settings Dialog](images/Settings.png)
+![System Info](images/System%20Info.png)
 ![Package Installer Launcher](images/Package%20Installer%20Launcher.png)
 ![Package Installer Dialog](images/Package%20Installer%20Dialog.png)
 ![Package Installer Operations](images/Package%20Installer%20Operations.png)
