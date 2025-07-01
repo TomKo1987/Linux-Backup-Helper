@@ -67,7 +67,7 @@ class LinuxDistroHelper:
             self.pkg_check_installed = lambda pkg: ["pacman", "-Qi", pkg]
             self.pkg_install = "sudo pacman -S --noconfirm {package}"
             self.pkg_update = "sudo pacman -Syu --noconfirm"
-            self.pkg_remove = "sudo pacman -R --noconfirm {package}"
+            self.pkg_remove = "sudo pacman -Rns --noconfirm {package}"
             self.pkg_clean_cache = "sudo pacman -Scc --noconfirm"
             self.find_orphans = "pacman -Qdtq"
             self.install_yay = "git clone https://aur.archlinux.org/yay.git && cd yay && makepkg -si --noconfirm"
