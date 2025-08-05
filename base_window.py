@@ -3,7 +3,7 @@ from options import Options
 from global_style import global_style
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QDialog, QLabel, QGridLayout,
-                             QScrollArea, QCheckBox, QSpacerItem, QSizePolicy)
+                             QScrollArea, QCheckBox, QSpacerItem, QSizePolicy, QComboBox, QDialogButtonBox)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -322,6 +322,7 @@ class BaseWindow(QDialog):
                        ('header_settings_button', "Header Settings", self.header_settings),
                        ('smb_password_button', "Samba Password", self.open_samba_password_dialog),
                        ('mount_button', "Mount Options", self.manage_mount_options),
+                       ('theme_button', "Change Theme", self.change_theme),
                        ('close_button', "Close", self.go_back)]
             for name, text, cb in buttons:
                 btn = QPushButton(text, self)
@@ -339,6 +340,8 @@ class BaseWindow(QDialog):
             for btn in [self.smb_password_button, self.mount_button]:
                 hbox2.addWidget(btn)
             layout.addLayout(hbox2, row, 0, 1, self.columns)
+            row += 1
+            layout.addWidget(self.theme_button, row, 0, 1, self.columns)
             row += 1
             layout.addWidget(self.close_button, row, 0, 1, self.columns)
         return row + 1
@@ -414,6 +417,49 @@ class BaseWindow(QDialog):
 
         self.content_widget = None
         self.checkbox_dirs.clear()
+
+    def change_theme(self):
+        from global_style import THEMES
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Select Theme")
+        dialog.setMinimumSize(400, 200)
+
+        layout = QVBoxLayout(dialog)
+
+        layout.addWidget(QLabel("Select a theme:"))
+
+        theme_combo = QComboBox()
+        theme_combo.addItems(list(THEMES.keys()))
+        current_theme = Options.ui_settings.get("theme", "Tokyo Night")
+        theme_combo.setCurrentText(current_theme)
+        layout.addWidget(theme_combo)
+
+        preview_btn = QPushButton("Preview")
+        preview_btn.clicked.connect(lambda: self.preview_theme(THEMES[theme_combo.currentText()]))
+        layout.addWidget(preview_btn)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(lambda: self.save_theme(theme_combo.currentText(), dialog))
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+
+        dialog.exec()
+
+    @staticmethod
+    def preview_theme(theme_style):
+        QApplication.instance().setStyleSheet(theme_style)
+
+    def save_theme(self, theme_name, dialog):
+        from global_style import THEMES
+        import global_style
+
+        Options.ui_settings["theme"] = theme_name
+        global_style.current_theme = theme_name
+        QApplication.instance().setStyleSheet(THEMES[theme_name])
+        Options.save_config()
+        dialog.accept()
+        self.show_message("Success", f"Theme changed to {theme_name}!")
 
     @staticmethod
     def _set_checkbox_checked(checkbox, checked):
