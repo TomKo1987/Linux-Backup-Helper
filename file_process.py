@@ -103,6 +103,7 @@ class FileProcessDialog(QDialog):
             self.sudo_password_event.wait(self.sudo_password_mutex)
             if self.sudo_password is None:
                 raise RuntimeError("Sudo password required for mounting SMB shares")
+            # noinspection PyUnreachableCode
             return self.sudo_password
 
     def setup_connections(self):
@@ -727,8 +728,9 @@ class SmbFileHandler:
             if self._smb_credentials:
                 return
             creds = getattr(self.thread, 'get_smb_credentials', lambda: None)() if self.thread else None
-            self._smb_credentials = creds if creds and all(creds) else self.samba_password_manager.get_samba_credentials()
-            if self.thread and hasattr(self.thread, 'set_smb_credentials') and (not creds or not all(creds)):
+            valid_creds = creds if isinstance(creds, (list, tuple)) and all(creds) else None
+            self._smb_credentials = valid_creds or self.samba_password_manager.get_samba_credentials()
+            if self.thread and hasattr(self.thread, 'set_smb_credentials') and not valid_creds:
                 self.thread.set_smb_credentials(self._smb_credentials)
 
     @staticmethod
@@ -907,11 +909,11 @@ class SmbFileHandler:
         fn = Path(source).name or "directory"
         try:
             if os.path.isdir(local_source):
-                dest_path = os.path.join(destination, os.path.basename(local_source))
+                dest_path = Path(destination) / Path(local_source).name
                 shutil.copytree(local_source, dest_path, dirs_exist_ok=True)
-                total = sum(f.stat().st_size for f in Path(dest_path).rglob('*') if f.is_file())
+                total = sum(f.stat().st_size for f in dest_path.rglob('*') if f.is_file())
             else:
-                os.makedirs(os.path.dirname(destination), exist_ok=True)
+                Path(destination).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(local_source, destination)
                 total = os.path.getsize(destination)
             if progress_callback:
@@ -1060,7 +1062,7 @@ class LogEntryListModel(QAbstractListModel):
                 return Qt.GlobalColor.green
         return QVariant()
 
-    def setFilter(self, text):
+    def set_filter(self, text):
         self.filter = text.lower()
         if self.filter:
             self._filtered_indices = [i for i, e in enumerate(self._entries) if self.filter in e.lower()]
@@ -1068,12 +1070,12 @@ class LogEntryListModel(QAbstractListModel):
             self._filtered_indices = list(range(len(self._entries)))
         self.layoutChanged.emit()
 
-    def addEntry(self, entry, entry_type):
+    def add_entry(self, entry, entry_type):
         self.beginInsertRows(QModelIndex(), len(self._entries), len(self._entries))
         self._entries.append(entry)
         self._types.append(entry_type)
         self.endInsertRows()
-        self.setFilter(self.filter)
+        self.set_filter(self.filter)
 
     def sort_entries(self):
         if not self._entries:
@@ -1125,7 +1127,7 @@ class LogEntryListModel(QAbstractListModel):
             self._types[:] = new_types
 
             self.endResetModel()
-            self.setFilter(self.filter)
+            self.set_filter(self.filter)
 
         except Exception as e:
             self.endResetModel()
@@ -1159,7 +1161,7 @@ class VirtualLogTabWidget(QWidget):
         self.list_view.setWordWrap(True)
         layout.addWidget(self.list_view)
 
-        self.search_box.textChanged.connect(self.model.setFilter)
+        self.search_box.textChanged.connect(self.model.set_filter)
 
         self._flush_timer = QTimer(self)
         self._flush_timer.setInterval(300)
@@ -1191,7 +1193,7 @@ class VirtualLogTabWidget(QWidget):
             self.entry_types.extend(types)
             self.model.endInsertRows()
 
-            self.model.setFilter(self.model.filter)
+            self.model.set_filter(self.model.filter)
 
         if has_remaining:
             self._flush_timer.start()
