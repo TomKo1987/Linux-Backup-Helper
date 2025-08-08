@@ -304,16 +304,17 @@ class Options(QObject):
             Options.sublayout_names = entries_data.get("sublayout_names", Options.sublayout_names)
             Options.installer_operations = entries_data.get("installer_operations", [])
 
-            system_files_raw = entries_data.get("system_files", [])
+            system_files_raw = entries_data.get("system_files")
             if isinstance(system_files_raw, list):
-                Options.system_files = sorted(system_files_raw, key=lambda x: x.get('source', '') if isinstance(x, dict) else '')
+                Options.system_files = sorted(system_files_raw,
+                                              key=lambda x: x.get('source', '') if isinstance(x, dict) else '')
             else:
                 Options.system_files = []
 
             Options.essential_packages = sorted(entries_data.get("essential_packages", []))
             Options.additional_packages = sorted(entries_data.get("additional_packages", []))
 
-            specific_packages_raw = entries_data.get("specific_packages", [])
+            specific_packages_raw = entries_data.get("specific_packages")
             if isinstance(specific_packages_raw, list):
                 Options.specific_packages = sorted(specific_packages_raw,
                                                    key=lambda x: x.get('package', '') if isinstance(x, dict) else '')
