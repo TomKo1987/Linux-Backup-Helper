@@ -249,8 +249,8 @@ class PackageInstallerOptions(QDialog):
         layout.addWidget(content_widget)
 
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
-        button_box.button(QDialogButtonBox.StandardButton.Ok).setText('Yes')
-        button_box.button(QDialogButtonBox.StandardButton.Cancel).setText('No')
+        button_box.button(QDialogButtonBox.StandardButton.Ok).setText('Save')
+        button_box.button(QDialogButtonBox.StandardButton.Cancel).setText('Close')
         button_box.accepted.connect(lambda: self.save_installer_options())
         button_box.rejected.connect(dialog.reject)
         layout.addWidget(button_box)
@@ -272,8 +272,8 @@ class PackageInstallerOptions(QDialog):
         scroll_area.setWidget(content_widget)
         layout.addWidget(scroll_area)
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
-        button_box.button(QDialogButtonBox.StandardButton.Ok).setText('Yes')
-        button_box.button(QDialogButtonBox.StandardButton.Cancel).setText('No')
+        button_box.button(QDialogButtonBox.StandardButton.Ok).setText('Save')
+        button_box.button(QDialogButtonBox.StandardButton.Cancel).setText('Close')
         if button_callback:
             button_box.accepted.connect(lambda: button_callback(dialog))
         button_box.rejected.connect(dialog.reject)
