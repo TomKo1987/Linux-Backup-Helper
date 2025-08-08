@@ -248,12 +248,14 @@ class PackageInstallerOptions(QDialog):
         layout = QVBoxLayout(dialog)
         layout.addWidget(content_widget)
 
-        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Close)
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
+        button_box.button(QDialogButtonBox.StandardButton.Ok).setText('Yes')
+        button_box.button(QDialogButtonBox.StandardButton.Cancel).setText('No')
         button_box.accepted.connect(lambda: self.save_installer_options())
         button_box.rejected.connect(dialog.reject)
         layout.addWidget(button_box)
 
-        button_box.button(QDialogButtonBox.StandardButton.Close).setFocus()
+        button_box.button(QDialogButtonBox.StandardButton.Cancel).setFocus()
         content_widget.adjustSize()
         dialog.adjustSize()
         dialog.setMinimumSize(dialog.sizeHint())
@@ -269,15 +271,16 @@ class PackageInstallerOptions(QDialog):
         scroll_area.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         scroll_area.setWidget(content_widget)
         layout.addWidget(scroll_area)
-
-        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Close)
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
+        button_box.button(QDialogButtonBox.StandardButton.Ok).setText('Yes')
+        button_box.button(QDialogButtonBox.StandardButton.Cancel).setText('No')
         if button_callback:
             button_box.accepted.connect(lambda: button_callback(dialog))
         button_box.rejected.connect(dialog.reject)
         layout.addWidget(button_box)
 
         self._adjust_dialog_size(dialog, content_widget, scroll_area)
-        button_box.button(QDialogButtonBox.StandardButton.Close).setFocus()
+        button_box.button(QDialogButtonBox.StandardButton.Cancel).setFocus()
         return dialog, layout
 
     def close_current_dialog(self):
@@ -413,16 +416,21 @@ class PackageInstallerOptions(QDialog):
             if clicked_button == cancel_button:
                 return
 
+            sources = None  # sicher initialisieren
+
             if clicked_button == file_button:
                 files, _ = QFileDialog.getOpenFileNames(self, "Select 'System File'")
                 if not files:
                     return
                 sources = files
-            else:
+            elif clicked_button == dir_button:
                 directory = QFileDialog.getExistingDirectory(self, "Select 'System Directory'")
                 if not directory:
                     return
-                sources = [directory]
+                sources = directory
+
+            if not sources:
+                return
 
             destination_dir = QFileDialog.getExistingDirectory(self, "Select Destination Directory")
             if not destination_dir:
@@ -431,7 +439,8 @@ class PackageInstallerOptions(QDialog):
             self._process_new_system_files(sources, destination_dir)
 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"An error occurred when adding the System File: {str(e)}", QMessageBox.StandardButton.Ok)
+            QMessageBox.critical(self, "Error", f"An error occurred when adding the System File: {str(e)}",
+                                 QMessageBox.StandardButton.Ok)
 
     def _process_new_system_files(self, sources, destination_dir):
         if not hasattr(Options, 'system_files') or Options.system_files is None:
@@ -657,7 +666,7 @@ class PackageInstallerOptions(QDialog):
         session_combo.setFixedHeight(field_height)
         form_layout.addRow("Session:", session_combo)
         layout.addLayout(form_layout)
-        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
         button_box.accepted.connect(dialog.accept)
         button_box.rejected.connect(dialog.reject)
         layout.addWidget(button_box)
