@@ -211,8 +211,8 @@ class SettingsWindow(BaseWindow):
             for i in range(1, 5):
                 checkboxes[f'sublayout_games_{i}'].stateChanged.connect(make_sublayout_handler(i))
 
-            button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
-            button_box.button(QDialogButtonBox.StandardButton.Save).setText("Save")
+            button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
+            button_box.button(QDialogButtonBox.StandardButton.Ok).setText("Save")
             button_box.button(QDialogButtonBox.StandardButton.Cancel).setText("Close")
             button_box.setMaximumHeight(field_height)
             main_layout.addWidget(button_box, alignment=Qt.AlignmentFlag.AlignRight)
@@ -395,8 +395,8 @@ class SettingsWindow(BaseWindow):
             if i + 1 < len(sublayout_buttons):
                 hbox.addWidget(sublayout_buttons[i + 1])
             layout.addLayout(hbox)
-        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
-        button_box.button(QDialogButtonBox.StandardButton.Save).setText("Save")
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
+        button_box.button(QDialogButtonBox.StandardButton.Ok).setText("Save")
         button_box.button(QDialogButtonBox.StandardButton.Cancel).setText("Close")
         layout.addWidget(button_box)
         button_box.accepted.connect(lambda: (self.save_header_options(list_widget), dialog.accept()))
@@ -459,8 +459,8 @@ class SettingsWindow(BaseWindow):
         input_field = QLineEdit(dialog)
         input_field.setMinimumWidth(450)
         layout.addWidget(input_field)
-        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
-        button_box.button(QDialogButtonBox.StandardButton.Save).setText("Save")
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
+        button_box.button(QDialogButtonBox.StandardButton.Ok).setText("Save")
         button_box.button(QDialogButtonBox.StandardButton.Cancel).setText("Close")
         layout.addWidget(button_box)
         button_box.accepted.connect(lambda: self.handle_new_header(input_field, dialog, list_widget))
@@ -542,7 +542,7 @@ class SettingsWindow(BaseWindow):
         if has_associated_entries:
             self.show_message("Cannot Delete Header",
                               "Header has associated entries and cannot be deleted. Remove them first.",
-                              QMessageBox.Icon.Warning)
+                              QMessageBox.Icon.Information)
             return
 
         confirm_box = QMessageBox(QMessageBox.Icon.Question, "Confirm Deletion",
