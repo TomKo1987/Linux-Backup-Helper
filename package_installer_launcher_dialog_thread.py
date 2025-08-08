@@ -109,9 +109,9 @@ class PackageInstallerLauncher:
     def _show_dialog_and_get_result(self, dialog, content_widget):
         confirm_label = QLabel("<span style='font-size: 16px;'>Start Package Installer?<br>(Check 'Enter sudo password' if a sudo password is set.)<br></span>")
         button_layout = QHBoxLayout()
-        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Yes | QDialogButtonBox.StandardButton.No)
-        button_box.button(QDialogButtonBox.StandardButton.Yes).setText('Yes')
-        button_box.button(QDialogButtonBox.StandardButton.No).setText('No')
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
+        button_box.button(QDialogButtonBox.StandardButton.Ok).setText('Yes')
+        button_box.button(QDialogButtonBox.StandardButton.Cancel).setText('No')
         button_box.accepted.connect(dialog.accept)
         button_box.rejected.connect(dialog.reject)
         self.sudo_checkbox = QCheckBox("Enter sudo password")
@@ -128,7 +128,7 @@ class PackageInstallerLauncher:
         screen_geometry = QApplication.primaryScreen().availableGeometry()
         content_size = content_widget.sizeHint()
         dialog.resize(min(content_size.width() + 40, screen_geometry.width()), min(content_size.height() + 40, screen_geometry.height()))
-        button_box.button(QDialogButtonBox.StandardButton.No).setFocus()
+        button_box.button(QDialogButtonBox.StandardButton.Cancel).setFocus()
         return dialog.exec() == QDialog.DialogCode.Accepted
 
     def start_package_installer_thread(self, sudo_password):
