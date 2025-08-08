@@ -439,7 +439,7 @@ class BaseWindow(QDialog):
         preview_btn.clicked.connect(lambda: self.preview_theme(THEMES[theme_combo.currentText()]))
         layout.addWidget(preview_btn)
 
-        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
         button_box.accepted.connect(lambda: self.save_theme(theme_combo.currentText(), dialog))
         button_box.rejected.connect(dialog.reject)
         layout.addWidget(button_box)
