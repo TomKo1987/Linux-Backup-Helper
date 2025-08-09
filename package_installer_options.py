@@ -90,7 +90,7 @@ class PackageInstallerOptions(QDialog):
         self._add_shell_selection(layout)
         self._connect_signals()
         layout.addWidget(self.close_button)
-        self.setFixedSize(1100, 800)
+        self.setFixedSize(1100, 900)
 
     def _add_distro_info(self, layout):
         yay_info = ""
