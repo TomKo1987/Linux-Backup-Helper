@@ -440,6 +440,7 @@ QCheckBox:indicator:unchecked {
 }
 QLabel {
     color: #93a1a1;
+    border: none;
     padding: 5px;
     font-size: 17px;
     qproperty-alignment: 'AlignCenter';
@@ -539,6 +540,7 @@ QCheckBox:indicator:unchecked {
 QLabel {
     color: #f8f8f2;
     padding: 5px;
+    border: none;
     font-size: 17px;
     qproperty-alignment: 'AlignCenter';
 }
@@ -634,6 +636,7 @@ QCheckBox:indicator:unchecked {
 QLabel {
     color: #ebdbb2;
     padding: 5px;
+    border: none;
     font-size: 17px;
     qproperty-alignment: 'AlignCenter';
 }
@@ -720,6 +723,7 @@ QCheckBox:indicator:unchecked {
 QLabel {
     color: #d8dee9;
     padding: 5px;
+    border: none;
     font-size: 17px;
     qproperty-alignment: 'AlignCenter';
 }
@@ -806,6 +810,7 @@ QCheckBox:indicator:unchecked {
 QLabel {
     color: #cdd6f4;
     padding: 5px;
+    border: none;
     font-size: 17px;
     qproperty-alignment: 'AlignCenter';
 }
@@ -892,6 +897,7 @@ QCheckBox:indicator:unchecked {
 QLabel {
     color: #f8f8f2;
     padding: 5px;
+    border: none;
     font-size: 17px;
     qproperty-alignment: 'AlignCenter';
 }
