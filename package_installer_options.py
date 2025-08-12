@@ -6,7 +6,7 @@ from linux_distro_helper import LinuxDistroHelper
 from options import Options, SESSIONS, USER_SHELL
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout, QLabel, QPushButton, QWidget,
                              QComboBox, QCheckBox, QListWidget, QListWidgetItem, QScrollArea, QDialogButtonBox, QMessageBox,
-                             QFileDialog, QInputDialog, QLineEdit, QApplication, QSizePolicy)
+                             QFileDialog, QInputDialog, QLineEdit, QTextEdit, QApplication, QSizePolicy)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -610,7 +610,7 @@ class PackageInstallerOptions(QDialog):
                 current_packages.append(package_name.strip())
                 setattr(Options, option_type, current_packages)
                 Options.save_config()
-                QMessageBox.information(self, "Package Added", f"Package '{package_name}' successfully added!",
+                QMessageBox.information(self, "Package Added", f"Package '{package_name}' has been successfully added!",
                                         QMessageBox.StandardButton.Ok)
             else:
                 QMessageBox.warning(self, "Duplicate Package", f"Package '{package_name}' already exists.",
@@ -619,31 +619,63 @@ class PackageInstallerOptions(QDialog):
 
     def batch_add_packages(self, option_type):
         self.close_current_dialog()
-        text, ok = QInputDialog.getMultiLineText(self, f"Add '{option_type.replace('_', ' ').title()}' in Batches", "                         Enter package names (one per line):                         ")
-        if ok and text.strip():
-            packages = [pkg.strip() for pkg in text.splitlines() if pkg.strip()]
-            current_packages = set(getattr(Options, option_type, []))
-            added_packages = []
-            duplicates = []
-            for package in packages:
-                if package not in current_packages:
-                    added_packages.append(package)
-                    current_packages.add(package)
-                else:
-                    duplicates.append(package)
-            setattr(Options, option_type, list(current_packages))
-            Options.save_config()
-            if duplicates:
-                dup_list = "\n".join(duplicates)
-                title = "Duplicate Package" if len(duplicates) == 1 else "Duplicate Packages"
-                plural = 's already exist' if len(duplicates) > 1 else ' already exists'
-                QMessageBox.warning(self, title, f"The following package{plural}:\n\n{dup_list}", QMessageBox.StandardButton.Ok)
-            if added_packages:
-                added_list = "\n".join(added_packages)
-                title = "Add Package" if len(added_packages) == 1 else "Add Packages"
-                message = f"The following package{'s have' if len(added_packages) > 1 else ' was'} successfully added:\n\n{added_list}"
-                QMessageBox.information(self, title, message, QMessageBox.StandardButton.Ok)
-            self.edit_packages(option_type)
+
+        # Create custom dialog instead of using QInputDialog.getMultiLineText()
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Add '{option_type.replace('_', ' ').title()}' in Batches")
+        layout = QVBoxLayout(dialog)
+
+        # Add instruction label
+        label = QLabel("Enter package names (one per line):")
+        layout.addWidget(label)
+
+        # Create text edit with proper height
+        text_edit = QTextEdit()
+        text_edit.setMinimumHeight(300)  # Set minimum height to 300px
+        text_edit.setPlaceholderText("package1\npackage2\npackage3\n...")
+        layout.addWidget(text_edit)
+
+        # Add button box
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+
+        # Set dialog size
+        dialog.setMinimumSize(750, 550)
+        dialog.resize(750, 600)
+
+        # Execute dialog
+        result = dialog.exec()
+
+        if result == QDialog.DialogCode.Accepted:
+            text = text_edit.toPlainText().strip()
+            if text:
+                packages = [pkg.strip() for pkg in text.splitlines() if pkg.strip()]
+                current_packages = set(getattr(Options, option_type, []))
+                added_packages = []
+                duplicates = []
+                for package in packages:
+                    if package not in current_packages:
+                        added_packages.append(package)
+                        current_packages.add(package)
+                    else:
+                        duplicates.append(package)
+                setattr(Options, option_type, list(current_packages))
+                Options.save_config()
+                if duplicates:
+                    dup_list = "\n".join(duplicates)
+                    title = "Duplicate Package" if len(duplicates) == 1 else "Duplicate Packages"
+                    plural = 's already exist' if len(duplicates) > 1 else ' already exists'
+                    QMessageBox.warning(self, title, f"The following package{plural}:\n\n{dup_list}",
+                                        QMessageBox.StandardButton.Ok)
+                if added_packages:
+                    added_list = "\n".join(added_packages)
+                    title = "Add Package" if len(added_packages) == 1 else "Add Packages"
+                    message = (f"The following package{'s have been' if len(added_packages) > 1 else ' has been'} "
+                               f"successfully added:\n\n{added_list}")
+                    QMessageBox.information(self, title, message, QMessageBox.StandardButton.Ok)
+                self.edit_packages(option_type)
 
     def _add_specific_package(self):
         dialog = QDialog(self)
