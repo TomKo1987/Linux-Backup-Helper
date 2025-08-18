@@ -36,7 +36,7 @@ class Options(QObject):
     header_order = []
     header_inactive = []
     header_colors = {}
-    installer_operations = []
+    system_manager_operations = []
     system_files = []
     essential_packages = []
     additional_packages = []
@@ -46,7 +46,7 @@ class Options(QObject):
                    "theme": "Tokyo Night"}
     text_replacements = [(home_user, '~'), (f"/run/media/{user}/", ''), ("[1m", ""), ("[0m", ""), ("", "")]
     text_replacements.extend([(env, env) for env in SESSIONS])
-    installer_tooltips = {}
+    system_manager_tooltips = {}
 
     def __init__(self, header, title, source, destination, details=None):
         super().__init__()
@@ -118,7 +118,7 @@ class Options(QObject):
             pass
 
     @staticmethod
-    def get_package_installer_operation_text(distro_helper):
+    def get_system_manager_operation_text(distro_helper):
         pkg_install_cmd = distro_helper.pkg_install.replace("{package}", "PACKAGE")
         pkg_update_cmd = distro_helper.pkg_update
         pkg_manager = "pacman" if "pacman" in pkg_install_cmd else (
@@ -222,7 +222,7 @@ class Options(QObject):
                 "run_mount_command_on_launch": Options.run_mount_command_on_launch,
                 "header": header_data,
                 "sublayout_names": Options.sublayout_names,
-                "installer_operations": Options.installer_operations,
+                "system_manager_operations": Options.system_manager_operations,
                 "system_files": system_files,
                 "essential_packages": essential_packages,
                 "additional_packages": additional_packages,
@@ -302,7 +302,7 @@ class Options(QObject):
                     Options.header_inactive.append(header)
 
             Options.sublayout_names = entries_data.get("sublayout_names", Options.sublayout_names)
-            Options.installer_operations = entries_data.get("installer_operations", [])
+            Options.system_manager_operations = entries_data.get("system_manager_operations", [])
 
             system_files_raw = entries_data.get("system_files")
             if isinstance(system_files_raw, list):
@@ -377,9 +377,12 @@ class Options(QObject):
 
         def format_html(entry_title, entry_source_text, entry_dest_text):
             template = """<table style='border-collapse: collapse; width: 100%; font-family: FiraCode Nerd Font Mono;'>
-                    <tr style='background-color: #121212;'><td colspan='2' style='font-size: 13px; color: #ffc1c2; text-align: center; padding: 5px 5px; white-space: nowrap;'>{title}</td>
-                    </tr><tr style='background-color: #2a2a2a;'><td colspan='2' style='font-size: 12px; color: #00fa9a; text-align: left; padding: 6px; font-family: FiraCode Nerd Font Mono; white-space: nowrap;'>
-                    Source:<br><br>{source}</td></tr><tr style='background-color: #1e1e1e;'><td colspan='2' style='font-size: 12px; color: #00fa9a; text-align: left; padding: 6px; font-family: 
+                    <tr style='background-color: #121212;'><td colspan='2' style='font-size: 13px; 
+                    color: #ffc1c2; text-align: center; padding: 5px 5px; white-space: nowrap;'>{title}</td>
+                    </tr><tr style='background-color: #2a2a2a;'><td colspan='2' style='font-size: 12px; 
+                    color: #00fa9a; text-align: left; padding: 6px; font-family: FiraCode Nerd Font Mono; white-space: nowrap;'>
+                    Source:<br><br>{source}</td></tr><tr style='background-color: #1e1e1e;'><td colspan='2' style=
+                    'font-size: 12px; color: #00fa9a; text-align: left; padding: 6px; font-family: 
                     FiraCode Nerd Font Mono; white-space: nowrap;'>Destination:<br><br>{dest}</td></tr></table>"""
             return template.format(title=entry_title, source=entry_source_text, dest=entry_dest_text)
 
@@ -403,16 +406,16 @@ class Options(QObject):
             backup_tooltips[tooltip_key] = apply_replacements(format_html(title, source_text, destination_text))
             restore_tooltips[tooltip_key] = apply_replacements(format_html(title, destination_text, source_text))
 
-        installer_tooltips = {}
+        system_manager_tooltips = {}
         operation_keys = {"copy_system_files": "system_files", "install_essential_packages": "essential_packages",
                           "install_additional_packages": "additional_packages",
                           "install_specific_packages": "specific_packages", "set_user_shell": "user_shell"}
 
         distro_helper = LinuxDistroHelper()
-        package_installer_operation_text = Options.get_package_installer_operation_text(distro_helper)
+        system_manager_operation_text = Options.get_system_manager_operation_text(distro_helper)
 
         for operation, config_key in operation_keys.items():
-            if operation not in package_installer_operation_text or not getattr(Options, config_key, None):
+            if operation not in system_manager_operation_text or not getattr(Options, config_key, None):
                 continue
             items = getattr(Options, config_key)
             column_width = 1 if config_key == "system_files" else 4
@@ -451,6 +454,6 @@ class Options(QObject):
                 "<div style='white-space: nowrap; font-size: 14px; color: #00fa9a; font-family: FiraCode Nerd Font Mono; "
                 f"background-color: #121212; padding: 5px 5px; border: 1px solid #444;'>"
                 f"<table style='border-collapse: collapse; table-layout: auto;'>{''.join(rows)}</table></div>")
-            installer_tooltips[operation] = apply_replacements(tooltip)
-        Options.installer_tooltips = installer_tooltips
-        return backup_tooltips, restore_tooltips, installer_tooltips
+            system_manager_tooltips[operation] = apply_replacements(tooltip)
+        Options.system_manager_tooltips = system_manager_tooltips
+        return backup_tooltips, restore_tooltips, system_manager_tooltips
