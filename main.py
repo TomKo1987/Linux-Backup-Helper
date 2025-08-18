@@ -7,7 +7,7 @@ from file_process import SmbFileHandler
 from settings_window import SettingsWindow
 from system_info_window import SystemInfoWindow
 from PyQt6.QtCore import Qt, pyqtSignal, QCoreApplication, QTimer
-from package_installer_launcher_dialog_thread import PackageInstallerLauncher
+from system_manager_launcher_dialog_thread import SystemManagerLauncher
 from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QMessageBox, QMainWindow
 
 sys.setrecursionlimit(5000)
@@ -34,7 +34,7 @@ class MainWindow(QMainWindow):
         self.system_info_window = None
         self.backup_restore_window = None
         self.settings_window = None
-        self.package_installer_launcher = None
+        self.system_manager_launcher = None
         self.btn_exit = QPushButton()
         self.settings_changed.connect(self.set_exit_button)
         self.settings_changed.connect(self.on_settings_changed)
@@ -57,7 +57,7 @@ class MainWindow(QMainWindow):
         button_height = 50
         buttons = [("Create Backup", lambda: self.start_backup_restoring("backup")),
                    ("Restore Backup", lambda: self.start_backup_restoring("restore")),
-                   ("Package Installer", self.launch_package_installer),
+                   ("System Manager", self.launch_system_manager),
                    ("System Info", self.open_system_info),
                    ("Settings", self.open_settings)]
         for text, callback in buttons:
@@ -132,9 +132,9 @@ class MainWindow(QMainWindow):
             logger.error(f"Error creating Settings Window: {e}")
             QMessageBox.critical(self, "Error", f"Could not open window: {e}")
 
-    def launch_package_installer(self):
-        self.package_installer_launcher = PackageInstallerLauncher(self)
-        self.package_installer_launcher.launch()
+    def launch_system_manager(self):
+        self.system_manager_launcher = SystemManagerLauncher(self)
+        self.system_manager_launcher.launch()
 
     def on_settings_changed(self):
         self.load_config()
@@ -149,8 +149,8 @@ class MainWindow(QMainWindow):
                 self.settings_window.settings_changed.emit()
             except RuntimeError:
                 pass
-        if self.package_installer_launcher and hasattr(self.package_installer_launcher, 'config'):
-            self.package_installer_launcher.config = self.config
+        if self.system_manager_launcher and hasattr(self.system_manager_launcher, 'config'):
+            self.system_manager_launcher.config = self.config
 
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
