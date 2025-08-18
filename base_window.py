@@ -23,7 +23,8 @@ class BaseWindow(QDialog):
         super().__init__(parent)
         self.window_type = window_type
         self.setWindowTitle(
-            {"backup": "Create Backup", "restore": "Restore Backup", "settings": "Settings"}.get(window_type, "Window"))
+            {"backup": "Create Backup", "restore": "Restore Backup", "settings": "Settings"}.get(window_type, "Window")
+        )
         self._last_entries_hash = None
         self._last_ui_state = None
         self.content_widget = None
@@ -43,16 +44,18 @@ class BaseWindow(QDialog):
         self.setup_ui()
 
     def setup_ui(self):
-        current_entries_hash = hash(str(getattr(Options, 'entries_sorted', [])))
+        current_entries_hash = hash(str(getattr(Options, "entries_sorted", [])))
         current_ui_state = (
             self.window_type,
             Options.ui_settings.get(f"{self.window_type}_window_columns", 2),
-            len(getattr(Options, 'header_order', [])),
-            len(getattr(Options, 'header_inactive', []))
+            len(getattr(Options, "header_order", [])),
+            len(getattr(Options, "header_inactive", [])),
         )
 
-        if (self._last_entries_hash == current_entries_hash and
-                self._last_ui_state == current_ui_state):
+        if (
+            self._last_entries_hash == current_entries_hash
+            and self._last_ui_state == current_ui_state
+        ):
             return
 
         self._last_entries_hash = None
@@ -80,25 +83,59 @@ class BaseWindow(QDialog):
         self.scroll_area.setWidget(self.content_widget)
         self.adjust_window_size()
 
-        self._last_entries_hash = hash(str(getattr(Options, 'entries_sorted', [])))
+        self._last_entries_hash = hash(str(getattr(Options, "entries_sorted", [])))
         self._last_ui_state = (
             self.window_type,
             Options.ui_settings.get(f"{self.window_type}_window_columns", 2),
             len(Options.header_order),
-            len(Options.header_inactive)
+            len(Options.header_inactive),
         )
 
     def create_top_controls(self, column_text):
         self._clear_layout(self.top_controls)
         self.selectall = QCheckBox("Select All")
-        self.selectall.setStyleSheet(f"{global_style} QCheckBox {{color: '#6ffff5'; font-size: 14px;}}")
+        self.selectall.setStyleSheet(
+            f"{global_style} QCheckBox {{color: '#6ffff5'; font-size: 14px;}}"
+        )
         self.selectall.clicked.connect(self.toggle_checkboxes_manually)
         config_path_text = str(Options.config_file_path)
-        if hasattr(Options, 'text_replacements'):
+        if hasattr(Options, "text_replacements"):
             for old, new in Options.text_replacements:
                 if old:
                     config_path_text = config_path_text.replace(old, new)
-        config_save_path_label = QLabel(config_path_text)
+
+        tooltip_text = (
+            "<b>How files are copied and when they are skipped</b><br><br>"
+            "<b>Copied Files:</b><br>"
+            "- Files are copied if the source file is newer than the destination, or if the destination does not exist.<br>"
+            "- For directories, all contained files are evaluated individually.<br>"
+            "- File attributes (modification time, permissions) are preserved.<br>"
+            "- Network (SMB) paths are supported; files can be copied to and from SMB shares.<br><br>"
+            "<b>Skipped Files:</b><br>"
+            "- Files are skipped and <b>NOT</b> copied if:<br>"
+            "&emsp;- The destination file already exists <b>and</b> has the same size <b>and</b> is at least as new as the source file (i.e., up to date).<br>"
+            "&emsp;- The file matches certain protection/lock patterns (e.g., <code>Singleton</code>, <code>lockfile</code>, <code>cookies.sqlite-wal</code>, etc.).<br>"
+            "&emsp;- The source file does not exist or cannot be accessed.<br>"
+            "- Skipped files are shown in the \"Skipped\" tab with a reason, such as \"Up to date\" or \"Protected/locked file\".<br><br>"
+            "<b>Errors:</b><br>"
+            "- If an error occurs during copying (e.g., permission denied, network problems, or unexpected issues), the file is not copied, and the error is shown in the \"Errors\" tab.<br><br>"
+            "<b>Summary:</b><br>"
+            "- You can view the total number of processed, copied, skipped, and error files in the summary.<br>"
+            "- The tooltip color-codes the results: green for copied, yellow for skipped, red for errors.<br><br>"
+            "This logic ensures that only necessary files are copied, avoids overwriting up-to-date or protected files, and provides clear feedback for each file processed."
+        )
+
+        tooltip_icon = "💡"
+        label_html = (
+            f"{tooltip_icon}<span style='font-size: 15px; padding: 4px; "
+            f"color: #9891c2; text-decoration: underline dotted;'>{config_path_text}</span>"
+        )
+        config_save_path_label = QLabel(label_html)
+        config_save_path_label.setTextFormat(Qt.TextFormat.RichText)
+        config_save_path_label.setToolTip(tooltip_text)
+        config_save_path_label.setCursor(Qt.CursorShape.WhatsThisCursor)
+        config_save_path_label.setToolTipDuration(30000)
+
         self.column_toggle = QPushButton(column_text)
         self.column_toggle.clicked.connect(self.toggle_columns)
         self.top_controls.addWidget(self.selectall)
@@ -197,12 +234,12 @@ class BaseWindow(QDialog):
 
         try:
             if not self._tooltip_cache:
-                tooltip_text, tooltip_text_entry_restore, installer_tooltips = Options.generate_tooltip()
+                tooltip_text, tooltip_text_entry_restore, system_manager_tooltips = Options.generate_tooltip()
                 self._tooltip_cache = {
                     'backup': tooltip_text,
                     'restore': tooltip_text_entry_restore,
                     'settings': tooltip_text,
-                    'installer': installer_tooltips
+                    'system_manager': system_manager_tooltips
                 }
 
             tooltip_dict = self._tooltip_cache.get(checkbox.window_type, {})
@@ -315,7 +352,7 @@ class BaseWindow(QDialog):
             layout.addWidget(btn, row, 0, 1, self.columns)
             layout.addWidget(close_btn, row + 1, 0, 1, self.columns)
         elif self.window_type == "settings":
-            buttons = [('package_installer_settings_button', "Package Installer Options", self.installer_options),
+            buttons = [('system_manager_settings_button', "System Manager Options", self.system_manager_options),
                        ('add_entry_button', "New Entry", lambda: self.entry_dialog(edit_mode=False)),
                        ('entry_editor_button', "Edit Entry", lambda: self.entry_dialog(edit_mode=True)),
                        ('delete_button', "Delete Entry", self.delete_entry),
@@ -328,7 +365,7 @@ class BaseWindow(QDialog):
                 btn = QPushButton(text, self)
                 btn.clicked.connect(cb)
                 setattr(self, name, btn)
-            layout.addWidget(self.package_installer_settings_button, row, 0, 1, self.columns)
+            layout.addWidget(self.system_manager_settings_button, row, 0, 1, self.columns)
             row += 1
             hbox = QHBoxLayout()
             for btn in [self.add_entry_button, self.entry_editor_button, self.delete_button,
