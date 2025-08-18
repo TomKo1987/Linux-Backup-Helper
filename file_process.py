@@ -21,8 +21,10 @@ if not logger.hasHandlers():
 
 # noinspection PyUnresolvedReferences
 class FileProcessDialog(QDialog):
-    TAB_CONFIG = {'summary': {'index': 0, 'color': '#6ffff5', 'display': 'Summary'}, 'copied':  {'index': 1, 'color': 'lightgreen', 'display': 'Copied'},
-                  'skipped': {'index': 2, 'color': '#ffff7f', 'display': 'Skipped'}, 'error':   {'index': 3, 'color': '#ff8587', 'display': 'Errors'}}
+    TAB_CONFIG = {'summary': {'index': 0, 'color': '#6ffff5', 'display': 'Summary'},
+                  'copied':  {'index': 1, 'color': 'lightgreen', 'display': 'Copied'},
+                  'skipped': {'index': 2, 'color': '#ffff7f', 'display': 'Skipped'},
+                  'error':   {'index': 3, 'color': '#ff8587', 'display': 'Errors'}}
 
     def __init__(self, parent, checkbox_dirs, operation_type):
         super().__init__(parent)
@@ -35,7 +37,8 @@ class FileProcessDialog(QDialog):
         self.sudo_password_mutex = QMutex()
         self.sudo_dialog_open = False
         self.status_label = QLabel(f"{self.operation_type} in progress...\n")
-        self.status_label.setStyleSheet("color: #6ffff5; font-weight: bold; font-size: 20px; background-color: transparent;")
+        self.status_label.setStyleSheet(
+            "color: #6ffff5; font-weight: bold; font-size: 20px; background-color: transparent;")
         self.current_file_label = QLabel(f"Preparing:\n{self.operation_type}")
         self.current_file_label.setStyleSheet("font-weight: bold; font-size: 17px;")
         self.elapsed_time_label = QLabel("\nElapsed time:\n00s\n")
@@ -86,7 +89,8 @@ class FileProcessDialog(QDialog):
             if self.timer.isValid():
                 self.paused_elapsed += self.timer.elapsed()
             self.update_timer.stop()
-            password, ok = QInputDialog.getText(self, "Sudo Password", "Enter sudo password for mounting SMB shares:", QLineEdit.EchoMode.Password)
+            password, ok = QInputDialog.getText(
+                self, "Sudo Password", "Enter sudo password for mounting SMB shares:", QLineEdit.EchoMode.Password)
             with QMutexLocker(self.sudo_password_mutex):
                 self.sudo_password = password if ok and password else None
                 self.sudo_password_event.wakeAll()
@@ -175,7 +179,10 @@ class FileProcessDialog(QDialog):
     def create_summary_row(label_text, value_text, text_color, bg_color):
         row_layout = QHBoxLayout()
         row_layout.setContentsMargins(5, 5, 5, 5)
-        base_style = f"font-family: 'FiraCode Nerd Font Mono', 'Fira Code', monospace; padding: 2px 2px; border-radius: 5px; font-size: 18px; background-color: {bg_color}; color: {text_color}; border: 2px solid rgba(0, 0, 0, 50%);"
+        base_style = \
+            (f"font-family: 'FiraCode Nerd Font Mono', 'Fira Code', monospace; padding: 2px 2px; border-radius: 5px; "
+             f"font-size: 18px; background-color: {bg_color}; color: {text_color}; "
+             f"border: 2px solid rgba(0, 0, 0, 50%);")
         label = QLabel(label_text)
         label.setStyleSheet(base_style + " qproperty-alignment: AlignLeft;")
         label.setFixedWidth(500)
@@ -192,10 +199,15 @@ class FileProcessDialog(QDialog):
         size_formatted = self.format_file_size(self.total_bytes_copied)
         copied_size_text = f"({size_formatted})" if copied else "(0.00 MB)"
         add = self.summary_layout.addLayout
-        add(self.create_summary_row("Processed files/directories:", f"{total}", "#c1ffe3", "#2c2f33"))
-        add(self.create_summary_row("Copied:", f"{copied} {copied_size_text}", "#55ff55", "#1f3a1f"))
-        add(self.create_summary_row("Skipped (Up to date, protected file...):", f"{skipped}", "#ffff7f", "#3a3a1f"))
-        add(self.create_summary_row("Errors:", f"{error}", "#ff8587", "#3a1f1f"))
+        add(self.create_summary_row(
+            "Processed files/directories:", f"{total}", "#c1ffe3", "#2c2f33"))
+        add(self.create_summary_row(
+            "Copied:", f"{copied} {copied_size_text}", "#55ff55", "#1f3a1f"))
+        add(self.create_summary_row(
+            "Skipped (Up to date, protected file...):", f"{skipped}", "#ffff7f",
+            "#3a3a1f"))
+        add(self.create_summary_row(
+            "Errors:", f"{error}", "#ff8587", "#3a1f1f"))
 
     @staticmethod
     def format_file_size(size_bytes):
@@ -240,7 +252,8 @@ class FileProcessDialog(QDialog):
 
     def update_summary(self):
         now = QDateTime.currentMSecsSinceEpoch()
-        if hasattr(self, 'thread') and self.thread and self.thread.isRunning() and now - self._last_summary_update_time < 250:
+        if (hasattr(self, 'thread') and self.thread and self.thread.isRunning()
+                and now - self._last_summary_update_time < 250):
             return
         self._last_summary_update_time = now
         self.update_summary_widget(self.copied_count, self.skipped_count, self.error_count)
@@ -293,20 +306,26 @@ class FileProcessDialog(QDialog):
 
     def handle_successful_completion(self):
         self.status_label.setText(f"{self.operation_type} successfully completed!\n")
-        self.status_label.setStyleSheet("color: #6ffff5; font-weight: bold; font-size: 20px; background-color: transparent;")
+        self.status_label.setStyleSheet(
+            "color: #6ffff5; font-weight: bold; font-size: 20px; background-color: transparent;")
         self.current_file_label.setText("⇪ \nCheck details above.")
         self.progress_bar.setValue(100)
         self.animate_text_effect()
 
     def handle_cancelled_completion(self):
         self.status_label.setText(f"{self.operation_type} canceled!\n")
-        self.status_label.setStyleSheet("color: #ff8587; font-weight: bold; font-size: 20px; background-color: transparent;")
-        text = "󰜺 \nProcess aborted due to samba file error." if self._smb_error_occurred else "󰜺 \nProcess aborted by user."
+        self.status_label.setStyleSheet(
+            "color: #ff8587; font-weight: bold; font-size: 20px; background-color: transparent;")
+        text = \
+            "󰜺 \nProcess aborted due to samba file error." if self._smb_error_occurred \
+                else "󰜺 \nProcess aborted by user."
         self.current_file_label.setText(text)
         err_style = "color: #ff8587; font-weight: bold; font-size: 17px;"
         self.current_file_label.setStyleSheet(err_style)
         self.elapsed_time_label.setStyleSheet(err_style)
-        self.progress_bar.setStyleSheet(f"""{global_style} QProgressBar::chunk {{background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 #fd7e14, stop:1 #ff8587); border-radius: 2px;}}""")
+        self.progress_bar.setStyleSheet(
+            f"""{global_style} QProgressBar::chunk {{background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, 
+            y2:0, stop:0 #fd7e14, stop:1 #ff8587); border-radius: 2px;}}""")
 
     def animate_text_effect(self):
         color_timer = QTimer(self)
@@ -326,17 +345,22 @@ class FileProcessDialog(QDialog):
         self.elapsed_time_label.setStyleSheet(f"{style} font-size: 17px;")
 
     def cancel_operation(self):
-        confirm_box = QMessageBox(QMessageBox.Icon.Question, "Confirm Cancellation", f"Are you sure you want to cancel the {self.operation_type} process?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, self)
+        confirm_box = QMessageBox(QMessageBox.Icon.Question,
+                                  "Confirm Cancellation", f"Are you sure you want to cancel the "
+                                                          f"{self.operation_type} process?",
+                                  QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, self)
         confirm_box.setDefaultButton(QMessageBox.StandardButton.No)
         if confirm_box.exec() == QMessageBox.StandardButton.Yes:
             if self.thread and self.thread.isRunning():
                 self.cancelled = True
                 self.thread.cancel()
                 self.status_label.setText(f"Cancelling {self.operation_type}...\n")
-                self.status_label.setStyleSheet("color: #ff8587; font-weight: bold; font-size: 20px; background-color: transparent;")
+                self.status_label.setStyleSheet(
+                    "color: #ff8587; font-weight: bold; font-size: 20px; background-color: transparent;")
                 self.current_file_label.setText("Please wait while operations are being cancelled...\n")
                 self.progress_bar.setStyleSheet(f"""{global_style} QProgressBar::chunk 
-                {{background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 #fd7e14, stop:1 #ff8587); border-radius: 2px;}}""")
+                {{background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 #fd7e14, stop:1 
+                #ff8587); border-radius: 2px;}}""")
                 QCoreApplication.processEvents()
                 if not self.thread.wait(1000):
                     self.thread.terminate()
@@ -345,7 +369,8 @@ class FileProcessDialog(QDialog):
     def closeEvent(self, event):
         if self.thread and self.thread.isRunning():
             confirm_box = QMessageBox(QMessageBox.Icon.Question, "Confirm Close",
-                                      f"The {self.operation_type} process is still running. Are you sure you want to close?",
+                                      f"The {self.operation_type} process is still running. "
+                                      f"Are you sure you want to close?",
                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, self)
             confirm_box.setDefaultButton(QMessageBox.StandardButton.No)
             if confirm_box.exec() == QMessageBox.StandardButton.Yes:
@@ -513,7 +538,8 @@ class FileCopyThread(QThread):
             if self.cancelled:
                 return
             self.smb_handler.copy_file(source_file, dest_file, lambda success, smb_file_name, size_or_error:
-            (self._handle_smb_result(success, source_file, dest_file, smb_file_name, size_or_error) if not self.cancelled else None))
+            (self._handle_smb_result(success, source_file, dest_file, smb_file_name, size_or_error)
+             if not self.cancelled else None))
             return
 
         try:
