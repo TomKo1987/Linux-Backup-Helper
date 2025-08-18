@@ -4,7 +4,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from base_window import BaseWindow
 from global_style import global_style
-from package_installer_options import PackageInstallerOptions
+from system_manager_options import SystemManagerOptions
 from PyQt6.QtWidgets import (QMessageBox, QDialog, QVBoxLayout, QLabel, QFormLayout, QComboBox, QLineEdit, QPushButton,
                              QSizePolicy, QHBoxLayout, QWidget, QCheckBox, QGridLayout, QDialogButtonBox, QColorDialog,
                              QFileDialog, QTextEdit, QListWidget, QListWidgetItem, QInputDialog)
@@ -42,9 +42,9 @@ class SettingsWindow(BaseWindow):
             return f"{items[0]} and {items[1]}{suffix}"
         return f"{', '.join(items[:-1])}, and {items[-1]}{suffix}"
 
-    def installer_options(self):
+    def system_manager_options(self):
         self.hide()
-        PackageInstallerOptions(self).exec()
+        SystemManagerOptions(self).exec()
         self.show()
 
     def entry_dialog(self, edit_mode=False):
