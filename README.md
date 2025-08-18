@@ -15,12 +15,36 @@ As this is my first project and I am new to programming, I would be very gratefu
 - Customizable headers and layouts for different backup types
 - Extensive error handling and user feedback
 
-## Package Installer Usage and Tips
+**How files are copied and when they are skipped**
 
-First you can select **System Files** in Package Installer. These files will be copied using `sudo`, for root privilege. If you have System Files selected, Package Installer will copy these first.
+- **Copied Files:**
+  - Files are copied if the source file is newer than the destination, or if the destination does not exist.
+  - For directories, all contained files are evaluated individually.
+  - File attributes (modification time, permissions) are preserved.
+  - Network (SMB) paths are supported; files can be copied to and from SMB shares.
+
+- **Skipped Files:**
+  - Files are skipped and NOT copied if:
+    - The destination file already exists **and** has the same size **and** is at least as new as the source file (i.e., up to date).
+    - The file matches certain protection/lock patterns (e.g., `Singleton`, `lockfile`, `cookies.sqlite-wal`, etc.).
+    - The source file does not exist or cannot be accessed.
+  - Skipped files are shown in the "Skipped" tab with a reason, such as "Up to date" or "Protected/locked file".
+
+- **Errors:**
+  - If an error occurs during copying (e.g., permission denied, network problems, or unexpected issues), the file is not copied, and the error is shown in the "Errors" tab.
+
+- **Summary:**
+  - You can view the total number of processed, copied, skipped, and error files in the summary.
+  - The tooltip color-codes the results: green for copied, yellow for skipped, red for errors.
+
+_This logic ensures that only necessary files are copied, avoids overwriting up-to-date or protected files, and provides clear feedback for each file processed._
+
+## System Manager Usage and Tips
+
+First you can select **System Files** in System Manager. These files will be copied using `sudo`, for root privilege. If you have System Files selected, System Manager will copy these first.
 This allows you to copy files such as 'pacman.conf' or 'smb.conf' to '/etc/'.
 
-Under **Installer Operations** you can specify how you would like to proceed. Each action is executed one after the other. Uncheck actions to disable them.
+Under **System Manager Operations** you can specify how you would like to proceed. Each action is executed one after the other. Uncheck actions to disable them.
 
 ### Tips
 
