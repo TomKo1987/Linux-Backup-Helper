@@ -6,7 +6,8 @@ from linux_distro_helper import LinuxDistroHelper
 from PyQt6.QtGui import QTextCursor, QColor, QIcon
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, QElapsedTimer, QTimer
 import ast, getpass, os, pwd, shutil, socket, subprocess, tempfile, threading, time, urllib.error, urllib.request, queue, logging.handlers
-from PyQt6.QtWidgets import (QVBoxLayout, QHBoxLayout, QPushButton, QListWidgetItem, QApplication, QListWidget, QWidget, QCheckBox, QTextEdit, QGraphicsDropShadowEffect, QDialogButtonBox, QDialog, QLabel, QScrollArea)
+from PyQt6.QtWidgets import (QVBoxLayout, QHBoxLayout, QPushButton, QListWidgetItem, QApplication, QListWidget, QWidget,
+                             QCheckBox, QTextEdit, QGraphicsDropShadowEffect, QDialogButtonBox, QDialog, QLabel, QScrollArea)
 
 user = pwd.getpwuid(os.getuid()).pw_name
 home_user = os.getenv("HOME")
@@ -23,14 +24,14 @@ if not logger.hasHandlers():
 
 
 # noinspection PyUnresolvedReferences
-class PackageInstallerLauncher:
+class SystemManagerLauncher:
     def __init__(self, parent=None):
         self.parent = parent
         self.config = getattr(parent, 'config', {}) if parent else {}
         self.drive_manager = DriveManager()
         self.failed_attempts = getattr(parent, 'failed_attempts', 0)
-        self.package_installer_thread = None
-        self.package_installer_dialog = None
+        self.system_manager_thread = None
+        self.system_manager_dialog = None
         self.sudo_checkbox = None
         self.distro_helper = LinuxDistroHelper()
         self.distro_name = self.distro_helper.distro_pretty_name
@@ -40,25 +41,25 @@ class PackageInstallerLauncher:
         if self.parent:
             self.parent.hide()
         try:
-            self.confirm_and_start_package_installer()
+            self.confirm_and_start_system_manager()
         finally:
             if self.parent:
                 self.parent.show()
 
-    def confirm_and_start_package_installer(self):
-        installer_operations = self.config.get('installer_operations', [])
+    def confirm_and_start_system_manager(self):
+        system_manager_operations = self.config.get('system_manager_operations', [])
         _, _, installer_tooltips = Options.generate_tooltip()
         distro_helper = LinuxDistroHelper()
-        package_installer_operation_text = Options.get_package_installer_operation_text(distro_helper)
-        operations_text = {k: v.replace("&&", "&") for k, v in package_installer_operation_text.items()}
+        system_manager_operation_text = Options.get_system_manager_operation_text(distro_helper)
+        operations_text = {k: v.replace("&&", "&") for k, v in system_manager_operation_text.items()}
         dialog, content_widget, content_layout = self._create_installer_dialog()
-        self._display_operations(installer_operations, operations_text, installer_tooltips, content_layout)
+        self._display_operations(system_manager_operations, operations_text, installer_tooltips, content_layout)
         if self._show_dialog_and_get_result(dialog, content_widget):
-            self._handle_dialog_accepted(installer_operations)
+            self._handle_dialog_accepted(system_manager_operations)
 
     def _create_installer_dialog(self):
         dialog = QDialog()
-        dialog.setWindowTitle('Package Installer')
+        dialog.setWindowTitle('System Manager')
         layout = QVBoxLayout()
         content_widget = QWidget()
         yay_info = ""
@@ -68,7 +69,7 @@ class PackageInstallerLauncher:
         self.distro_label.setStyleSheet("color: lightgreen")
         content_layout = QVBoxLayout(content_widget)
         content_layout.addWidget(self.distro_label)
-        header_label = QLabel("<span style='font-size: 18px;'>Package Installer will perform the following operations:<br></span>")
+        header_label = QLabel("<span style='font-size: 18px;'>System Manager will perform the following operations:<br></span>")
         header_label.setTextFormat(Qt.TextFormat.RichText)
         content_layout.addWidget(header_label)
         scroll_area = QScrollArea()
@@ -79,11 +80,11 @@ class PackageInstallerLauncher:
         dialog.setLayout(layout)
         return dialog, content_widget, content_layout
 
-    def _display_operations(self, installer_operations, operations_text, installer_tooltips, content_layout):
-        for i, opt in enumerate(installer_operations):
-            if opt in operations_text:
-                has_tooltip = opt in installer_tooltips and installer_tooltips[opt]
-                self._add_operation_row(i, operations_text[opt], has_tooltip, installer_tooltips.get(opt, ""), content_layout)
+    def _display_operations(self, system_manager_operations, system_manager_operations_text, system_manager_tooltips, content_layout):
+        for i, opt in enumerate(system_manager_operations):
+            if opt in system_manager_operations_text:
+                has_tooltip = opt in system_manager_tooltips and system_manager_tooltips[opt]
+                self._add_operation_row(i, system_manager_operations_text[opt], has_tooltip, system_manager_tooltips.get(opt, ""), content_layout)
 
     @staticmethod
     def _add_operation_row(index, text, has_tooltip, tooltip_text, layout):
@@ -107,7 +108,7 @@ class PackageInstallerLauncher:
         layout.addLayout(row_layout)
 
     def _show_dialog_and_get_result(self, dialog, content_widget):
-        confirm_label = QLabel("<span style='font-size: 16px;'>Start Package Installer?<br>(Check 'Enter sudo password' if a sudo password is set.)<br></span>")
+        confirm_label = QLabel("<span style='font-size: 16px;'>Start System Manager?<br>(Check 'Enter sudo password' if a sudo password is set.)<br></span>")
         button_layout = QHBoxLayout()
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
         button_box.button(QDialogButtonBox.StandardButton.Ok).setText('Yes')
@@ -131,19 +132,19 @@ class PackageInstallerLauncher:
         button_box.button(QDialogButtonBox.StandardButton.Cancel).setFocus()
         return dialog.exec() == QDialog.DialogCode.Accepted
 
-    def start_package_installer_thread(self, sudo_password):
-        self.package_installer_thread = PackageInstallerThread(sudo_password)
-        self.package_installer_dialog = PackageInstallerDialog(self.parent)
-        self.package_installer_thread.started.connect(self.show_package_installer_dialog)
-        self.package_installer_thread.passwordFailed.connect(self.on_password_failed)
-        self.package_installer_thread.passwordSuccess.connect(self.on_password_success)
-        self.package_installer_thread.outputReceived.connect(self.package_installer_dialog.update_operation_dialog)
-        self.package_installer_thread.taskStatusChanged.connect(self.package_installer_dialog.update_task_checklist_status)
-        self.package_installer_thread.finished.connect(self.on_package_installer_finished)
-        self.package_installer_thread.start()
+    def start_system_manager_thread(self, sudo_password):
+        self.system_manager_thread = SystemManagerThread(sudo_password)
+        self.system_manager_dialog = SystemManagerDialog(self.parent)
+        self.system_manager_thread.started.connect(self.show_system_manager_dialog)
+        self.system_manager_thread.passwordFailed.connect(self.on_password_failed)
+        self.system_manager_thread.passwordSuccess.connect(self.on_password_success)
+        self.system_manager_thread.outputReceived.connect(self.system_manager_dialog.update_operation_dialog)
+        self.system_manager_thread.taskStatusChanged.connect(self.system_manager_dialog.update_task_checklist_status)
+        self.system_manager_thread.finished.connect(self.on_system_manager_finished)
+        self.system_manager_thread.start()
 
-    def _handle_dialog_accepted(self, installer_operations):
-        if "copy_system_files" in installer_operations:
+    def _handle_dialog_accepted(self, system_manager_operations):
+        if "copy_system_files" in system_manager_operations:
             system_files = self.config.get('system_files', [])
             paths_to_check = []
             for file in system_files:
@@ -157,11 +158,11 @@ class PackageInstallerLauncher:
         if self.sudo_checkbox.isChecked():
             self.show_sudo_password_dialog()
         else:
-            self.start_package_installer_thread("")
+            self.start_system_manager_thread("")
 
-    def show_package_installer_dialog(self):
+    def show_system_manager_dialog(self):
         try:
-            self.package_installer_dialog.exec()
+            self.system_manager_dialog.exec()
         finally:
             self.drive_manager.unmount_drives()
 
@@ -173,16 +174,16 @@ class PackageInstallerLauncher:
         dialog.exec()
 
     def on_sudo_password_entered(self, sudo_password):
-        self.start_package_installer_thread(sudo_password)
+        self.start_system_manager_thread(sudo_password)
 
     def on_password_failed(self):
         self.failed_attempts += 1
         if self.parent:
             self.parent.failed_attempts = self.failed_attempts
 
-        if self.package_installer_dialog:
-            self.package_installer_dialog.update_failed_attempts(self.failed_attempts)
-            self.package_installer_dialog.auth_failed = True
+        if self.system_manager_dialog:
+            self.system_manager_dialog.update_failed_attempts(self.failed_attempts)
+            self.system_manager_dialog.auth_failed = True
             error_msg = ("<p style='color: #ff4a4d; font-size: 18px; font-weight: bold;'>"
                          "<br>Authentication failed. Canceling process to prevent account lockout."
                          "<br>This could be due to:"
@@ -192,21 +193,21 @@ class PackageInstallerLauncher:
                          "<li>User not in sudoers file</li>"
                          "<li>Sudo configuration issue</li>"
                          "</ul>"
-                         "Package Installer has been aborted to protect your system."
+                         "System Manager has been aborted to protect your system."
                          "</p>")
-            self.package_installer_dialog.update_operation_dialog(error_msg)
-            self.package_installer_dialog.completed_message_shown = True
-            self.package_installer_dialog.update_timer.stop()
-            self.package_installer_dialog.has_error = True
-            self.package_installer_dialog.ok_button.setEnabled(True)
+            self.system_manager_dialog.update_operation_dialog(error_msg)
+            self.system_manager_dialog.completed_message_shown = True
+            self.system_manager_dialog.update_timer.stop()
+            self.system_manager_dialog.has_error = True
+            self.system_manager_dialog.ok_button.setEnabled(True)
 
-        if self.package_installer_thread:
-            self.package_installer_thread.terminated = True
-            self.package_installer_thread.quit()
+        if self.system_manager_thread:
+            self.system_manager_thread.terminated = True
+            self.system_manager_thread.quit()
             try:
-                if not self.package_installer_thread.wait(2000):
-                    self.package_installer_thread.terminate()
-                    self.package_installer_thread.wait(1000)
+                if not self.system_manager_thread.wait(2000):
+                    self.system_manager_thread.terminate()
+                    self.system_manager_thread.wait(1000)
             except (RuntimeError, AttributeError):
                 pass
 
@@ -214,13 +215,13 @@ class PackageInstallerLauncher:
         self.failed_attempts = 0
         if self.parent:
             self.parent.failed_attempts = 0
-        if self.package_installer_dialog:
-            self.package_installer_dialog.update_failed_attempts(self.failed_attempts)
-            self.package_installer_dialog.auth_failed = False
+        if self.system_manager_dialog:
+            self.system_manager_dialog.update_failed_attempts(self.failed_attempts)
+            self.system_manager_dialog.auth_failed = False
 
-    def on_package_installer_finished(self):
-        self.package_installer_thread = None
-        self.package_installer_dialog = None
+    def on_system_manager_finished(self):
+        self.system_manager_thread = None
+        self.system_manager_dialog = None
 
 
 class StyleConfig:
@@ -269,7 +270,7 @@ class TaskStatus:
 
 
 # noinspection PyUnresolvedReferences
-class PackageInstallerDialog(QDialog):
+class SystemManagerDialog(QDialog):
     outputReceived = pyqtSignal(str, str)
     DIALOG_SIZE = (1400, 1100)
     CHECKLIST_WIDTH = 370
@@ -354,7 +355,7 @@ class PackageInstallerDialog(QDialog):
         self.text_edit.setReadOnly(True)
         self.text_edit.setHtml(
             "<p style='color: #55ff55; font-size: 20px; text-align: center; margin-top: 25px;'>"
-            "<b>Package Installer</b><br>Initialization completed. Starting Package Installer</p>"
+            "<b>System Manager</b><br>Initialization completed. Starting System Manager</p>"
         )
 
     def _configure_checklist(self):
@@ -643,7 +644,7 @@ class PackageInstallerDialog(QDialog):
         color = StyleConfig.COLORS['warning' if is_error else 'success']
         summary_text = "Completed with issues" if is_error else "Successfully Completed"
         icon = "⚠️" if is_error else "✅"
-        message = f"Package Installer {'completed with warnings/errors' if is_error else 'successfully completed all operations<br>'}"
+        message = f"System Manager {'completed with warnings/errors' if is_error else 'successfully completed all operations<br>'}"
 
         color_obj = QColor(color)
         r, g, b = color_obj.red(), color_obj.green(), color_obj.blue()
@@ -763,7 +764,7 @@ class PackageInstallerDialog(QDialog):
 
 
 # noinspection PyUnresolvedReferences
-class PackageInstallerThread(QThread):
+class SystemManagerThread(QThread):
     started = pyqtSignal()
     outputReceived = pyqtSignal(str, str)
     passwordFailed = pyqtSignal()
@@ -795,7 +796,7 @@ class PackageInstallerThread(QThread):
                 return
             self.passwordSuccess.emit()
             if not self.auth_failed and not self.terminated:
-                self.start_package_installer()
+                self.start_system_manager()
         except Exception as e:
             self.outputReceived.emit(f"Critical error during execution: {e}", "error")
             self.has_error = True
@@ -805,14 +806,14 @@ class PackageInstallerThread(QThread):
 
     def prepare_tasks(self):
         Options.load_config(Options.config_file_path)
-        installer_operations = Options.installer_operations
+        system_manager_operations = Options.system_manager_operations
         tasks = self._define_base_tasks()
         for service_task_id, (desc, name, pkgs) in self._define_service_tasks().items():
             def make_task(task_name, task_pkgs):
                 return lambda: self.setup_service_with_packages(task_name, list(task_pkgs))
             tasks[service_task_id] = (desc, make_task(name, pkgs))
         tasks.update({"remove_orphaned_packages": ("Removing orphaned packages...", self.remove_orphaned_packages), "clean_cache": ("Cleaning cache...", self.clean_cache)})
-        self.enabled_tasks = {tid: t for tid, t in tasks.items() if tid in installer_operations}
+        self.enabled_tasks = {tid: t for tid, t in tasks.items() if tid in system_manager_operations}
         self.task_descriptions = [(tid, desc) for tid, (desc, _) in self.enabled_tasks.items()]
         self.outputReceived.emit(str(self.task_descriptions), "task_list")
 
@@ -1038,7 +1039,7 @@ class PackageInstallerThread(QThread):
             self.outputReceived.emit(f"<span>Error waiting for process: {e}</span>", "error")
             return None
 
-    def start_package_installer(self):
+    def start_system_manager(self):
         for task_id, (description, function) in self.enabled_tasks.items():
             if self.terminated:
                 break
