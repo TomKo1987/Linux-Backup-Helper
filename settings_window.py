@@ -3,7 +3,7 @@ from options import Options
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from base_window import BaseWindow
-from global_style import global_style
+from global_style import get_current_style
 from system_manager_options import SystemManagerOptions
 from PyQt6.QtWidgets import (QMessageBox, QDialog, QVBoxLayout, QLabel, QFormLayout, QComboBox, QLineEdit, QPushButton,
                              QSizePolicy, QHBoxLayout, QWidget, QCheckBox, QGridLayout, QDialogButtonBox, QColorDialog,
@@ -159,7 +159,7 @@ class SettingsWindow(BaseWindow):
             for key, text in checkbox_texts.items():
                 cb = QCheckBox(text)
                 cb.setChecked(entry_obj.details.get(key, False) if entry_obj else False)
-                cb.setStyleSheet(f"{global_style} QCheckBox {{color: '#6ffff5'}}")
+                cb.setStyleSheet(f"{get_current_style()} QCheckBox {{color: '#6ffff5'}}")
                 cb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
                 cb.setMaximumHeight(field_height)
                 checkboxes[key] = cb
