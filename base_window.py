@@ -1,7 +1,8 @@
+import global_style
 import logging.handlers
 from options import Options
-from global_style import global_style
 from PyQt6.QtCore import Qt, pyqtSignal
+from global_style import THEMES, get_current_style
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QDialog, QLabel, QGridLayout,
                              QScrollArea, QCheckBox, QSpacerItem, QSizePolicy, QComboBox, QDialogButtonBox)
 
@@ -95,7 +96,7 @@ class BaseWindow(QDialog):
         self._clear_layout(self.top_controls)
         self.selectall = QCheckBox("Select All")
         self.selectall.setStyleSheet(
-            f"{global_style} QCheckBox {{color: '#6ffff5'; font-size: 14px;}}"
+            "QCheckBox {color: '#6ffff5'; font-size: 14px;}"
         )
         self.selectall.clicked.connect(self.toggle_checkboxes_manually)
         config_path_text = str(Options.config_file_path)
@@ -178,7 +179,8 @@ class BaseWindow(QDialog):
 
             for entry in ents:
                 checkbox = QCheckBox(entry["title"])
-                ch_style = f"{global_style} QCheckBox {{color: {header_color}; font-size: 16px; }} QToolTip {{color: '#07e392';}}"
+                ch_style = f"QCheckBox {{color: {header_color}; font-size: 16px;}} QToolTip {{color: '#07e392';}}"
+                checkbox.setStyleSheet(ch_style)
 
                 if header == "Games" and self.window_type in ("restore", "settings") and sublayout_entries:
                     added = False
@@ -186,7 +188,7 @@ class BaseWindow(QDialog):
                         key = f'sublayout_games_{i}'
                         if entry["title"] in sublayout_entries[key]:
                             checkbox.setStyleSheet(
-                                f"{global_style} QCheckBox {{color: {header_color}; font-size: 14px;}} QToolTip {{color: '#07e392';}}")
+                                f"{get_current_style()} QCheckBox {{color: {header_color}; font-size: 14px;}} QToolTip {{color: '#07e392';}}")
                             sublayout = getattr(self, key, None)
                             if sublayout:
                                 sublayout.addWidget(checkbox)
@@ -300,7 +302,7 @@ class BaseWindow(QDialog):
             select_all = QCheckBox(name)
             color = "#7f7f7f" if self.window_type == "settings" and "Games" in Options.header_inactive else Options.header_colors.get(
                 "Games", "#ffffff")
-            select_all.setStyleSheet(f"{global_style} QCheckBox {{color: {color}; font-size: 15px;}}")
+            select_all.setStyleSheet(f"QCheckBox {{color: {color}; font-size: 15px;}}")
             select_all.clicked.connect(lambda checked, idx=i: self._toggle_sublayout_checkboxes(
                 getattr(self, f'sublayout_games_{idx}'),
                 getattr(self, f'select_all_games_{idx}')
@@ -488,15 +490,13 @@ class BaseWindow(QDialog):
         QApplication.instance().setStyleSheet(theme_style)
 
     def save_theme(self, theme_name, dialog):
-        from global_style import THEMES
-        import global_style
-
         Options.ui_settings["theme"] = theme_name
         global_style.current_theme = theme_name
         QApplication.instance().setStyleSheet(THEMES[theme_name])
         Options.save_config()
         dialog.accept()
         self.show_message("Success", f"Theme changed to {theme_name}!")
+        self.setup_ui()
 
     @staticmethod
     def _set_checkbox_checked(checkbox, checked):
