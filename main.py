@@ -1,5 +1,7 @@
+import global_style
 from pathlib import Path
 from options import Options
+from global_style import THEMES
 import json, sys, logging.handlers
 from base_window import BaseWindow
 from drive_manager import DriveManager
@@ -305,19 +307,15 @@ class BackupRestoreWindow(BaseWindow):
 
 def main():
     app = QApplication(sys.argv)
-
-    # Load config first
     Options.load_config(Options.config_file_path)
 
     # Apply theme from settings
-    from global_style import THEMES
-    import global_style
     theme_name = Options.ui_settings.get("theme", "Tokyo Night")
     if theme_name in THEMES:
         global_style.current_theme = theme_name
         app.setStyleSheet(THEMES[theme_name])
     else:
-        app.setStyleSheet(global_style.global_style)
+        app.setStyleSheet(global_style)
 
     def handle_exception(exc_type, exc_value, exc_traceback):
         if issubclass(exc_type, KeyboardInterrupt):
