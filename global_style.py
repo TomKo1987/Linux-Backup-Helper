@@ -16,7 +16,7 @@ QPushButton, QCheckBox {
     text-align: center;
     padding: 5px;
     font-size: 16px;
-    font: bold;
+    font-weight: bold;
     color: #ffffff;
 }
 QPushButton {
@@ -27,6 +27,7 @@ QPushButton:enabled:hover, QPushButton:enabled:focus {
     border: 2px solid #ffff00;
     background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3a425f, stop:1 #606d9c);
     color: #55ffff;
+    outline: none;
 }
 QPushButton:disabled {
     border: 2px solid #444;
@@ -35,13 +36,12 @@ QPushButton:disabled {
 }
 QCheckBox {
     background-color: transparent;
-}
-QCheckBox:enabled, QCheckBox:disabled {
     border: 2px solid transparent;
 }
 QCheckBox:enabled:hover, QCheckBox:enabled:focus {
     border: 2px solid #ffff00;
     color: #55ffff;
+    outline: none;
 }
 QCheckBox:disabled {
     color: #616161;
@@ -175,7 +175,7 @@ QTabBar::tab:selected {
 }
 """,
 
-    "Dark Mode": """
+"Dark Mode": """
 QDialog, QWidget {
     background-color: #1a1a1a;
     border-radius: 8px;
@@ -192,7 +192,7 @@ QPushButton, QCheckBox {
     text-align: center;
     padding: 5px;
     font-size: 16px;
-    font: bold;
+    font-weight: bold;
     color: #ffffff;
 }
 QPushButton {
@@ -201,8 +201,9 @@ QPushButton {
 }
 QPushButton:enabled:hover, QPushButton:enabled:focus {
     border: 2px solid #888;
-    background-color: #3a3a3a;
+    background-color: #505050;
     color: #ffffff;
+    outline: none;
 }
 QPushButton:disabled {
     border: 2px solid #333;
@@ -211,10 +212,12 @@ QPushButton:disabled {
 }
 QCheckBox {
     background-color: transparent;
+    border: 2px solid transparent;
 }
 QCheckBox:enabled:hover, QCheckBox:enabled:focus {
     border: 2px solid #888;
     color: #ffffff;
+    outline: none;
 }
 QCheckBox:disabled {
     color: #666;
@@ -281,7 +284,7 @@ QProgressBar::chunk {
 }
 """,
 
-    "Light Mode": """
+"Light Mode": """
 QDialog, QWidget {
     background-color: #f5f5f5;
     border-radius: 8px;
@@ -298,7 +301,7 @@ QPushButton, QCheckBox {
     text-align: center;
     padding: 5px;
     font-size: 16px;
-    font: bold;
+    font-weight: bold;
     color: #333333;
 }
 QPushButton {
@@ -309,6 +312,7 @@ QPushButton:enabled:hover, QPushButton:enabled:focus {
     border: 2px solid #0078d4;
     background-color: #e1f5fe;
     color: #0078d4;
+    outline: none;
 }
 QPushButton:disabled {
     border: 2px solid #e0e0e0;
@@ -317,10 +321,12 @@ QPushButton:disabled {
 }
 QCheckBox {
     background-color: transparent;
+    border: 2px solid transparent;
 }
 QCheckBox:enabled:hover, QCheckBox:enabled:focus {
     border: 2px solid #0078d4;
     color: #0078d4;
+    outline: none;
 }
 QCheckBox:disabled {
     color: #999999;
@@ -386,7 +392,8 @@ QProgressBar::chunk {
     border-radius: 3px;
 }
 """,
-    "Solarized Dark": """
+
+"Solarized Dark": """
 QDialog, QWidget {
     background-color: #002b36;
     border-radius: 10px;
@@ -401,8 +408,9 @@ QPushButton, QCheckBox {
     border-radius: 8px;
     padding: 5px;
     font-size: 16px;
-    font: bold;
+    font-weight: bold;
     color: #fdf6e3;
+    outline: none;
 }
 QPushButton {
     border: 2px solid #268bd2;
@@ -412,15 +420,21 @@ QPushButton:enabled:hover, QPushButton:enabled:focus {
     border: 2px solid #b58900;
     background-color: #586e75;
     color: #fdf6e3;
+    outline: none;
 }
 QPushButton:disabled {
     border: 2px solid #333;
     color: #657b83;
     background-color: #002b36;
 }
+QCheckBox {
+    background-color: transparent;
+    border: 2px solid transparent;
+}
 QCheckBox:enabled:hover, QCheckBox:enabled:focus {
     border: 2px solid #b58900;
     color: #fdf6e3;
+    outline: none;
 }
 QCheckBox:disabled {
     color: #586e75;
@@ -485,7 +499,7 @@ QProgressBar::chunk {
 }
 """,
 
-    "Dracula": """
+"Dracula": """
 QDialog, QWidget {
     background-color: #282a36;
     border-radius: 10px;
@@ -500,8 +514,9 @@ QPushButton, QCheckBox {
     border-radius: 6px;
     padding: 5px;
     font-size: 16px;
-    font: bold;
+    font-weight: bold;
     color: #f8f8f2;
+    outline: none;
 }
 QPushButton {
     border: 2px solid #bd93f9;
@@ -511,15 +526,21 @@ QPushButton:enabled:hover, QPushButton:enabled:focus {
     border: 2px solid #ff79c6;
     background-color: #6272a4;
     color: #50fa7b;
+    outline: none;
 }
 QPushButton:disabled {
     border: 2px solid #444;
     color: #6272a4;
     background-color: #1e1f29;
 }
+QCheckBox {
+    background-color: transparent;
+    border: 2px solid transparent;
+}
 QCheckBox:enabled:hover, QCheckBox:enabled:focus {
     border: 2px solid #ff79c6;
     color: #50fa7b;
+    outline: none;
 }
 QCheckBox:disabled {
     color: #6272a4;
@@ -583,7 +604,8 @@ QProgressBar::chunk {
     border-radius: 4px;
 }
 """,
-    "Gruvbox Dark": """
+
+"Gruvbox Dark": """
 QDialog, QWidget {
     background-color: #282828;
     border-radius: 10px;
@@ -598,26 +620,33 @@ QPushButton, QCheckBox {
     border-radius: 6px;
     padding: 5px;
     font-size: 16px;
-    font: bold;
+    font-weight: bold;
     color: #fbf1c7;
+    outline: none;
 }
 QPushButton {
     border: 2px solid #b8bb26;
     background-color: #3c3836;
 }
-QPushButton:enabled:hover {
+QPushButton:enabled:hover, QPushButton:enabled:focus {
     background-color: #504945;
     color: #fabd2f;
-    border: 2px solid #fabd2f;
+    border: 2px solid #da39fa;
+    outline: none;
 }
 QPushButton:disabled {
     color: #928374;
     background-color: #282828;
     border: 2px solid #444;
 }
-QCheckBox:enabled:hover {
+QCheckBox {
+    background-color: transparent;
+    border: 2px solid transparent;
+}
+QCheckBox:enabled:hover, QCheckBox:enabled:focus {
     color: #fabd2f;
-    border: 2px solid #fabd2f;
+    border: 2px solid #da39fa;
+    outline: none;
 }
 QCheckBox:disabled {
     color: #928374;
@@ -629,9 +658,11 @@ QCheckBox:indicator {
 }
 QCheckBox:indicator:checked {
     background-color: #b8bb26;
+    border: 1px solid #98971a;
 }
 QCheckBox:indicator:unchecked {
     background-color: #cc241d;
+    border: 1px solid #9d0006;
 }
 QLabel {
     color: #ebdbb2;
@@ -670,8 +701,7 @@ QProgressBar::chunk {
     border-radius: 4px;
 }
 """,
-
-    "Nord": """
+"Nord": """
 QDialog, QWidget {
     background-color: #2e3440;
     border-radius: 10px;
@@ -685,26 +715,33 @@ QWidget {
 QPushButton, QCheckBox {
     border-radius: 6px;
     padding: 5px;
-    font: bold;
+    font-weight: bold;
     color: #eceff4;
+    outline: none;
 }
 QPushButton {
     border: 2px solid #88c0d0;
     background-color: #3b4252;
 }
-QPushButton:enabled:hover {
-    background-color: #434c5e;
+QPushButton:enabled:hover, QPushButton:enabled:focus {
+    background-color: #282d38;
     border-color: #81a1c1;
     color: #8fbcbb;
+    outline: none;
 }
 QPushButton:disabled {
     color: #616e88;
     background-color: #2e3440;
     border: 2px solid #4c566a;
 }
-QCheckBox:enabled:hover {
+QCheckBox {
+    background-color: transparent;
+    border: 2px solid transparent;
+}
+QCheckBox:enabled:hover, QCheckBox:enabled:focus {
     color: #8fbcbb;
     border: 2px solid #81a1c1;
+    outline: none;
 }
 QCheckBox:disabled {
     color: #616e88;
@@ -716,9 +753,11 @@ QCheckBox:indicator {
 }
 QCheckBox:indicator:checked {
     background-color: #a3be8c;
+    border: 1px solid #8c9d71;
 }
 QCheckBox:indicator:unchecked {
     background-color: #bf616a;
+    border: 1px solid #9e4f56;
 }
 QLabel {
     color: #d8dee9;
@@ -758,7 +797,7 @@ QProgressBar::chunk {
 }
 """,
 
-    "Catppuccin Mocha": """
+"Catppuccin Mocha": """
 QDialog, QWidget {
     background-color: #1e1e2e;
     border-radius: 10px;
@@ -772,26 +811,33 @@ QWidget {
 QPushButton, QCheckBox {
     border-radius: 6px;
     padding: 5px;
-    font: bold;
+    font-weight: bold;
     color: #cdd6f4;
+    outline: none;
 }
 QPushButton {
     border: 2px solid #89b4fa;
     background-color: #313244;
 }
-QPushButton:enabled:hover {
+QPushButton:enabled:hover, QPushButton:enabled:focus {
     background-color: #45475a;
     border-color: #f5c2e7;
     color: #f5c2e7;
+    outline: none;
 }
 QPushButton:disabled {
     color: #6c7086;
     background-color: #1e1e2e;
     border: 2px solid #313244;
 }
-QCheckBox:enabled:hover {
+QCheckBox {
+    background-color: transparent;
+    border: 2px solid transparent;
+}
+QCheckBox:enabled:hover, QCheckBox:enabled:focus {
     color: #f5c2e7;
     border: 2px solid #f5c2e7;
+    outline: none;
 }
 QCheckBox:disabled {
     color: #6c7086;
@@ -803,9 +849,11 @@ QCheckBox:indicator {
 }
 QCheckBox:indicator:checked {
     background-color: #a6e3a1;
+    border: 1px solid #88bd84;
 }
 QCheckBox:indicator:unchecked {
     background-color: #f38ba8;
+    border: 1px solid #c9738b;
 }
 QLabel {
     color: #cdd6f4;
@@ -845,7 +893,7 @@ QProgressBar::chunk {
 }
 """,
 
-    "Monokai Pro": """
+"Monokai Pro": """
 QDialog, QWidget {
     background-color: #2d2a2e;
     border-radius: 10px;
@@ -859,26 +907,33 @@ QWidget {
 QPushButton, QCheckBox {
     border-radius: 6px;
     padding: 5px;
-    font: bold;
+    font-weight: bold;
     color: #f8f8f2;
+    outline: none;
 }
 QPushButton {
     border: 2px solid #66d9ef;
     background-color: #403e41;
 }
-QPushButton:enabled:hover {
-    background-color: #75715e;
+QPushButton:enabled:hover, QPushButton:enabled:focus {
+    background-color: #282720;
     border-color: #a6e22e;
     color: #a6e22e;
+    outline: none;
 }
 QPushButton:disabled {
     color: #75715e;
     background-color: #2d2a2e;
     border: 2px solid #403e41;
 }
-QCheckBox:enabled:hover {
+QCheckBox {
+    background-color: transparent;
+    border: 2px solid transparent;
+}
+QCheckBox:enabled:hover, QCheckBox:enabled:focus {
     color: #a6e22e;
     border: 2px solid #a6e22e;
+    outline: none;
 }
 QCheckBox:disabled {
     color: #75715e;
@@ -890,9 +945,11 @@ QCheckBox:indicator {
 }
 QCheckBox:indicator:checked {
     background-color: #a6e22e;
+    border: 1px solid #88b725;
 }
 QCheckBox:indicator:unchecked {
     background-color: #f92672;
+    border: 1px solid #ca1f5c;
 }
 QLabel {
     color: #f8f8f2;
