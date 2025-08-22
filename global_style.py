@@ -1,8 +1,10 @@
+from PyQt6.QtWidgets import QApplication, QDialog, QWidget
+
 THEMES = {
     "Tokyo Night": """
 QDialog, QWidget {
-    background-color: #232534;
     border-radius: 16px;
+    background-color: #232534;
     border: 1px solid #2d2d44;
 }
 QWidget {
@@ -14,13 +16,14 @@ QPushButton, QCheckBox {
     border-radius: 10px;
     outline: none;
     text-align: center;
-    padding: 5px;
-    font-size: 16px;
+    padding: 3px;
+    font-size: 15px;
     font-weight: bold;
     color: #ffffff;
 }
 QPushButton {
     border: 2px solid #7dcfff;
+    height: 23px;
     background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #24283b, stop:1 #414868);
 }
 QPushButton:enabled:hover, QPushButton:enabled:focus {
@@ -52,16 +55,16 @@ QCheckBox:indicator {
     border-radius: 4px;
 }
 QCheckBox:indicator:checked {
-    border: 1px solid #55ff00;
-    background-color: #55ff00;
+    background-color: #00ffbf;
+    border: 1px solid #98971a;
 }
 QCheckBox:indicator:unchecked {
-    border: 1px solid #f7768e;
-    background-color: #f7768e;
+    background-color: #cc241d;
+    border: 1px solid #9d0006;
 }
 QCheckBox:indicator:indeterminate {
-    border: 1px solid #7aa2f7;
     background-color: transparent;
+    border: 1px solid #00ffbf;
 }
 QLabel {
     color: #c0caf5;
@@ -148,7 +151,7 @@ QProgressBar {
     background-color: #6d7582;
     border-radius: 8px;
     border: 3px solid #7aa2f7;
-    height: 25px;
+    height: 22,5px;
     text-align: center;
     margin: 10px 0;
     font-weight: bold;
@@ -177,8 +180,8 @@ QTabBar::tab:selected {
 
 "Dark Mode": """
 QDialog, QWidget {
+    border-radius: 16px;
     background-color: #1a1a1a;
-    border-radius: 8px;
     border: 1px solid #333;
 }
 QWidget {
@@ -187,16 +190,17 @@ QWidget {
     font-size: 16px;
 }
 QPushButton, QCheckBox {
-    border-radius: 6px;
+    border-radius: 10px;
     outline: none;
     text-align: center;
-    padding: 5px;
-    font-size: 16px;
+    padding: 3px;
+    font-size: 15px;
     font-weight: bold;
     color: #ffffff;
 }
 QPushButton {
     border: 2px solid #666;
+    height: 23px;
     background-color: #2b2b2b;
 }
 QPushButton:enabled:hover, QPushButton:enabled:focus {
@@ -228,19 +232,25 @@ QCheckBox:indicator {
     border-radius: 4px;
 }
 QCheckBox:indicator:checked {
-    border: 1px solid #4a9eff;
-    background-color: #4a9eff;
+    background-color: #00ffbf;
+    border: 1px solid #98971a;
 }
 QCheckBox:indicator:unchecked {
-    border: 1px solid #666;
-    background-color: #333;
+    background-color: #cc241d;
+    border: 1px solid #9d0006;
+}
+QCheckBox:indicator:indeterminate {
+    background-color: transparent;
+    border: 1px solid #00ffbf;
 }
 QLabel {
     color: #e0e0e0;
     border: none;
+    border-radius: 2px;
     padding: 5px;
     font-size: 17px;
     qproperty-alignment: 'AlignCenter';
+    font-family: "CaskaydiaCove Nerd Font", "Noto Sans", "DejaVu Sans", "Arial", sans-serif;
 }
 QLineEdit {
     background-color: #2b2b2b;
@@ -275,7 +285,7 @@ QProgressBar {
     background-color: #2b2b2b;
     border-radius: 4px;
     border: 1px solid #444;
-    height: 25px;
+    height: 22,5px;
     text-align: center;
 }
 QProgressBar::chunk {
@@ -286,8 +296,8 @@ QProgressBar::chunk {
 
 "Light Mode": """
 QDialog, QWidget {
+    border-radius: 16px;
     background-color: #f5f5f5;
-    border-radius: 8px;
     border: 1px solid #d0d0d0;
 }
 QWidget {
@@ -296,16 +306,17 @@ QWidget {
     font-size: 16px;
 }
 QPushButton, QCheckBox {
-    border-radius: 6px;
+    border-radius: 10px;
     outline: none;
     text-align: center;
-    padding: 5px;
-    font-size: 16px;
+    padding: 3px;
+    font-size: 15px;
     font-weight: bold;
     color: #333333;
 }
 QPushButton {
     border: 2px solid #b0b0b0;
+    height: 23px;
     background-color: #ffffff;
 }
 QPushButton:enabled:hover, QPushButton:enabled:focus {
@@ -337,19 +348,25 @@ QCheckBox:indicator {
     border-radius: 4px;
 }
 QCheckBox:indicator:checked {
-    border: 1px solid #0078d4;
-    background-color: #0078d4;
+    background-color: #00ffbf;
+    border: 1px solid #98971a;
 }
 QCheckBox:indicator:unchecked {
-    border: 1px solid #999999;
-    background-color: #ffffff;
+    background-color: #cc241d;
+    border: 1px solid #9d0006;
+}
+QCheckBox:indicator:indeterminate {
+    background-color: transparent;
+    border: 1px solid #00ffbf;
 }
 QLabel {
     color: #333333;
     border: none;
+    border-radius: 2px;
     padding: 5px;
     font-size: 17px;
     qproperty-alignment: 'AlignCenter';
+    font-family: "CaskaydiaCove Nerd Font", "Noto Sans", "DejaVu Sans", "Arial", sans-serif;
 }
 QLineEdit {
     background-color: #ffffff;
@@ -384,7 +401,7 @@ QProgressBar {
     background-color: #e0e0e0;
     border-radius: 4px;
     border: 1px solid #d0d0d0;
-    height: 25px;
+    height: 22,5px;
     text-align: center;
 }
 QProgressBar::chunk {
@@ -395,8 +412,8 @@ QProgressBar::chunk {
 
 "Solarized Dark": """
 QDialog, QWidget {
+    border-radius: 16px;
     background-color: #002b36;
-    border-radius: 10px;
     border: 1px solid #073642;
 }
 QWidget {
@@ -405,15 +422,17 @@ QWidget {
     font-size: 16px;
 }
 QPushButton, QCheckBox {
-    border-radius: 8px;
-    padding: 5px;
-    font-size: 16px;
+    border-radius: 10px;
+    outline: none;
+    text-align: center;
+    padding: 3px;
+    font-size: 15px;
     font-weight: bold;
     color: #fdf6e3;
-    outline: none;
 }
 QPushButton {
     border: 2px solid #268bd2;
+    height: 23px;
     background-color: #073642;
 }
 QPushButton:enabled:hover, QPushButton:enabled:focus {
@@ -445,19 +464,25 @@ QCheckBox:indicator {
     border-radius: 4px;
 }
 QCheckBox:indicator:checked {
-    border: 1px solid #859900;
-    background-color: #859900;
+    background-color: #00ffbf;
+    border: 1px solid #98971a;
 }
 QCheckBox:indicator:unchecked {
-    border: 1px solid #dc322f;
-    background-color: #dc322f;
+    background-color: #cc241d;
+    border: 1px solid #9d0006;
+}
+QCheckBox:indicator:indeterminate {
+    background-color: transparent;
+    border: 1px solid #00ffbf;
 }
 QLabel {
     color: #93a1a1;
     border: none;
+    border-radius: 2px;
     padding: 5px;
     font-size: 17px;
     qproperty-alignment: 'AlignCenter';
+    font-family: "CaskaydiaCove Nerd Font", "Noto Sans", "DejaVu Sans", "Arial", sans-serif;
 }
 QLineEdit {
     background-color: #073642;
@@ -489,7 +514,7 @@ QProgressBar {
     background-color: #073642;
     border: 1px solid #268bd2;
     border-radius: 6px;
-    height: 25px;
+    height: 22,5px;
     text-align: center;
     font-size: 16px;
 }
@@ -501,25 +526,27 @@ QProgressBar::chunk {
 
 "Dracula": """
 QDialog, QWidget {
+    border-radius: 16px;
     background-color: #282a36;
-    border-radius: 10px;
     border: 1px solid #44475a;
 }
 QWidget {
     color: #f8f8f2;
-    font-family: "JetBrains Mono", "FiraCode Nerd Font", "Courier New", monospace;
+    font-family: "Noto Sans Mono", "DejaVu Sans Mono", "Courier New", monospace;
     font-size: 16px;
 }
 QPushButton, QCheckBox {
-    border-radius: 6px;
-    padding: 5px;
-    font-size: 16px;
+    border-radius: 10px;
+    outline: none;
+    text-align: center;
+    padding: 3px;
+    font-size: 15px;
     font-weight: bold;
     color: #f8f8f2;
-    outline: none;
 }
 QPushButton {
     border: 2px solid #bd93f9;
+    height: 23px;
     background-color: #44475a;
 }
 QPushButton:enabled:hover, QPushButton:enabled:focus {
@@ -551,19 +578,25 @@ QCheckBox:indicator {
     border-radius: 4px;
 }
 QCheckBox:indicator:checked {
-    border: 1px solid #50fa7b;
-    background-color: #50fa7b;
+    background-color: #00ffbf;
+    border: 1px solid #98971a;
 }
 QCheckBox:indicator:unchecked {
-    border: 1px solid #ff5555;
-    background-color: #ff5555;
+    background-color: #cc241d;
+    border: 1px solid #9d0006;
+}
+QCheckBox:indicator:indeterminate {
+    background-color: transparent;
+    border: 1px solid #00ffbf;
 }
 QLabel {
     color: #f8f8f2;
-    padding: 5px;
     border: none;
+    border-radius: 2px;
+    padding: 5px;
     font-size: 17px;
     qproperty-alignment: 'AlignCenter';
+    font-family: "CaskaydiaCove Nerd Font", "Noto Sans", "DejaVu Sans", "Arial", sans-serif;
 }
 QLineEdit {
     background-color: #44475a;
@@ -595,7 +628,7 @@ QProgressBar {
     background-color: #44475a;
     border: 1px solid #bd93f9;
     border-radius: 6px;
-    height: 25px;
+    height: 22,5px;
     text-align: center;
     font-size: 16px;
 }
@@ -607,31 +640,33 @@ QProgressBar::chunk {
 
 "Gruvbox Dark": """
 QDialog, QWidget {
+    border-radius: 16px;
     background-color: #282828;
-    border-radius: 10px;
     border: 1px solid #3c3836;
 }
 QWidget {
     color: #ebdbb2;
-    font-family: "Fira Code", "Noto Sans Mono", monospace;
+    font-family: "Noto Sans Mono", "DejaVu Sans Mono", "Courier New", monospace;
     font-size: 16px;
 }
 QPushButton, QCheckBox {
-    border-radius: 6px;
-    padding: 5px;
-    font-size: 16px;
+    border-radius: 10px;
+    outline: none;
+    text-align: center;
+    padding: 3px;
+    font-size: 15px;
     font-weight: bold;
     color: #fbf1c7;
-    outline: none;
 }
 QPushButton {
     border: 2px solid #b8bb26;
+    height: 23px;
     background-color: #3c3836;
 }
 QPushButton:enabled:hover, QPushButton:enabled:focus {
     background-color: #504945;
     color: #fabd2f;
-    border: 2px solid #da39fa;
+    border: 2px solid #00fa71;
     outline: none;
 }
 QPushButton:disabled {
@@ -645,7 +680,7 @@ QCheckBox {
 }
 QCheckBox:enabled:hover, QCheckBox:enabled:focus {
     color: #fabd2f;
-    border: 2px solid #da39fa;
+    border: 2px solid #00fa71;
     outline: none;
 }
 QCheckBox:disabled {
@@ -657,19 +692,25 @@ QCheckBox:indicator {
     border-radius: 4px;
 }
 QCheckBox:indicator:checked {
-    background-color: #b8bb26;
+    background-color: #00ffbf;
     border: 1px solid #98971a;
 }
 QCheckBox:indicator:unchecked {
     background-color: #cc241d;
     border: 1px solid #9d0006;
 }
+QCheckBox:indicator:indeterminate {
+    background-color: transparent;
+    border: 1px solid #00ffbf;
+}
 QLabel {
     color: #ebdbb2;
-    padding: 5px;
     border: none;
+    border-radius: 2px;
+    padding: 5px;
     font-size: 17px;
     qproperty-alignment: 'AlignCenter';
+    font-family: "CaskaydiaCove Nerd Font", "Noto Sans", "DejaVu Sans", "Arial", sans-serif;
 }
 QLineEdit, QTextEdit, QListWidget {
     background-color: #3c3836;
@@ -693,7 +734,7 @@ QProgressBar {
     background-color: #504945;
     border-radius: 6px;
     border: 1px solid #b8bb26;
-    height: 25px;
+    height: 22,5px;
     text-align: center;
 }
 QProgressBar::chunk {
@@ -701,32 +742,36 @@ QProgressBar::chunk {
     border-radius: 4px;
 }
 """,
+
 "Nord": """
 QDialog, QWidget {
+    border-radius: 16px;
     background-color: #2e3440;
-    border-radius: 10px;
     border: 1px solid #4c566a;
 }
 QWidget {
     color: #d8dee9;
-    font-family: "JetBrains Mono", "Fira Code", monospace;
+    font-family: "Noto Sans Mono", "DejaVu Sans Mono", "Courier New", monospace;
     font-size: 16px;
 }
 QPushButton, QCheckBox {
-    border-radius: 6px;
-    padding: 5px;
+    border-radius: 10px;
+    outline: none;
+    text-align: center;
+    padding: 3px;
+    font-size: 15px;
     font-weight: bold;
     color: #eceff4;
-    outline: none;
 }
 QPushButton {
     border: 2px solid #88c0d0;
+    height: 23px;
     background-color: #3b4252;
 }
 QPushButton:enabled:hover, QPushButton:enabled:focus {
-    background-color: #282d38;
-    border-color: #81a1c1;
-    color: #8fbcbb;
+    background-color: #5a657d;
+    border-color: #85c199;
+    color: #aaff00;
     outline: none;
 }
 QPushButton:disabled {
@@ -740,7 +785,7 @@ QCheckBox {
 }
 QCheckBox:enabled:hover, QCheckBox:enabled:focus {
     color: #8fbcbb;
-    border: 2px solid #81a1c1;
+    border: 2px solid #85c199;
     outline: none;
 }
 QCheckBox:disabled {
@@ -752,19 +797,25 @@ QCheckBox:indicator {
     border-radius: 4px;
 }
 QCheckBox:indicator:checked {
-    background-color: #a3be8c;
-    border: 1px solid #8c9d71;
+    background-color: #00ffbf;
+    border: 1px solid #98971a;
 }
 QCheckBox:indicator:unchecked {
-    background-color: #bf616a;
-    border: 1px solid #9e4f56;
+    background-color: #cc241d;
+    border: 1px solid #9d0006;
+}
+QCheckBox:indicator:indeterminate {
+    background-color: transparent;
+    border: 1px solid #00ffbf;
 }
 QLabel {
     color: #d8dee9;
-    padding: 5px;
     border: none;
+    border-radius: 2px;
+    padding: 5px;
     font-size: 17px;
     qproperty-alignment: 'AlignCenter';
+    font-family: "CaskaydiaCove Nerd Font", "Noto Sans", "DejaVu Sans", "Arial", sans-serif;
 }
 QLineEdit, QTextEdit, QListWidget {
     background-color: #3b4252;
@@ -788,7 +839,7 @@ QProgressBar {
     background-color: #3b4252;
     border-radius: 6px;
     border: 1px solid #88c0d0;
-    height: 25px;
+    height: 22,5px;
     text-align: center;
 }
 QProgressBar::chunk {
@@ -799,30 +850,33 @@ QProgressBar::chunk {
 
 "Catppuccin Mocha": """
 QDialog, QWidget {
+    border-radius: 16px;
     background-color: #1e1e2e;
-    border-radius: 10px;
     border: 1px solid #313244;
 }
 QWidget {
     color: #cdd6f4;
-    font-family: "Iosevka", "Fira Code", monospace;
+    font-family: "Noto Sans Mono", "DejaVu Sans Mono", "Courier New", monospace;
     font-size: 16px;
 }
 QPushButton, QCheckBox {
-    border-radius: 6px;
-    padding: 5px;
+    border-radius: 10px;
+    outline: none;
+    text-align: center;
+    padding: 3px;
+    font-size: 15px;
     font-weight: bold;
     color: #cdd6f4;
-    outline: none;
 }
 QPushButton {
     border: 2px solid #89b4fa;
+    height: 23px;
     background-color: #313244;
 }
 QPushButton:enabled:hover, QPushButton:enabled:focus {
     background-color: #45475a;
     border-color: #f5c2e7;
-    color: #f5c2e7;
+    color: #00ffc8;
     outline: none;
 }
 QPushButton:disabled {
@@ -835,7 +889,7 @@ QCheckBox {
     border: 2px solid transparent;
 }
 QCheckBox:enabled:hover, QCheckBox:enabled:focus {
-    color: #f5c2e7;
+    color: #00ffc8;
     border: 2px solid #f5c2e7;
     outline: none;
 }
@@ -848,19 +902,25 @@ QCheckBox:indicator {
     border-radius: 4px;
 }
 QCheckBox:indicator:checked {
-    background-color: #a6e3a1;
-    border: 1px solid #88bd84;
+    background-color: #00ffbf;
+    border: 1px solid #98971a;
 }
 QCheckBox:indicator:unchecked {
-    background-color: #f38ba8;
-    border: 1px solid #c9738b;
+    background-color: #cc241d;
+    border: 1px solid #9d0006;
+}
+QCheckBox:indicator:indeterminate {
+    background-color: transparent;
+    border: 1px solid #00ffbf;
 }
 QLabel {
     color: #cdd6f4;
-    padding: 5px;
     border: none;
+    border-radius: 2px;
+    padding: 5px;
     font-size: 17px;
     qproperty-alignment: 'AlignCenter';
+    font-family: "CaskaydiaCove Nerd Font", "Noto Sans", "DejaVu Sans", "Arial", sans-serif;
 }
 QLineEdit, QTextEdit, QListWidget {
     background-color: #313244;
@@ -884,7 +944,7 @@ QProgressBar {
     background-color: #313244;
     border-radius: 6px;
     border: 1px solid #89b4fa;
-    height: 25px;
+    height: 22,5px;
     text-align: center;
 }
 QProgressBar::chunk {
@@ -895,28 +955,31 @@ QProgressBar::chunk {
 
 "Monokai Pro": """
 QDialog, QWidget {
+    border-radius: 16px;
     background-color: #2d2a2e;
-    border-radius: 10px;
     border: 1px solid #403e41;
 }
 QWidget {
     color: #f8f8f2;
-    font-family: "Source Code Pro", "Fira Code", monospace;
+    font-family: "Noto Sans Mono", "DejaVu Sans Mono", "Courier New", monospace;
     font-size: 16px;
 }
 QPushButton, QCheckBox {
-    border-radius: 6px;
-    padding: 5px;
+    border-radius: 10px;
+    outline: none;
+    text-align: center;
+    padding: 3px;
+    font-size: 15px;
     font-weight: bold;
     color: #f8f8f2;
-    outline: none;
 }
 QPushButton {
     border: 2px solid #66d9ef;
+    height: 23px;
     background-color: #403e41;
 }
 QPushButton:enabled:hover, QPushButton:enabled:focus {
-    background-color: #282720;
+    background-color: #413f34;
     border-color: #a6e22e;
     color: #a6e22e;
     outline: none;
@@ -944,19 +1007,25 @@ QCheckBox:indicator {
     border-radius: 4px;
 }
 QCheckBox:indicator:checked {
-    background-color: #a6e22e;
-    border: 1px solid #88b725;
+    background-color: #00ffbf;
+    border: 1px solid #98971a;
 }
 QCheckBox:indicator:unchecked {
-    background-color: #f92672;
-    border: 1px solid #ca1f5c;
+    background-color: #cc241d;
+    border: 1px solid #9d0006;
+}
+QCheckBox:indicator:indeterminate {
+    background-color: transparent;
+    border: 1px solid #00ffbf;
 }
 QLabel {
     color: #f8f8f2;
-    padding: 5px;
     border: none;
+    border-radius: 2px;
+    padding: 5px;
     font-size: 17px;
     qproperty-alignment: 'AlignCenter';
+    font-family: "CaskaydiaCove Nerd Font", "Noto Sans", "DejaVu Sans", "Arial", sans-serif;
 }
 QLineEdit, QTextEdit, QListWidget {
     background-color: #403e41;
@@ -980,7 +1049,7 @@ QProgressBar {
     background-color: #403e41;
     border-radius: 6px;
     border: 1px solid #66d9ef;
-    height: 25px;
+    height: 22,5px;
     text-align: center;
 }
 QProgressBar::chunk {
@@ -998,3 +1067,28 @@ def get_current_style():
 
 # For backward compatibility
 global_style = get_current_style()
+
+
+def apply_theme_to_widget(widget, theme_name=None):
+    """Apply theme to a specific widget and all its children"""
+    if theme_name is None:
+        theme_name = current_theme
+
+    if theme_name in THEMES:
+        style = THEMES[theme_name]
+        widget.setStyleSheet(style)
+
+        # Apply to all children
+        for child in widget.findChildren(QWidget):
+            child.style().unpolish(child)
+            child.style().polish(child)
+
+
+def refresh_all_windows():
+    """Refresh styling for all top-level windows"""
+    current_style = get_current_style()
+
+    for widget in QApplication.topLevelWidgets():
+        if isinstance(widget, (QDialog, QWidget)) and widget.isVisible():
+            widget.setStyleSheet(current_style)
+            widget.update()
