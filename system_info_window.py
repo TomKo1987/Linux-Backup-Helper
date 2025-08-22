@@ -1,5 +1,5 @@
 import subprocess, logging
-from PyQt6.QtGui import QFont, QTextOption
+from PyQt6.QtGui import QFont, QTextOption, QFontMetrics
 from global_style import get_current_style
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QPushButton, QLabel
@@ -53,8 +53,8 @@ class SystemInfoWindow(QDialog):
         self.text_edit = QTextEdit()
         self.close_btn = QPushButton("Close")
         self.setWindowTitle("System Information")
-        self.setMinimumSize(1000, 850)
-        self.resize(1150, 1000)
+        self.setMinimumSize(1000, 750)
+        self.resize(1100, 950)
 
         self.worker = None
         self.init_ui()
@@ -62,6 +62,7 @@ class SystemInfoWindow(QDialog):
 
     def init_ui(self):
         layout = QVBoxLayout()
+        layout.setContentsMargins(10, 10, 10, 10)
 
         header = QLabel("System Information")
         header_font = QFont()
@@ -75,6 +76,18 @@ class SystemInfoWindow(QDialog):
         self.text_edit.setReadOnly(True)
         self.text_edit.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
         self.text_edit.setWordWrapMode(QTextOption.WrapMode.NoWrap)
+
+        font = QFont("Courier New", 10)  # oder "Consolas", "Monaco"
+        font.setFixedPitch(True)
+        self.text_edit.setFont(font)
+
+        self.text_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.text_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        font_metrics = QFontMetrics(font)
+        tab_width = 4 * font_metrics.horizontalAdvance(' ')
+        self.text_edit.setTabStopDistance(tab_width)
+
         self.text_edit.setStyleSheet(f"{get_current_style()}")
         layout.addWidget(self.text_edit)
 
@@ -87,6 +100,27 @@ class SystemInfoWindow(QDialog):
     def on_info_loaded(self, info):
         self.text_edit.setPlainText(info)
         self.close_btn.setFocus()
+
+        self.adjust_window_width()
+
+    def adjust_window_width(self):
+        try:
+            font_metrics = QFontMetrics(self.text_edit.font())
+            text = self.text_edit.toPlainText()
+            lines = text.split('\n')
+
+            if lines:
+                max_line_width = max(font_metrics.horizontalAdvance(line) for line in lines)
+                optimal_width = max_line_width + 100
+
+                screen = self.screen().availableGeometry()
+                max_width = int(screen.width() * 0.9)
+
+                new_width = min(optimal_width, max_width)
+                if new_width > self.width():
+                    self.resize(new_width, self.height())
+        except Exception as e:
+            logger.debug(f"Could not adjust window width: {e}")
 
     def load_system_info(self):
         self.text_edit.setPlainText("Loading system information...")
