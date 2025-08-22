@@ -52,9 +52,9 @@ class SystemInfoWindow(QDialog):
         super().__init__(parent)
         self.text_edit = QTextEdit()
         self.close_btn = QPushButton("Close")
-        self.setWindowTitle("System information")
-        self.setMinimumSize(1100, 900)
-        self.resize(1250, 1000)
+        self.setWindowTitle("System Information")
+        self.setMinimumSize(1000, 850)
+        self.resize(1150, 1000)
 
         self.worker = None
         self.init_ui()
@@ -63,7 +63,7 @@ class SystemInfoWindow(QDialog):
     def init_ui(self):
         layout = QVBoxLayout()
 
-        header = QLabel("System information")
+        header = QLabel("System Information")
         header_font = QFont()
         header_font.setPointSize(14)
         header_font.setBold(True)
