@@ -94,6 +94,7 @@ QTextEdit, QListWidget {
     border-radius: 8px;
     font-size: 16px;
     font-family: "FiraCode Nerd Font Mono", "DejaVu Sans Mono", "Courier New", monospace;
+    outline: none;
 }
 QListWidget::item {
     padding: 5px;
