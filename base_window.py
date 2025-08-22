@@ -54,8 +54,9 @@ class BaseWindow(QDialog):
         )
 
         if (
-            self._last_entries_hash == current_entries_hash
-            and self._last_ui_state == current_ui_state
+                self._last_entries_hash == current_entries_hash
+                and self._last_ui_state == current_ui_state
+                and self.content_widget is not None
         ):
             return
 
@@ -95,9 +96,7 @@ class BaseWindow(QDialog):
     def create_top_controls(self, column_text):
         self._clear_layout(self.top_controls)
         self.selectall = QCheckBox("Select All")
-        self.selectall.setStyleSheet(
-            "QCheckBox {color: '#6ffff5'; font-size: 14px;}"
-        )
+        self.selectall.setStyleSheet(f"{get_current_style()}")
         self.selectall.clicked.connect(self.toggle_checkboxes_manually)
         config_path_text = str(Options.config_file_path)
         if hasattr(Options, "text_replacements"):
@@ -128,7 +127,7 @@ class BaseWindow(QDialog):
 
         tooltip_icon = "💡"
         label_html = (
-            f"{tooltip_icon}<span style='font-size: 15px; padding: 4px; "
+            f"{tooltip_icon}<span style='font-size: 16px; padding: 4px; "
             f"color: #9891c2; text-decoration: underline dotted;'>{config_path_text}</span>"
         )
         config_save_path_label = QLabel(label_html)
@@ -171,7 +170,7 @@ class BaseWindow(QDialog):
             col = 0
             header_color = "#7f7f7f" if inactive else Options.header_colors.get(header, '#ffffff')
             label = QLabel(f"{header} (Inactive)" if inactive else header)
-            label.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {header_color};")
+            label.setStyleSheet(f"font-size: 17px; font-weight: bold; color: {header_color};")
             hbox = QHBoxLayout()
             hbox.addWidget(label)
             layout.addLayout(hbox, row, 0, 1, self.columns)
@@ -179,7 +178,7 @@ class BaseWindow(QDialog):
 
             for entry in ents:
                 checkbox = QCheckBox(entry["title"])
-                ch_style = f"QCheckBox {{color: {header_color}; font-size: 16px;}} QToolTip {{color: '#07e392';}}"
+                ch_style = f"{get_current_style()} QCheckBox {{color: {header_color}}} QToolTip {{color: '#07e392';}}"
                 checkbox.setStyleSheet(ch_style)
 
                 if header == "Games" and self.window_type in ("restore", "settings") and sublayout_entries:
@@ -188,7 +187,7 @@ class BaseWindow(QDialog):
                         key = f'sublayout_games_{i}'
                         if entry["title"] in sublayout_entries[key]:
                             checkbox.setStyleSheet(
-                                f"{get_current_style()} QCheckBox {{color: {header_color}; font-size: 14px;}} QToolTip {{color: '#07e392';}}")
+                                f"{get_current_style()} QCheckBox {{color: {header_color};}} QToolTip {{color: '#07e392';}}")
                             sublayout = getattr(self, key, None)
                             if sublayout:
                                 sublayout.addWidget(checkbox)
@@ -302,7 +301,7 @@ class BaseWindow(QDialog):
             select_all = QCheckBox(name)
             color = "#7f7f7f" if self.window_type == "settings" and "Games" in Options.header_inactive else Options.header_colors.get(
                 "Games", "#ffffff")
-            select_all.setStyleSheet(f"QCheckBox {{color: {color}; font-size: 15px;}}")
+            select_all.setStyleSheet(f"QCheckBox {{color: {color}; font-size: 14px;}}")
             select_all.clicked.connect(lambda checked, idx=i: self._toggle_sublayout_checkboxes(
                 getattr(self, f'sublayout_games_{idx}'),
                 getattr(self, f'select_all_games_{idx}')
@@ -419,23 +418,22 @@ class BaseWindow(QDialog):
                 items_to_clean.append(item)
 
         for item in items_to_clean:
-            widget = item.widget()
-            if widget:
-                try:
+            try:
+                widget = item.widget()
+                if widget:
                     widget.blockSignals(True)
                     widget.clearFocus()
                     if hasattr(widget, 'enterEvent'):
                         widget.enterEvent = None
                     widget.setParent(None)
                     widget.deleteLater()
-                except Exception as e:
-                    logger.warning(f"Error cleaning up widget: {e}")
-            elif item.layout():
-                self._clear_layout(item.layout())
-                try:
+                elif item.layout():
+                    self._clear_layout(item.layout())
                     item.layout().deleteLater()
-                except Exception as e:
-                    logger.warning(f"Error cleaning up layout: {e}")
+                elif item.spacerItem():
+                    pass
+            except Exception as e:
+                logger.warning(f"Error cleaning up item: {e}")
 
     def clear_layout_contents(self):
         self._tooltip_cache = None
@@ -463,6 +461,7 @@ class BaseWindow(QDialog):
         dialog = QDialog(self)
         dialog.setWindowTitle("Select Theme")
         dialog.setMinimumSize(400, 200)
+        dialog.setWindowModality(Qt.WindowModality.NonModal)
 
         layout = QVBoxLayout(dialog)
 
@@ -474,20 +473,32 @@ class BaseWindow(QDialog):
         theme_combo.setCurrentText(current_theme)
         layout.addWidget(theme_combo)
 
+        original_theme = current_theme
+
         preview_btn = QPushButton("Preview")
         preview_btn.clicked.connect(lambda: self.preview_theme(THEMES[theme_combo.currentText()]))
         layout.addWidget(preview_btn)
 
-        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel) # type: ignore
         button_box.accepted.connect(lambda: self.save_theme(theme_combo.currentText(), dialog))
-        button_box.rejected.connect(dialog.reject)
+        button_box.rejected.connect(lambda: self.restore_theme(original_theme, dialog))
         layout.addWidget(button_box)
 
-        dialog.exec()
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def preview_theme(self, theme_style):
+        QApplication.instance().setStyleSheet(theme_style)
+        self.adjust_window_size()
 
     @staticmethod
-    def preview_theme(theme_style):
-        QApplication.instance().setStyleSheet(theme_style)
+    def restore_theme(original_theme, dialog):
+        from global_style import THEMES
+        if original_theme in THEMES:
+            QApplication.instance().setStyleSheet(THEMES[original_theme])
+            global_style.current_theme = original_theme
+        dialog.reject()
 
     def save_theme(self, theme_name, dialog):
         Options.ui_settings["theme"] = theme_name
@@ -495,8 +506,15 @@ class BaseWindow(QDialog):
         QApplication.instance().setStyleSheet(THEMES[theme_name])
         Options.save_config()
         dialog.accept()
-        self.show_message("Success", f"Theme changed to {theme_name}!")
         self.setup_ui()
+        for cb, *_ in self.checkbox_dirs:
+            header_color = Options.header_colors.get(cb.entry_data["header"], "#ffffff")
+            cb.setStyleSheet(
+                f"{get_current_style()} QCheckBox {{color: {header_color};}} QToolTip {{color: '#07e392';}}")
+        self.selectall.setStyleSheet(f"{get_current_style()}")
+        self.show_message("Success", f"Theme changed to {theme_name}!")
+        if hasattr(self, 'parent') and self.parent():
+            self.parent().update()
 
     @staticmethod
     def _set_checkbox_checked(checkbox, checked):
