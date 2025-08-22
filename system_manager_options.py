@@ -2,12 +2,12 @@ import logging.handlers
 from pathlib import Path
 from PyQt6.QtCore import Qt, QTimer
 from global_style import global_style
+from global_style import get_current_style
 from linux_distro_helper import LinuxDistroHelper
 from options import Options, SESSIONS, USER_SHELL
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout, QLabel, QPushButton, QWidget,
                              QComboBox, QCheckBox, QListWidget, QListWidgetItem, QScrollArea, QDialogButtonBox,
-                             QMessageBox,
-                             QFileDialog, QInputDialog, QLineEdit, QTextEdit, QApplication, QSizePolicy)
+                             QMessageBox, QFileDialog, QInputDialog, QLineEdit, QTextEdit, QApplication, QSizePolicy)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -113,7 +113,8 @@ class SystemManagerOptions(QDialog):
         self._add_shell_selection(layout)
         self._connect_signals()
         layout.addWidget(self.close_button)
-        self.setFixedSize(1100, 900)
+        self.setStyleSheet(get_current_style())
+        self.setFixedSize(1000, 900)
 
     def _add_distro_info(self, layout):
         yay_info = ""
@@ -406,6 +407,54 @@ class SystemManagerOptions(QDialog):
         for list_widget in self.system_files_widgets:
             list_widget.setMinimumWidth(max_text_width)
 
+        if self.system_files_widgets:
+            select_all_checkbox = self._create_select_all_checkbox()
+            select_all_checkbox.setText("Check/Uncheck All System Files")
+            select_all_checkbox.setStyleSheet(get_current_style())
+            grid_layout.addWidget(select_all_checkbox, len(system_files), 0)
+            self._setup_system_files_select_all(select_all_checkbox)
+
+    def _setup_system_files_select_all(self, select_all_checkbox):
+        def toggle_all_system_files():
+            checked = select_all_checkbox.checkState() == Qt.CheckState.Checked
+            for manager_widget in self.system_files_widgets:
+                if isinstance(manager_widget, QListWidget) and manager_widget.count() > 0:
+                    manager_item = manager_widget.item(0)
+                    if manager_item:
+                        manager_item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+
+        def update_select_all_state():
+            if not self.system_files_widgets:
+                return
+            checked_count = 0
+            total_count = 0
+            for manager_widget in self.system_files_widgets:
+                if isinstance(manager_widget, QListWidget) and manager_widget.count() > 0:
+                    manager_item = manager_widget.item(0)
+                    if manager_item:
+                        total_count += 1
+                        if manager_item.checkState() == Qt.CheckState.Checked:
+                            checked_count += 1
+            if total_count == 0:
+                return
+
+            select_all_checkbox.blockSignals(True)
+            if checked_count == 0:
+                select_all_checkbox.setCheckState(Qt.CheckState.Unchecked)
+            elif checked_count == total_count:
+                select_all_checkbox.setCheckState(Qt.CheckState.Checked)
+            else:
+                select_all_checkbox.setCheckState(Qt.CheckState.PartiallyChecked)
+            select_all_checkbox.blockSignals(False)
+
+        select_all_checkbox.stateChanged.connect(toggle_all_system_files)
+        for widget in self.system_files_widgets:
+            if isinstance(widget, QListWidget) and widget.count() > 0:
+                item = widget.item(0)
+                if item:
+                    widget.itemChanged.connect(update_select_all_state)
+        update_select_all_state()
+
     @staticmethod
     def _parse_file_info(file_info):
         file_source = file_destination = ""
@@ -528,12 +577,62 @@ class SystemManagerOptions(QDialog):
             grid_layout.addWidget(widget, index // 5, index % 5)
         setattr(self, f"{option_type}_widgets", package_widgets)
 
+        if package_widgets:
+            row = (len(package_widgets) - 1) // 5 + 1
+            select_all_checkbox = self._create_select_all_checkbox()
+            select_all_checkbox.setText(f"Check/Uncheck All {option_type.replace('_', ' ').title()}")
+            select_all_checkbox.setStyleSheet(get_current_style())
+            grid_layout.addWidget(select_all_checkbox, row, 0, 1, 5)
+            self._setup_packages_select_all(select_all_checkbox, package_widgets)
+
         dialog, layout = self.create_dialog(
             title, content_widget, lambda dlg: self.save_system_manager_options(dlg, option_type)
         )
         self._add_search_functionality(layout, package_widgets)
         self._add_package_management_buttons(layout, add_button_text, option_type, is_specific)
         dialog.exec()
+
+    @staticmethod
+    def _setup_packages_select_all(select_all_checkbox, package_widgets):
+        def toggle_all_packages():
+            checked = select_all_checkbox.checkState() == Qt.CheckState.Checked
+            for manager_widget in package_widgets:
+                if isinstance(manager_widget, QListWidget) and manager_widget.count() > 0:
+                    manager_item = manager_widget.item(0)
+                    if manager_item:
+                        manager_item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+
+        def update_select_all_state():
+            if not package_widgets:
+                return
+            checked_count = 0
+            total_count = 0
+            for manager_widget in package_widgets:
+                if isinstance(manager_widget, QListWidget) and manager_widget.count() > 0:
+                    manager_item = manager_widget.item(0)
+                    if manager_item:
+                        total_count += 1
+                        if manager_item.checkState() == Qt.CheckState.Checked:
+                            checked_count += 1
+            if total_count == 0:
+                return
+
+            select_all_checkbox.blockSignals(True)
+            if checked_count == 0:
+                select_all_checkbox.setCheckState(Qt.CheckState.Unchecked)
+            elif checked_count == total_count:
+                select_all_checkbox.setCheckState(Qt.CheckState.Checked)
+            else:
+                select_all_checkbox.setCheckState(Qt.CheckState.PartiallyChecked)
+            select_all_checkbox.blockSignals(False)
+
+        select_all_checkbox.stateChanged.connect(toggle_all_packages)
+        for widget in package_widgets:
+            if isinstance(widget, QListWidget) and widget.count() > 0:
+                item = widget.item(0)
+                if item:
+                    widget.itemChanged.connect(update_select_all_state)
+        update_select_all_state()
 
     def _add_search_functionality(self, layout, package_widgets):
         search_layout = QHBoxLayout()
