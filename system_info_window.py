@@ -73,6 +73,7 @@ class SystemInfoWindow(QDialog):
         layout.addWidget(header)
 
         self.text_edit.setReadOnly(True)
+        self.text_edit.lineWrapColumnOrWidth()
         self.text_edit.setStyleSheet(f"{get_current_style()}")
         layout.addWidget(self.text_edit)
 
