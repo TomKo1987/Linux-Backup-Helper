@@ -384,18 +384,26 @@ class SettingsWindow(BaseWindow):
         new_header_button = QPushButton("New Header")
         new_header_button.clicked.connect(lambda: self.add_new_header(list_widget))
         layout.addWidget(new_header_button)
-        sublayout_buttons = [QPushButton(
-            f"Name Sublayout-Games {i}:\n{Options.sublayout_names.get(f'sublayout_games_{i}', f'Sublayout Games {i}')}")
-                             for i in range(1, 5)]
-        for i, btn in enumerate(sublayout_buttons, 1):
+
+        sublayout_buttons_height = 70
+
+        sublayout_buttons = []
+        for i in range(1, 5):
+            btn = QPushButton(
+                f"Sublayout-Games {i}:\n{Options.sublayout_names.get(f'sublayout_games_{i}', f'Sublayout Games {i}')}")
             btn.clicked.connect(lambda _, num=i: self.prompt_for_name(dialog, num))
+            btn.setFixedHeight(sublayout_buttons_height)
+            sublayout_buttons.append(btn)
+
         for i in range(0, 4, 2):
             hbox = QHBoxLayout()
             hbox.addWidget(sublayout_buttons[i])
             if i + 1 < len(sublayout_buttons):
                 hbox.addWidget(sublayout_buttons[i + 1])
             layout.addLayout(hbox)
-        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
+
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
         button_box.button(QDialogButtonBox.StandardButton.Ok).setText("Save")
         button_box.button(QDialogButtonBox.StandardButton.Cancel).setText("Close")
         layout.addWidget(button_box)
@@ -703,18 +711,23 @@ class SettingsWindow(BaseWindow):
         def close_parent_safely():
             if parent_dialog:
                 try:
-                    if hasattr(parent_dialog, 'close') and not parent_dialog.isHidden():
-                        parent_dialog.close()
-                except (RuntimeError, AttributeError):
-                    pass
+                    if hasattr(parent_dialog, 'close') and callable(parent_dialog.close):
+                        if hasattr(parent_dialog, 'isHidden') and not parent_dialog.isHidden():
+                            parent_dialog.close()
+                except (RuntimeError, AttributeError) as error:
+                    logger.warning(f"Error closing parent dialog: {error}")
 
         try:
             dialog.show()
             close_parent_safely()
         except Exception as e:
             logger.error(f"Error showing mount options dialog: {e}")
-            if parent_dialog:
-                parent_dialog.show()
+            if parent_dialog and hasattr(parent_dialog, 'show'):
+                try:
+                    parent_dialog.show()
+                except (RuntimeError, AttributeError):
+                    pass
+            return
 
         layout = QVBoxLayout(dialog)
         fields = {}
