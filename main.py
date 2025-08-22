@@ -55,7 +55,7 @@ class MainWindow(QMainWindow):
     def init_ui(self):
         central_widget = QWidget()
         layout = QVBoxLayout(central_widget)
-        self.setMinimumSize(400, 300)
+        self.setMinimumSize(375, 250)
         button_height = 50
         buttons = [("Create Backup", lambda: self.start_backup_restoring("backup")),
                    ("Restore Backup", lambda: self.start_backup_restoring("restore")),
@@ -65,6 +65,7 @@ class MainWindow(QMainWindow):
         for text, callback in buttons:
             btn = QPushButton(text)
             btn.setFixedHeight(button_height)
+            btn.setStyleSheet("font-size: 17px")
             btn.clicked.connect(callback)
             layout.addWidget(btn)
         self.btn_exit.setFixedHeight(button_height)
@@ -75,6 +76,7 @@ class MainWindow(QMainWindow):
 
     def set_exit_button(self):
         self.btn_exit.setText("Unmount and Exit" if Options.run_mount_command_on_launch and Options.mount_options else "Exit")
+        self.btn_exit.setStyleSheet("font-size: 17px")
 
     def open_system_info(self):
         if self.system_info_window:
@@ -160,7 +162,7 @@ class MainWindow(QMainWindow):
             if isinstance(w, QPushButton):
                 w.click()
         elif event.key() == Qt.Key.Key_Escape:
-            self.confirm_exit()
+            self.closeEvent(event)
         else:
             super().keyPressEvent(event)
 
@@ -178,14 +180,17 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         try:
             drives = []
-            if hasattr(Options, 'mount_options') and Options.mount_options:
+            if (hasattr(Options, 'mount_options') and
+                    Options.mount_options and
+                    hasattr(Options, 'run_mount_command_on_launch') and
+                    Options.run_mount_command_on_launch):
                 drives = [f"'{opt.get('drive_name', 'Unknown')}'"
                           for opt in Options.mount_options
                           if isinstance(opt, dict) and opt.get('drive_name')]
 
             text = (f"Exit without unmounting drive{'s' if len(drives) > 1 else ''} "
                     f"{' & '.join(drives)}?"
-                    if Options.run_mount_command_on_launch and drives
+                    if drives
                     else "Are you sure you want to exit?")
 
             if self._confirm_dialog("Exit Confirmation", text):
@@ -195,8 +200,16 @@ class MainWindow(QMainWindow):
                 event.ignore()
         except Exception as e:
             logger.error(f"Error in closeEvent: {e}")
-            event.accept()
-            QCoreApplication.exit(0)
+            try:
+                if self._confirm_dialog("Exit Confirmation", "Are you sure you want to exit?"):
+                    event.accept()
+                    QCoreApplication.exit(0)
+                else:
+                    event.ignore()
+            except Exception as e:
+                    logger.error(f"Error in closeEvent: {e}")
+                    event.accept()
+                    QCoreApplication.exit(0)
 
     def _confirm_dialog(self, title, text):
         dlg = QMessageBox(self)
