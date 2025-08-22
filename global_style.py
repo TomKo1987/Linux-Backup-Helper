@@ -90,7 +90,7 @@ QTextEdit, QListWidget {
     background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #293147, stop:1 #4d5a83);
     color: #aaff00;
     border: none;
-    padding: 3px 3px;
+    padding: 2px 2px;
     border-radius: 8px;
     font-size: 16px;
     font-family: "FiraCode Nerd Font Mono", "DejaVu Sans Mono", "Courier New", monospace;
@@ -264,7 +264,7 @@ QTextEdit, QListWidget {
     background-color: #2b2b2b;
     color: #e0e0e0;
     border: none;
-    padding: 3px 3px;
+    padding: 2px 2px;
     border-radius: 8px;
     font-size: 16px;
     font-family: "FiraCode Nerd Font Mono", "DejaVu Sans Mono", "Courier New", monospace;
@@ -381,7 +381,7 @@ QTextEdit, QListWidget {
     background-color: #ffffff;
     color: #333333;
     border: none;
-    padding: 3px 3px;
+    padding: 2px 2px;
     border-radius: 8px;
     font-size: 16px;
     font-family: "FiraCode Nerd Font Mono", "DejaVu Sans Mono", "Courier New", monospace;
@@ -497,7 +497,7 @@ QTextEdit, QListWidget {
     background-color: #073642;
     color: #93a1a1;
     border: none;
-    padding: 3px 3px;
+    padding: 2px 2px;
     border-radius: 8px;
     font-size: 16px;
     font-family: "FiraCode Nerd Font Mono", "DejaVu Sans Mono", "Courier New", monospace;
@@ -612,7 +612,7 @@ QTextEdit, QListWidget {
     background-color: #44475a;
     color: #f8f8f2;
     border: none;
-    padding: 3px 3px;
+    padding: 2px 2px;
     border-radius: 8px;
     font-size: 16px;
     font-family: "FiraCode Nerd Font Mono", "DejaVu Sans Mono", "Courier New", monospace;
@@ -720,7 +720,7 @@ QLineEdit, QTextEdit, QListWidget {
     background-color: #3c3836;
     color: #ebdbb2;
     border: none;
-    padding: 3px 3px;
+    padding: 2px 2px;
     border-radius: 8px;
     font-size: 16px;
     font-family: "FiraCode Nerd Font Mono", "DejaVu Sans Mono", "Courier New", monospace;
@@ -827,7 +827,7 @@ QLineEdit, QTextEdit, QListWidget {
     background-color: #3b4252;
     color: #eceff4;
     border: none;
-    padding: 3px 3px;
+    padding: 2px 2px;
     border-radius: 8px;
     font-size: 16px;
     font-family: "FiraCode Nerd Font Mono", "DejaVu Sans Mono", "Courier New", monospace;
@@ -934,7 +934,7 @@ QLineEdit, QTextEdit, QListWidget {
     background-color: #313244;
     color: #cdd6f4;
     border: none;
-    padding: 3px 3px;
+    padding: 2px 2px;
     border-radius: 8px;
     font-size: 16px;
     font-family: "FiraCode Nerd Font Mono", "DejaVu Sans Mono", "Courier New", monospace;
@@ -1041,7 +1041,7 @@ QLineEdit, QTextEdit, QListWidget {
     background-color: #403e41;
     color: #f8f8f2;
     border: none;
-    padding: 3px 3px;
+    padding: 2px 2px;
     border-radius: 8px;
     font-size: 16px;
     font-family: "FiraCode Nerd Font Mono", "DejaVu Sans Mono", "Courier New", monospace;
