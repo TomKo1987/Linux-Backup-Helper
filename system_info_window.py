@@ -53,8 +53,7 @@ class SystemInfoWindow(QDialog):
         self.text_edit = QTextEdit()
         self.close_btn = QPushButton("Close")
         self.setWindowTitle("System information")
-        self.setMinimumSize(900, 700)
-        self.resize(1100, 800)
+        self.setMinimumSize(1100, 875)
 
         self.worker = None
         self.init_ui()
