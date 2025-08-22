@@ -1,5 +1,5 @@
 import subprocess, logging
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QTextOption
 from global_style import get_current_style
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QPushButton, QLabel
@@ -73,7 +73,8 @@ class SystemInfoWindow(QDialog):
         layout.addWidget(header)
 
         self.text_edit.setReadOnly(True)
-        self.text_edit.lineWrapColumnOrWidth()
+        self.text_edit.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        self.text_edit.setWordWrapMode(QTextOption.WrapMode.NoWrap)
         self.text_edit.setStyleSheet(f"{get_current_style()}")
         layout.addWidget(self.text_edit)
 
