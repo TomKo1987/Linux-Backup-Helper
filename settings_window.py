@@ -385,7 +385,7 @@ class SettingsWindow(BaseWindow):
         new_header_button.clicked.connect(lambda: self.add_new_header(list_widget))
         layout.addWidget(new_header_button)
 
-        sublayout_buttons_height = 70
+        sublayout_buttons_height = 60
 
         sublayout_buttons = []
         for i in range(1, 5):
