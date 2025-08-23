@@ -776,7 +776,7 @@ QPushButton {
 }
 QPushButton:enabled:hover, QPushButton:enabled:focus {
     background-color: #5a657d;
-    border-color: #85c199;
+    border: 2px solid #85c199;
     color: #aaff00;
     outline: none;
 }
@@ -790,7 +790,7 @@ QCheckBox {
     border: 2px solid transparent;
 }
 QCheckBox:enabled:hover, QCheckBox:enabled:focus {
-    color: #8fbcbb;
+    color: #aaff00;
     border: 2px solid #85c199;
     outline: none;
 }
