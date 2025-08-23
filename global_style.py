@@ -663,14 +663,14 @@ QPushButton, QCheckBox {
     color: #fbf1c7;
 }
 QPushButton {
-    border: 2px solid #b8bb26;
+    border: 2px solid #7c7e1a;
     height: 23px;
     background-color: #3c3836;
 }
 QPushButton:enabled:hover, QPushButton:enabled:focus {
     background-color: #504945;
     color: #fabd2f;
-    border: 2px solid #00fa71;
+    border: 2px solid #fcff34;
     outline: none;
 }
 QPushButton:disabled {
@@ -684,7 +684,7 @@ QCheckBox {
 }
 QCheckBox:enabled:hover, QCheckBox:enabled:focus {
     color: #fabd2f;
-    border: 2px solid #00fa71;
+    border: 2px solid #fcff34;
     outline: none;
 }
 QCheckBox:disabled {
