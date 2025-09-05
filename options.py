@@ -42,8 +42,14 @@ class Options(QObject):
     additional_packages = []
     specific_packages = []
     sublayout_names = {'sublayout_games_1': '', 'sublayout_games_2': '', 'sublayout_games_3': '', 'sublayout_games_4': ''}
-    ui_settings = {"backup_window_columns": 2, "restore_window_columns": 2, "settings_window_columns": 2,
-                   "theme": "Tokyo Night"}
+    ui_settings = {
+        "backup_window_columns": 2,
+        "restore_window_columns": 2,
+        "settings_window_columns": 2,
+        "theme": "Tokyo Night",
+        "font_family": "DejaVu Sans",
+        "font_size": 14
+    }
     text_replacements = [(home_user, '~'), (f"/run/media/{user}/", ''), ("[1m", ""), ("[0m", ""), ("", "")]
     text_replacements.extend([(env, env) for env in SESSIONS])
     system_manager_tooltips = {}
