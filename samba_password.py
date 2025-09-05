@@ -67,7 +67,7 @@ class SambaPasswordDialog(QDialog):
             button_box.addWidget(self.delete_button)
         self.save_button.setText("Update credentials") if self.has_existing_credentials else self.save_button.setText("Save")
         button_box.addWidget(self.save_button)
-        self.setMinimumSize(575, 375)
+        self.setMinimumSize(950, 500)
         layout.addWidget(self.username_label)
         layout.addWidget(self.username_field)
         layout.addWidget(self.password_label)
