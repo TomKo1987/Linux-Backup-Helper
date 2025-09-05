@@ -322,13 +322,13 @@ def main():
     app = QApplication(sys.argv)
     Options.load_config(Options.config_file_path)
 
-    # Apply theme from settings
     theme_name = Options.ui_settings.get("theme", "Tokyo Night")
     if theme_name in THEMES:
         global_style.current_theme = theme_name
-        app.setStyleSheet(THEMES[theme_name])
+        # Apply the complete style including fonts
+        app.setStyleSheet(global_style.get_current_style())
     else:
-        app.setStyleSheet(global_style)
+        app.setStyleSheet(global_style.get_current_style())
 
     def handle_exception(exc_type, exc_value, exc_traceback):
         if issubclass(exc_type, KeyboardInterrupt):
