@@ -1,6 +1,6 @@
-import global_style
 import logging.handlers
 from options import Options
+from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtCore import Qt, pyqtSignal
 from global_style import THEMES, get_current_style
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QDialog, QLabel, QGridLayout,
@@ -456,65 +456,135 @@ class BaseWindow(QDialog):
         self.checkbox_dirs.clear()
 
     def change_theme(self):
-        from global_style import THEMES
-
         dialog = QDialog(self)
-        dialog.setWindowTitle("Select Theme")
-        dialog.setMinimumSize(400, 200)
+        dialog.setWindowTitle("Theme and Font Settings")
+        dialog.setMinimumSize(500, 400)
         dialog.setWindowModality(Qt.WindowModality.NonModal)
-
         layout = QVBoxLayout(dialog)
 
-        layout.addWidget(QLabel("Select a theme:"))
-
+        # Theme selection
+        layout.addWidget(QLabel("Select Theme:"))
         theme_combo = QComboBox()
         theme_combo.addItems(list(THEMES.keys()))
         current_theme = Options.ui_settings.get("theme", "Tokyo Night")
         theme_combo.setCurrentText(current_theme)
         layout.addWidget(theme_combo)
 
-        original_theme = current_theme
+        # Font family selection
+        layout.addWidget(QLabel("Select Font:"))
+        font_combo = QComboBox()
+        available_fonts = sorted(QFontDatabase.families())
+        font_combo.addItems(available_fonts)
+        current_font = Options.ui_settings.get("font_family", "DejaVu Sans")
+        font_combo.setCurrentText(current_font)
+        layout.addWidget(font_combo)
 
+        # Font size selection
+        layout.addWidget(QLabel("Select Font Size:"))
+        size_combo = QComboBox()
+        sizes = ["10", "11", "12", "13", "14", "15", "16", "17", "18", "20", "22", "24"]
+        size_combo.addItems(sizes)
+        current_size = str(Options.ui_settings.get("font_size", 14))
+        size_combo.setCurrentText(current_size)
+        layout.addWidget(size_combo)
+
+        original_theme = current_theme
+        original_font = current_font
+        original_size = current_size
+
+        # Preview button
         preview_btn = QPushButton("Preview")
-        preview_btn.clicked.connect(lambda: self.preview_theme(THEMES[theme_combo.currentText()]))
+        preview_btn.clicked.connect(lambda: self.preview_theme_and_font(
+            theme_combo.currentText(),
+            font_combo.currentText(),
+            int(size_combo.currentText())
+        ))
         layout.addWidget(preview_btn)
 
-        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel) # type: ignore
-        button_box.accepted.connect(lambda: self.save_theme(theme_combo.currentText(), dialog))
-        button_box.rejected.connect(lambda: self.restore_theme(original_theme, dialog))
+        # Buttons
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel  # type: ignore
+        )
+        button_box.accepted.connect(lambda: self.save_theme_and_font(
+            theme_combo.currentText(),
+            font_combo.currentText(),
+            int(size_combo.currentText()),
+            dialog
+        ))
+        button_box.rejected.connect(lambda: self.restore_theme_and_font(
+            original_theme, original_font, int(original_size), dialog
+        ))
         layout.addWidget(button_box)
 
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
 
-    def preview_theme(self, theme_style):
-        QApplication.instance().setStyleSheet(theme_style)
+    def preview_theme_and_font(self, theme_name, font_family, font_size):
+        Options.ui_settings["theme"] = theme_name
+        Options.ui_settings["font_family"] = font_family
+        Options.ui_settings["font_size"] = font_size
+
+        import global_style
+        global_style.current_theme = theme_name
+        style = global_style.get_current_style()
+        QApplication.instance().setStyleSheet(style)
         self.adjust_window_size()
 
     @staticmethod
-    def restore_theme(original_theme, dialog):
-        from global_style import THEMES
+    def restore_theme_and_font(original_theme, original_font, original_size, dialog):
+        Options.ui_settings["theme"] = original_theme
+        Options.ui_settings["font_family"] = original_font
+        Options.ui_settings["font_size"] = original_size
+
+        import global_style
+        global_style.current_theme = original_theme
         if original_theme in THEMES:
-            QApplication.instance().setStyleSheet(THEMES[original_theme])
-            global_style.current_theme = original_theme
+            style = global_style.get_current_style()
+            QApplication.instance().setStyleSheet(style)
         dialog.reject()
 
-    def save_theme(self, theme_name, dialog):
+    def save_theme_and_font(self, theme_name, font_family, font_size, dialog):
         Options.ui_settings["theme"] = theme_name
+        Options.ui_settings["font_family"] = font_family
+        Options.ui_settings["font_size"] = font_size
+
+        import global_style
         global_style.current_theme = theme_name
-        QApplication.instance().setStyleSheet(THEMES[theme_name])
+        style = global_style.get_current_style()
+        QApplication.instance().setStyleSheet(style)
+
         Options.save_config()
         dialog.accept()
+
+        # Force complete window recreation by hiding, clearing, and rebuilding
+        self.hide()
+
+        # Clear all cached data to force complete rebuild
+        self._last_entries_hash = None
+        self._last_ui_state = None
+        self._tooltip_cache = None
+
+        # Clear and rebuild UI
+        self.clear_layout_contents()
         self.setup_ui()
-        for cb, *_ in self.checkbox_dirs:
-            header_color = Options.header_colors.get(cb.entry_data["header"], "#ffffff")
-            cb.setStyleSheet(
-                f"{get_current_style()} QCheckBox {{color: {header_color};}} QToolTip {{color: '#07e392';}}")
-        self.selectall.setStyleSheet(f"{get_current_style()}")
-        self.show_message("Success", f"Theme changed to {theme_name}!")
+
+        # Show window again
+        self.show()
+
+        self.show_message("Success", f"Theme changed to {theme_name}, font set to {font_family} {font_size}px!")
+
         if hasattr(self, 'parent') and self.parent():
             self.parent().update()
+
+    def _delayed_size_adjustment(self):
+        """Delayed size adjustment to ensure proper layout after font changes"""
+        if self.content_widget:
+            self.content_widget.adjustSize()
+            self.content_widget.updateGeometry()
+        self.scroll_area.updateGeometry()
+        self.adjust_window_size()
+        self.update()
 
     @staticmethod
     def _set_checkbox_checked(checkbox, checked):
