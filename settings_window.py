@@ -58,11 +58,11 @@ class SettingsWindow(BaseWindow):
 
         for entry_data in entries_to_process:
             dialog = QDialog(self)
-            dialog.setFixedSize(1000, 550)
+            dialog.setFixedSize(1350, 750)
             dialog.setWindowTitle("Edit Entry" if edit_mode else "Add New Entry")
 
             main_layout = QVBoxLayout(dialog)
-            main_layout.setContentsMargins(5, 5, 5, 5)
+            main_layout.setContentsMargins(2, 2, 2, 2)
 
             title_checkbox = entry_data[0].text() if edit_mode else ""
             unique_id = entry_data[3] if edit_mode else None
@@ -75,7 +75,6 @@ class SettingsWindow(BaseWindow):
             header_label = QLabel(header_label_text)
             header_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
             main_layout.addWidget(header_label)
-            main_layout.addStretch(1)
 
             form_layout = QFormLayout()
             form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -124,13 +123,13 @@ class SettingsWindow(BaseWindow):
                     field_edit.setMaximumHeight(field_height)
                     field_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
 
-                    btn = QPushButton(f"Select {field_type} Directory")
+                    btn = QPushButton(f"Select {field_type}")
                     btn.setMaximumHeight(field_height)
                     btn.setFixedWidth(300)
                     btn.clicked.connect(lambda _, le=field_edit: self.select_directory(le))
 
                     hbox = QHBoxLayout()
-                    hbox.setSpacing(5)
+                    hbox.setSpacing(2)
                     hbox.setContentsMargins(2, 2, 2, 2)
                     hbox.addWidget(field_edit)
                     hbox.addWidget(btn)
@@ -176,6 +175,7 @@ class SettingsWindow(BaseWindow):
             form_layout.addRow(QLabel(""), QLabel(""))  # Spacer
             form_layout.addRow(checkbox_grid)
 
+            main_layout.addStretch()
             main_layout.addLayout(form_layout)
 
             def update_restore(state):
@@ -211,10 +211,12 @@ class SettingsWindow(BaseWindow):
             for i in range(1, 5):
                 checkboxes[f'sublayout_games_{i}'].stateChanged.connect(make_sublayout_handler(i))
 
-            button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
+            button_box = QDialogButtonBox(
+                QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
             button_box.button(QDialogButtonBox.StandardButton.Ok).setText("Save")
             button_box.button(QDialogButtonBox.StandardButton.Cancel).setText("Close")
             button_box.setMaximumHeight(field_height)
+            main_layout.addStretch()
             main_layout.addWidget(button_box, alignment=Qt.AlignmentFlag.AlignRight)
 
             def save_entry():
@@ -266,7 +268,8 @@ class SettingsWindow(BaseWindow):
                 for entry_key, entry_cb in checkboxes.items():
                     new_entry.details[entry_key] = entry_cb.isChecked()
 
-                self.show_message("Success", f"Entry '{new_entry.title}' successfully {'updated' if edit_mode else 'added'}!")
+                self.show_message("Success",
+                                  f"Entry '{new_entry.title}' successfully {'updated' if edit_mode else 'added'}!")
                 dialog.accept()
 
             button_box.accepted.connect(save_entry)
@@ -358,7 +361,7 @@ class SettingsWindow(BaseWindow):
             Options.sublayout_names = {}
         self.hide()
         dialog = QDialog(self)
-        dialog.setMinimumSize(850, 950)
+        dialog.setMinimumSize(1100, 1000)
         dialog.setWindowTitle("Header Settings")
         layout = QVBoxLayout(dialog)
         list_widget = QListWidget(dialog)
@@ -380,7 +383,7 @@ class SettingsWindow(BaseWindow):
             list_widget.setItemWidget(item, item_widget)
         layout.addWidget(list_widget)
         layout.addWidget(QLabel(
-            "Click and hold headers to move them.\nCreating header 'Games' provides access to sublayouts for this header."))
+            "Click and hold headers to move them.\nCreating header 'Games' provides sublayouts for this header."))
         new_header_button = QPushButton("New Header")
         new_header_button.clicked.connect(lambda: self.add_new_header(list_widget))
         layout.addWidget(new_header_button)
@@ -653,7 +656,7 @@ class SettingsWindow(BaseWindow):
                 self.mount_options_dialog = None
 
         dialog.finished.connect(cleanup_dialog)
-        dialog.setMinimumSize(550, 300)
+        dialog.setMinimumSize(825, 450)
         dialog.setWindowTitle("Mount Options")
         layout = QVBoxLayout(dialog)
 
@@ -704,7 +707,7 @@ class SettingsWindow(BaseWindow):
             option = {}
 
         dialog = QDialog(self)
-        dialog.setMinimumSize(500, 300)
+        dialog.setMinimumSize(825, 450)
         title = f"Edit Mount Option: {option.get('drive_name', '')}" if option.get('drive_name') else "New Mount Option"
         dialog.setWindowTitle(title)
 
