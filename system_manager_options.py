@@ -88,33 +88,38 @@ class SystemManagerOptions(QDialog):
         self._last_shell = USER_SHELL[idx]
 
     def _get_top_label_text(self):
-        return (f"\nFirst you can select 'System Files' in System Manager. These files will be copied using 'sudo', "
-                f"for root privilege. If you have 'System Files' selected, System Manager will copy these first. This "
-                f"allows you to copy files such as 'pacman.conf' or 'smb.conf' to '/etc/'.\n\n"
+        return (f"First you can select 'System Files' in System Manager. These files will be copied using 'sudo', "
+                f"for root privilege. If you have 'System Files' selected, System Manager will copy these first. "
+                f"This allows you to copy files such as 'pacman.conf' or 'smb.conf' to '/etc/'.\n\n"
                 f"Under 'Installer Operations' you can specify how you would like to proceed. "
-                f"Each action is executed one after the other. Uncheck actions to disable them.\n\n\nTips:\n\n"
+                f"Each action is executed one after the other. Uncheck actions to disable them.\n\n"
+                f"Tips:\n\n"
                 f"It is possible to copy to and from samba shares if samba is set up correctly. "
                 f"Source and/or destination must be saved as follows:\n\n"
-                f"'smb://ip/rest of path'\n\nExample: 'smb://192.168.0.53/rest of smb share path'\n\n"
-                f"\n'Essential Packages' will be installed using '{self.install_package_command}PACKAGE'.\n\n"
+                f"'smb://ip/rest of path'\n\n"
+                f"Example: 'smb://192.168.0.53/rest of smb share path'\n\n"
+                f"'Essential Packages' will be installed using '{self.install_package_command}PACKAGE'.\n\n"
                 f"'Additional Packages' provides access to the Arch User Repository. "
-                f"Therefore 'yay' must and will be installed. This feature is available only on Arch Linux based "
-                f"distributions.\n\n"
-                f"You can also define 'Specific Packages'. These packages will be installed only\n"
+                f"Therefore 'yay' must and will be installed. This feature is available only on "
+                f"Arch Linux based distributions.\n\n"
+                f"You can also define 'Specific Packages'. These packages will be installed only "
                 f"(using '{self.install_package_command}PACKAGE') "
                 f"if the corresponding session has been recognized.\n"
-                f"Both full desktop environments and window managers such as 'Hyprland' and others are supported.\n")
+                f"Both full desktop environments and window managers such as 'Hyprland' and others are supported.")
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
         self._add_distro_info(layout)
-        layout.addWidget(self.top_label)
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setWidget(self.top_label)
+        layout.addWidget(scroll_area)
         self._add_button_layouts(layout)
         self._add_shell_selection(layout)
         self._connect_signals()
         layout.addWidget(self.close_button)
         self.setStyleSheet(get_current_style())
-        self.setFixedSize(1000, 900)
+        self.setMinimumSize(1425, 950)
 
     def _add_distro_info(self, layout):
         yay_info = ""
