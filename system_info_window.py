@@ -1,7 +1,7 @@
 import subprocess, logging
-from PyQt6.QtGui import QFont, QTextOption, QFontMetrics
 from global_style import get_current_style
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QFont, QTextOption, QFontMetrics
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QPushButton, QLabel
 
 logger = logging.getLogger(__name__)
@@ -53,7 +53,7 @@ class SystemInfoWindow(QDialog):
         self.text_edit = QTextEdit()
         self.close_btn = QPushButton("Close")
         self.setWindowTitle("System Information")
-        self.setMinimumSize(1100, 800)
+        self.setMinimumSize(1250, 950)
 
         self.worker = None
         self.init_ui()
@@ -61,7 +61,7 @@ class SystemInfoWindow(QDialog):
 
     def init_ui(self):
         layout = QVBoxLayout()
-        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setContentsMargins(5, 5, 5, 5)
 
         header = QLabel("System Information")
         header_font = QFont()
@@ -76,7 +76,7 @@ class SystemInfoWindow(QDialog):
         self.text_edit.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
         self.text_edit.setWordWrapMode(QTextOption.WrapMode.NoWrap)
 
-        font = QFont("Courier New", 10)  # oder "Consolas", "Monaco"
+        font = QFont(f"{get_current_style()}")
         font.setFixedPitch(True)
         self.text_edit.setFont(font)
 
