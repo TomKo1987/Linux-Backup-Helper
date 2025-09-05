@@ -9,15 +9,12 @@ QDialog, QWidget {
 }
 QWidget {
     color: #c0caf5;
-    font-family: "Noto Sans Mono", "DejaVu Sans Mono", "Courier New", monospace;
-    font-size: 16px;
 }
 QPushButton, QCheckBox {
     border-radius: 10px;
     outline: none;
     text-align: center;
     padding: 3px;
-    font-size: 15px;
     font-weight: bold;
     color: #ffffff;
 }
@@ -71,9 +68,7 @@ QLabel {
     border: none;
     border-radius: 2px;
     padding: 5px;
-    font-size: 17px;
     qproperty-alignment: 'AlignCenter';
-    font-family: "CaskaydiaCove Nerd Font", "Noto Sans", "DejaVu Sans", "Arial", sans-serif;
 }
 QWidget[class="container"] {
     background-color: #222;
@@ -84,7 +79,6 @@ QLineEdit {
     color: #aaff00;
     padding: 5px 5px;
     border-radius: 8px;
-    font-size: 16px;
 }
 QTextEdit, QListWidget {
     background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #293147, stop:1 #4d5a83);
@@ -92,8 +86,6 @@ QTextEdit, QListWidget {
     border: none;
     padding: 2px 2px;
     border-radius: 8px;
-    font-size: 16px;
-    font-family: "FiraCode Nerd Font Mono", "DejaVu Sans Mono", "Courier New", monospace;
 }
 QListWidget::item {
     padding: 5px;
@@ -155,7 +147,6 @@ QProgressBar {
     text-align: center;
     margin: 10px 0;
     font-weight: bold;
-    font-size: 18px;
     color: #000000;
 }
 QProgressBar::chunk {
@@ -164,13 +155,11 @@ QProgressBar::chunk {
 }
 QTabBar::tab {
     background-color: #24283b;
-    font-size: 16px;
     padding: 8px 12px;
     border: 1px solid #414868;
     border-bottom: none;
     border-top-left-radius: 6px;
     border-top-right-radius: 6px;
-    font-family: "FiraCode Nerd Font Mono", "DejaVu Sans Mono", "Courier New", monospace;
 }
 QTabBar::tab:selected {
     background-color: #1e1e2e;
@@ -178,7 +167,7 @@ QTabBar::tab:selected {
 }
 """,
 
-"Dark Mode": """
+    "Dark Mode": """
 QDialog, QWidget {
     border-radius: 16px;
     background-color: #1a1a1a;
@@ -186,15 +175,12 @@ QDialog, QWidget {
 }
 QWidget {
     color: #e0e0e0;
-    font-family: "Noto Sans Mono", "DejaVu Sans Mono", "Courier New", monospace;
-    font-size: 16px;
 }
 QPushButton, QCheckBox {
     border-radius: 10px;
     outline: none;
     text-align: center;
     padding: 3px;
-    font-size: 15px;
     font-weight: bold;
     color: #ffffff;
 }
@@ -248,9 +234,7 @@ QLabel {
     border: none;
     border-radius: 2px;
     padding: 5px;
-    font-size: 17px;
     qproperty-alignment: 'AlignCenter';
-    font-family: "CaskaydiaCove Nerd Font", "Noto Sans", "DejaVu Sans", "Arial", sans-serif;
 }
 QLineEdit {
     background-color: #2b2b2b;
@@ -258,7 +242,6 @@ QLineEdit {
     padding: 5px 5px;
     border-radius: 4px;
     border: 1px solid #444;
-    font-size: 16px;
 }
 QTextEdit, QListWidget {
     background-color: #2b2b2b;
@@ -266,8 +249,6 @@ QTextEdit, QListWidget {
     border: none;
     padding: 2px 2px;
     border-radius: 8px;
-    font-size: 16px;
-    font-family: "FiraCode Nerd Font Mono", "DejaVu Sans Mono", "Courier New", monospace;
 }
 QScrollBar:vertical {
     border: none;
@@ -295,7 +276,7 @@ QProgressBar::chunk {
 }
 """,
 
-"Light Mode": """
+    "Light Mode": """
 QDialog, QWidget {
     border-radius: 16px;
     background-color: #f5f5f5;
@@ -303,15 +284,12 @@ QDialog, QWidget {
 }
 QWidget {
     color: #333333;
-    font-family: "Noto Sans Mono", "DejaVu Sans Mono", "Courier New", monospace;
-    font-size: 16px;
 }
 QPushButton, QCheckBox {
     border-radius: 10px;
     outline: none;
     text-align: center;
     padding: 3px;
-    font-size: 15px;
     font-weight: bold;
     color: #333333;
 }
@@ -365,9 +343,7 @@ QLabel {
     border: none;
     border-radius: 2px;
     padding: 5px;
-    font-size: 17px;
     qproperty-alignment: 'AlignCenter';
-    font-family: "CaskaydiaCove Nerd Font", "Noto Sans", "DejaVu Sans", "Arial", sans-serif;
 }
 QLineEdit {
     background-color: #ffffff;
@@ -375,7 +351,6 @@ QLineEdit {
     padding: 5px 5px;
     border-radius: 4px;
     border: 1px solid #d0d0d0;
-    font-size: 16px;
 }
 QTextEdit, QListWidget {
     background-color: #ffffff;
@@ -383,8 +358,6 @@ QTextEdit, QListWidget {
     border: none;
     padding: 2px 2px;
     border-radius: 8px;
-    font-size: 16px;
-    font-family: "FiraCode Nerd Font Mono", "DejaVu Sans Mono", "Courier New", monospace;
 }
 QScrollBar:vertical {
     border: none;
@@ -412,7 +385,7 @@ QProgressBar::chunk {
 }
 """,
 
-"Solarized Dark": """
+    "Solarized Dark": """
 QDialog, QWidget {
     border-radius: 16px;
     background-color: #002b36;
@@ -420,15 +393,12 @@ QDialog, QWidget {
 }
 QWidget {
     color: #839496;
-    font-family: "Noto Sans Mono", "DejaVu Sans Mono", "Courier New", monospace;
-    font-size: 16px;
 }
 QPushButton, QCheckBox {
     border-radius: 10px;
     outline: none;
     text-align: center;
     padding: 3px;
-    font-size: 15px;
     font-weight: bold;
     color: #fdf6e3;
 }
@@ -482,16 +452,13 @@ QLabel {
     border: none;
     border-radius: 2px;
     padding: 5px;
-    font-size: 17px;
     qproperty-alignment: 'AlignCenter';
-    font-family: "CaskaydiaCove Nerd Font", "Noto Sans", "DejaVu Sans", "Arial", sans-serif;
 }
 QLineEdit {
     background-color: #073642;
     color: #eee8d5;
     padding: 5px;
     border-radius: 6px;
-    font-size: 16px;
 }
 QTextEdit, QListWidget {
     background-color: #073642;
@@ -499,8 +466,6 @@ QTextEdit, QListWidget {
     border: none;
     padding: 2px 2px;
     border-radius: 8px;
-    font-size: 16px;
-    font-family: "FiraCode Nerd Font Mono", "DejaVu Sans Mono", "Courier New", monospace;
 }
 QScrollBar:vertical {
     background: #002b36;
@@ -519,7 +484,6 @@ QProgressBar {
     border-radius: 6px;
     height: 22,5px;
     text-align: center;
-    font-size: 16px;
 }
 QProgressBar::chunk {
     background-color: #268bd2;
@@ -527,7 +491,7 @@ QProgressBar::chunk {
 }
 """,
 
-"Dracula": """
+    "Dracula": """
 QDialog, QWidget {
     border-radius: 16px;
     background-color: #282a36;
@@ -535,15 +499,12 @@ QDialog, QWidget {
 }
 QWidget {
     color: #f8f8f2;
-    font-family: "Noto Sans Mono", "DejaVu Sans Mono", "Courier New", monospace;
-    font-size: 16px;
 }
 QPushButton, QCheckBox {
     border-radius: 10px;
     outline: none;
     text-align: center;
     padding: 3px;
-    font-size: 15px;
     font-weight: bold;
     color: #f8f8f2;
 }
@@ -597,16 +558,13 @@ QLabel {
     border: none;
     border-radius: 2px;
     padding: 5px;
-    font-size: 17px;
     qproperty-alignment: 'AlignCenter';
-    font-family: "CaskaydiaCove Nerd Font", "Noto Sans", "DejaVu Sans", "Arial", sans-serif;
 }
 QLineEdit {
     background-color: #44475a;
     color: #f8f8f2;
     padding: 5px;
     border-radius: 6px;
-    font-size: 16px;
 }
 QTextEdit, QListWidget {
     background-color: #44475a;
@@ -614,8 +572,6 @@ QTextEdit, QListWidget {
     border: none;
     padding: 2px 2px;
     border-radius: 8px;
-    font-size: 16px;
-    font-family: "FiraCode Nerd Font Mono", "DejaVu Sans Mono", "Courier New", monospace;
 }
 QScrollBar:vertical {
     background: #282a36;
@@ -634,7 +590,6 @@ QProgressBar {
     border-radius: 6px;
     height: 22,5px;
     text-align: center;
-    font-size: 16px;
 }
 QProgressBar::chunk {
     background-color: #50fa7b;
@@ -642,7 +597,7 @@ QProgressBar::chunk {
 }
 """,
 
-"Gruvbox Dark": """
+    "Gruvbox Dark": """
 QDialog, QWidget {
     border-radius: 16px;
     background-color: #282828;
@@ -650,15 +605,12 @@ QDialog, QWidget {
 }
 QWidget {
     color: #ebdbb2;
-    font-family: "Noto Sans Mono", "DejaVu Sans Mono", "Courier New", monospace;
-    font-size: 16px;
 }
 QPushButton, QCheckBox {
     border-radius: 10px;
     outline: none;
     text-align: center;
     padding: 3px;
-    font-size: 15px;
     font-weight: bold;
     color: #fbf1c7;
 }
@@ -712,9 +664,7 @@ QLabel {
     border: none;
     border-radius: 2px;
     padding: 5px;
-    font-size: 17px;
     qproperty-alignment: 'AlignCenter';
-    font-family: "CaskaydiaCove Nerd Font", "Noto Sans", "DejaVu Sans", "Arial", sans-serif;
 }
 QLineEdit, QTextEdit, QListWidget {
     background-color: #3c3836;
@@ -722,8 +672,6 @@ QLineEdit, QTextEdit, QListWidget {
     border: none;
     padding: 2px 2px;
     border-radius: 8px;
-    font-size: 16px;
-    font-family: "FiraCode Nerd Font Mono", "DejaVu Sans Mono", "Courier New", monospace;
 }
 QScrollBar:vertical {
     background: #3c3836;
@@ -749,7 +697,7 @@ QProgressBar::chunk {
 }
 """,
 
-"Nord": """
+    "Nord": """
 QDialog, QWidget {
     border-radius: 16px;
     background-color: #2e3440;
@@ -757,15 +705,12 @@ QDialog, QWidget {
 }
 QWidget {
     color: #d8dee9;
-    font-family: "Noto Sans Mono", "DejaVu Sans Mono", "Courier New", monospace;
-    font-size: 16px;
 }
 QPushButton, QCheckBox {
     border-radius: 10px;
     outline: none;
     text-align: center;
     padding: 3px;
-    font-size: 15px;
     font-weight: bold;
     color: #eceff4;
 }
@@ -819,9 +764,7 @@ QLabel {
     border: none;
     border-radius: 2px;
     padding: 5px;
-    font-size: 17px;
     qproperty-alignment: 'AlignCenter';
-    font-family: "CaskaydiaCove Nerd Font", "Noto Sans", "DejaVu Sans", "Arial", sans-serif;
 }
 QLineEdit, QTextEdit, QListWidget {
     background-color: #3b4252;
@@ -829,8 +772,6 @@ QLineEdit, QTextEdit, QListWidget {
     border: none;
     padding: 2px 2px;
     border-radius: 8px;
-    font-size: 16px;
-    font-family: "FiraCode Nerd Font Mono", "DejaVu Sans Mono", "Courier New", monospace;
 }
 QScrollBar:vertical {
     background: #2e3440;
@@ -856,7 +797,7 @@ QProgressBar::chunk {
 }
 """,
 
-"Catppuccin Mocha": """
+    "Catppuccin Mocha": """
 QDialog, QWidget {
     border-radius: 16px;
     background-color: #1e1e2e;
@@ -864,15 +805,12 @@ QDialog, QWidget {
 }
 QWidget {
     color: #cdd6f4;
-    font-family: "Noto Sans Mono", "DejaVu Sans Mono", "Courier New", monospace;
-    font-size: 16px;
 }
 QPushButton, QCheckBox {
     border-radius: 10px;
     outline: none;
     text-align: center;
     padding: 3px;
-    font-size: 15px;
     font-weight: bold;
     color: #cdd6f4;
 }
@@ -926,9 +864,7 @@ QLabel {
     border: none;
     border-radius: 2px;
     padding: 5px;
-    font-size: 17px;
     qproperty-alignment: 'AlignCenter';
-    font-family: "CaskaydiaCove Nerd Font", "Noto Sans", "DejaVu Sans", "Arial", sans-serif;
 }
 QLineEdit, QTextEdit, QListWidget {
     background-color: #313244;
@@ -936,8 +872,6 @@ QLineEdit, QTextEdit, QListWidget {
     border: none;
     padding: 2px 2px;
     border-radius: 8px;
-    font-size: 16px;
-    font-family: "FiraCode Nerd Font Mono", "DejaVu Sans Mono", "Courier New", monospace;
 }
 QScrollBar:vertical {
     background: #1e1e2e;
@@ -963,7 +897,7 @@ QProgressBar::chunk {
 }
 """,
 
-"Monokai Pro": """
+    "Monokai Pro": """
 QDialog, QWidget {
     border-radius: 16px;
     background-color: #2d2a2e;
@@ -971,15 +905,12 @@ QDialog, QWidget {
 }
 QWidget {
     color: #f8f8f2;
-    font-family: "Noto Sans Mono", "DejaVu Sans Mono", "Courier New", monospace;
-    font-size: 16px;
 }
 QPushButton, QCheckBox {
     border-radius: 10px;
     outline: none;
     text-align: center;
     padding: 3px;
-    font-size: 15px;
     font-weight: bold;
     color: #f8f8f2;
 }
@@ -1033,9 +964,7 @@ QLabel {
     border: none;
     border-radius: 2px;
     padding: 5px;
-    font-size: 17px;
     qproperty-alignment: 'AlignCenter';
-    font-family: "CaskaydiaCove Nerd Font", "Noto Sans", "DejaVu Sans", "Arial", sans-serif;
 }
 QLineEdit, QTextEdit, QListWidget {
     background-color: #403e41;
@@ -1043,8 +972,6 @@ QLineEdit, QTextEdit, QListWidget {
     border: none;
     padding: 2px 2px;
     border-radius: 8px;
-    font-size: 16px;
-    font-family: "FiraCode Nerd Font Mono", "DejaVu Sans Mono", "Courier New", monospace;
 }
 QScrollBar:vertical {
     background: #2d2a2e;
@@ -1071,35 +998,60 @@ QProgressBar::chunk {
 """
 }
 
-# Default theme selection
 current_theme = "Tokyo Night"
 
-def get_current_style():
-    return THEMES.get(current_theme, THEMES["Tokyo Night"])
 
-# For backward compatibility
+def get_current_style():
+    base_style = THEMES.get(current_theme, THEMES["Tokyo Night"])
+
+    # Add font settings from Options
+    try:
+        from options import Options
+        font_family = Options.ui_settings.get("font_family", "DejaVu Sans")
+        font_size = Options.ui_settings.get("font_size", 14)
+
+        font_style = f"""
+* {{
+    font-family: "{font_family}";
+    font-size: {font_size}px;
+}}
+QPushButton {{
+    font-size: {font_size}px;
+}}
+QCheckBox {{
+    font-size: {font_size}px;
+}}
+QLabel {{
+    font-size: {font_size + 2}px;
+}}
+QProgressBar {{
+    font-size: {font_size + 2}px;
+}}
+QTabBar::tab {{
+    font-size: {font_size}px;
+}}
+"""
+        return base_style + font_style
+    except ImportError:
+        return base_style
+
+
 global_style = get_current_style()
 
 
 def apply_theme_to_widget(widget, theme_name=None):
-    """Apply theme to a specific widget and all its children"""
     if theme_name is None:
         theme_name = current_theme
-
     if theme_name in THEMES:
-        style = THEMES[theme_name]
+        style = get_current_style()
         widget.setStyleSheet(style)
-
-        # Apply to all children
         for child in widget.findChildren(QWidget):
             child.style().unpolish(child)
             child.style().polish(child)
 
 
 def refresh_all_windows():
-    """Refresh styling for all top-level windows"""
     current_style = get_current_style()
-
     for widget in QApplication.topLevelWidgets():
         if isinstance(widget, (QDialog, QWidget)) and widget.isVisible():
             widget.setStyleSheet(current_style)
