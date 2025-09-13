@@ -1064,6 +1064,12 @@ class SystemManagerThread(QThread):
             if not isinstance(file, dict):
                 self.outputReceived.emit(f"Expected Dictionary but got: {type(file)}", "error")
                 continue
+
+            if file.get('disabled', False):
+                src = file.get('source', '')
+                self.outputReceived.emit(f"Skipping disabled system file: '{src}'", "info")
+                continue
+
             src, dest = file.get('source', '').strip(), file.get('destination', '').strip()
             if src and dest:
                 parsed_files.append((src, dest))
@@ -1163,12 +1169,23 @@ class SystemManagerThread(QThread):
 
         pkgs = []
         for p in packages:
-            if isinstance(p, str) and p.strip():
+            pkg_name = ""
+            is_disabled = False
+
+            if isinstance(p, dict):
+                pkg_name = p.get('name', '').strip()
+                is_disabled = p.get('disabled', False)
+            elif isinstance(p, str):
                 pkg_name = p.strip()
-                if all(c.isalnum() or c in '-_.' for c in pkg_name):
-                    pkgs.append(pkg_name)
-                else:
-                    self.outputReceived.emit(f"Invalid package name skipped: '{pkg_name}'", "warning")
+
+            if is_disabled:
+                self.outputReceived.emit(f"Skipping disabled package: '{pkg_name}'", "info")
+                continue
+
+            if pkg_name and all(c.isalnum() or c in '-_.' for c in pkg_name):
+                pkgs.append(pkg_name)
+            elif pkg_name:
+                self.outputReceived.emit(f"Invalid package name skipped: '{pkg_name}'", "warning")
 
         pkgs_to_install = self.distro.filter_not_installed(pkgs)
 
@@ -1425,26 +1442,42 @@ class SystemManagerThread(QThread):
                         break
             if session:
                 break
+
         if not session:
             self.outputReceived.emit("Unable to determine current desktop environment or window manager.", "warning")
             self.taskStatusChanged.emit(task_id, "error")
             return False
+
         self.outputReceived.emit(f"Detected session: {session}", "success")
-        matching_packages = [spec_pkg.get('package') for spec_pkg in Options.specific_packages if spec_pkg.get('session') == session and 'package' in spec_pkg]
+
+        # Filter out disabled packages
+        matching_packages = []
+        for spec_pkg in Options.specific_packages:
+            if spec_pkg.get('session') == session and 'package' in spec_pkg:
+                if spec_pkg.get('disabled', False):
+                    self.outputReceived.emit(f"Skipping disabled specific package: '{spec_pkg['package']}'", "info")
+                    continue
+                matching_packages.append(spec_pkg.get('package'))
+
         pkgs_to_install = self.distro.filter_not_installed(matching_packages)
+
         if not pkgs_to_install:
             self.outputReceived.emit(f"All 'Specific Packages' for {session} already present...", "success")
             self.taskStatusChanged.emit(task_id, "success")
             return True
+
         cmd = self.distro.get_pkg_install_cmd(" ".join(pkgs_to_install))
         self.run_sudo_command(cmd.split())
+
         failed = []
         for pkg in pkgs_to_install:
             if not self.distro.package_is_installed(pkg):
                 failed.append(pkg)
+
         success = not failed
         if failed:
             self.outputReceived.emit(f"Failed to install: {', '.join(failed)}", "warning")
+
         self.taskStatusChanged.emit(task_id, "success" if success else "error")
         return success
 
