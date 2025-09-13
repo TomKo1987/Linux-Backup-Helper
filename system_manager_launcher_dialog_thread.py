@@ -1067,7 +1067,7 @@ class SystemManagerThread(QThread):
 
             if file.get('disabled', False):
                 src = file.get('source', '')
-                self.outputReceived.emit(f"Skipping disabled system file: '{src}'", "info")
+                self.outputReceived.emit(f"Skipping disabled 'System File': '{src}'", "info")
                 continue
 
             src, dest = file.get('source', '').strip(), file.get('destination', '').strip()
@@ -1179,7 +1179,7 @@ class SystemManagerThread(QThread):
                 pkg_name = p.strip()
 
             if is_disabled:
-                self.outputReceived.emit(f"Skipping disabled package: '{pkg_name}'", "info")
+                self.outputReceived.emit(f"Skipping disabled '{package_type}': '{pkg_name}'", "info")
                 continue
 
             if pkg_name and all(c.isalnum() or c in '-_.' for c in pkg_name):
@@ -1411,7 +1411,8 @@ class SystemManagerThread(QThread):
         to_remove = [pkg for pkg in ['yay-debug', 'go'] if self.distro.package_is_installed(pkg)]
         if to_remove:
             result = self.run_sudo_command(['sudo', 'pacman', '-R', '--noconfirm'] + to_remove)
-            self.outputReceived.emit(f"{'Successfully removed' if result and result.returncode == 0 else 'Error during uninstallation of'}: '{', '.join(to_remove)}'", "subprocess" if result and result.returncode == 0 else "warning")
+            self.outputReceived.emit(f"{'Successfully removed' if result and result.returncode == 0 
+            else 'Error during uninstallation of'}: '{', '.join(to_remove)}'", "subprocess" if result and result.returncode == 0 else "warning")
         pkg_files = sorted(f for f in os.listdir(yay_build_path) if f.endswith('.pkg.tar.zst'))
         if not pkg_files:
             self.outputReceived.emit("No package file found for installation.", "warning")
@@ -1455,7 +1456,7 @@ class SystemManagerThread(QThread):
         for spec_pkg in Options.specific_packages:
             if spec_pkg.get('session') == session and 'package' in spec_pkg:
                 if spec_pkg.get('disabled', False):
-                    self.outputReceived.emit(f"Skipping disabled specific package: '{spec_pkg['package']}'", "info")
+                    self.outputReceived.emit(f"Skipping disabled 'Specific Package': '{spec_pkg['package']}'", "info")
                     continue
                 matching_packages.append(spec_pkg.get('package'))
 
