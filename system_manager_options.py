@@ -542,6 +542,10 @@ class SystemManagerOptions(QDialog):
             except Exception as e:
                 logger.error(f"Error when processing {source}: {e}")
 
+        if Options.system_files:
+            Options.system_files.sort(
+                key=lambda x: x.get('source', '').lower() if isinstance(x, dict) else str(x).lower())
+
         self._handle_added_files_result(added_items)
 
     def _handle_added_files_result(self, added_items):
