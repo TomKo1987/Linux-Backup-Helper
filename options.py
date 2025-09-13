@@ -314,16 +314,35 @@ class Options(QObject):
             if isinstance(system_files_raw, list):
                 Options.system_files = sorted(system_files_raw,
                                               key=lambda x: x.get('source', '') if isinstance(x, dict) else '')
+                # Ensure disabled field exists for each system file
+                for file_item in Options.system_files:
+                    if isinstance(file_item, dict) and 'disabled' not in file_item:
+                        file_item['disabled'] = False
             else:
                 Options.system_files = []
 
-            Options.essential_packages = sorted(entries_data.get("essential_packages", []))
-            Options.additional_packages = sorted(entries_data.get("additional_packages", []))
+            Options.essential_packages = entries_data.get("essential_packages", [])
+            Options.additional_packages = entries_data.get("additional_packages", [])
+
+            for pkg_list_name in ["essential_packages", "additional_packages"]:
+                pkg_list = getattr(Options, pkg_list_name, [])
+                updated_list = []
+                for pkg in pkg_list:
+                    if isinstance(pkg, str):
+                        updated_list.append({"name": pkg, "disabled": False})
+                    elif isinstance(pkg, dict):
+                        if 'disabled' not in pkg:
+                            pkg['disabled'] = False
+                        updated_list.append(pkg)
+                setattr(Options, pkg_list_name, updated_list)
 
             specific_packages_raw = entries_data.get("specific_packages")
             if isinstance(specific_packages_raw, list):
                 Options.specific_packages = sorted(specific_packages_raw,
                                                    key=lambda x: x.get('package', '') if isinstance(x, dict) else '')
+                for pkg_item in Options.specific_packages:
+                    if isinstance(pkg_item, dict) and 'disabled' not in pkg_item:
+                        pkg_item['disabled'] = False
             else:
                 Options.specific_packages = []
 
