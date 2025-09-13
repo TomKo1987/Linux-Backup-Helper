@@ -197,29 +197,38 @@ class Options(QObject):
                     if entry.header not in Options.header_order:
                         Options.header_order.append(entry.header)
 
-            header_data = {header: {"inactive": header in Options.header_inactive, "header_color": Options.header_colors.get(header, '#ffffff')}
+            header_data = {header: {"inactive": header in Options.header_inactive,
+                                    "header_color": Options.header_colors.get(header, '#ffffff')}
                            for header in Options.header_order + Options.header_inactive}
 
             mount_options = [opt for opt in Options.mount_options if isinstance(opt, dict) and opt.get("drive_name")]
             mount_options.sort(key=lambda x: x.get("drive_name", ""))
 
-            def sort_if_valid(collection, key=None):
-                if isinstance(collection, list) and all(isinstance(item, str) for item in collection):
-                    return sorted(collection, key=key) if key else sorted(collection)
-                return collection
+            # Sort essential packages alphabetically by name
+            essential_packages = Options.essential_packages.copy() if Options.essential_packages else []
+            if essential_packages:
+                essential_packages.sort(
+                    key=lambda x: x.get('name', '').lower() if isinstance(x, dict) else str(x).lower())
 
-            essential_packages = sort_if_valid(Options.essential_packages)
-            additional_packages = sort_if_valid(Options.additional_packages)
+            # Sort additional packages alphabetically by name
+            additional_packages = Options.additional_packages.copy() if Options.additional_packages else []
+            if additional_packages:
+                additional_packages.sort(
+                    key=lambda x: x.get('name', '').lower() if isinstance(x, dict) else str(x).lower())
 
-            if (isinstance(Options.specific_packages, list) and
-                    all(isinstance(item, dict) for item in Options.specific_packages)):
-                specific_packages = sorted(Options.specific_packages, key=lambda x: (x.get('package', ''), x.get('session', '')))
+            # Sort specific packages alphabetically by package name, then by session
+            specific_packages = Options.specific_packages.copy() if Options.specific_packages else []
+            if (isinstance(specific_packages, list) and
+                    all(isinstance(item, dict) for item in specific_packages)):
+                specific_packages.sort(key=lambda x: (x.get('package', '').lower(), x.get('session', '').lower()))
             else:
                 specific_packages = []
 
-            if (isinstance(Options.system_files, list) and
-                    all(isinstance(item, dict) for item in Options.system_files)):
-                system_files = Options.system_files
+            # Sort system files alphabetically by source path
+            system_files = Options.system_files.copy() if Options.system_files else []
+            if (isinstance(system_files, list) and
+                    all(isinstance(item, dict) for item in system_files)):
+                system_files.sort(key=lambda x: x.get('source', '').lower())
             else:
                 system_files = []
 
@@ -310,10 +319,11 @@ class Options(QObject):
             Options.sublayout_names = entries_data.get("sublayout_names", Options.sublayout_names)
             Options.system_manager_operations = entries_data.get("system_manager_operations", [])
 
+            # Load and sort system files alphabetically by source
             system_files_raw = entries_data.get("system_files")
             if isinstance(system_files_raw, list):
                 Options.system_files = sorted(system_files_raw,
-                                              key=lambda x: x.get('source', '') if isinstance(x, dict) else '')
+                                              key=lambda x: x.get('source', '').lower() if isinstance(x, dict) else '')
                 # Ensure disabled field exists for each system file
                 for file_item in Options.system_files:
                     if isinstance(file_item, dict) and 'disabled' not in file_item:
@@ -321,9 +331,11 @@ class Options(QObject):
             else:
                 Options.system_files = []
 
+            # Load essential and additional packages
             Options.essential_packages = entries_data.get("essential_packages", [])
             Options.additional_packages = entries_data.get("additional_packages", [])
 
+            # Process and sort essential and additional packages alphabetically
             for pkg_list_name in ["essential_packages", "additional_packages"]:
                 pkg_list = getattr(Options, pkg_list_name, [])
                 updated_list = []
@@ -334,12 +346,17 @@ class Options(QObject):
                         if 'disabled' not in pkg:
                             pkg['disabled'] = False
                         updated_list.append(pkg)
+                # Sort alphabetically by name (case-insensitive)
+                updated_list.sort(key=lambda x: x.get('name', '').lower() if isinstance(x, dict) else str(x).lower())
                 setattr(Options, pkg_list_name, updated_list)
 
+            # Load and sort specific packages alphabetically by package name, then by session
             specific_packages_raw = entries_data.get("specific_packages")
             if isinstance(specific_packages_raw, list):
                 Options.specific_packages = sorted(specific_packages_raw,
-                                                   key=lambda x: x.get('package', '') if isinstance(x, dict) else '')
+                                                   key=lambda x: (x.get('package', '').lower(),
+                                                                  x.get('session', '').lower()) if isinstance(x,
+                                                                                                              dict) else '')
                 for pkg_item in Options.specific_packages:
                     if isinstance(pkg_item, dict) and 'disabled' not in pkg_item:
                         pkg_item['disabled'] = False
