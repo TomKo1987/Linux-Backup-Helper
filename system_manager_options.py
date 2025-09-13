@@ -397,20 +397,28 @@ class SystemManagerOptions(QDialog):
             if not file_source or not file_destination:
                 continue
 
-            self.original_system_files.append({'source': file_source, 'destination': file_destination})
+            self.original_system_files.append(file_info)
 
-            list_widget = self._create_file_list_widget(file_source, file_destination)
+            container_widget = self._create_file_list_widget(file_source, file_destination, file_info)
+
+            if hasattr(container_widget, 'list_widget'):
+                list_widget = container_widget.list_widget
+            else:
+                list_widget = container_widget
 
             display_text = f"{file_source}  --->  {file_destination}"
             display_text = self._apply_text_replacements(display_text)
             text_width = list_widget.fontMetrics().horizontalAdvance(display_text)
             max_text_width = max(max_text_width, text_width)
 
-            grid_layout.addWidget(list_widget, file_index, 0)
-            self.system_files_widgets.append(list_widget)
+            grid_layout.addWidget(container_widget, file_index, 0)
+            self.system_files_widgets.append(container_widget)
 
-        for list_widget in self.system_files_widgets:
-            list_widget.setMinimumWidth(max_text_width)
+        for container_widget in self.system_files_widgets:
+            if hasattr(container_widget, 'list_widget'):
+                container_widget.list_widget.setMinimumWidth(max_text_width)
+            else:
+                container_widget.setMinimumWidth(max_text_width)
 
         if self.system_files_widgets:
             select_all_checkbox = self._create_select_all_checkbox()
@@ -422,42 +430,46 @@ class SystemManagerOptions(QDialog):
     def _setup_system_files_select_all(self, select_all_checkbox):
         def toggle_all_system_files():
             checked = select_all_checkbox.checkState() == Qt.CheckState.Checked
-            for manager_widget in self.system_files_widgets:
-                if isinstance(manager_widget, QListWidget) and manager_widget.count() > 0:
-                    manager_item = manager_widget.item(0)
-                    if manager_item:
-                        manager_item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+            for list_widget_item in self.system_files_widgets:
+                if list_widget_item.count() > 0:
+                    item = list_widget_item.item(0)
+                    if item:
+                        item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
 
         def update_select_all_state():
             if not self.system_files_widgets:
                 return
             checked_count = 0
+            partially_checked_count = 0
             total_count = 0
-            for manager_widget in self.system_files_widgets:
-                if isinstance(manager_widget, QListWidget) and manager_widget.count() > 0:
-                    manager_item = manager_widget.item(0)
-                    if manager_item:
+
+            for list_widget_item in self.system_files_widgets:
+                if list_widget_item.count() > 0:
+                    item = list_widget_item.item(0)
+                    if item:
                         total_count += 1
-                        if manager_item.checkState() == Qt.CheckState.Checked:
+                        state = item.checkState()
+                        if state == Qt.CheckState.Checked:
                             checked_count += 1
+                        elif state == Qt.CheckState.PartiallyChecked:
+                            partially_checked_count += 1
+
             if total_count == 0:
                 return
 
             select_all_checkbox.blockSignals(True)
-            if checked_count == 0:
-                select_all_checkbox.setCheckState(Qt.CheckState.Unchecked)
-            elif checked_count == total_count:
+            if checked_count == total_count:
                 select_all_checkbox.setCheckState(Qt.CheckState.Checked)
+            elif checked_count + partially_checked_count == 0:
+                select_all_checkbox.setCheckState(Qt.CheckState.Unchecked)
             else:
                 select_all_checkbox.setCheckState(Qt.CheckState.PartiallyChecked)
             select_all_checkbox.blockSignals(False)
 
         select_all_checkbox.stateChanged.connect(toggle_all_system_files)
-        for widget in self.system_files_widgets:
-            if isinstance(widget, QListWidget) and widget.count() > 0:
-                item = widget.item(0)
-                if item:
-                    widget.itemChanged.connect(update_select_all_state)
+        for list_widget in self.system_files_widgets:
+            if list_widget.count() > 0:
+                list_widget.itemChanged.connect(update_select_all_state)
         update_select_all_state()
 
     @staticmethod
@@ -543,31 +555,80 @@ class SystemManagerOptions(QDialog):
 
         QTimer.singleShot(0, self.edit_system_files)
 
-    def _create_file_list_widget(self, file_source, file_destination):
+    def _create_file_list_widget(self, file_source, file_destination, file_data=None):
         display_text = self._apply_text_replacements(f"{file_source}  --->  {file_destination}")
+
         item = QListWidgetItem(display_text)
         item.setData(Qt.ItemDataRole.UserRole, {'source': file_source, 'destination': file_destination})
+
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-        item.setCheckState(Qt.CheckState.Checked)
+
+        if isinstance(file_data, dict):
+            is_disabled = file_data.get('disabled', False)
+            if is_disabled:
+                item.setCheckState(Qt.CheckState.PartiallyChecked)
+            else:
+                item.setCheckState(Qt.CheckState.Checked)
+        else:
+            item.setCheckState(Qt.CheckState.Checked)
+
         list_widget = QListWidget()
         list_widget.addItem(item)
         list_widget.setMaximumHeight(40)
+
+        list_widget.itemClicked.connect(lambda widget_item: self._handle_tristate_click(widget_item))
+
+        list_widget.setToolTip(
+            "☑ = Active (will be copied)\n▣ = Disabled (will be skipped)\n☐ = Delete (will be removed)")
+
         return list_widget
 
     @staticmethod
     def _create_package_list_widget(packages, is_specific=False):
         widgets = []
         for package in packages:
-            item_text = f"{package['package']}\n({package['session']})" if is_specific and isinstance(package,
-                                                                                                      dict) else package
+            if is_specific and isinstance(package, dict):
+                item_text = f"{package['package']}\n({package['session']})"
+                is_disabled = package.get('disabled', False)
+            elif isinstance(package, dict):
+                item_text = package.get('name', str(package))
+                is_disabled = package.get('disabled', False)
+            else:
+                item_text = str(package)
+                is_disabled = False
+
             item = QListWidgetItem(item_text)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Checked)
+
+            if is_disabled:
+                item.setCheckState(Qt.CheckState.PartiallyChecked)  # Disabled state
+            else:
+                item.setCheckState(Qt.CheckState.Checked)  # Active state
+
             list_widget = QListWidget()
             list_widget.addItem(item)
             list_widget.setMaximumHeight(60 if is_specific else 40)
+            list_widget.setProperty("tristate_enabled", True)
+
+            list_widget.setToolTip(
+                "☑ = Active (will be installed)\n▣ = Disabled (will be skipped)\n☐ = Delete (will be removed)")
+
             widgets.append(list_widget)
         return widgets
+
+    @staticmethod
+    def _handle_tristate_click(item):
+        if not item:
+            return
+
+        current_state = item.checkState()
+
+        if current_state == Qt.CheckState.Checked:
+            item.setCheckState(Qt.CheckState.PartiallyChecked)
+        elif current_state == Qt.CheckState.PartiallyChecked:
+            item.setCheckState(Qt.CheckState.Unchecked)
+        else:  # Unchecked
+            item.setCheckState(Qt.CheckState.Checked)
 
     def manage_packages(self, title, option_type, add_button_text, is_specific=False):
         self.current_option_type = option_type
@@ -578,6 +639,10 @@ class SystemManagerOptions(QDialog):
         if not isinstance(packages, list): packages = []
 
         package_widgets = self._create_package_list_widget(packages, is_specific)
+
+        for widget in package_widgets:
+            widget.itemClicked.connect(lambda item: self._handle_tristate_click(item))
+
         for index, widget in enumerate(package_widgets):
             grid_layout.addWidget(widget, index // 5, index % 5)
         setattr(self, f"{option_type}_widgets", package_widgets)
@@ -601,42 +666,47 @@ class SystemManagerOptions(QDialog):
     def _setup_packages_select_all(select_all_checkbox, package_widgets):
         def toggle_all_packages():
             checked = select_all_checkbox.checkState() == Qt.CheckState.Checked
-            for manager_widget in package_widgets:
-                if isinstance(manager_widget, QListWidget) and manager_widget.count() > 0:
-                    manager_item = manager_widget.item(0)
-                    if manager_item:
-                        manager_item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+            for list_widget_item in package_widgets:
+                if list_widget_item.count() > 0:
+                    item = list_widget_item.item(0)
+                    if item:
+                        # Toggle between checked and unchecked (skip partially checked)
+                        item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
 
         def update_select_all_state():
             if not package_widgets:
                 return
             checked_count = 0
+            partially_checked_count = 0
             total_count = 0
-            for manager_widget in package_widgets:
-                if isinstance(manager_widget, QListWidget) and manager_widget.count() > 0:
-                    manager_item = manager_widget.item(0)
-                    if manager_item:
+
+            for list_widget_item in package_widgets:
+                if list_widget_item.count() > 0:
+                    item = list_widget_item.item(0)
+                    if item:
                         total_count += 1
-                        if manager_item.checkState() == Qt.CheckState.Checked:
+                        state = item.checkState()
+                        if state == Qt.CheckState.Checked:
                             checked_count += 1
+                        elif state == Qt.CheckState.PartiallyChecked:
+                            partially_checked_count += 1
+
             if total_count == 0:
                 return
 
             select_all_checkbox.blockSignals(True)
-            if checked_count == 0:
-                select_all_checkbox.setCheckState(Qt.CheckState.Unchecked)
-            elif checked_count == total_count:
+            if checked_count == total_count:
                 select_all_checkbox.setCheckState(Qt.CheckState.Checked)
+            elif checked_count + partially_checked_count == 0:
+                select_all_checkbox.setCheckState(Qt.CheckState.Unchecked)
             else:
                 select_all_checkbox.setCheckState(Qt.CheckState.PartiallyChecked)
             select_all_checkbox.blockSignals(False)
 
         select_all_checkbox.stateChanged.connect(toggle_all_packages)
-        for widget in package_widgets:
-            if isinstance(widget, QListWidget) and widget.count() > 0:
-                item = widget.item(0)
-                if item:
-                    widget.itemChanged.connect(update_select_all_state)
+        for list_widget in package_widgets:
+            if list_widget.count() > 0:
+                list_widget.itemChanged.connect(update_select_all_state)
         update_select_all_state()
 
     def _add_search_functionality(self, layout, package_widgets):
@@ -815,23 +885,38 @@ class SystemManagerOptions(QDialog):
 
     @staticmethod
     def _get_checked_items_from_widgets(widget_list):
-        return [widget.item(i).text() for widget in widget_list if isinstance(widget, QListWidget)
-                for i in range(widget.count())
-                if widget.item(i).checkState() == Qt.CheckState.Checked]
+        items = []
+        for list_widget in widget_list:
+            for i in range(list_widget.count()):
+                item = list_widget.item(i)
+                if item:
+                    check_state = item.checkState()
+                    if check_state in [Qt.CheckState.Checked, Qt.CheckState.PartiallyChecked]:
+                        items.append({
+                            'name': item.text(),
+                            'disabled': check_state == Qt.CheckState.PartiallyChecked
+                        })
+        return items
 
     def _get_system_files_from_widgets(self):
         files = []
-        for widget in self.system_files_widgets:
-            if isinstance(widget, QListWidget):
-                for i in range(widget.count()):
-                    item = widget.item(i)
-                    if item and item.checkState() == Qt.CheckState.Checked:
+        for list_widget in self.system_files_widgets:
+            for i in range(list_widget.count()):
+                item = list_widget.item(i)
+                if item:
+                    check_state = item.checkState()
+                    if check_state in [Qt.CheckState.Checked, Qt.CheckState.PartiallyChecked]:
                         original_data = item.data(Qt.ItemDataRole.UserRole)
                         if original_data and isinstance(original_data, dict):
                             source = original_data.get('source', '')
                             destination = original_data.get('destination', '')
                             if source and destination:
-                                files.append({'source': source, 'destination': destination})
+                                file_entry = {
+                                    'source': source,
+                                    'destination': destination,
+                                    'disabled': check_state == Qt.CheckState.PartiallyChecked
+                                }
+                                files.append(file_entry)
         return files
 
     def _get_specific_packages_from_widgets(self):
@@ -839,24 +924,23 @@ class SystemManagerOptions(QDialog):
         if not hasattr(self, 'specific_packages_widgets'):
             return packages
 
-        for widget in self.specific_packages_widgets:
-            if isinstance(widget, QListWidget):
-                for i in range(widget.count()):
-                    item = widget.item(i)
-                    if item and item.checkState() == Qt.CheckState.Checked:
+        for list_widget in self.specific_packages_widgets:
+            for i in range(list_widget.count()):
+                item = list_widget.item(i)
+                if item:
+                    check_state = item.checkState()
+                    if check_state in [Qt.CheckState.Checked, Qt.CheckState.PartiallyChecked]:
                         item_text = item.text()
                         if '\n' in item_text:
                             parts = item_text.split('\n', 1)
                             if len(parts) >= 2:
                                 package_name = parts[0].strip()
                                 session_part = parts[1].strip('()')
-                                packages.append({'package': package_name, 'session': session_part})
-                        else:
-                            parts = item_text.partition('(')
-                            package_name = parts[0].strip()
-                            session = parts[2].partition(')')[0].strip() if parts[1] else ""
-                            if package_name:
-                                packages.append({'package': package_name, 'session': session})
+                                packages.append({
+                                    'package': package_name,
+                                    'session': session_part,
+                                    'disabled': check_state == Qt.CheckState.PartiallyChecked
+                                })
         return packages
 
     def save_system_manager_options(self, dialog=None, option_type=None):
@@ -867,27 +951,54 @@ class SystemManagerOptions(QDialog):
             selected_ops = [key for checkbox, key in self.system_manager_operations_widgets if checkbox.isChecked()]
             Options.system_manager_operations = selected_ops
         elif current_type == "system_files":
-            new_files = [
-                lw.item(0).data(Qt.ItemDataRole.UserRole)
-                for lw in self.system_files_widgets
-                if lw.item(0).checkState() == Qt.CheckState.Checked
-            ]
+            new_files = []
+            for list_widget in self.system_files_widgets:
+                if list_widget.count() > 0:
+                    item = list_widget.item(0)
+                    if item:
+                        check_state = item.checkState()
+                        if check_state in [Qt.CheckState.Checked, Qt.CheckState.PartiallyChecked]:
+                            original_data = item.data(Qt.ItemDataRole.UserRole)
+                            if original_data and isinstance(original_data, dict):
+                                file_entry = {
+                                    'source': original_data.get('source', ''),
+                                    'destination': original_data.get('destination', ''),
+                                    'disabled': check_state == Qt.CheckState.PartiallyChecked
+                                }
+                                new_files.append(file_entry)
+
             if len(new_files) != len(Options.system_files or []):
                 options_changed = True
             Options.system_files = new_files
+
         elif current_type in ["essential_packages", "additional_packages", "specific_packages"]:
             widgets = getattr(self, f"{current_type}_widgets", [])
             new_packages = []
             is_specific = (current_type == "specific_packages")
 
-            for lw in widgets:
-                item = lw.item(0)
-                if item.checkState() == Qt.CheckState.Checked:
-                    if is_specific:
-                        name, session = item.text().split('\n')
-                        new_packages.append({'package': name, 'session': session.strip('()')})
-                    else:
-                        new_packages.append(item.text())
+            for list_widget in widgets:
+                if list_widget.count() > 0:
+                    item = list_widget.item(0)
+                    if item:
+                        check_state = item.checkState()
+                        if check_state in [Qt.CheckState.Checked, Qt.CheckState.PartiallyChecked]:
+                            if is_specific:
+                                item_text = item.text()
+                                if '\n' in item_text:
+                                    parts = item_text.split('\n', 1)
+                                    if len(parts) >= 2:
+                                        package_name = parts[0].strip()
+                                        session_part = parts[1].strip('()')
+                                        new_packages.append({
+                                            'package': package_name,
+                                            'session': session_part,
+                                            'disabled': check_state == Qt.CheckState.PartiallyChecked
+                                        })
+                            else:
+                                new_packages.append({
+                                    'name': item.text(),
+                                    'disabled': check_state == Qt.CheckState.PartiallyChecked
+                                })
 
             original_packages = getattr(Options, current_type, [])
             if len(new_packages) != len(original_packages):
