@@ -5,9 +5,9 @@ from drive_manager import DriveManager
 from linux_distro_helper import LinuxDistroHelper
 from PyQt6.QtGui import QTextCursor, QColor, QIcon
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, QElapsedTimer, QTimer
-import ast, getpass, os, pwd, shutil, socket, subprocess, tempfile, threading, time, urllib.error, urllib.request, queue, logging.handlers
 from PyQt6.QtWidgets import (QVBoxLayout, QHBoxLayout, QPushButton, QListWidgetItem, QApplication, QListWidget, QWidget,
                              QCheckBox, QTextEdit, QGraphicsDropShadowEffect, QDialogButtonBox, QDialog, QLabel, QScrollArea)
+import ast, getpass, os, pwd, shutil, socket, subprocess, tempfile, threading, time, urllib.error, urllib.request, queue, logging.handlers
 
 user = pwd.getpwuid(os.getuid()).pw_name
 home_user = os.getenv("HOME")
