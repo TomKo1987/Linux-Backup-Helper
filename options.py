@@ -457,9 +457,27 @@ class Options(QObject):
         system_manager_operation_text = Options.get_system_manager_operation_text(distro_helper)
 
         for operation, config_key in operation_keys.items():
-            if operation not in system_manager_operation_text or not getattr(Options, config_key, None):
+            if operation not in system_manager_operation_text:
                 continue
-            items = getattr(Options, config_key)
+
+            raw_items = getattr(Options, config_key, None)
+            if not raw_items:
+                continue
+
+            if config_key in ["system_files", "essential_packages", "additional_packages", "specific_packages"]:
+                items = []
+                for item in raw_items:
+                    if isinstance(item, dict):
+                        if not item.get('disabled', False):
+                            items.append(item)
+                    else:
+                        items.append(item)
+            else:
+                items = raw_items
+
+            if not items:
+                continue
+
             column_width = 1 if config_key == "system_files" else 4
             label_maps = {"system_files": {"source": "Source:<br>", "destination": "<br>Destination:<br>"},
                           "specific_packages": {"package": lambda v: f"{v}", "session": lambda v: f"<br>({v})"},
@@ -480,7 +498,10 @@ class Options(QObject):
                 if config_key == "user_shell":
                     items = [mapped(items)]
                 else:
-                    items = [{k: apply_map(k, v) for k, v in item.items()} for item in items]
+                    items = [{k: apply_map(k, v) for k, v in item.items() if k != 'disabled'} for item in items]
+            else:
+                if config_key in ["essential_packages", "additional_packages"]:
+                    items = [item.get('name', str(item)) if isinstance(item, dict) else str(item) for item in items]
             item_format = "".join if config_key == "specific_packages" else lambda l: "<br>".join(l)
             item_strings = [item_format([str(v) for v in item.values()]) if isinstance(item, dict) else str(item) for
                             item in items]
