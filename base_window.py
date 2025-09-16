@@ -4,7 +4,7 @@ from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtCore import Qt, pyqtSignal
 from global_style import THEMES, get_current_style
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QDialog, QLabel, QGridLayout,
-                             QScrollArea, QCheckBox, QSpacerItem, QSizePolicy, QComboBox, QDialogButtonBox)
+                             QScrollArea, QCheckBox, QSpacerItem, QSizePolicy, QComboBox, QMessageBox, QDialogButtonBox)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -125,7 +125,7 @@ class BaseWindow(QDialog):
             "This logic ensures that only necessary files are copied, avoids overwriting up-to-date or protected files, and provides clear feedback for each file processed."
         )
 
-        tooltip_icon = "💡"
+        tooltip_icon = "󰔨  "
         label_html = (
             f"{tooltip_icon}<span style='font-size: 16px; padding: 4px; "
             f"color: #9891c2; text-decoration: underline dotted;'>{config_path_text}</span>"
@@ -557,19 +557,15 @@ class BaseWindow(QDialog):
         Options.save_config()
         dialog.accept()
 
-        # Force complete window recreation by hiding, clearing, and rebuilding
         self.hide()
 
-        # Clear all cached data to force complete rebuild
         self._last_entries_hash = None
         self._last_ui_state = None
         self._tooltip_cache = None
 
-        # Clear and rebuild UI
         self.clear_layout_contents()
         self.setup_ui()
 
-        # Show window again
         self.show()
 
         self.show_message("Success", f"Theme changed to {theme_name}, font set to {font_family} {font_size}px!")
@@ -578,13 +574,36 @@ class BaseWindow(QDialog):
             self.parent().update()
 
     def _delayed_size_adjustment(self):
-        """Delayed size adjustment to ensure proper layout after font changes"""
         if self.content_widget:
             self.content_widget.adjustSize()
             self.content_widget.updateGeometry()
         self.scroll_area.updateGeometry()
         self.adjust_window_size()
         self.update()
+
+    def start_process(self):
+        pass
+
+    def show_message(self, title, message):
+        QMessageBox.information(self, title, message)
+
+    def system_manager_options(self):
+        pass
+
+    def entry_dialog(self, edit_mode=False):
+        pass
+
+    def delete_entry(self):
+        pass
+
+    def header_settings(self):
+        pass
+
+    def open_samba_password_dialog(self):
+        pass
+
+    def manage_mount_options(self):
+        pass
 
     @staticmethod
     def _set_checkbox_checked(checkbox, checked):
