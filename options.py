@@ -257,7 +257,7 @@ class Options(QObject):
                     "details": {**{k: e.details.get(k, False) for k in
                                    ('no_backup', 'no_restore', 'sublayout_games_1', 'sublayout_games_2',
                                     'sublayout_games_3', 'sublayout_games_4')},
-                                "unique_id": e.details.get('unique_id', QUuid.createUuid().toString(
+                                    "unique_id": e.details.get('unique_id', QUuid.createUuid().toString(
                                     QUuid.StringFormat.WithoutBraces))}
                 }
                 entries_data["entries"].append(entry)
