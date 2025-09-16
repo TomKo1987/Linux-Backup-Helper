@@ -200,16 +200,11 @@ class MainWindow(QMainWindow):
                 event.ignore()
         except Exception as e:
             logger.error(f"Error in closeEvent: {e}")
-            try:
-                if self._confirm_dialog("Exit Confirmation", "Are you sure you want to exit?"):
-                    event.accept()
-                    QCoreApplication.exit(0)
-                else:
-                    event.ignore()
-            except Exception as e:
-                    logger.error(f"Error in closeEvent: {e}")
-                    event.accept()
-                    QCoreApplication.exit(0)
+            if self._confirm_dialog("Exit Confirmation", "Are you sure you want to exit?"):
+                event.accept()
+                QCoreApplication.exit(0)
+            else:
+                event.ignore()
 
     def _confirm_dialog(self, title, text):
         dlg = QMessageBox(self)
@@ -325,7 +320,6 @@ def main():
     theme_name = Options.ui_settings.get("theme", "Tokyo Night")
     if theme_name in THEMES:
         global_style.current_theme = theme_name
-        # Apply the complete style including fonts
         app.setStyleSheet(global_style.get_current_style())
     else:
         app.setStyleSheet(global_style.get_current_style())
