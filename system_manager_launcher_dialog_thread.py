@@ -90,7 +90,7 @@ class SystemManagerLauncher:
     def _add_operation_row(index, text, has_tooltip, tooltip_text, layout):
         style_color = "#9891c2;" if has_tooltip else "#c8beff;"
         text_style = "text-decoration: underline dotted;" if has_tooltip else ""
-        tooltip_icon = "💡" if has_tooltip else ""
+        tooltip_icon = "󰔨  " if has_tooltip else ""
         operation_text = f"{tooltip_icon}<span style='font-size: 16px; padding: 5px; color: {style_color}{text_style}'>{text}</span>"
         row_layout = QHBoxLayout()
         number_label = QLabel(f"{index + 1}:")
@@ -309,7 +309,7 @@ class SystemManagerDialog(QDialog):
         self.text_edit = QTextEdit()
         self.failed_attempts_label = QLabel(self)
 
-        self.checklist_label = QLabel("Pending Operations:")
+        self.checklist_label = QLabel("  Pending Operations:")
         self.checklist = QListWidget()
         self.elapsed_time_label = QLabel("\nElapsed time:\n00s\n")
         self.ok_button = QPushButton("Close")
@@ -362,6 +362,7 @@ class SystemManagerDialog(QDialog):
         colors = StyleConfig.COLORS
         border_style = self._get_border_style()
 
+        self.checklist_label.setText("  Pending Operations:")
         self.checklist_label.setStyleSheet(f"""
             color: {colors['info']};
             font-size: 18px;
@@ -372,6 +373,9 @@ class SystemManagerDialog(QDialog):
                        stop:1 {colors['border']});
             {border_style}
         """)
+
+        self.checklist_label.setFixedWidth(self.CHECKLIST_WIDTH)
+        self.checklist_label.setFixedSize(self.checklist_label.sizeHint())
 
         self.checklist.setStyleSheet(f"""
             QListWidget {{
@@ -643,7 +647,7 @@ class SystemManagerDialog(QDialog):
         is_error = self.has_error
         color = StyleConfig.COLORS['warning' if is_error else 'success']
         summary_text = "Completed with issues" if is_error else "Successfully Completed"
-        icon = "⚠️" if is_error else "✅"
+        icon = "⚠️" if is_error else "🗹"
         message = f"System Manager {'completed with warnings/errors' if is_error else 'successfully completed all operations<br>'}"
 
         color_obj = QColor(color)
