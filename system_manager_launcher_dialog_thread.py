@@ -647,7 +647,7 @@ class SystemManagerDialog(QDialog):
         is_error = self.has_error
         color = StyleConfig.COLORS['warning' if is_error else 'success']
         summary_text = "Completed with issues" if is_error else "Successfully Completed"
-        icon = "⚠️" if is_error else "🗹"
+        icon = " ️" if is_error else "🗹"
         message = f"System Manager {'completed with warnings/errors' if is_error else 'successfully completed all operations<br>'}"
 
         color_obj = QColor(color)
@@ -712,7 +712,7 @@ class SystemManagerDialog(QDialog):
 
     def update_failed_attempts(self, failed_attempts: int):
         if failed_attempts > 0:
-            text = f"⚠️ Failed Authentication Attempts: {failed_attempts}"
+            text = f" ️ Failed Authentication Attempts: {failed_attempts}"
             self.failed_attempts_label.setText(text)
             self.failed_attempts_label.setVisible(True)
             self.auth_failed = True
@@ -778,15 +778,25 @@ class SystemManagerThread(QThread):
 
     def __init__(self, sudo_password):
         super().__init__()
-        self.enabled_tasks = None
-        self.task_descriptions = None
-        self.sudo_password = SecureString(sudo_password)
-        self.auth_failed = self.has_error = self.terminated = False
-        self.temp_dir = self.askpass_script_path = self.current_task = None
+        self.enabled_tasks = {}
+        self.task_descriptions = []
+        self.sudo_password = SecureString(sudo_password) if sudo_password else SecureString("")
+        self.auth_failed = False
+        self.has_error = False
+        self.terminated = False
+        self.temp_dir = None
+        self.askpass_script_path = None
+        self.current_task = None
         self.task_status = {}
         self._installed_packages_cache = {}
-        self.distro = LinuxDistroHelper()
-        self.package_cache = PackageCache(self.distro)
+
+        try:
+            self.distro = LinuxDistroHelper()
+            self.package_cache = PackageCache(self.distro)
+        except Exception as e:
+            logger.warning(f"Could not initialize distro helper: {e}")
+            self.distro = None
+            self.package_cache = None
 
     def run(self):
         self.started.emit()
@@ -806,7 +816,8 @@ class SystemManagerThread(QThread):
             self.has_error = True
         finally:
             self.cleanup_temp_files()
-            self.sudo_password.clear()
+            if hasattr(self.sudo_password, 'clear'):
+                self.sudo_password.clear()
 
     def prepare_tasks(self):
         Options.load_config(Options.config_file_path)
