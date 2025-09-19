@@ -1,8 +1,8 @@
 import logging.handlers
 from options import Options
-from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from base_window import BaseWindow
+from PyQt6.QtCore import Qt, QMutexLocker
 from global_style import get_current_style
 from system_manager_options import SystemManagerOptions
 from PyQt6.QtWidgets import (QMessageBox, QDialog, QVBoxLayout, QLabel, QFormLayout, QComboBox, QLineEdit, QPushButton,
@@ -83,8 +83,12 @@ class SettingsWindow(BaseWindow):
 
             header_combo = QComboBox()
             header_combo.setStyleSheet("color: #ffffff; background-color: #555582; padding: 5px 5px;")
+
             if not hasattr(Options, 'headers') or not Options.headers:
-                Options.headers = ['Default']
+                Options.headers = getattr(Options, 'header_order', []).copy()
+                if not Options.headers:
+                    Options.headers = ['Default']
+
             header_combo.addItems(Options.headers)
             header_combo.setMaximumHeight(field_height)
 
@@ -295,18 +299,24 @@ class SettingsWindow(BaseWindow):
 
         if confirm_box.exec() == QMessageBox.StandardButton.Yes:
             self.hide()
-            entries_to_delete = []
-            for checked_entry in checked_entries:
-                if hasattr(Options, 'all_entries'):
-                    entry_obj = next((e for e in Options.all_entries
-                                      if hasattr(e, 'details') and e.details.get('unique_id') == checked_entry[3]),
-                                     None)
-                    if entry_obj:
-                        entries_to_delete.append(entry_obj)
 
-            for entry_obj in entries_to_delete:
-                if hasattr(Options, 'delete_entry'):
-                    Options.delete_entry(entry_obj)
+            entries_to_delete = []
+            unique_ids_to_delete = [entry_data[3] for entry_data in checked_entries]
+
+            if hasattr(Options, 'all_entries') and Options.all_entries:
+                for entry in Options.all_entries[:]:
+                    if (hasattr(entry, 'details') and
+                            isinstance(entry.details, dict) and
+                            entry.details.get('unique_id') in unique_ids_to_delete):
+                        entries_to_delete.append(entry)
+
+            try:
+                with QMutexLocker(Options.entries_mutex):
+                    for entry_obj in entries_to_delete:
+                        if entry_obj in Options.all_entries:
+                            Options.all_entries.remove(entry_obj)
+            except Exception as e:
+                logger.error(f"Error removing entries: {e}")
 
             Options.save_config()
             self.settings_changed.emit()
