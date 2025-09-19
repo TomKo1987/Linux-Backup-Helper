@@ -28,7 +28,7 @@ class Options(QObject):
     main_window = None
     run_mount_command_on_launch = False
     user_shell = USER_SHELL[0]
-    _entries_mutex = QMutex()
+    entries_mutex = QMutex()
     all_entries = []
     entries_sorted = []
     mount_options = []
@@ -85,7 +85,7 @@ class Options(QObject):
     @staticmethod
     def sort_entries():
         try:
-            with QMutexLocker(Options._entries_mutex):
+            with QMutexLocker(Options.entries_mutex):
                 if not Options.all_entries:
                     Options.entries_sorted = []
                     return []
@@ -110,14 +110,14 @@ class Options(QObject):
                 return sorted_entries
         except Exception as e:
             logger.error(f"Error in sort_entries: {e}")
-            with QMutexLocker(Options._entries_mutex):
+            with QMutexLocker(Options.entries_mutex):
                 Options.entries_sorted = []
             return []
 
     @staticmethod
     def delete_entry(entry):
         try:
-            with QMutexLocker(Options._entries_mutex):
+            with QMutexLocker(Options.entries_mutex):
                 Options.all_entries.remove(entry)
             Options.save_config()
         except ValueError:
@@ -185,7 +185,7 @@ class Options(QObject):
             return False
 
         try:
-            with QMutexLocker(Options._entries_mutex):
+            with QMutexLocker(Options.entries_mutex):
                 for entry in Options.all_entries:
                     if not hasattr(entry, 'details') or not isinstance(entry.details, dict):
                         logger.warning(f"Invalid entry detected: {entry}")
@@ -302,8 +302,9 @@ class Options(QObject):
                 return
 
             header_data = entries_data.get('header', {})
-            Options.headers = [h for h in Options.header_order]
+
             Options.header_order = list(header_data.keys())
+            Options.headers = Options.header_order.copy()
             Options.header_colors = {}
             Options.header_inactive = []
 
@@ -364,7 +365,7 @@ class Options(QObject):
 
             Options.ui_settings = entries_data.get("ui_settings", Options.ui_settings)
 
-            with QMutexLocker(Options._entries_mutex):
+            with QMutexLocker(Options.entries_mutex):
                 Options.all_entries = []
 
                 for entry_data in entries_data.get('entries', []):
