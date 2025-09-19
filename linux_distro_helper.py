@@ -137,11 +137,11 @@ class LinuxDistroHelper:
         if not package or len(package) > 255:
             return False
 
-        if not PACKAGE_NAME_REGEX.match(package):
+        if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9._+-]*$', package):
             logger.warning(f"Invalid package name format: {package}")
             return False
 
-        dangerous_chars = [';', '&', '|', '`', '$', '(', ')', '<', '>', '\n', '\r']
+        dangerous_chars = [';', '&', '|', '`', '$', '(', ')', '<', '>', '\n', '\r', '\t', ' ']
         if any(char in package for char in dangerous_chars):
             logger.warning(f"Dangerous characters in package name: {package}")
             return False
@@ -151,7 +151,7 @@ class LinuxDistroHelper:
                 self.pkg_check_installed(package),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                timeout=15,
+                timeout=10,
                 check=False
             )
             return result.returncode == 0
