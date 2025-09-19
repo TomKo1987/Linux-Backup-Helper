@@ -67,6 +67,10 @@ class BaseWindow(QDialog):
         Options.sort_entries()
         self.clear_layout_contents()
 
+        if not hasattr(Options, 'headers') or not Options.headers:
+            Options.headers = Options.header_order.copy() if hasattr(Options,
+                                                                     'header_order') and Options.header_order else []
+
         key = f"{self.window_type}_window_columns"
         self.columns = 4 if Options.ui_settings.get(key, 2) == 4 else 2
         self.create_top_controls(f"{2 if self.columns == 4 else 4} Columns")
@@ -227,10 +231,7 @@ class BaseWindow(QDialog):
 
     def _setup_tooltip_on_hover(self, checkbox, event):
         if hasattr(checkbox, '_tooltip_set') and checkbox._tooltip_set:
-            try:
-                super(QCheckBox, checkbox).enterEvent(event)
-            except AttributeError:
-                pass
+            QCheckBox.enterEvent(checkbox, event)
             return
 
         try:
@@ -256,10 +257,7 @@ class BaseWindow(QDialog):
             checkbox.setToolTip("No detailed information available")
             checkbox._tooltip_set = True
 
-        try:
-            super(QCheckBox, checkbox).enterEvent(event)
-        except AttributeError:
-            pass
+        QCheckBox.enterEvent(checkbox, event)
 
     @staticmethod
     def get_sublayout_entries():
