@@ -5,12 +5,17 @@ from PyQt6.QtGui import QFont, QTextOption, QFontMetrics
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QPushButton, QLabel
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+if not logger.hasHandlers():
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 
 # noinspection PyUnresolvedReferences
 class InxiWorker(QThread):
     finished = pyqtSignal(str)
-
     default_args = ['inxi', '-SMCGAz', '--no-host', '--color', '0']
 
     def run(self):
@@ -69,14 +74,15 @@ class SystemInfoWindow(QDialog):
         header_font.setBold(True)
         header.setFont(header_font)
         header.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        header.setStyleSheet(f"{get_current_style()}")
+        header.setStyleSheet(get_current_style())
         layout.addWidget(header)
 
         self.text_edit.setReadOnly(True)
         self.text_edit.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
         self.text_edit.setWordWrapMode(QTextOption.WrapMode.NoWrap)
 
-        font = QFont(f"{get_current_style()}")
+        font = QFont("Monospace")
+        font.setStyleHint(QFont.StyleHint.Monospace)
         font.setFixedPitch(True)
         self.text_edit.setFont(font)
 
@@ -87,10 +93,10 @@ class SystemInfoWindow(QDialog):
         tab_width = 4 * font_metrics.horizontalAdvance(' ')
         self.text_edit.setTabStopDistance(tab_width)
 
-        self.text_edit.setStyleSheet(f"{get_current_style()}")
+        self.text_edit.setStyleSheet(get_current_style())
         layout.addWidget(self.text_edit)
 
-        self.close_btn.setStyleSheet(f"{get_current_style()}")
+        self.close_btn.setStyleSheet(get_current_style())
         self.close_btn.clicked.connect(self.close)
         layout.addWidget(self.close_btn)
 
@@ -99,7 +105,6 @@ class SystemInfoWindow(QDialog):
     def on_info_loaded(self, info):
         self.text_edit.setPlainText(info)
         self.close_btn.setFocus()
-
         self.adjust_window_width()
 
     def adjust_window_width(self):
