@@ -49,8 +49,7 @@ class SystemManagerLauncher:
     def confirm_and_start_system_manager(self):
         system_manager_operations = self.config.get('system_manager_operations', [])
         _, _, installer_tooltips = Options.generate_tooltip()
-        distro_helper = LinuxDistroHelper()
-        system_manager_operation_text = Options.get_system_manager_operation_text(distro_helper)
+        system_manager_operation_text = Options.get_system_manager_operation_text(self.distro_helper)
         operations_text = {k: v.replace("&&", "&") for k, v in system_manager_operation_text.items()}
         dialog, content_widget, content_layout = self._create_installer_dialog()
         self._display_operations(system_manager_operations, operations_text, installer_tooltips, content_layout)
@@ -64,12 +63,20 @@ class SystemManagerLauncher:
         content_widget = QWidget()
         yay_info = ""
         if self.distro_helper.has_aur:
-            yay_info = " | AUR Helper: 'yay' detected" if self.distro_helper.package_is_installed('yay') else " | AUR Helper: 'yay' not detected"
-        self.distro_label = QLabel(f"Recognized Linux distribution: {self.distro_name} | Session: {self.session}{yay_info}")
+            yay_info = (
+                " | AUR Helper: 'yay' detected"
+                if self.distro_helper.package_is_installed('yay')
+                else " | AUR Helper: 'yay' not detected"
+            )
+        self.distro_label = QLabel(
+            f"Recognized Linux distribution: {self.distro_name} | Session: {self.session}{yay_info}"
+        )
         self.distro_label.setStyleSheet("color: lightgreen")
         content_layout = QVBoxLayout(content_widget)
         content_layout.addWidget(self.distro_label)
-        header_label = QLabel("<span style='font-size: 18px;'>System Manager will perform the following operations:<br></span>")
+        header_label = QLabel(
+            "<span style='font-size: 18px;'>System Manager will perform the following operations:<br></span>"
+        )
         header_label.setTextFormat(Qt.TextFormat.RichText)
         content_layout.addWidget(header_label)
         scroll_area = QScrollArea()
@@ -83,15 +90,23 @@ class SystemManagerLauncher:
     def _display_operations(self, system_manager_operations, system_manager_operations_text, system_manager_tooltips, content_layout):
         for i, opt in enumerate(system_manager_operations):
             if opt in system_manager_operations_text:
-                has_tooltip = opt in system_manager_tooltips and system_manager_tooltips[opt]
-                self._add_operation_row(i, system_manager_operations_text[opt], has_tooltip, system_manager_tooltips.get(opt, ""), content_layout)
+                has_tooltip = bool(system_manager_tooltips.get(opt))
+                self._add_operation_row(
+                    i,
+                    system_manager_operations_text[opt],
+                    has_tooltip,
+                    system_manager_tooltips.get(opt, ""),
+                    content_layout
+                )
 
     @staticmethod
     def _add_operation_row(index, text, has_tooltip, tooltip_text, layout):
         style_color = "#9891c2;" if has_tooltip else "#c8beff;"
         text_style = "text-decoration: underline dotted;" if has_tooltip else ""
         tooltip_icon = "󰔨  " if has_tooltip else ""
-        operation_text = f"{tooltip_icon}<span style='font-size: 16px; padding: 5px; color: {style_color}{text_style}'>{text}</span>"
+        operation_text = (
+            f"{tooltip_icon}<span style='font-size: 16px; padding: 5px; color: {style_color}{text_style}'>{text}</span>"
+        )
         row_layout = QHBoxLayout()
         number_label = QLabel(f"{index + 1}:")
         number_label.setStyleSheet("font-size: 16px; padding: 5px; qproperty-alignment: 'AlignLeft'")
@@ -108,9 +123,11 @@ class SystemManagerLauncher:
         layout.addLayout(row_layout)
 
     def _show_dialog_and_get_result(self, dialog, content_widget):
-        confirm_label = QLabel("<span style='font-size: 16px;'>Start System Manager?<br>(Check 'Enter sudo password' if a sudo password is set.)<br></span>")
+        confirm_label = QLabel(
+            "<span style='font-size: 16px;'>Start System Manager?<br>(Check 'Enter sudo password' if a sudo password is set.)<br></span>"
+        )
         button_layout = QHBoxLayout()
-        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel) # type: ignore
         button_box.button(QDialogButtonBox.StandardButton.Ok).setText('Yes')
         button_box.button(QDialogButtonBox.StandardButton.Cancel).setText('No')
         button_box.accepted.connect(dialog.accept)
@@ -128,7 +145,10 @@ class SystemManagerLauncher:
         content_widget.layout().addLayout(button_layout)
         screen_geometry = QApplication.primaryScreen().availableGeometry()
         content_size = content_widget.sizeHint()
-        dialog.resize(min(content_size.width() + 40, screen_geometry.width()), min(content_size.height() + 40, screen_geometry.height()))
+        dialog.resize(
+            min(content_size.width() + 40, screen_geometry.width()),
+            min(content_size.height() + 40, screen_geometry.height())
+        )
         button_box.button(QDialogButtonBox.StandardButton.Cancel).setFocus()
         return dialog.exec() == QDialog.DialogCode.Accepted
 
@@ -167,7 +187,7 @@ class SystemManagerLauncher:
             self.drive_manager.unmount_drives()
 
     def show_sudo_password_dialog(self):
-        from sudo_password import SudoPasswordDialog, SecureString
+        from sudo_password import SudoPasswordDialog
         dialog = SudoPasswordDialog(self.parent)
         dialog.sudo_password_entered.connect(self.on_sudo_password_entered)
         dialog.update_failed_attempts(self.failed_attempts)
@@ -184,17 +204,19 @@ class SystemManagerLauncher:
         if self.system_manager_dialog:
             self.system_manager_dialog.update_failed_attempts(self.failed_attempts)
             self.system_manager_dialog.auth_failed = True
-            error_msg = ("<p style='color: #ff4a4d; font-size: 18px; font-weight: bold;'>"
-                         "<br>Authentication failed. Canceling process to prevent account lockout."
-                         "<br>This could be due to:"
-                         "<ul>"
-                         "<li>Incorrect or missing password</li>"
-                         "<li>Password is unauthorized</li>"
-                         "<li>User not in sudoers file</li>"
-                         "<li>Sudo configuration issue</li>"
-                         "</ul>"
-                         "System Manager has been aborted to protect your system."
-                         "</p>")
+            error_msg = (
+                "<p style='color: #ff4a4d; font-size: 18px; font-weight: bold;'>"
+                "<br>Authentication failed. Canceling process to prevent account lockout."
+                "<br>This could be due to:"
+                "<ul>"
+                "<li>Incorrect or missing password</li>"
+                "<li>Password is unauthorized</li>"
+                "<li>User not in sudoers file</li>"
+                "<li>Sudo configuration issue</li>"
+                "</ul>"
+                "System Manager has been aborted to protect your system."
+                "</p>"
+            )
             self.system_manager_dialog.update_operation_dialog(error_msg)
             self.system_manager_dialog.completed_message_shown = True
             self.system_manager_dialog.update_timer.stop()
@@ -225,8 +247,8 @@ class SystemManagerLauncher:
 
 
 class StyleConfig:
-    FONT_MAIN = "DejaVu Sans Mono"
-    FONT_SUBPROCESS = "Hack"
+    FONT_MAIN = "DejaVu Sans Mono, Fira Code, monospace"
+    FONT_SUBPROCESS = "Hack, Fira Mono, monospace"
 
     COLORS = {
         'primary': '#7aa2f7',
@@ -244,21 +266,28 @@ class StyleConfig:
     }
 
     STYLE_MAP = {
-        "operation": (FONT_MAIN, 16, "#6ffff5", 1.2),
-        "info": (FONT_MAIN, 15, "#ceec9e", 1.0),
-        "subprocess": (FONT_SUBPROCESS, 13, "#f9e7ff", 0.6),
-        "success": (FONT_MAIN, 15, "#8fffab", 1.0),
-        "warning": (FONT_MAIN, 15, "#ffaa00", 1.0),
-        "error": (FONT_MAIN, 15, "#ff5555", 1.0)
+        "operation": (FONT_MAIN, 16, COLORS['info'], 1.2),
+        "info": (FONT_MAIN, 15, COLORS['success'], 1.0),
+        "subprocess": (FONT_SUBPROCESS, 13, COLORS['text'], 0.6),
+        "success": (FONT_MAIN, 15, COLORS['success'], 1.0),
+        "warning": (FONT_MAIN, 15, COLORS['warning'], 1.0),
+        "error": (FONT_MAIN, 15, COLORS['error'], 1.0)
     }
 
     @classmethod
     def get_style_string(cls, style_name):
-        if style_name not in cls.STYLE_MAP:
+        style = cls.STYLE_MAP.get(style_name)
+        if not style:
             return ""
-
-        font, size, color, line_height = cls.STYLE_MAP[style_name]
-        return f"font-family: {font}; font-size: {size}px; color: {color}; padding: 5px; line-height: {line_height};"
+        font, size, color, line_height = style
+        return (
+            f"font-family: {font}; "
+            f"font-size: {size}px; "
+            f"color: {color}; "
+            f"padding: 5px; "
+            f"line-height: {line_height}; "
+            "word-break: break-word;"
+        )
 
 
 class TaskStatus:
@@ -280,49 +309,32 @@ class SystemManagerDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._init_attributes()
-        self._setup_ui_components()
+        self.task_status = {}
+        self.task_descriptions = []
         self.installer_thread = None
         self.current_task = None
         self.completed_message_shown = False
         self.has_error = False
         self.auth_failed = False
-        self.setup_ui()
-
-    def _init_attributes(self):
-        self.task_status = {}
-        self.task_descriptions = []
         self.update_timer = QTimer(self)
         self.timer = QElapsedTimer()
+        self._init_ui()
 
-    def _setup_ui_components(self):
+    def _init_ui(self):
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setFixedSize(*self.DIALOG_SIZE)
 
         self.shadow = self._create_shadow_effect()
-
         self.layout = QHBoxLayout(self)
         self.left_panel = QVBoxLayout()
         self.right_panel = QVBoxLayout()
-
         self.scroll_area = QScrollArea()
         self.text_edit = QTextEdit()
         self.failed_attempts_label = QLabel(self)
-
         self.checklist_label = QLabel("  Pending Operations:")
         self.checklist = QListWidget()
         self.elapsed_time_label = QLabel("\nElapsed time:\n00s\n")
         self.ok_button = QPushButton("Close")
-
-    def _create_shadow_effect(self):
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(self.SHADOW_BLUR)
-        shadow.setXOffset(self.SHADOW_OFFSET)
-        shadow.setYOffset(self.SHADOW_OFFSET)
-        shadow.setColor(QColor(0, 0, 0, 160))
-        return shadow
-
-    def setup_ui(self):
         self._apply_global_styles()
         self._configure_scroll_area()
         self._configure_text_edit()
@@ -331,6 +343,14 @@ class SystemManagerDialog(QDialog):
         self._configure_ok_button()
         self._setup_timers()
         self._setup_layout()
+
+    def _create_shadow_effect(self):
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(self.SHADOW_BLUR)
+        shadow.setXOffset(self.SHADOW_OFFSET)
+        shadow.setYOffset(self.SHADOW_OFFSET)
+        shadow.setColor(QColor(0, 0, 0, 160))
+        return shadow
 
     def _apply_global_styles(self):
         colors = StyleConfig.COLORS
@@ -361,7 +381,6 @@ class SystemManagerDialog(QDialog):
     def _configure_checklist(self):
         colors = StyleConfig.COLORS
         border_style = self._get_border_style()
-
         self.checklist_label.setText("  Pending Operations:")
         self.checklist_label.setStyleSheet(f"""
             color: {colors['info']};
@@ -373,10 +392,8 @@ class SystemManagerDialog(QDialog):
                        stop:1 {colors['border']});
             {border_style}
         """)
-
         self.checklist_label.setFixedWidth(self.CHECKLIST_WIDTH)
         self.checklist_label.setFixedSize(self.checklist_label.sizeHint())
-
         self.checklist.setStyleSheet(f"""
             QListWidget {{
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
@@ -424,18 +441,15 @@ class SystemManagerDialog(QDialog):
         self.left_panel.addWidget(self.scroll_area)
         self._setup_failed_attempts_label()
         self.left_panel.addWidget(self.failed_attempts_label)
-
         self.right_panel.addWidget(self.checklist_label)
         self.right_panel.addWidget(self.checklist)
         self.right_panel.addStretch(1)
         self.right_panel.addWidget(self.elapsed_time_label)
         self.right_panel.addStretch(1)
-
         button_container = QHBoxLayout()
         button_container.addStretch()
         button_container.addWidget(self.ok_button)
         self.right_panel.addLayout(button_container)
-
         self.layout.addLayout(self.left_panel, 3)
         self.layout.addSpacing(10)
         self.layout.addLayout(self.right_panel, 1)
@@ -466,12 +480,10 @@ class SystemManagerDialog(QDialog):
     def initialize_checklist(self):
         self.checklist.clear()
         self.task_status.clear()
-
         cleaned_tasks = [
             (tid, desc.replace("...", "").replace("with 'yay'", ""))
             for tid, desc in self.task_descriptions
         ]
-
         for task_id, desc in cleaned_tasks:
             item = QListWidgetItem(desc)
             item.setData(Qt.ItemDataRole.UserRole, task_id)
@@ -479,14 +491,12 @@ class SystemManagerDialog(QDialog):
             item.setForeground(QColor(StyleConfig.COLORS['muted']))
             self.checklist.addItem(item)
             self.task_status[task_id] = TaskStatus.PENDING
-
         self._adjust_checklist_height()
 
     def _adjust_checklist_height(self):
         if self.checklist.count() == 0:
             self.checklist.setFixedHeight(40)
             return
-
         total_height = sum(
             self.checklist.sizeHintForRow(i)
             for i in range(self.checklist.count())
@@ -497,16 +507,12 @@ class SystemManagerDialog(QDialog):
     def update_task_checklist_status(self, task_id, status):
         if not task_id or task_id not in self.task_status:
             return
-
         old_status = self.task_status.get(task_id)
         if old_status == status:
             return
-
         self.task_status[task_id] = status
-
         if status in (TaskStatus.ERROR, TaskStatus.WARNING):
             self.has_error = True
-
         self._update_checklist_item_appearance(task_id, status)
 
     def _update_checklist_item_appearance(self, task_id, status):
@@ -516,43 +522,33 @@ class SystemManagerDialog(QDialog):
             TaskStatus.WARNING: (StyleConfig.COLORS['warning'], "dialog-warning"),
             TaskStatus.IN_PROGRESS: (StyleConfig.COLORS['info'], "media-playback-start")
         }
-
         if status not in status_config:
             return
-
         color, icon_name = status_config[status]
-
         for i in range(self.checklist.count()):
             item = self.checklist.item(i)
             if not item:
                 continue
-
             if item.data(Qt.ItemDataRole.UserRole) == task_id:
                 item.setIcon(QIcon.fromTheme(icon_name))
                 item.setForeground(QColor(color))
-
                 bg_color = QColor(color)
                 bg_color.setAlpha(25)
                 item.setBackground(bg_color)
-
                 self.checklist.scrollToItem(item)
                 break
 
     def update_operation_dialog(self, output: str, message_type: str = "info"):
         cursor = self.text_edit.textCursor()
-
         if self._handle_special_outputs(output, cursor):
             return
-
         if message_type == "finish":
             if not self.auth_failed:
                 self._show_completion_message()
             return
-
         if message_type == "task_list":
             self._handle_task_list(output)
             return
-
         self._process_regular_output(output, message_type, cursor)
 
     def _handle_special_outputs(self, output: str, cursor: QTextCursor) -> bool:
@@ -574,7 +570,6 @@ class SystemManagerDialog(QDialog):
             </p>
         </div>
         """
-
         cursor.insertHtml(error_html)
         self._finalize_text_edit(cursor)
         self._enable_close_button()
@@ -590,21 +585,17 @@ class SystemManagerDialog(QDialog):
     def _process_regular_output(self, output: str, message_type: str, cursor: QTextCursor):
         if message_type not in StyleConfig.STYLE_MAP and "<span " not in output:
             return
-
         if "<span " in output:
             html_content = output
         else:
             html_content = self._format_output_as_html(output, message_type)
-
         for old, new in Options.text_replacements:
             html_content = html_content.replace(old, new)
-
         self._finalize_text_edit(cursor, html_content)
 
     @staticmethod
     def _format_output_as_html(output: str, message_type: str) -> str:
         style = StyleConfig.get_style_string(message_type)
-
         if message_type == "operation":
             return f"""
             <hr style='border: none; margin: 15px 30px; border-top: 1px dashed rgba(111, 255, 245, 0.3);'>
@@ -624,35 +615,28 @@ class SystemManagerDialog(QDialog):
         try:
             if not cursor:
                 cursor = self.text_edit.textCursor()
-
             cursor.movePosition(QTextCursor.MoveOperation.End)
             if html_content:
                 cursor.insertHtml(html_content)
             self.text_edit.setTextCursor(cursor)
-
             scrollbar = self.text_edit.verticalScrollBar()
             if scrollbar:
                 scrollbar.setValue(scrollbar.maximum())
-
         except Exception as e:
             logger.exception(f"Text edit update failed: {e}")
 
     def _show_completion_message(self):
         if self.completed_message_shown or self.auth_failed:
             return
-
         self.completed_message_shown = True
         self.update_timer.stop()
-
         is_error = self.has_error
         color = StyleConfig.COLORS['warning' if is_error else 'success']
         summary_text = "Completed with issues" if is_error else "Successfully Completed"
         icon = " ️" if is_error else "🗹"
         message = f"System Manager {'completed with warnings/errors' if is_error else 'successfully completed all operations<br>'}"
-
         color_obj = QColor(color)
         r, g, b = color_obj.red(), color_obj.green(), color_obj.blue()
-
         cursor = self.text_edit.textCursor()
         completion_html = f"""
         <hr style='border: none; margin: 25px 50px; border-top: 2px solid {color};'>
@@ -663,7 +647,6 @@ class SystemManagerDialog(QDialog):
         </div>
         """
         cursor.insertHtml(completion_html)
-
         self._enable_close_button()
         self._update_checklist_label_completion(icon, summary_text, color, r, g, b)
         self.text_edit.setTextCursor(cursor)
@@ -674,7 +657,7 @@ class SystemManagerDialog(QDialog):
 
     def _stop_installation(self):
         self.update_timer.stop()
-        if hasattr(self, 'installer_thread') and self.installer_thread and self.installer_thread.isRunning():
+        if self.installer_thread and self.installer_thread.isRunning():
             self.installer_thread.terminate()
 
     def _update_checklist_label_completion(self, icon: str, summary_text: str, color: str, r: int, g: int, b: int):
@@ -702,7 +685,6 @@ class SystemManagerDialog(QDialog):
     def _format_elapsed_time(elapsed: int) -> str:
         h, remainder = divmod(elapsed, 3600)
         m, s = divmod(remainder, 60)
-
         if h:
             return f"\nElapsed time:\n{h:02}h {m:02}m {s:02}s\n"
         elif m:
@@ -721,13 +703,11 @@ class SystemManagerDialog(QDialog):
     def keyPressEvent(self, event):
         if not event:
             return
-
         key_handlers = {
             Qt.Key.Key_Down: self._handle_down_key,
             Qt.Key.Key_Escape: self._handle_escape_key,
             Qt.Key.Key_Tab: self.focusNextChild
         }
-
         key_handler = key_handlers.get(event.key())
         if key_handler:
             key_handler()
@@ -747,18 +727,13 @@ class SystemManagerDialog(QDialog):
         if not self.completed_message_shown and not self.auth_failed:
             event.ignore()
             return
-
         self._cleanup_installer_thread()
         super().closeEvent(event)
 
     def _cleanup_installer_thread(self):
-        if not (hasattr(self, 'installer_thread') and self.installer_thread):
-            return
-
-        if self.installer_thread.isRunning():
+        if self.installer_thread and self.installer_thread.isRunning():
             self.installer_thread.terminated = True
             self.installer_thread.quit()
-
             try:
                 if not self.installer_thread.wait(2000):
                     self.installer_thread.terminate()
@@ -780,7 +755,7 @@ class SystemManagerThread(QThread):
         super().__init__()
         self.enabled_tasks = {}
         self.task_descriptions = []
-        self.sudo_password = SecureString(sudo_password) if sudo_password else SecureString("")
+        self.sudo_password = SecureString(sudo_password or "")
         self.auth_failed = False
         self.has_error = False
         self.terminated = False
@@ -816,8 +791,9 @@ class SystemManagerThread(QThread):
             self.has_error = True
         finally:
             self.cleanup_temp_files()
-            if hasattr(self.sudo_password, 'clear'):
+            if hasattr(self.sudo_password, 'clear') and callable(self.sudo_password.clear):
                 self.sudo_password.clear()
+            self.finished.emit()
 
     def prepare_tasks(self):
         Options.load_config(Options.config_file_path)
@@ -825,56 +801,38 @@ class SystemManagerThread(QThread):
         tasks = self._define_base_tasks()
         for service_task_id, (desc, name, pkgs) in self._define_service_tasks().items():
             def make_task(task_name, task_pkgs):
-                return lambda: self.setup_service_with_packages(task_name, list(task_pkgs))
+                return lambda task_name_item=task_name, task_pkgs_item=task_pkgs: self.setup_service_with_packages(task_name_item, list(task_pkgs_item))
             tasks[service_task_id] = (desc, make_task(name, pkgs))
-        tasks.update({"remove_orphaned_packages": ("Removing orphaned packages...", self.remove_orphaned_packages), "clean_cache": ("Cleaning cache...", self.clean_cache)})
+        tasks.update({
+            "remove_orphaned_packages": ("Removing orphaned packages...", self.remove_orphaned_packages),
+            "clean_cache": ("Cleaning cache...", self.clean_cache)
+        })
         self.enabled_tasks = {tid: t for tid, t in tasks.items() if tid in system_manager_operations}
         self.task_descriptions = [(tid, desc) for tid, (desc, _) in self.enabled_tasks.items()]
         self.outputReceived.emit(str(self.task_descriptions), "task_list")
 
     def _define_base_tasks(self):
-        return {"copy_system_files": ("Copying 'System Files'...", lambda: self.copy_files(self.parse_system_files(Options.system_files))),
-                "update_mirrors": ("Updating mirrors...", lambda: self.update_mirrors("update_mirrors")),
-                "set_user_shell": ("Setting user shell...", lambda: self.set_user_shell("set_user_shell")),
-                "update_system": ("Updating system...", lambda: self.update_system("update_system")),
-                "install_kernel_header": ("Installing kernel headers...", lambda: self.install_kernel_header("install_kernel_header")),
-                "install_essential_packages": ("Installing 'Essential Packages'...", lambda: self.batch_install(Options.essential_packages, "Essential Package")),
-                "install_yay": ("Installing 'yay'...", self.install_yay),
-                "install_additional_packages": ("Installing 'Additional Packages' with 'yay'...", lambda: self.batch_install(Options.additional_packages, "Additional Package")),
-                "install_specific_packages": ("Installing 'Specific Packages'...", self.install_specific_packages_based_on_session)}
+        return {
+            "copy_system_files": ("Copying 'System Files'...", lambda: self.copy_files(self.parse_system_files(Options.system_files))),
+            "update_mirrors": ("Updating mirrors...", lambda: self.update_mirrors("update_mirrors")),
+            "set_user_shell": ("Setting user shell...", lambda: self.set_user_shell("set_user_shell")),
+            "update_system": ("Updating system...", lambda: self.update_system("update_system")),
+            "install_kernel_header": ("Installing kernel headers...", lambda: self.install_kernel_header("install_kernel_header")),
+            "install_essential_packages": ("Installing 'Essential Packages'...", lambda: self.batch_install(Options.essential_packages, "Essential Package")),
+            "install_yay": ("Installing 'yay'...", self.install_yay),
+            "install_additional_packages": ("Installing 'Additional Packages' with 'yay'...", lambda: self.batch_install(Options.additional_packages, "Additional Package")),
+            "install_specific_packages": ("Installing 'Specific Packages'...", self.install_specific_packages_based_on_session)
+        }
 
     def _define_service_tasks(self):
+        get = lambda method: getattr(self.distro, method, lambda: [])()
         return {
-            "enable_printer_support": (
-                "Initializing printer support...",
-                "cups",
-                self.distro.get_printer_packages()
-            ),
-            "enable_samba_network_filesharing": (
-                "Initializing samba...",
-                "smb",
-                self.distro.get_samba_packages()
-            ),
-            "enable_bluetooth_service": (
-                "Initializing bluetooth...",
-                "bluetooth",
-                self.distro.get_bluetooth_packages()
-            ),
-            "enable_atd_service": (
-                "Initializing atd...",
-                "atd",
-                self.distro.get_at_packages()
-            ),
-            "enable_cronie_service": (
-                "Initializing cronie...",
-                "cronie",
-                self.distro.get_cron_packages()
-            ),
-            "enable_firewall": (
-                "Initializing firewall...",
-                "ufw",
-                self.distro.get_firewall_packages()
-            )
+            "enable_printer_support": ("Initializing printer support...", "cups", get("get_printer_packages")),
+            "enable_samba_network_filesharing": ("Initializing samba...", "smb", get("get_samba_packages")),
+            "enable_bluetooth_service": ("Initializing bluetooth...", "bluetooth", get("get_bluetooth_packages")),
+            "enable_atd_service": ("Initializing atd...", "atd", get("get_at_packages")),
+            "enable_cronie_service": ("Initializing cronie...", "cronie", get("get_cron_packages")),
+            "enable_firewall": ("Initializing firewall...", "ufw", get("get_firewall_packages")),
         }
 
     def reset_sudo_timeout(self):
@@ -893,9 +851,11 @@ class SystemManagerThread(QThread):
             return False
         try:
             env = os.environ.copy()
-            env['SUDO_ASKPASS'] = self.askpass_script_path
-            process = subprocess.run(['sudo', '-A', 'echo', 'Sudo access successfully verified...'],
-                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, timeout=0.2)
+            env['SUDO_ASKPASS'] = str(self.askpass_script_path)
+            process = subprocess.run(
+                ['sudo', '-A', 'echo', 'Sudo access successfully verified...'],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, timeout=0.5
+            )
             if process.stdout:
                 self.outputReceived.emit(process.stdout.strip(), "success")
             if process.stderr:
@@ -974,13 +934,12 @@ class SystemManagerThread(QThread):
             return None
         try:
             env = os.environ.copy()
-            env['SUDO_ASKPASS'] = self.askpass_script_path
+            env['SUDO_ASKPASS'] = str(self.askpass_script_path)
             if isinstance(command, list):
-                if command[0] == 'sudo' and '-A' not in command:
+                if command and command[0] == 'sudo' and '-A' not in command:
                     command.insert(1, '-A')
-                elif command[0] == 'yay' and not any(arg.startswith('--sudoflags=') for arg in command):
+                elif command and command[0] == 'yay' and not any(arg.startswith('--sudoflags=') for arg in command):
                     command.insert(1, '--sudoflags=-A')
-
             process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, bufsize=4096)
             return self._process_command_output(process)
         except Exception as e:
@@ -1178,7 +1137,7 @@ class SystemManagerThread(QThread):
                 self.taskStatusChanged.emit(task_id, "warning")
             return True
 
-        def package_batches(pkg_list, size):
+        def package_batches_items(pkg_list, size):
             for i in range(0, len(pkg_list), size):
                 yield pkg_list[i:i + size]
 
@@ -1215,7 +1174,7 @@ class SystemManagerThread(QThread):
 
         batch_size = 15 if package_type == "Essential Package" else 25
 
-        for batch in package_batches(pkgs_to_install, batch_size):
+        for batch in package_batches_items(pkgs_to_install, batch_size):
             if self.terminated:
                 break
 
@@ -1540,7 +1499,6 @@ class PackageCache:
 
     def is_installed(self, package):
         current_time = time.time()
-
         with self._lock:
             if current_time - self._cache_timestamp > self._cache_duration:
                 self._cache.clear()
@@ -1549,14 +1507,12 @@ class PackageCache:
                 keys_to_remove = list(self._cache.keys())[:len(self._cache) // 2]
                 for key in keys_to_remove:
                     self._cache.pop(key, None)
-
             if package not in self._cache:
                 try:
                     self._cache[package] = self.distro.package_is_installed(package)
                 except Exception as e:
                     logger.warning(f"Package check failed for {package}: {e}")
                     return False
-
             return self._cache[package]
 
     def mark_installed(self, package):
@@ -1569,3 +1525,13 @@ class PackageCache:
                 self._cache.pop(package, None)
             else:
                 self._cache.clear()
+
+
+def _sanitize_package_name(pkg_name):
+    pkg_name = str(pkg_name).strip()
+    return pkg_name if all(c.isalnum() or c in '-_.' for c in pkg_name) else None
+
+
+def package_batches(pkg_list, size):
+    for i in range(0, len(pkg_list), size):
+        yield pkg_list[i:i + size]
