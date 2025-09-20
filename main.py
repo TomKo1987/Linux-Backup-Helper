@@ -22,6 +22,13 @@ if not logger.hasHandlers():
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
+def flatten_paths(*args):
+    for item in args:
+        if isinstance(item, list):
+            yield from item
+        else:
+            yield item
+
 
 # noinspection PyUnresolvedReferences
 class MainWindow(QMainWindow):
@@ -78,36 +85,25 @@ class MainWindow(QMainWindow):
         self.btn_exit.setText("Unmount and Exit" if Options.run_mount_command_on_launch and Options.mount_options else "Exit")
         self.btn_exit.setStyleSheet("font-size: 17px")
 
-    def open_system_info(self):
-        if self.system_info_window:
+    def _safe_close_window(self, window_attr):
+        win = getattr(self, window_attr, None)
+        if win:
             try:
-                if not self.system_info_window.isVisible():
-                    self.system_info_window.close()
-                self.system_info_window.deleteLater()
-                self.system_info_window = None
-            except (RuntimeError, AttributeError):
-                self.system_info_window = None
-            finally:
-                self.system_info_window = None
-        try:
-            self.system_info_window = SystemInfoWindow(self)
-            self.system_info_window.show()
-            self.hide()
-        except Exception as e:
-            logger.error(f"Error creating backup/restore window: {e}")
-            QMessageBox.critical(self, "Error", f"Could not open window: {e}")
+                win.close()
+            except RuntimeError as e:
+                logger.warning(f"RuntimeError while closing window: {e}")
+            except Exception as e:
+                logger.error(f"Error while closing window: {e}")
+            try:
+                win.deleteLater()
+            except RuntimeError as e:
+                logger.warning(f"RuntimeError in deleteLater: {e}")
+            except Exception as e:
+                logger.error(f"Error in deleteLater: {e}")
+            setattr(self, window_attr, None)
 
     def start_backup_restoring(self, window_type):
-        if self.backup_restore_window:
-            try:
-                if not self.backup_restore_window.isVisible():
-                    self.backup_restore_window.close()
-                self.backup_restore_window.deleteLater()
-                self.backup_restore_window = None
-            except (RuntimeError, AttributeError):
-                self.backup_restore_window = None
-            finally:
-                self.backup_restore_window = None
+        self._safe_close_window('backup_restore_window')
         try:
             self.backup_restore_window = BackupRestoreWindow(self, window_type)
             self.backup_restore_window.show()
@@ -117,17 +113,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Could not open window: {e}")
 
     def open_settings(self):
-        if self.settings_window:
-            try:
-                self.settings_window.close()
-            except RuntimeError:
-                pass
-            try:
-                self.settings_window.deleteLater()
-            except RuntimeError:
-                pass
-            finally:
-                self.settings_window = None
+        self._safe_close_window('settings_window')
         try:
             self.settings_window = SettingsWindow(self)
             self.settings_window.show()
@@ -139,6 +125,16 @@ class MainWindow(QMainWindow):
     def launch_system_manager(self):
         self.system_manager_launcher = SystemManagerLauncher(self)
         self.system_manager_launcher.launch()
+
+    def open_system_info(self):
+        self._safe_close_window('system_info_window')
+        try:
+            self.system_info_window = SystemInfoWindow(self)
+            self.system_info_window.show()
+            self.hide()
+        except Exception as e:
+            logger.error(f"Error creating System Info window: {e}")
+            QMessageBox.critical(self, "Error", f"Could not open window: {e}")
 
     def on_settings_changed(self):
         self.load_config()
@@ -251,17 +247,7 @@ class BackupRestoreWindow(BaseWindow):
 
     @staticmethod
     def _extract_paths_to_check(selected_items):
-        paths = []
-        for source_dirs, dest_dirs, _ in selected_items:
-            if isinstance(source_dirs, list):
-                paths.extend(source_dirs)
-            else:
-                paths.append(source_dirs)
-            if isinstance(dest_dirs, list):
-                paths.extend(dest_dirs)
-            else:
-                paths.append(dest_dirs)
-        return paths
+        return [p for source, dest, _ in selected_items for p in flatten_paths(source, dest)]
 
     @staticmethod
     def _check_path_exists(path):
@@ -318,11 +304,8 @@ def main():
     Options.load_config(Options.config_file_path)
 
     theme_name = Options.ui_settings.get("theme", "Tokyo Night")
-    if theme_name in THEMES:
-        global_style.current_theme = theme_name
-        app.setStyleSheet(global_style.get_current_style())
-    else:
-        app.setStyleSheet(global_style.get_current_style())
+    global_style.current_theme = theme_name if theme_name in THEMES else global_style.current_theme
+    app.setStyleSheet(global_style.get_current_style())
 
     def handle_exception(exc_type, exc_value, exc_traceback):
         if issubclass(exc_type, KeyboardInterrupt):
@@ -332,8 +315,6 @@ def main():
         QMessageBox.critical(None, "Critical Error", f"An unexpected error occurred:\n{exc_value}")
 
     sys.excepthook = handle_exception
-
-    Options.load_config(Options.config_file_path)
 
     window = MainWindow()
     window.show()
