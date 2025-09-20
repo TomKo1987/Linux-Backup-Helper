@@ -6,12 +6,11 @@ from PyQt6.QtCore import Qt, QMutexLocker
 from global_style import get_current_style
 from system_manager_options import SystemManagerOptions
 from PyQt6.QtWidgets import (QMessageBox, QDialog, QVBoxLayout, QLabel, QFormLayout, QComboBox, QLineEdit, QPushButton,
-                             QSizePolicy, QHBoxLayout, QWidget, QCheckBox, QGridLayout, QDialogButtonBox, QColorDialog,
-                             QFileDialog, QTextEdit, QListWidget, QListWidgetItem, QInputDialog)
+    QSizePolicy, QHBoxLayout, QWidget, QCheckBox, QGridLayout, QDialogButtonBox, QColorDialog, QFileDialog, QTextEdit,
+    QListWidget, QListWidgetItem, QInputDialog)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-
 if not logger.hasHandlers():
     handler = logging.StreamHandler()
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
@@ -208,7 +207,6 @@ class SettingsWindow(BaseWindow):
                         for entry_i in range(1, 5):
                             if entry_i != num:
                                 checkboxes[f'sublayout_games_{entry_i}'].setEnabled(True)
-
                 return entry_handler
 
             checkboxes['no_restore'].stateChanged.connect(update_restore)
@@ -216,7 +214,7 @@ class SettingsWindow(BaseWindow):
                 checkboxes[f'sublayout_games_{i}'].stateChanged.connect(make_sublayout_handler(i))
 
             button_box = QDialogButtonBox(
-                QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
+                QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel) # type: ignore
             button_box.button(QDialogButtonBox.StandardButton.Ok).setText("Save")
             button_box.button(QDialogButtonBox.StandardButton.Cancel).setText("Close")
             button_box.setMaximumHeight(field_height)
@@ -416,7 +414,7 @@ class SettingsWindow(BaseWindow):
             layout.addLayout(hbox)
 
         button_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel) # type: ignore
         button_box.button(QDialogButtonBox.StandardButton.Ok).setText("Save")
         button_box.button(QDialogButtonBox.StandardButton.Cancel).setText("Close")
         layout.addWidget(button_box)
@@ -480,7 +478,7 @@ class SettingsWindow(BaseWindow):
         input_field = QLineEdit(dialog)
         input_field.setMinimumWidth(450)
         layout.addWidget(input_field)
-        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel) # type: ignore
         button_box.button(QDialogButtonBox.StandardButton.Ok).setText("Save")
         button_box.button(QDialogButtonBox.StandardButton.Cancel).setText("Close")
         layout.addWidget(button_box)
@@ -525,8 +523,8 @@ class SettingsWindow(BaseWindow):
             key = f'sublayout_games_{sublayout_num}'
             Options.sublayout_names[key] = name
             for button in parent_dialog.findChildren(QPushButton):
-                if button.text().startswith(f"Name Sublayout-Games {sublayout_num}:"):
-                    button.setText(f"Name Sublayout-Games {sublayout_num}:\n{name}")
+                if button.text().startswith(f"Sublayout-Games {sublayout_num}:"):
+                    button.setText(f"Sublayout-Games {sublayout_num}:\n{name}")
                     break
             self.show_message('Success', 'Sublayout name successfully saved!')
             Options.save_config()
@@ -638,7 +636,7 @@ class SettingsWindow(BaseWindow):
 
     def open_samba_password_dialog(self):
         self.hide()
-        from samba_password import SambaPasswordDialog, SambaPasswordManager
+        from samba_password import SambaPasswordDialog
         SambaPasswordDialog(self).exec()
         self.show()
 
@@ -793,7 +791,7 @@ class SettingsWindow(BaseWindow):
             if any(existing[field].lower() == new_option[field].lower() and existing != option for existing in Options.mount_options):
                 self.show_message(f'Duplicate {label}', f'{label} already exists. Please change your input.')
                 return
-        if option:
+        if option and option in Options.mount_options:
             index = Options.mount_options.index(option)
             Options.mount_options[index] = new_option
         else:
