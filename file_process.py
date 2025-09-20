@@ -893,12 +893,18 @@ class SmbFileHandler:
                 cmd = ['sudo', 'umount', '-l', mount_point]
                 subprocess.run(cmd, capture_output=True, text=True, timeout=3)
 
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Warning: Unmount of {mount_point} timed out")
+            try:
+                subprocess.run(['sudo', 'umount', '-l', mount_point], timeout=3, capture_output=True)
+            except Exception as e:
+                logger.warning(f"Warning: Could not force unmount {mount_point}: {e}")
         except Exception as e:
             logger.warning(f"Warning: Could not unmount {mount_point}: {e}")
             try:
                 subprocess.run(['sudo', 'umount', '-l', mount_point], timeout=3, capture_output=True)
-            except Exception as e:
-                logger.warning(f"Warning: Could not unmount {mount_point}: {e}")
+            except Exception as fallback_e:
+                logger.warning(f"Warning: Fallback unmount failed for {mount_point}: {fallback_e}")
         finally:
             try:
                 if os.path.exists(mount_point) and not os.listdir(mount_point):
