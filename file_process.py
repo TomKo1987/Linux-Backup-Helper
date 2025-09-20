@@ -107,7 +107,6 @@ class FileProcessDialog(QDialog):
             self.sudo_password_event.wait(self.sudo_password_mutex)
             if self.sudo_password is None:
                 raise RuntimeError("Sudo password required for mounting SMB shares")
-            # noinspection PyUnreachableCode
             return self.sudo_password
 
     def setup_connections(self):
@@ -179,10 +178,11 @@ class FileProcessDialog(QDialog):
     def create_summary_row(label_text, value_text, text_color, bg_color):
         row_layout = QHBoxLayout()
         row_layout.setContentsMargins(5, 5, 5, 5)
-        base_style = \
-            (f"font-family: 'FiraCode Nerd Font Mono', 'Fira Code', monospace; padding: 2px 2px; border-radius: 5px; "
-             f"font-size: 18px; background-color: {bg_color}; color: {text_color}; "
-             f"border: 2px solid rgba(0, 0, 0, 50%);")
+        base_style = (
+            f"font-family: 'FiraCode Nerd Font Mono', 'Fira Code', monospace; padding: 2px 2px; border-radius: 5px; "
+            f"font-size: 18px; background-color: {bg_color}; color: {text_color}; "
+            f"border: 2px solid rgba(0, 0, 0, 50%);"
+        )
         label = QLabel(label_text)
         label.setStyleSheet(base_style + " qproperty-alignment: AlignLeft;")
         label.setFixedWidth(500)
@@ -204,8 +204,7 @@ class FileProcessDialog(QDialog):
         add(self.create_summary_row(
             "Copied:", f"{copied} {copied_size_text}", "#55ff55", "#1f3a1f"))
         add(self.create_summary_row(
-            "Skipped (Up to date, protected file...):", f"{skipped}", "#ffff7f",
-            "#3a3a1f"))
+            "Skipped (Up to date, protected file...):", f"{skipped}", "#ffff7f", "#3a3a1f"))
         add(self.create_summary_row(
             "Errors:", f"{error}", "#ff8587", "#3a1f1f"))
 
@@ -316,16 +315,18 @@ class FileProcessDialog(QDialog):
         self.status_label.setText(f"{self.operation_type} canceled!\n")
         self.status_label.setStyleSheet(
             "color: #ff8587; font-weight: bold; font-size: 20px; background-color: transparent;")
-        text = \
-            "󰜺 \nProcess aborted due to samba file error." if self._smb_error_occurred \
-                else "󰜺 \nProcess aborted by user."
+        text = (
+            "󰜺 \nProcess aborted due to samba file error." if self._smb_error_occurred
+            else "󰜺 \nProcess aborted by user."
+        )
         self.current_file_label.setText(text)
         err_style = "color: #ff8587; font-weight: bold; font-size: 17px;"
         self.current_file_label.setStyleSheet(err_style)
         self.elapsed_time_label.setStyleSheet(err_style)
         self.progress_bar.setStyleSheet(
             f"""{global_style} QProgressBar::chunk {{background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, 
-            y2:0, stop:0 #fd7e14, stop:1 #ff8587); border-radius: 2px;}}""")
+            y2:0, stop:0 #fd7e14, stop:1 #ff8587); border-radius: 2px;}}"""
+        )
 
     def animate_text_effect(self):
         color_timer = QTimer(self)
@@ -533,7 +534,6 @@ class FileCopyThread(QThread):
             return
         file_name = Path(source_file).name
         dest_path = Path(dest_file)
-
         if SmbFileHandler.is_smb_path(source_file) or SmbFileHandler.is_smb_path(dest_file):
             if self.cancelled:
                 return
@@ -541,24 +541,19 @@ class FileCopyThread(QThread):
             (self._handle_smb_result(success, source_file, dest_file, smb_file_name, size_or_error)
              if not self.cancelled else None))
             return
-
         try:
             if not Path(source_file).exists():
                 self.handle_file_error(source_file, "Source file not found")
                 return
-
             src_stat = Path(source_file).stat()
             file_size = src_stat.st_size
-
             if dest_path.exists():
                 dest_stat = dest_path.stat()
                 if src_stat.st_size == dest_stat.st_size and src_stat.st_mtime <= dest_stat.st_mtime:
                     self._update_file_progress(False, source_file, dest_file, file_name, file_size)
                     return
-
             self.fast_copy(source_file, dest_file)
             self._update_file_progress(True, source_file, dest_file, file_name, file_size)
-
         except (OSError, FileNotFoundError) as e:
             error_msg = str(e).lower()
             if any(pattern.lower() in error_msg for pattern in self.SKIP_PATTERNS):
@@ -621,7 +616,6 @@ class FileCopyThread(QThread):
                 self.processed_files += 1
                 self.processed_bytes += self.file_sizes.get(source_file, file_size)
                 progress = int((self.processed_bytes / self.total_bytes) * 100) if self.total_bytes > 0 else 0
-
                 if should_copy:
                     self.file_copied.emit(source_file, dest_file, file_size)
                     self.progress_updated.emit(progress, f"Copying:\n{file_name}")
@@ -713,7 +707,6 @@ class FileCopyThread(QThread):
                 worker.terminate()
         self.cleanup_resources()
 
-
 class FileWorkerThread(QThread):
     def __init__(self, main_thread, worker_id):
         super().__init__()
@@ -734,7 +727,6 @@ class FileWorkerThread(QThread):
                 except Exception as e:
                     if not self.main_thread.cancelled:
                         self.main_thread.handle_file_error(source_file, str(e))
-
 
 class SmbFileHandler:
     def __init__(self, samba_password_manager, thread=None):
@@ -789,58 +781,43 @@ class SmbFileHandler:
     def _mount_smb_share(self, server, share):
         if self.thread and getattr(self.thread, 'cancelled', False):
             raise RuntimeError("Operation cancelled!")
-
         if not server or not share:
             raise ValueError("Server and share must be specified!")
-
         key = (server, share)
-
         with QMutexLocker(self.mutex):
             if key in self._mounted_shares and os.path.ismount(self._mounted_shares[key]):
                 return self._mounted_shares[key]
-
             self._mounted_shares.pop(key, None)
-
             if key in self._mounting_shares:
                 if key not in self._mount_wait_conditions:
                     self._mount_wait_conditions[key] = QWaitCondition()
                 wait_condition = self._mount_wait_conditions[key]
-
                 wait_count = 0
                 while key in self._mounting_shares and wait_count < 10:
                     if self.thread and getattr(self.thread, 'cancelled', False):
                         raise RuntimeError("Operation cancelled during mount wait!")
-
                     wait_condition.wait(self.mutex, 500)
                     wait_count += 1
-
                 if key in self._mounted_shares and os.path.ismount(self._mounted_shares[key]):
                     return self._mounted_shares[key]
-
                 if key in self._mounting_shares:
                     raise RuntimeError("Mount operation timed out - another thread is still mounting")
-
             self._mounting_shares.add(key)
             if key not in self._mount_wait_conditions:
                 self._mount_wait_conditions[key] = QWaitCondition()
-
         mount_point = tempfile.mkdtemp(prefix=f"smb_{server}_{share}_")
-
         try:
             if self.thread and getattr(self.thread, 'cancelled', False):
                 raise RuntimeError("Operation cancelled before mount")
-
             self.initialize()
             username, password = self._smb_credentials[:2]
             domain = self._smb_credentials[2] if len(self._smb_credentials) > 2 else None
-
             cmd = ['sudo', 'mount.cifs', f'//{server}/{share}', mount_point]
             opts = [f'username={username}', f'password={password}']
             if domain:
                 opts.append(f'domain={domain}')
             opts += ['uid=1000', 'gid=1000', 'iocharset=utf8']
             cmd.extend(['-o', ','.join(opts)])
-
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
             if proc.returncode == 0:
                 with QMutexLocker(self.mutex):
@@ -848,7 +825,6 @@ class SmbFileHandler:
             else:
                 if self.thread and getattr(self.thread, 'cancelled', False):
                     raise RuntimeError("Operation cancelled")
-
                 sudo_password = self._get_sudo_password()
                 cmd = ['sudo', '-S', 'mount.cifs', f'//{server}/{share}', mount_point, '-o', ','.join(opts)]
                 proc_2 = subprocess.run(cmd, input=f"{sudo_password}\n", capture_output=True, text=True, timeout=10)
@@ -856,12 +832,9 @@ class SmbFileHandler:
                     if os.path.exists(mount_point):
                         os.rmdir(mount_point)
                     raise RuntimeError(f"Mount failed: {proc_2.stderr}")
-
                 with QMutexLocker(self.mutex):
                     self._mounted_shares[key] = mount_point
-
             return mount_point
-
         except subprocess.TimeoutExpired:
             if os.path.exists(mount_point):
                 os.rmdir(mount_point)
@@ -880,19 +853,15 @@ class SmbFileHandler:
     def _unmount_smb_share(mount_point, sudo_password=None):
         if not mount_point or not os.path.exists(mount_point):
             return
-
         try:
             cmd = ['sudo', 'umount', mount_point]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-
             if result.returncode != 0 and sudo_password:
                 cmd = ['sudo', '-S', 'umount', mount_point]
                 result = subprocess.run(cmd, input=f"{sudo_password}\n", capture_output=True, text=True, timeout=5)
-
             if result.returncode != 0:
                 cmd = ['sudo', 'umount', '-l', mount_point]
                 subprocess.run(cmd, capture_output=True, text=True, timeout=3)
-
         except subprocess.TimeoutExpired:
             logger.warning(f"Warning: Unmount of {mount_point} timed out")
             try:
@@ -1066,7 +1035,6 @@ class SmbFileHandler:
         except Exception as e:
             logger.exception(f"Force cleanup error (ignored): {e}")
 
-
 class LogEntryListModel(QAbstractListModel):
     def __init__(self, entries, entry_types, parent=None):
         super().__init__(parent)
@@ -1112,35 +1080,28 @@ class LogEntryListModel(QAbstractListModel):
     def sort_entries(self):
         if not self._entries:
             return
-
         try:
             self.beginResetModel()
-
             replaced = []
             for entry, entry_type in zip(self._entries, self._types):
                 e = entry
                 for old, new in getattr(Options, 'text_replacements', []):
                     e = e.replace(old, new)
                 replaced.append((e, entry_type))
-
             def extract_path(sorted_entry):
                 try:
                     m = re.match(r"^\d+:(?:<br>)?'([^']+)'", sorted_entry)
                     if m:
                         return m.group(1).lower()
-
                     lines = sorted_entry.split('<br>' if '<br>' in sorted_entry else '\n')
                     for line in lines:
                         if '/' in line and not line.strip().isdigit():
                             return line.strip().lower()
-
                     return sorted_entry.lower()
                 except Exception as error:
                     logger.error(f"Error in sort_entries: {error}")
                     return sorted_entry.lower()
-
             replaced_sorted = sorted(replaced, key=lambda x: extract_path(x[0]))
-
             new_entries, new_types = [], []
             for i, (entry, entry_type) in enumerate(replaced_sorted):
                 try:
@@ -1151,16 +1112,12 @@ class LogEntryListModel(QAbstractListModel):
                 except Exception as e:
                     logger.error(f"Error in sort_entries: {e}")
                     entry = f"{i + 1}: {entry}"
-
                 new_entries.append(entry)
                 new_types.append(entry_type)
-
             self._entries[:] = new_entries
             self._types[:] = new_types
-
             self.endResetModel()
             self.set_filter(self.filter)
-
         except Exception as e:
             self.endResetModel()
             logger.exception(f"Error in sort_entries: {e}")
@@ -1174,17 +1131,14 @@ class VirtualLogTabWidget(QWidget):
         self.entry_types = []
         self.pending_entries = []
         self._mutex = QMutex()
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
-
         search_label = QLabel("Search:")
         search_label.setStyleSheet("color: #e0e0e0;")
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("Filter entries...")
         layout.addWidget(search_label)
         layout.addWidget(self.search_box)
-
         self.model = LogEntryListModel(self.entries, self.entry_types)
         self.list_view = QListView()
         self.list_view.setModel(self.model)
@@ -1192,9 +1146,7 @@ class VirtualLogTabWidget(QWidget):
         self.list_view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.list_view.setWordWrap(True)
         layout.addWidget(self.list_view)
-
         self.search_box.textChanged.connect(self.model.set_filter)
-
         self._flush_timer = QTimer(self)
         self._flush_timer.setInterval(300)
         self._flush_timer.setSingleShot(True)
@@ -1203,7 +1155,6 @@ class VirtualLogTabWidget(QWidget):
     def add_entry(self, entry, entry_type):
         with QMutexLocker(self._mutex):
             self.pending_entries.append((entry, entry_type))
-
         if not self._flush_timer.isActive():
             self._flush_timer.start()
 
@@ -1211,22 +1162,17 @@ class VirtualLogTabWidget(QWidget):
         with QMutexLocker(self._mutex):
             if not self.pending_entries:
                 return
-
             entries_to_add = self.pending_entries[:100]
             self.pending_entries = self.pending_entries[100:]
             has_remaining = bool(self.pending_entries)
-
         if entries_to_add:
             start = len(self.entries)
             entries, types = zip(*entries_to_add)
-
             self.model.beginInsertRows(QModelIndex(), start, start + len(entries) - 1)
             self.entries.extend(entries)
             self.entry_types.extend(types)
             self.model.endInsertRows()
-
             self.model.set_filter(self.model.filter)
-
         if has_remaining:
             self._flush_timer.start()
 
