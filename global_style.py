@@ -1000,34 +1000,18 @@ QProgressBar::chunk {
 
 current_theme = "Tokyo Night"
 
-
 def get_current_style():
     base_style = THEMES.get(current_theme, THEMES["Tokyo Night"])
-
-    # Add font settings from Options
     try:
         from options import Options
         font_family = Options.ui_settings.get("font_family", "DejaVu Sans")
         font_size = Options.ui_settings.get("font_size", 14)
-
         font_style = f"""
 * {{
     font-family: "{font_family}";
     font-size: {font_size}px;
 }}
-QPushButton {{
-    font-size: {font_size}px;
-}}
-QCheckBox {{
-    font-size: {font_size}px;
-}}
-QLabel {{
-    font-size: {font_size + 2}px;
-}}
-QProgressBar {{
-    font-size: {font_size + 2}px;
-}}
-QTabBar::tab {{
+QPushButton, QCheckBox, QLabel, QProgressBar, QTabBar::tab {{
     font-size: {font_size}px;
 }}
 """
@@ -1035,9 +1019,7 @@ QTabBar::tab {{
     except ImportError:
         return base_style
 
-
 global_style = get_current_style()
-
 
 def apply_theme_to_widget(widget, theme_name=None):
     if theme_name is None:
@@ -1048,7 +1030,6 @@ def apply_theme_to_widget(widget, theme_name=None):
         for child in widget.findChildren(QWidget):
             child.style().unpolish(child)
             child.style().polish(child)
-
 
 def refresh_all_windows():
     current_style = get_current_style()
