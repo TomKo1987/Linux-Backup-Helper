@@ -1,13 +1,12 @@
-import global_style
 from pathlib import Path
 from options import Options
 from global_style import THEMES
-import json, sys, logging.handlers
 from base_window import BaseWindow
 from drive_manager import DriveManager
 from file_process import SmbFileHandler
 from settings_window import SettingsWindow
 from system_info_window import SystemInfoWindow
+import json, sys, logging.handlers, global_style
 from PyQt6.QtCore import Qt, pyqtSignal, QCoreApplication, QTimer
 from system_manager_launcher_dialog_thread import SystemManagerLauncher
 from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QMessageBox, QMainWindow
@@ -183,12 +182,10 @@ class MainWindow(QMainWindow):
                 drives = [f"'{opt.get('drive_name', 'Unknown')}'"
                           for opt in Options.mount_options
                           if isinstance(opt, dict) and opt.get('drive_name')]
-
             text = (f"Exit without unmounting drive{'s' if len(drives) > 1 else ''} "
                     f"{' & '.join(drives)}?"
                     if drives
                     else "Are you sure you want to exit?")
-
             if self._confirm_dialog("Exit Confirmation", text):
                 event.accept()
                 QCoreApplication.exit(0)
@@ -209,7 +206,6 @@ class MainWindow(QMainWindow):
         dlg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         dlg.setDefaultButton(QMessageBox.StandardButton.No)
         return dlg.exec() == QMessageBox.StandardButton.Yes
-
 
 class BackupRestoreWindow(BaseWindow):
     def __init__(self, parent=None, window_type="backup"):
@@ -264,13 +260,11 @@ class BackupRestoreWindow(BaseWindow):
         processable = []
         unprocessable = []
         label_to_title = {entry.get('unique_id'): entry.get('title') for entry in Options.entries_sorted}
-
         for source_dirs, dest_dirs, label in selected_items:
             if self._has_existing_source(source_dirs):
                 processable.append((source_dirs, dest_dirs, label))
             else:
                 unprocessable.append(label_to_title.get(label, label))
-
         return processable, unprocessable
 
     def _show_error_and_return(self, message):
@@ -298,31 +292,23 @@ class BackupRestoreWindow(BaseWindow):
         sources = source_dirs if isinstance(source_dirs, list) else [source_dirs]
         return any(self._check_path_exists(src) for src in sources)
 
-
 def main():
     app = QApplication(sys.argv)
     Options.load_config(Options.config_file_path)
-
     theme_name = Options.ui_settings.get("theme", "Tokyo Night")
     global_style.current_theme = theme_name if theme_name in THEMES else global_style.current_theme
     app.setStyleSheet(global_style.get_current_style())
-
     def handle_exception(exc_type, exc_value, exc_traceback):
         if issubclass(exc_type, KeyboardInterrupt):
             sys.__excepthook__(exc_type, exc_value, exc_traceback)
             return
         logger.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
         QMessageBox.critical(None, "Critical Error", f"An unexpected error occurred:\n{exc_value}")
-
     sys.excepthook = handle_exception
-
     window = MainWindow()
     window.show()
-
     Options.mount_drives_on_startup()
-
     sys.exit(app.exec())
-
 
 if __name__ == '__main__':
     main()
