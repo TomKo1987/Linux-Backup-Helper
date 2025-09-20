@@ -1,17 +1,17 @@
 import logging.handlers
 from pathlib import Path
 from PyQt6.QtCore import Qt, QTimer
-from global_style import global_style
-from global_style import get_current_style
+from global_style import global_style, get_current_style
 from linux_distro_helper import LinuxDistroHelper
 from options import Options, SESSIONS, USER_SHELL
-from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout, QLabel, QPushButton, QWidget,
-                             QComboBox, QCheckBox, QListWidget, QListWidgetItem, QScrollArea, QDialogButtonBox,
-                             QMessageBox, QFileDialog, QInputDialog, QLineEdit, QTextEdit, QApplication, QSizePolicy)
+from PyQt6.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout, QLabel, QPushButton, QWidget,
+    QComboBox, QCheckBox, QListWidget, QListWidgetItem, QScrollArea, QDialogButtonBox,
+    QMessageBox, QFileDialog, QInputDialog, QLineEdit, QTextEdit, QApplication, QSizePolicy
+)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-
 if not logger.hasHandlers():
     handler = logging.StreamHandler()
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
@@ -24,12 +24,25 @@ class SystemManagerOptions(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("System Manager Options")
-        self.current_option_type = None
         self.distro_helper = LinuxDistroHelper()
-        self._initialize_attributes()
+        self.distro_name = self.distro_helper.distro_pretty_name
+        self.session = self.distro_helper.detect_session()
+        self.install_package_command = self.distro_helper.get_pkg_install_cmd("")
+        self._active_dialogs = []
+        self._last_shell = None
+
+        self.top_label = None
+        self.distro_label = None
+        self.shell_combo = None
+        self.close_button = None
+        self.system_manager_operations_widgets = []
         self.system_files_widgets = []
         self.original_system_files = []
-        self._active_dialogs = []
+        self.essential_packages_widgets = []
+        self.additional_packages_widgets = []
+        self.specific_packages_widgets = []
+        self.current_option_type = None
+
         self.setup_ui()
 
     def track_dialog(self, dialog):
@@ -88,28 +101,33 @@ class SystemManagerOptions(QDialog):
         self._last_shell = USER_SHELL[idx]
 
     def _get_top_label_text(self):
-        return (f"First you can select 'System Files' in System Manager. These files will be copied using 'sudo', "
-                f"for root privilege. If you have 'System Files' selected, System Manager will copy these first. "
-                f"This allows you to copy files such as 'pacman.conf' or 'smb.conf' to '/etc/'.\n\n"
-                f"Under 'Installer Operations' you can specify how you would like to proceed. "
-                f"Each action is executed one after the other. Uncheck actions to disable them.\n\n"
-                f"Tips:\n\n"
-                f"It is possible to copy to and from samba shares if samba is set up correctly. "
-                f"Source and/or destination must be saved as follows:\n\n"
-                f"'smb://ip/rest of path'\n\n"
-                f"Example: 'smb://192.168.0.53/rest of smb share path'\n\n"
-                f"'Essential Packages' will be installed using '{self.install_package_command}PACKAGE'.\n\n"
-                f"'Additional Packages' provides access to the Arch User Repository. "
-                f"Therefore 'yay' must and will be installed. This feature is available only on "
-                f"Arch Linux based distributions.\n\n"
-                f"You can also define 'Specific Packages'. These packages will be installed only "
-                f"(using '{self.install_package_command}PACKAGE') "
-                f"if the corresponding session has been recognized.\n"
-                f"Both full desktop environments and window managers such as 'Hyprland' and others are supported.")
+        return (
+            f"First you can select 'System Files' in System Manager. These files will be copied using 'sudo', "
+            f"for root privilege. If you have 'System Files' selected, System Manager will copy these first. "
+            f"This allows you to copy files such as 'pacman.conf' or 'smb.conf' to '/etc/'.\n\n"
+            f"Under 'Installer Operations' you can specify how you would like to proceed. "
+            f"Each action is executed one after the other. Uncheck actions to disable them.\n\n"
+            f"Tips:\n\n"
+            f"It is possible to copy to and from samba shares if samba is set up correctly. "
+            f"Source and/or destination must be saved as follows:\n\n"
+            f"'smb://ip/rest of path'\n\n"
+            f"Example: 'smb://192.168.0.53/rest of smb share path'\n\n"
+            f"'Essential Packages' will be installed using '{self.install_package_command}PACKAGE'.\n\n"
+            f"'Additional Packages' provides access to the Arch User Repository. "
+            f"Therefore 'yay' must and will be installed. This feature is available only on "
+            f"Arch Linux based distributions.\n\n"
+            f"You can also define 'Specific Packages'. These packages will be installed only "
+            f"(using '{self.install_package_command}PACKAGE') "
+            f"if the corresponding session has been recognized.\n"
+            f"Both full desktop environments and window managers such as 'Hyprland' and others are supported."
+        )
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
         self._add_distro_info(layout)
+        self.top_label = QLabel(self._get_top_label_text())
+        self.top_label.setWordWrap(True)
+        self.top_label.setSizePolicy(QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred))
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setWidget(self.top_label)
@@ -117,6 +135,7 @@ class SystemManagerOptions(QDialog):
         self._add_button_layouts(layout)
         self._add_shell_selection(layout)
         self._connect_signals()
+        self.close_button = QPushButton("Close")
         layout.addWidget(self.close_button)
         self.setStyleSheet(get_current_style())
         self.setMinimumSize(1425, 950)
@@ -127,11 +146,19 @@ class SystemManagerOptions(QDialog):
             yay_info = " | AUR Helper: 'yay' detected" if self.distro_helper.package_is_installed('yay') \
                 else " | AUR Helper: 'yay' not detected"
         self.distro_label = QLabel(
-            f"Recognized Linux distribution: {self.distro_name} | Session: {self.session}{yay_info}")
+            f"Recognized Linux distribution: {self.distro_name} | Session: {self.session}{yay_info}"
+        )
         self.distro_label.setStyleSheet("color: lightgreen")
         layout.addWidget(self.distro_label)
 
     def _add_button_layouts(self, layout):
+        self.system_manager_operations_button = QPushButton("System Manager Operations")
+        self.system_files_button = QPushButton("System Files")
+        self.package_buttons = {
+            "essential_packages": QPushButton("Essential Packages"),
+            "additional_packages": QPushButton("Additional Packages"),
+            "specific_packages": QPushButton("Specific Packages")
+        }
         hbox1_buttons = QHBoxLayout()
         hbox1_buttons.addWidget(self.system_manager_operations_button)
         hbox1_buttons.addWidget(self.system_files_button)
@@ -142,6 +169,11 @@ class SystemManagerOptions(QDialog):
         layout.addLayout(hbox2_buttons)
 
     def _add_shell_selection(self, layout):
+        self.shell_combo = QComboBox()
+        self.shell_combo.addItems(USER_SHELL)
+        idx = USER_SHELL.index(Options.user_shell) if Options.user_shell in USER_SHELL else 0
+        self.shell_combo.setCurrentIndex(idx)
+        self._last_shell = USER_SHELL[idx]
         shell_box_layout = QHBoxLayout()
         shell_label = QLabel("Select User Shell:")
         border_style = "border-radius: 6px; border: 1px solid #7aa2f7;"
@@ -1023,4 +1055,5 @@ class SystemManagerOptions(QDialog):
 
     def go_back(self):
         self.close()
-        self.parent().show()
+        if self.parent():
+            self.parent().show()
