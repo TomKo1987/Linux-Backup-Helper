@@ -106,7 +106,6 @@ class SambaPasswordDialog(QDialog):
         except Exception as e:
             self.error_dialog.showMessage(f"Failed to delete credentials: {str(e)}")
 
-
 class SambaPasswordManager:
     def __init__(self):
         self.keyring_service = "backup-helper-samba"
