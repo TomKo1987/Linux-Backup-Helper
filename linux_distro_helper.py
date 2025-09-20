@@ -11,7 +11,6 @@ if not logger.hasHandlers():
 
 PACKAGE_NAME_REGEX = re.compile(r'^[a-zA-Z0-9._+:-]+$')
 
-
 class LinuxDistroHelper:
     def __init__(self):
         info = self._detect_distro_info()
