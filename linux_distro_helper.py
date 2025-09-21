@@ -129,20 +129,7 @@ class LinuxDistroHelper:
             self.kernel_headers = "linux-headers"
 
     def package_is_installed(self, package):
-        if not package or not isinstance(package, str):
-            return False
-
-        package = package.strip()
-        if not package or len(package) > 255:
-            return False
-
-        if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9._+-]*$', package):
-            logger.warning(f"Invalid package name format: {package}")
-            return False
-
-        dangerous_chars = [';', '&', '|', '`', '$', '(', ')', '<', '>', '\n', '\r', '\t', ' ']
-        if any(char in package for char in dangerous_chars):
-            logger.warning(f"Dangerous characters in package name: {package}")
+        if not self._is_valid_package_name(package):
             return False
 
         try:
@@ -154,15 +141,24 @@ class LinuxDistroHelper:
                 check=False
             )
             return result.returncode == 0
-        except subprocess.TimeoutExpired:
-            logger.warning(f"Timeout when checking package: {package}")
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+            logger.warning(f"Error checking package {package}: {e}")
             return False
-        except (FileNotFoundError, OSError) as e:
-            logger.warning(f"System command error when checking {package}: {e}")
+
+    @staticmethod
+    def _is_valid_package_name(package):
+        if not package or not isinstance(package, str):
             return False
-        except Exception as e:
-            logger.error(f"Unexpected error when checking {package}: {e}")
+
+        package = package.strip()
+        if not package or len(package) > 255:
             return False
+
+        if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9._+-]*$', package):
+            return False
+
+        dangerous_chars = [';', '&', '|', '`', '$', '(', ')', '<', '>', '\n', '\r', '\t', ' ']
+        return not any(char in package for char in dangerous_chars)
 
     def filter_not_installed(self, packages):
         if not packages or not isinstance(packages, (list, tuple)):
@@ -170,40 +166,41 @@ class LinuxDistroHelper:
 
         valid_packages = [
             pkg.strip() for pkg in packages
-            if pkg and isinstance(pkg, str) and pkg.strip() and len(pkg.strip()) <= 255
+            if self._is_valid_package_name(pkg)
         ]
 
         if not valid_packages:
             return []
 
-        if len(valid_packages) <= 3:
+        if len(valid_packages) <= 5:
             return [pkg for pkg in valid_packages if not self.package_is_installed(pkg)]
 
-        max_workers = min(3, max(1, len(valid_packages) // 3))
+        return self._check_packages_parallel(valid_packages)
+
+    def _check_packages_parallel(self, packages):
+        max_workers = min(4, max(1, len(packages) // 4))
 
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_pkg = {
                     executor.submit(self.package_is_installed, pkg): pkg
-                    for pkg in valid_packages
+                    for pkg in packages
                 }
 
                 not_installed = []
                 for future in concurrent.futures.as_completed(future_to_pkg, timeout=60):
                     pkg = future_to_pkg[future]
                     try:
-                        is_installed = future.result(timeout=10)
-                        if not is_installed:
+                        if not future.result(timeout=10):
                             not_installed.append(pkg)
                     except Exception as e:
                         logger.warning(f"Error checking package {pkg}: {e}")
                         not_installed.append(pkg)
 
                 return not_installed
-
         except Exception as e:
-            logger.error(f"Error in concurrent package checking: {e}")
-            return [pkg for pkg in valid_packages if not self.package_is_installed(pkg)]
+            logger.error(f"Error in parallel checking: {e}")
+            return [pkg for pkg in packages if not self.package_is_installed(pkg)]
 
     def get_kernel_headers_pkg(self):
         try:
