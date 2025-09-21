@@ -479,7 +479,7 @@ class FileCopyThread(QThread):
         self.file_sizes = file_sizes
         self.total_bytes = total_bytes
         workers = max(1, min(self.num_workers, os.cpu_count() or 4))
-        batch_size = max(100, min(500, self.total_files // (workers * 4) or 250))
+        batch_size = max(50, min(200, self.total_files // (workers * 2) or 100))
         self.file_batches = [all_files[i:i + batch_size] for i in range(0, len(all_files), batch_size)]
         self.batch_index = 0
 
@@ -545,11 +545,12 @@ class FileCopyThread(QThread):
             return
         try:
             file_size = os.path.getsize(source)
-            buffer_size = 64 * 1024
             if file_size > 1024 * 1024:
+                buffer_size = 64 * 1024
+            elif file_size > 64 * 1024 * 1024:
                 buffer_size = 1024 * 1024
-            if file_size > 64 * 1024 * 1024:
-                buffer_size = 8 * 1024 * 1024
+            else:
+                buffer_size = min(8 * 1024 * 1024, self.buffer_size)
             dest_dir = os.path.dirname(destination)
             if dest_dir and not os.path.exists(dest_dir):
                 Path(dest_dir).mkdir(parents=True, exist_ok=True)
