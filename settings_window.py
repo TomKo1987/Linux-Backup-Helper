@@ -436,10 +436,7 @@ class SettingsWindow(BaseWindow):
             self._color_cache = {}
 
         header_color = Options.header_colors.get(header, '#ffffff')
-
-        if header_color not in self._color_cache:
-            self._color_cache[header_color] = self.darken_color(header_color)
-        darker = self._color_cache[header_color]
+        darker = self._get_cached_darker_color(header_color)
 
         btn_style = "color: black; font-weight: bold; font-size: 17px;"
         color_btn = QPushButton(header)
@@ -469,6 +466,15 @@ class SettingsWindow(BaseWindow):
         item_layout.addWidget(inactive_cb)
         item_layout.addWidget(del_btn)
         return item_widget
+
+    def _get_cached_darker_color(self, color):
+        if not hasattr(self, '_color_cache'):
+            self._color_cache = {}
+
+        if color not in self._color_cache:
+            self._color_cache[color] = self.darken_color(color)
+
+        return self._color_cache[color]
 
     def add_new_header(self, list_widget):
         dialog = QDialog(self)
