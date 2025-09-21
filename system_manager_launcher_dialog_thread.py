@@ -87,7 +87,8 @@ class SystemManagerLauncher:
         dialog.setLayout(layout)
         return dialog, content_widget, content_layout
 
-    def _display_operations(self, system_manager_operations, system_manager_operations_text, system_manager_tooltips, content_layout):
+    def _display_operations(self, system_manager_operations, system_manager_operations_text, system_manager_tooltips,
+                            content_layout):
         for i, opt in enumerate(system_manager_operations):
             if opt in system_manager_operations_text:
                 has_tooltip = bool(system_manager_tooltips.get(opt))
@@ -127,9 +128,7 @@ class SystemManagerLauncher:
             "<span style='font-size: 16px;'>Start System Manager?<br>(Check 'Enter sudo password' if a sudo password is set.)<br></span>"
         )
         button_layout = QHBoxLayout()
-        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel) # type: ignore
-        button_box.button(QDialogButtonBox.StandardButton.Ok).setText('Yes')
-        button_box.button(QDialogButtonBox.StandardButton.Cancel).setText('No')
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Yes | QDialogButtonBox.StandardButton.No) # type: ignore
         button_box.accepted.connect(dialog.accept)
         button_box.rejected.connect(dialog.reject)
         self.sudo_checkbox = QCheckBox("Enter sudo password")
@@ -149,7 +148,7 @@ class SystemManagerLauncher:
             min(content_size.width() + 40, screen_geometry.width()),
             min(content_size.height() + 40, screen_geometry.height())
         )
-        button_box.button(QDialogButtonBox.StandardButton.Cancel).setFocus()
+        button_box.button(QDialogButtonBox.StandardButton.No).setFocus()
         return dialog.exec() == QDialog.DialogCode.Accepted
 
     def start_system_manager_thread(self, sudo_password):
@@ -226,12 +225,7 @@ class SystemManagerLauncher:
         if self.system_manager_thread:
             self.system_manager_thread.terminated = True
             self.system_manager_thread.quit()
-            try:
-                if not self.system_manager_thread.wait(2000):
-                    self.system_manager_thread.terminate()
-                    self.system_manager_thread.wait(1000)
-            except (RuntimeError, AttributeError):
-                pass
+            self.system_manager_thread.wait(2000)
 
     def on_password_success(self):
         self.failed_attempts = 0
@@ -288,6 +282,16 @@ class StyleConfig:
             f"line-height: {line_height}; "
             "word-break: break-word;"
         )
+
+    @classmethod
+    def get_border_style(cls):
+        return f"""
+            border-radius: 8px;
+            border-right: 1px solid {cls.COLORS['primary']};
+            border-top: 1px solid {cls.COLORS['primary']};
+            border-bottom: 1px solid {cls.COLORS['primary']};
+            border-left: 4px solid {cls.COLORS['primary']};
+        """
 
 
 class TaskStatus:
@@ -380,7 +384,7 @@ class SystemManagerDialog(QDialog):
 
     def _configure_checklist(self):
         colors = StyleConfig.COLORS
-        border_style = self._get_border_style()
+        border_style = StyleConfig.get_border_style()
         self.checklist_label.setText("  Pending Operations:")
         self.checklist_label.setStyleSheet(f"""
             color: {colors['info']};
@@ -418,7 +422,7 @@ class SystemManagerDialog(QDialog):
         self.elapsed_time_label.setStyleSheet(f"""
             color: {colors['info']};
             font-size: 17px;
-            {self._get_border_style()}
+            {StyleConfig.get_border_style()}
             background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
                        stop:0 {colors['background_secondary']}, 
                        stop:1 {colors['border']});
@@ -466,16 +470,6 @@ class SystemManagerDialog(QDialog):
             border-left: 4px solid {StyleConfig.COLORS['error']};
         """)
         self.failed_attempts_label.setVisible(False)
-
-    @staticmethod
-    def _get_border_style():
-        return f"""
-            border-radius: 8px;
-            border-right: 1px solid {StyleConfig.COLORS['primary']};
-            border-top: 1px solid {StyleConfig.COLORS['primary']};
-            border-bottom: 1px solid {StyleConfig.COLORS['primary']};
-            border-left: 4px solid {StyleConfig.COLORS['primary']};
-        """
 
     def initialize_checklist(self):
         self.checklist.clear()
@@ -539,25 +533,22 @@ class SystemManagerDialog(QDialog):
                 break
 
     def update_operation_dialog(self, output: str, message_type: str = "info"):
-        cursor = self.text_edit.textCursor()
-        if self._handle_special_outputs(output, cursor):
-            return
-        if message_type == "finish":
-            if not self.auth_failed:
-                self._show_completion_message()
-            return
-        if message_type == "task_list":
-            self._handle_task_list(output)
-            return
-        self._process_regular_output(output, message_type, cursor)
+        message_handlers = {
+            "finish": self._show_completion_message,
+            "task_list": lambda: self._handle_task_list(output),
+            "database_lock_error": lambda: self._show_database_lock_error(),
+            "default": lambda: self._process_regular_output(output, message_type)
+        }
 
-    def _handle_special_outputs(self, output: str, cursor: QTextCursor) -> bool:
         if "/var/lib/pacman/db.lck" in output:
-            self._show_database_lock_error(cursor)
-            return True
-        return False
+            message_handlers["database_lock_error"]()
+            return
 
-    def _show_database_lock_error(self, cursor: QTextCursor):
+        handler_item = message_handlers.get(message_type, message_handlers["default"])
+        handler_item()
+
+    def _show_database_lock_error(self):
+        cursor = self.text_edit.textCursor()
         error_html = f"""
         <hr style='border: none; margin: 10px 20px; border-top: 1px dashed rgba(247, 118, 142, 0.4);'>
         <div style='padding: 15px; margin: 10px; border-radius: 10px; border-left: 4px solid {StyleConfig.COLORS["error"]};'>
@@ -570,8 +561,7 @@ class SystemManagerDialog(QDialog):
             </p>
         </div>
         """
-        cursor.insertHtml(error_html)
-        self._finalize_text_edit(cursor)
+        self._finalize_text_edit(cursor, error_html)
         self._enable_close_button()
         self._stop_installation()
 
@@ -582,7 +572,8 @@ class SystemManagerDialog(QDialog):
         except (SyntaxError, ValueError) as e:
             self.outputReceived.emit(f"Error parsing task list: {e}", "error")
 
-    def _process_regular_output(self, output: str, message_type: str, cursor: QTextCursor):
+    def _process_regular_output(self, output: str, message_type: str):
+        cursor = self.text_edit.textCursor()
         if message_type not in StyleConfig.STYLE_MAP and "<span " not in output:
             return
         if "<span " in output:
@@ -658,7 +649,7 @@ class SystemManagerDialog(QDialog):
     def _stop_installation(self):
         self.update_timer.stop()
         if self.installer_thread and self.installer_thread.isRunning():
-            self.installer_thread.terminate()
+            self.installer_thread.terminated = True
 
     def _update_checklist_label_completion(self, icon: str, summary_text: str, color: str, r: int, g: int, b: int):
         self.checklist_label.setText(f"{icon} {summary_text}")
@@ -668,7 +659,7 @@ class SystemManagerDialog(QDialog):
             font-weight: bold;
             padding: 10px;
             background-color: rgba({r}, {g}, {b}, 0.15);
-            {self._get_border_style()}
+            {StyleConfig.get_border_style()}
         """
         self.checklist_label.setStyleSheet(completion_style)
 
@@ -734,12 +725,7 @@ class SystemManagerDialog(QDialog):
         if self.installer_thread and self.installer_thread.isRunning():
             self.installer_thread.terminated = True
             self.installer_thread.quit()
-            try:
-                if not self.installer_thread.wait(2000):
-                    self.installer_thread.terminate()
-                    self.installer_thread.wait(1000)
-            except RuntimeError as e:
-                logger.warning(f"Thread cleanup warning: {e}")
+            self.installer_thread.wait(2000)
 
 
 # noinspection PyUnresolvedReferences
@@ -801,7 +787,9 @@ class SystemManagerThread(QThread):
         tasks = self._define_base_tasks()
         for service_task_id, (desc, name, pkgs) in self._define_service_tasks().items():
             def make_task(task_name, task_pkgs):
-                return lambda task_name_item=task_name, task_pkgs_item=task_pkgs: self.setup_service_with_packages(task_name_item, list(task_pkgs_item))
+                return lambda task_name_item=task_name, task_pkgs_item=task_pkgs: self.setup_service_with_packages(
+                    task_name_item, list(task_pkgs_item))
+
             tasks[service_task_id] = (desc, make_task(name, pkgs))
         tasks.update({
             "remove_orphaned_packages": ("Removing orphaned packages...", self.remove_orphaned_packages),
@@ -813,15 +801,21 @@ class SystemManagerThread(QThread):
 
     def _define_base_tasks(self):
         return {
-            "copy_system_files": ("Copying 'System Files'...", lambda: self.copy_files(self.parse_system_files(Options.system_files))),
+            "copy_system_files": ("Copying 'System Files'...",
+                                  lambda: self.copy_files(self.parse_system_files(Options.system_files))),
             "update_mirrors": ("Updating mirrors...", lambda: self.update_mirrors("update_mirrors")),
             "set_user_shell": ("Setting user shell...", lambda: self.set_user_shell("set_user_shell")),
             "update_system": ("Updating system...", lambda: self.update_system("update_system")),
-            "install_kernel_header": ("Installing kernel headers...", lambda: self.install_kernel_header("install_kernel_header")),
-            "install_essential_packages": ("Installing 'Essential Packages'...", lambda: self.batch_install(Options.essential_packages, "Essential Package")),
+            "install_kernel_header": ("Installing kernel headers...",
+                                      lambda: self.install_kernel_header("install_kernel_header")),
+            "install_essential_packages": ("Installing 'Essential Packages'...",
+                                           lambda: self.batch_install(Options.essential_packages, "Essential Package")),
             "install_yay": ("Installing 'yay'...", self.install_yay),
-            "install_additional_packages": ("Installing 'Additional Packages' with 'yay'...", lambda: self.batch_install(Options.additional_packages, "Additional Package")),
-            "install_specific_packages": ("Installing 'Specific Packages'...", self.install_specific_packages_based_on_session)
+            "install_additional_packages": ("Installing 'Additional Packages' with 'yay'...",
+                                            lambda: self.batch_install(Options.additional_packages,
+                                                                       "Additional Package")),
+            "install_specific_packages": ("Installing 'Specific Packages'...",
+                                          self.install_specific_packages_based_on_session)
         }
 
     def _define_service_tasks(self):
@@ -940,7 +934,8 @@ class SystemManagerThread(QThread):
                     command.insert(1, '-A')
                 elif command and command[0] == 'yay' and not any(arg.startswith('--sudoflags=') for arg in command):
                     command.insert(1, '--sudoflags=-A')
-            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, bufsize=4096)
+            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+                                       bufsize=4096)
             return self._process_command_output(process)
         except Exception as e:
             self.outputReceived.emit(f"<span>Error during command execution: {e}</span>", "error")
@@ -1219,7 +1214,8 @@ class SystemManagerThread(QThread):
             return True
         self.install_package_generic("reflector", package_type="Service Package")
         country = self._detect_country()
-        command = ['sudo', 'reflector', '--verbose', '--latest', '10', '--protocol', 'https', '--sort', 'rate', '--save', '/etc/pacman.d/mirrorlist']
+        command = ['sudo', 'reflector', '--verbose', '--latest', '10', '--protocol', 'https', '--sort', 'rate',
+                   '--save', '/etc/pacman.d/mirrorlist']
         if country:
             self.outputReceived.emit(f"<br>Detected country: {country}", "success")
             command.extend(['--country', country])
@@ -1251,7 +1247,8 @@ class SystemManagerThread(QThread):
         shell_pkg = self.distro.get_shell_package_name(config_shell)
         shell_bin = shutil.which(shell_pkg) or f"/bin/{shell_pkg}"
         try:
-            actual_user = os.environ.get('SUDO_USER') or os.environ.get('USER') or os.environ.get('LOGNAME') or getpass.getuser()
+            actual_user = os.environ.get('SUDO_USER') or os.environ.get('USER') or os.environ.get(
+                'LOGNAME') or getpass.getuser()
             current_shell = pwd.getpwnam(actual_user).pw_shell
             self.outputReceived.emit(f"Target user: '{actual_user}' (current shell: {current_shell})", "info")
         except Exception as e:
@@ -1286,7 +1283,8 @@ class SystemManagerThread(QThread):
             chsh_cmd = ['sudo', 'chsh', '-s', shell_bin, actual_user]
             chsh_result = self.run_sudo_command(chsh_cmd)
             if chsh_result and chsh_result.returncode == 0:
-                self.outputReceived.emit(f"Shell for user '{actual_user}' successfully changed to '{config_shell}'...", "success")
+                self.outputReceived.emit(f"Shell for user '{actual_user}' successfully changed to '{config_shell}'...",
+                                         "success")
                 self.taskStatusChanged.emit(task_id, "success")
                 return True
             else:
@@ -1318,8 +1316,10 @@ class SystemManagerThread(QThread):
         return success
 
     def setup_service_with_packages(self, service, packages):
-        task_id = {'cups': "enable_printer_support", 'smb': "enable_samba_network_filesharing", 'bluetooth': "enable_bluetooth_service",
-                   'atd': "enable_atd_service", 'cronie': "enable_cronie_service", 'ufw': "enable_firewall"}.get(service)
+        task_id = {'cups': "enable_printer_support", 'smb': "enable_samba_network_filesharing",
+                   'bluetooth': "enable_bluetooth_service",
+                   'atd': "enable_atd_service", 'cronie': "enable_cronie_service", 'ufw': "enable_firewall"}.get(
+            service)
         success = all(self.install_package_generic(pkg, package_type="Service Package") for pkg in packages)
         service_success = self.enable_service(service)
         if task_id:
@@ -1328,7 +1328,8 @@ class SystemManagerThread(QThread):
 
     def enable_service(self, service):
         self.outputReceived.emit(f"Enabling: '{service}.service'...", "info")
-        is_active = subprocess.run(['systemctl', 'is-active', '--quiet', f'{service}.service'], check=False).returncode == 0
+        is_active = subprocess.run(['systemctl', 'is-active', '--quiet', f'{service}.service'],
+                                   check=False).returncode == 0
         if is_active:
             self.outputReceived.emit(f"'{service}.service' already enabled...", "success")
             return True
@@ -1338,7 +1339,8 @@ class SystemManagerThread(QThread):
         if success:
             self.outputReceived.emit(f"'{service}.service' successfully enabled...", "success")
             if service == "ufw":
-                for ufw_cmd in (['sudo', 'ufw', 'default', 'deny'], ['sudo', 'ufw', 'enable'], ['sudo', 'ufw', 'reload']):
+                for ufw_cmd in (['sudo', 'ufw', 'default', 'deny'], ['sudo', 'ufw', 'enable'],
+                                ['sudo', 'ufw', 'reload']):
                     if not (self.run_sudo_command(ufw_cmd) or False):
                         success = False
         else:
@@ -1365,15 +1367,18 @@ class SystemManagerThread(QThread):
         yay_build_path = Path(home_user) / "yay"
         if yay_build_path.exists():
             shutil.rmtree(yay_build_path) if yay_build_path.is_dir() else yay_build_path.unlink()
+
         def run_and_stream(cmd, cwd):
             try:
-                with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=cwd) as proc:
+                with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                      cwd=cwd) as proc:
                     for line in proc.stdout:
                         self.outputReceived.emit(line.rstrip(), "subprocess")
                     return proc.wait() == 0
             except Exception as e:
                 self.outputReceived.emit(f"Exception: {e}", "error")
                 return False
+
         self.outputReceived.emit("Cloning 'yay' from git...", "subprocess")
         if not run_and_stream(['git', 'clone', 'https://aur.archlinux.org/yay.git'], home_user):
             self.taskStatusChanged.emit(task_id, "error")
@@ -1385,8 +1390,9 @@ class SystemManagerThread(QThread):
         to_remove = [pkg for pkg in ['yay-debug', 'go'] if self.distro.package_is_installed(pkg)]
         if to_remove:
             result = self.run_sudo_command(['sudo', 'pacman', '-R', '--noconfirm'] + to_remove)
-            self.outputReceived.emit(f"{'Successfully removed' if result and result.returncode == 0 
-            else 'Error during uninstallation of'}: '{', '.join(to_remove)}'", "subprocess" if result and result.returncode == 0 else "warning")
+            self.outputReceived.emit(f"{'Successfully removed' if result and result.returncode == 0
+            else 'Error during uninstallation of'}: '{', '.join(to_remove)}'",
+                                     "subprocess" if result and result.returncode == 0 else "warning")
         pkg_files = sorted(f for f in os.listdir(yay_build_path) if f.endswith('.pkg.tar.zst'))
         if not pkg_files:
             self.outputReceived.emit("No package file found for installation.", "warning")
@@ -1397,7 +1403,8 @@ class SystemManagerThread(QThread):
         success = result and result.returncode == 0
         shutil.rmtree(yay_build_path, ignore_errors=True)
         shutil.rmtree(Path(home_config) / "go", ignore_errors=True)
-        self.outputReceived.emit(f"'yay' {'successfully installed' if success else 'installation failed'}...", "success" if success else "error")
+        self.outputReceived.emit(f"'yay' {'successfully installed' if success else 'installation failed'}...",
+                                 "success" if success else "error")
         self.taskStatusChanged.emit(task_id, "success" if success else "error")
         return success
 
@@ -1425,7 +1432,6 @@ class SystemManagerThread(QThread):
 
         self.outputReceived.emit(f"Detected session: {session}", "success")
 
-        # Filter out disabled packages
         matching_packages = []
         for spec_pkg in Options.specific_packages:
             if spec_pkg.get('session') == session and 'package' in spec_pkg:
@@ -1459,12 +1465,15 @@ class SystemManagerThread(QThread):
     def remove_orphaned_packages(self):
         task_id = "remove_orphaned_packages"
         find_orphans_cmd = self.distro.get_find_orphans_cmd()
-        orphaned_packages = subprocess.run(find_orphans_cmd.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True).stdout.strip()
+        orphaned_packages = subprocess.run(find_orphans_cmd.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                           text=True).stdout.strip()
         if orphaned_packages:
             packages_list = orphaned_packages.split('\n')
             result = self.run_sudo_command(self.distro.get_pkg_remove_cmd(' '.join(packages_list)).split())
             success = result and result.returncode == 0
-            self.outputReceived.emit(f"Orphaned packages {'successfully removed' if success else 'could not be removed'}...", "success" if success else "error")
+            self.outputReceived.emit(
+                f"Orphaned packages {'successfully removed' if success else 'could not be removed'}...",
+                "success" if success else "error")
         else:
             self.outputReceived.emit("No orphaned packages found...", "success")
             success = True
@@ -1475,7 +1484,9 @@ class SystemManagerThread(QThread):
         task_id = "clean_cache"
         result = self.run_sudo_command(self.distro.get_clean_cache_cmd().split())
         success = result and result.returncode == 0
-        self.outputReceived.emit("Cache of system package manager successfully cleaned..." if success else "Error cleaning cache...", "success" if success else "error")
+        self.outputReceived.emit(
+            "Cache of system package manager successfully cleaned..." if success else "Error cleaning cache...",
+            "success" if success else "error")
         if self.distro.package_is_installed('yay'):
             self.outputReceived.emit("<br>Cleaning 'yay' cache...", "info")
             result_yay = self.run_sudo_command(['yay', '-Scc', '--noconfirm'])
