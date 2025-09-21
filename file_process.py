@@ -6,17 +6,16 @@ from samba_password import SambaPasswordManager
 import os, re, time, shutil, psutil, tempfile, subprocess, logging.handlers
 from PyQt6.QtCore import (QThread, QTimer, QElapsedTimer, QMutex, QMutexLocker, QWaitCondition, QDateTime, pyqtSignal,
                           QAbstractListModel, QModelIndex, Qt, QVariant, QCoreApplication)
-from PyQt6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar, QTabWidget, QPushButton,
-                             QDialogButtonBox, QInputDialog, QLineEdit, QMessageBox, QListView, QGraphicsDropShadowEffect)
+from PyQt6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar, QTabWidget,
+                             QDialogButtonBox, QInputDialog, QLineEdit, QMessageBox, QListView,
+                             QGraphicsDropShadowEffect)
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
 if not logger.hasHandlers():
     handler = logging.StreamHandler()
-    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-    handler.setFormatter(formatter)
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
     logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
 
 
 # noinspection PyUnresolvedReferences
@@ -59,8 +58,7 @@ class FileProcessDialog(QDialog):
         self.container = QWidget(self)
         self.container.setProperty("class", "container")
         self.info_layout = QVBoxLayout()
-        self.cancel_button = QPushButton()
-        self.cancel_button.setStyleSheet(global_style)
+        self.cancel_button = None
         self.summary_table = QWidget()
         self.summary_layout = QVBoxLayout(self.summary_table)
         self.shadow = QGraphicsDropShadowEffect()
@@ -111,7 +109,7 @@ class FileProcessDialog(QDialog):
 
     def setup_connections(self):
         t = self.thread
-        t.workers_ready.connect(self.enable_cancel_button)
+        t.workers_ready.connect(lambda: self.cancel_button.setEnabled(True))
         t.file_copied.connect(self.log_file_copied)
         t.file_skipped.connect(self.log_file_skipped)
         t.file_error.connect(self.log_file_error)
@@ -131,6 +129,7 @@ class FileProcessDialog(QDialog):
         self.cancel_button.setFixedSize(125, 35)
         self.cancel_button.clicked.connect(self.cancel_operation)
         self.cancel_button.setEnabled(False)
+        self.cancel_button.setStyleSheet(global_style)
         container_layout = QVBoxLayout(self.container)
         container_layout.addWidget(self.status_label)
         container_layout.addWidget(self.tab_widget)
@@ -180,9 +179,7 @@ class FileProcessDialog(QDialog):
         row_layout.setContentsMargins(5, 5, 5, 5)
         base_style = (
             f"font-family: 'FiraCode Nerd Font Mono', 'Fira Code', monospace; padding: 2px 2px; border-radius: 5px; "
-            f"font-size: 18px; background-color: {bg_color}; color: {text_color}; "
-            f"border: 2px solid rgba(0, 0, 0, 50%);"
-        )
+            f"font-size: 18px; background-color: {bg_color}; color: {text_color}; border: 2px solid rgba(0, 0, 0, 50%);")
         label = QLabel(label_text)
         label.setStyleSheet(base_style + " qproperty-alignment: AlignLeft;")
         label.setFixedWidth(500)
@@ -198,15 +195,14 @@ class FileProcessDialog(QDialog):
         total = copied + skipped + error
         size_formatted = self.format_file_size(self.total_bytes_copied)
         copied_size_text = f"({size_formatted})" if copied else "(0.00 MB)"
-        add = self.summary_layout.addLayout
-        add(self.create_summary_row(
-            "Processed files/directories:", f"{total}", "#c1ffe3", "#2c2f33"))
-        add(self.create_summary_row(
-            "Copied:", f"{copied} {copied_size_text}", "#55ff55", "#1f3a1f"))
-        add(self.create_summary_row(
-            "Skipped (Up to date, protected file...):", f"{skipped}", "#ffff7f", "#3a3a1f"))
-        add(self.create_summary_row(
-            "Errors:", f"{error}", "#ff8587", "#3a1f1f"))
+        rows = [
+            ("Processed files/directories:", f"{total}", "#c1ffe3", "#2c2f33"),
+            ("Copied:", f"{copied} {copied_size_text}", "#55ff55", "#1f3a1f"),
+            ("Skipped (Up to date, protected file...):", f"{skipped}", "#ffff7f", "#3a3a1f"),
+            ("Errors:", f"{error}", "#ff8587", "#3a1f1f")
+        ]
+        for label, value, text_color, bg_color in rows:
+            self.summary_layout.addLayout(self.create_summary_row(label, value, text_color, bg_color))
 
     @staticmethod
     def format_file_size(size_bytes):
@@ -227,9 +223,6 @@ class FileProcessDialog(QDialog):
             elif item.layout():
                 FileProcessDialog.clear_layout(item.layout())
 
-    def enable_cancel_button(self):
-        self.cancel_button.setEnabled(True)
-
     def update_progress(self, progress, status_text):
         if not self.cancelled:
             self.progress_bar.setValue(progress)
@@ -240,19 +233,14 @@ class FileProcessDialog(QDialog):
             total_elapsed = (self.paused_elapsed + self.timer.elapsed()) // 1000
             h, rem = divmod(total_elapsed, 3600)
             m, s = divmod(rem, 60)
-            if h:
-                time_text = f"\nElapsed time:\n{h:02}h {m:02}m {s:02}s\n"
-            elif m:
-                time_text = f"\nElapsed time:\n{m:02}m {s:02}s\n"
-            else:
-                time_text = f"\nElapsed time:\n{s:02}s\n"
+            time_text = f"\nElapsed time:\n{h:02}h {m:02}m {s:02}s\n" if h \
+                else f"\nElapsed time:\n{m:02}m {s:02}s\n" if m else f"\nElapsed time:\n{s:02}s\n"
             self.elapsed_time_label.setText(time_text)
         self.update_summary()
 
     def update_summary(self):
         now = QDateTime.currentMSecsSinceEpoch()
-        if (hasattr(self, 'thread') and self.thread and self.thread.isRunning()
-                and now - self._last_summary_update_time < 250):
+        if hasattr(self, 'thread') and self.thread and self.thread.isRunning() and now - self._last_summary_update_time < 250:
             return
         self._last_summary_update_time = now
         self.update_summary_widget(self.copied_count, self.skipped_count, self.error_count)
@@ -291,9 +279,22 @@ class FileProcessDialog(QDialog):
         if self.thread:
             self.thread.cleanup_resources()
         if self.cancelled:
-            self.handle_cancelled_completion()
+            self.status_label.setText(f"{self.operation_type} canceled!\n")
+            self.status_label.setStyleSheet(
+                "color: #ff8587; font-weight: bold; font-size: 20px; background-color: transparent;")
+            text = "ó°œº \nProcess aborted due to samba file error." if self._smb_error_occurred else "ó°œº \nProcess aborted by user."
+            self.current_file_label.setText(text)
+            err_style = "color: #ff8587; font-weight: bold; font-size: 17px;"
+            self.current_file_label.setStyleSheet(err_style)
+            self.elapsed_time_label.setStyleSheet(err_style)
+            self.progress_bar.setStyleSheet(
+                f"""{global_style} QProgressBar::chunk {{background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, 
+                y2:0, stop:0 #fd7e14, stop:1 #ff8587); border-radius: 2px;}}""")
         else:
-            self.handle_successful_completion()
+            self.status_label.setText(f"{self.operation_type} successfully completed!\n")
+            self.current_file_label.setText("⇪ \nCheck details above.")
+            self.progress_bar.setValue(100)
+            self.animate_text_effect()
         self.cancel_button.setText("Close")
         self.cancel_button.clicked.disconnect()
         self.cancel_button.clicked.connect(self.accept)
@@ -302,31 +303,6 @@ class FileProcessDialog(QDialog):
         for tab in (self.copied_tab, self.skipped_tab, self.error_tab):
             tab.flush_entries()
             tab.sort_entries()
-
-    def handle_successful_completion(self):
-        self.status_label.setText(f"{self.operation_type} successfully completed!\n")
-        self.status_label.setStyleSheet(
-            "color: #6ffff5; font-weight: bold; font-size: 20px; background-color: transparent;")
-        self.current_file_label.setText("⇪ \nCheck details above.")
-        self.progress_bar.setValue(100)
-        self.animate_text_effect()
-
-    def handle_cancelled_completion(self):
-        self.status_label.setText(f"{self.operation_type} canceled!\n")
-        self.status_label.setStyleSheet(
-            "color: #ff8587; font-weight: bold; font-size: 20px; background-color: transparent;")
-        text = (
-            "󰜺 \nProcess aborted due to samba file error." if self._smb_error_occurred
-            else "󰜺 \nProcess aborted by user."
-        )
-        self.current_file_label.setText(text)
-        err_style = "color: #ff8587; font-weight: bold; font-size: 17px;"
-        self.current_file_label.setStyleSheet(err_style)
-        self.elapsed_time_label.setStyleSheet(err_style)
-        self.progress_bar.setStyleSheet(
-            f"""{global_style} QProgressBar::chunk {{background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, 
-            y2:0, stop:0 #fd7e14, stop:1 #ff8587); border-radius: 2px;}}"""
-        )
 
     def animate_text_effect(self):
         color_timer = QTimer(self)
@@ -397,9 +373,11 @@ class FileCopyThread(QThread):
     file_error = pyqtSignal(str, str)
     smb_error_cancel = pyqtSignal()
     operation_completed = pyqtSignal()
-    SKIP_PATTERNS = ["Singleton", "SingletonCookie", "SingletonLock", "lockfile", "lock", "Cache-Control", ".parentlock",
-                     "cookies.sqlite-wal", "cookies.sqlite-shm", "places.sqlite-wal", "places.sqlite-shm", "SingletonSocket"]
     sudo_password_requested = pyqtSignal()
+
+    SKIP_PATTERNS = ["Singleton", "SingletonCookie", "SingletonLock", "lockfile", "lock", "Cache-Control",
+                     ".parentlock", "cookies.sqlite-wal", "cookies.sqlite-shm", "places.sqlite-wal",
+                     "places.sqlite-shm", "SingletonSocket"]
 
     def __init__(self, checkbox_dirs, operation_type):
         super().__init__()
@@ -514,8 +492,7 @@ class FileCopyThread(QThread):
             return None
 
     def _should_skip_file(self, file_path):
-        file_name = Path(file_path).name
-        return any(pattern == file_name for pattern in self.SKIP_PATTERNS)
+        return Path(file_path).name in self.SKIP_PATTERNS
 
     def _skip_file(self, source_file, reason):
         self.mutex.lock()
@@ -538,8 +515,8 @@ class FileCopyThread(QThread):
             if self.cancelled:
                 return
             self.smb_handler.copy_file(source_file, dest_file, lambda success, smb_file_name, size_or_error:
-            (self._handle_smb_result(success, source_file, dest_file, smb_file_name, size_or_error)
-             if not self.cancelled else None))
+            (self._handle_smb_result(success, source_file, dest_file, smb_file_name,
+                                     size_or_error) if not self.cancelled else None))
             return
         try:
             if not Path(source_file).exists():
@@ -707,6 +684,7 @@ class FileCopyThread(QThread):
                 worker.terminate()
         self.cleanup_resources()
 
+
 class FileWorkerThread(QThread):
     def __init__(self, main_thread, worker_id):
         super().__init__()
@@ -727,6 +705,7 @@ class FileWorkerThread(QThread):
                 except Exception as e:
                     if not self.main_thread.cancelled:
                         self.main_thread.handle_file_error(source_file, str(e))
+
 
 class SmbFileHandler:
     def __init__(self, samba_password_manager, thread=None):
@@ -805,6 +784,7 @@ class SmbFileHandler:
             self._mounting_shares.add(key)
             if key not in self._mount_wait_conditions:
                 self._mount_wait_conditions[key] = QWaitCondition()
+
         mount_point = tempfile.mkdtemp(prefix=f"smb_{server}_{share}_")
         try:
             if self.thread and getattr(self.thread, 'cancelled', False):
@@ -853,33 +833,26 @@ class SmbFileHandler:
     def _unmount_smb_share(mount_point, sudo_password=None):
         if not mount_point or not os.path.exists(mount_point):
             return
+        commands_to_try = [
+            (['sudo', 'umount', mount_point], None),
+            (['sudo', '-S', 'umount', mount_point], sudo_password),
+            (['sudo', 'umount', '-l', mount_point], None)
+        ]
+
+        for cmd, input_data in commands_to_try:
+            try:
+                input_str = f"{input_data}\n" if input_data else None
+                result = subprocess.run(cmd, input=input_str, capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    break
+            except (subprocess.TimeoutExpired, Exception) as e:
+                logger.warning(f"Warning during unmount attempt: {e}")
+
         try:
-            cmd = ['sudo', 'umount', mount_point]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-            if result.returncode != 0 and sudo_password:
-                cmd = ['sudo', '-S', 'umount', mount_point]
-                result = subprocess.run(cmd, input=f"{sudo_password}\n", capture_output=True, text=True, timeout=5)
-            if result.returncode != 0:
-                cmd = ['sudo', 'umount', '-l', mount_point]
-                subprocess.run(cmd, capture_output=True, text=True, timeout=3)
-        except subprocess.TimeoutExpired:
-            logger.warning(f"Warning: Unmount of {mount_point} timed out")
-            try:
-                subprocess.run(['sudo', 'umount', '-l', mount_point], timeout=3, capture_output=True)
-            except Exception as e:
-                logger.warning(f"Warning: Could not force unmount {mount_point}: {e}")
+            if os.path.exists(mount_point) and not os.listdir(mount_point):
+                os.rmdir(mount_point)
         except Exception as e:
-            logger.warning(f"Warning: Could not unmount {mount_point}: {e}")
-            try:
-                subprocess.run(['sudo', 'umount', '-l', mount_point], timeout=3, capture_output=True)
-            except Exception as fallback_e:
-                logger.warning(f"Warning: Fallback unmount failed for {mount_point}: {fallback_e}")
-        finally:
-            try:
-                if os.path.exists(mount_point) and not os.listdir(mount_point):
-                    os.rmdir(mount_point)
-            except Exception as e:
-                logger.warning(f"Could not remove mount point {mount_point}: {e}")
+            logger.warning(f"Could not remove mount point {mount_point}: {e}")
 
     def _smb_path_to_local(self, smb_path):
         server, share, path = self.parse_smb_url(smb_path)
@@ -891,6 +864,7 @@ class SmbFileHandler:
             return None
         src_is_smb = self.is_smb_path(source)
         dst_is_smb = self.is_smb_path(destination)
+
         try:
             if src_is_smb and not dst_is_smb:
                 return self._copy_smb_to_local(source, destination, progress_callback)
@@ -1007,12 +981,6 @@ class SmbFileHandler:
                 self._unmount_smb_share(mount_point, self._sudo_password)
             except Exception as e:
                 logger.warning(f"Cleanup warning: {e}")
-                try:
-                    subprocess.run(['sudo', 'umount', '-l', mount_point], timeout=1, capture_output=True)
-                    if os.path.exists(mount_point):
-                        os.rmdir(mount_point)
-                except Exception as e:
-                    logger.warning(f"Cleanup warning: {e}")
         self._mounted_shares.clear()
         self._mounting_shares.clear()
         self._mount_wait_conditions.clear()
@@ -1035,6 +1003,7 @@ class SmbFileHandler:
         except Exception as e:
             logger.exception(f"Force cleanup error (ignored): {e}")
 
+
 class LogEntryListModel(QAbstractListModel):
     def __init__(self, entries, entry_types, parent=None):
         super().__init__(parent)
@@ -1054,20 +1023,14 @@ class LogEntryListModel(QAbstractListModel):
             return self._entries[row]
         if role == Qt.ItemDataRole.ForegroundRole:
             t = self._types[row]
-            if t == "error":
-                return Qt.GlobalColor.red
-            elif t == "skipped":
-                return Qt.GlobalColor.yellow
-            elif t == "copied":
-                return Qt.GlobalColor.green
+            colors = {"error": Qt.GlobalColor.red, "skipped": Qt.GlobalColor.yellow, "copied": Qt.GlobalColor.green}
+            return colors.get(t, QVariant())
         return QVariant()
 
     def set_filter(self, text):
         self.filter = text.lower()
-        if self.filter:
-            self._filtered_indices = [i for i, e in enumerate(self._entries) if self.filter in e.lower()]
-        else:
-            self._filtered_indices = list(range(len(self._entries)))
+        self._filtered_indices = [i for i, e in enumerate(self._entries) if
+                                  self.filter in e.lower()] if self.filter else list(range(len(self._entries)))
         self.layoutChanged.emit()
 
     def add_entry(self, entry, entry_type):
@@ -1088,6 +1051,7 @@ class LogEntryListModel(QAbstractListModel):
                 for old, new in getattr(Options, 'text_replacements', []):
                     e = e.replace(old, new)
                 replaced.append((e, entry_type))
+
             def extract_path(sorted_entry):
                 try:
                     m = re.match(r"^\d+:(?:<br>)?'([^']+)'", sorted_entry)
@@ -1101,6 +1065,7 @@ class LogEntryListModel(QAbstractListModel):
                 except Exception as error:
                     logger.error(f"Error in sort_entries: {error}")
                     return sorted_entry.lower()
+
             replaced_sorted = sorted(replaced, key=lambda x: extract_path(x[0]))
             new_entries, new_types = [], []
             for i, (entry, entry_type) in enumerate(replaced_sorted):
@@ -1131,6 +1096,7 @@ class VirtualLogTabWidget(QWidget):
         self.entry_types = []
         self.pending_entries = []
         self._mutex = QMutex()
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
         search_label = QLabel("Search:")
@@ -1139,6 +1105,7 @@ class VirtualLogTabWidget(QWidget):
         self.search_box.setPlaceholderText("Filter entries...")
         layout.addWidget(search_label)
         layout.addWidget(self.search_box)
+
         self.model = LogEntryListModel(self.entries, self.entry_types)
         self.list_view = QListView()
         self.list_view.setModel(self.model)
@@ -1146,6 +1113,7 @@ class VirtualLogTabWidget(QWidget):
         self.list_view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.list_view.setWordWrap(True)
         layout.addWidget(self.list_view)
+
         self.search_box.textChanged.connect(self.model.set_filter)
         self._flush_timer = QTimer(self)
         self._flush_timer.setInterval(300)
