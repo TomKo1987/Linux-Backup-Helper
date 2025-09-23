@@ -6,9 +6,8 @@ from samba_password import SambaPasswordManager
 import os, re, time, shutil, psutil, tempfile, subprocess, logging.handlers
 from PyQt6.QtCore import (QThread, QTimer, QElapsedTimer, QMutex, QMutexLocker, QWaitCondition, QDateTime, pyqtSignal,
                           QAbstractListModel, QModelIndex, Qt, QVariant, QCoreApplication)
-from PyQt6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar, QTabWidget,
-                             QDialogButtonBox, QInputDialog, QLineEdit, QMessageBox, QListView,
-                             QGraphicsDropShadowEffect)
+from PyQt6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar, QTabWidget, QLineEdit,
+                             QDialogButtonBox, QInputDialog, QMessageBox, QListView, QGraphicsDropShadowEffect)
 
 logger = logging.getLogger(__name__)
 if not logger.hasHandlers():
@@ -74,6 +73,7 @@ class FileProcessDialog(QDialog):
         self.cancelled = False
         self._smb_error_occurred = False
         self._error_keys = set()
+        self.color_timer = QTimer(self)
         self.setup_ui_layout()
         self.setup_tabs()
         self.setup_connections()
@@ -305,9 +305,8 @@ class FileProcessDialog(QDialog):
             tab.sort_entries()
 
     def animate_text_effect(self):
-        color_timer = QTimer(self)
-        color_timer.timeout.connect(self.update_label_color)
-        color_timer.start(50)
+        self.color_timer.timeout.connect(self.update_label_color)
+        self.color_timer.start(50)
 
     def update_label_color(self):
         self.color_step = (self.color_step + 0.0175) % 1
@@ -479,7 +478,7 @@ class FileCopyThread(QThread):
         self.file_sizes = file_sizes
         self.total_bytes = total_bytes
         workers = max(1, min(self.num_workers, os.cpu_count() or 4))
-        batch_size = max(50, min(200, self.total_files // (workers * 2) or 100))
+        batch_size = max(50, min(200, (self.total_files // (workers * 2)) or 100))
         self.file_batches = [all_files[i:i + batch_size] for i in range(0, len(all_files), batch_size)]
         self.batch_index = 0
 
@@ -545,23 +544,40 @@ class FileCopyThread(QThread):
             return
         try:
             file_size = os.path.getsize(source)
-            if file_size > 1024 * 1024:
-                buffer_size = 64 * 1024
-            elif file_size > 64 * 1024 * 1024:
+            if file_size >= 64 * 1024 * 1024:
                 buffer_size = 1024 * 1024
+            elif file_size >= 1 * 1024 * 1024:
+                buffer_size = 64 * 1024
             else:
-                buffer_size = min(8 * 1024 * 1024, self.buffer_size)
+                buffer_size = min(8 * 1024, self.buffer_size)
             dest_dir = os.path.dirname(destination)
             if dest_dir and not os.path.exists(dest_dir):
-                Path(dest_dir).mkdir(parents=True, exist_ok=True)
+                os.makedirs(dest_dir, exist_ok=True)
+            try:
+                if hasattr(os, 'sendfile') and os.name == 'posix' and file_size > (1 * 1024 * 1024):
+                    with open(source, 'rb') as fsrc, open(destination, 'wb') as fdst:
+                        src_fd = fsrc.fileno()
+                        dst_fd = fdst.fileno()
+                        offset = 0
+                        remaining = file_size
+                        while remaining > 0 and not self.cancelled:
+                            sent = os.sendfile(dst_fd, src_fd, offset, remaining)
+                            if sent == 0:
+                                break
+                            offset += sent
+                            remaining -= sent
+                    shutil.copystat(source, destination)
+                    return
+            except Exception as e:
+                logger.debug(f"sendfile fallback engaged for: %s {e}", source)
             try:
                 with open(source, 'rb') as fsrc, open(destination, 'wb') as fdst:
-                    buffer = memoryview(bytearray(buffer_size))
+                    mv = memoryview(bytearray(buffer_size))
                     while not self.cancelled:
-                        n = fsrc.readinto(buffer)
+                        n = fsrc.readinto(mv)
                         if not n:
                             break
-                        fdst.write(buffer[:n])
+                        fdst.write(mv[:n])
                 shutil.copystat(source, destination)
             except MemoryError:
                 shutil.copy2(source, destination)
@@ -811,19 +827,32 @@ class SmbFileHandler:
                 proc_2 = subprocess.run(cmd, input=f"{sudo_password}\n", capture_output=True, text=True, timeout=10)
                 if proc_2.returncode != 0:
                     if os.path.exists(mount_point):
-                        os.rmdir(mount_point)
+                        try:
+                            os.rmdir(mount_point)
+                        except Exception as e:
+                            logger.warning(f"{e}")
+                            pass
                     raise RuntimeError(f"Mount failed: {proc_2.stderr}")
                 with QMutexLocker(self.mutex):
                     self._mounted_shares[key] = mount_point
             return mount_point
         except subprocess.TimeoutExpired:
             if os.path.exists(mount_point):
-                os.rmdir(mount_point)
+                try:
+                    os.rmdir(mount_point)
+                except Exception as e:
+                    logger.warning(f"{e}")
+                    pass
             raise RuntimeError("Mount operation timed out")
         except Exception as e:
+            logger.warning(f"{e}")
             if os.path.exists(mount_point):
-                os.rmdir(mount_point)
-            raise e
+                try:
+                    os.rmdir(mount_point)
+                except Exception as e:
+                    logger.warning(f"{e}")
+                    pass
+            raise
         finally:
             with QMutexLocker(self.mutex):
                 self._mounting_shares.discard(key)
@@ -992,7 +1021,11 @@ class SmbFileHandler:
                 try:
                     subprocess.run(['sudo', 'umount', '-l', mount_point], timeout=2, capture_output=True)
                     if os.path.exists(mount_point):
-                        os.rmdir(mount_point)
+                        try:
+                            os.rmdir(mount_point)
+                        except Exception as e:
+                            logger.warning(f"{e}")
+                            pass
                 except Exception as e:
                     logger.exception(f"Force cleanup error (ignored): {e}")
             self._mounted_shares.clear()
