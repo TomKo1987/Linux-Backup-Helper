@@ -12,7 +12,7 @@ if not logger.hasHandlers():
     handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
-
+1
 MAX_MOUNT_OPTIONS = 3
 SESSIONS = [
     "GNOME", "KDE", "XFCE", "LXQt", "LXDE", "Cinnamon", "Mate", "Deepin", "Budgie", "Enlightenment",
