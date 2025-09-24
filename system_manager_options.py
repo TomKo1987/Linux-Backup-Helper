@@ -1,14 +1,12 @@
 import logging.handlers
 from pathlib import Path
 from PyQt6.QtCore import Qt, QTimer
-from global_style import global_style, get_current_style
 from linux_distro_helper import LinuxDistroHelper
 from options import Options, SESSIONS, USER_SHELL
-from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout, QLabel, QPushButton, QWidget,
-    QComboBox, QCheckBox, QListWidget, QListWidgetItem, QScrollArea, QDialogButtonBox,
-    QMessageBox, QFileDialog, QInputDialog, QLineEdit, QTextEdit, QApplication, QSizePolicy
-)
+from global_style import global_style, get_current_style
+from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout, QLabel, QPushButton, QWidget,
+                             QComboBox, QCheckBox, QListWidget, QListWidgetItem, QScrollArea, QDialogButtonBox, QLineEdit,
+                             QMessageBox, QFileDialog, QInputDialog, QTextEdit, QApplication, QSizePolicy)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -35,6 +33,10 @@ class SystemManagerOptions(QDialog):
         self.distro_label = None
         self.shell_combo = None
         self.close_button = None
+        self.system_manager_operations_button = None
+        self.system_files_button = None
+        self.package_buttons = {}
+
         self.system_manager_operations_widgets = []
         self.system_files_widgets = []
         self.original_system_files = []
@@ -58,47 +60,6 @@ class SystemManagerOptions(QDialog):
             if dialog and dialog.isVisible():
                 dialog.close()
         self._active_dialogs.clear()
-
-    def _initialize_attributes(self):
-        self.distro_name = self.distro_helper.distro_pretty_name
-        self.session = self.distro_helper.detect_session()
-        self.install_package_command = self.distro_helper.get_pkg_install_cmd("")
-
-        self._create_labels()
-        self._create_buttons()
-        self._create_combo_boxes()
-
-        self.system_files_widgets = []
-        self.system_manager_operations_widgets = []
-        self.essential_packages_widgets = []
-        self.additional_packages_widgets = []
-        self.specific_packages_widgets = []
-
-        self.current_option_type = None
-        self.original_system_files = []
-        self._last_shell = None
-
-    def _create_labels(self):
-        self.top_label = QLabel(self._get_top_label_text())
-        self.top_label.setWordWrap(True)
-        self.top_label.setSizePolicy(QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred))
-
-    def _create_buttons(self):
-        self.system_manager_operations_button = QPushButton("System Manager Operations")
-        self.system_files_button = QPushButton("System Files")
-        self.package_buttons = {
-            "essential_packages": QPushButton("Essential Packages"),
-            "additional_packages": QPushButton("Additional Packages"),
-            "specific_packages": QPushButton("Specific Packages")
-        }
-        self.close_button = QPushButton("Close")
-
-    def _create_combo_boxes(self):
-        self.shell_combo = QComboBox()
-        self.shell_combo.addItems(USER_SHELL)
-        idx = USER_SHELL.index(Options.user_shell) if Options.user_shell in USER_SHELL else 0
-        self.shell_combo.setCurrentIndex(idx)
-        self._last_shell = USER_SHELL[idx]
 
     def _get_top_label_text(self):
         return (
@@ -125,18 +86,23 @@ class SystemManagerOptions(QDialog):
     def setup_ui(self):
         layout = QVBoxLayout(self)
         self._add_distro_info(layout)
+
         self.top_label = QLabel(self._get_top_label_text())
         self.top_label.setWordWrap(True)
         self.top_label.setSizePolicy(QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred))
+
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setWidget(self.top_label)
         layout.addWidget(scroll_area)
+
         self._add_button_layouts(layout)
         self._add_shell_selection(layout)
-        self._connect_signals()
+
         self.close_button = QPushButton("Close")
         layout.addWidget(self.close_button)
+
+        self._connect_signals()
         self.setStyleSheet(get_current_style())
         self.setMinimumSize(1425, 950)
 
@@ -145,6 +111,7 @@ class SystemManagerOptions(QDialog):
         if self.distro_helper.has_aur:
             yay_info = " | AUR Helper: 'yay' detected" if self.distro_helper.package_is_installed('yay') \
                 else " | AUR Helper: 'yay' not detected"
+
         self.distro_label = QLabel(
             f"Recognized Linux distribution: {self.distro_name} | Session: {self.session}{yay_info}"
         )
@@ -159,10 +126,12 @@ class SystemManagerOptions(QDialog):
             "additional_packages": QPushButton("Additional Packages"),
             "specific_packages": QPushButton("Specific Packages")
         }
+
         hbox1_buttons = QHBoxLayout()
         hbox1_buttons.addWidget(self.system_manager_operations_button)
         hbox1_buttons.addWidget(self.system_files_button)
         layout.addLayout(hbox1_buttons)
+
         hbox2_buttons = QHBoxLayout()
         for button in self.package_buttons.values():
             hbox2_buttons.addWidget(button)
@@ -174,12 +143,14 @@ class SystemManagerOptions(QDialog):
         idx = USER_SHELL.index(Options.user_shell) if Options.user_shell in USER_SHELL else 0
         self.shell_combo.setCurrentIndex(idx)
         self._last_shell = USER_SHELL[idx]
+
         shell_box_layout = QHBoxLayout()
         shell_label = QLabel("Select User Shell:")
         border_style = "border-radius: 6px; border: 1px solid #7aa2f7;"
         style = f"color: #a9b1d6; font-size: 16px; font-weight: 500; padding: 4px 8px; background-color: #1a1b26; {border_style}"
         shell_label.setStyleSheet(style)
         self.shell_combo.setStyleSheet(style)
+
         shell_box_layout.addWidget(shell_label)
         shell_box_layout.addWidget(self.shell_combo)
         layout.addLayout(shell_box_layout)
@@ -189,6 +160,7 @@ class SystemManagerOptions(QDialog):
         self.system_files_button.clicked.connect(self.edit_system_files)
         self.close_button.clicked.connect(self.go_back)
         self.shell_combo.currentIndexChanged.connect(self._on_shell_changed)
+
         for option_type, button in self.package_buttons.items():
             button.clicked.connect(lambda _, ot=option_type: self.edit_packages(ot))
 
@@ -203,10 +175,13 @@ class SystemManagerOptions(QDialog):
     def system_manager_operations(self):
         self.current_option_type = "system_manager_operations"
         Options.load_config(Options.config_file_path)
+
         content_widget = QWidget()
         grid_layout = QGridLayout(content_widget)
+
         select_all_checkbox = self._create_select_all_checkbox()
         grid_layout.addWidget(select_all_checkbox, 0, 1)
+
         self._create_operation_checkboxes(grid_layout)
         self._setup_checkbox_interactions(select_all_checkbox)
         self._show_operations_dialog(content_widget)
@@ -221,13 +196,16 @@ class SystemManagerOptions(QDialog):
         arch_only_operations = {'update_mirrors', 'install_yay', 'install_additional_packages'}
         system_manager_operation_text = Options.get_system_manager_operation_text(self.distro_helper)
         operations = [(text.replace("<br>", "\n"), key) for key, text in system_manager_operation_text.items()]
+
         self.system_manager_operations_widgets = []
         for index, (label, operation_key) in enumerate(operations):
             checkbox = QCheckBox(label)
+
             if operation_key in arch_only_operations and not self.distro_helper.supports_aur():
                 self._configure_disabled_checkbox(checkbox, operation_key)
             else:
                 self._configure_enabled_checkbox(checkbox, operation_key)
+
             grid_layout.addWidget(checkbox, index, 0)
             self.system_manager_operations_widgets.append((checkbox, operation_key))
 
@@ -237,10 +215,14 @@ class SystemManagerOptions(QDialog):
         checkbox.setEnabled(False)
         checkbox.setStyleSheet(f"{global_style} QCheckBox {{ color: #666666; }}")
 
-        if operation_key == 'update_mirrors':
-            checkbox.setToolTip("Mirror update is available on Arch Linux only")
-        elif operation_key in ['install_yay', 'install_additional_packages']:
-            checkbox.setToolTip("Available only on Arch Linux based distributions")
+        tooltips = {
+            'update_mirrors': "Mirror update is available on Arch Linux only",
+            'install_yay': "Available only on Arch Linux based distributions",
+            'install_additional_packages': "Available only on Arch Linux based distributions"
+        }
+
+        if operation_key in tooltips:
+            checkbox.setToolTip(tooltips[operation_key])
 
     @staticmethod
     def _configure_enabled_checkbox(checkbox, operation_key):
@@ -312,7 +294,7 @@ class SystemManagerOptions(QDialog):
         layout = QVBoxLayout(dialog)
         layout.addWidget(content_widget)
 
-        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel) # type: ignore
         button_box.button(QDialogButtonBox.StandardButton.Ok).setText('Save')
         button_box.button(QDialogButtonBox.StandardButton.Cancel).setText('Close')
 
@@ -336,9 +318,11 @@ class SystemManagerOptions(QDialog):
         scroll_area.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         scroll_area.setWidget(content_widget)
         layout.addWidget(scroll_area)
-        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel) # type: ignore
         button_box.button(QDialogButtonBox.StandardButton.Ok).setText('Save')
         button_box.button(QDialogButtonBox.StandardButton.Cancel).setText('Close')
+
         if button_callback:
             button_box.accepted.connect(lambda: button_callback(dialog))
         button_box.rejected.connect(dialog.reject)
@@ -379,24 +363,6 @@ class SystemManagerOptions(QDialog):
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll_area.setMaximumWidth(min(content_size.width() + margin_w, screen.width() - margin_w))
 
-    @staticmethod
-    def _resize_listwidget_to_contents(listwidget, min_width=120, extra=36):
-        fm = listwidget.fontMetrics()
-        max_width = min_width
-        height = 0
-
-        for i in range(listwidget.count()):
-            item = listwidget.item(i)
-            if item is None:
-                continue
-            text = item.text()
-            line_widths = [fm.horizontalAdvance(line) for line in text.splitlines()]
-            max_width = max(max_width, max(line_widths, default=0) + extra)
-            height += fm.lineSpacing() * (len(text.splitlines()) or 1) + 6
-
-        listwidget.setMinimumWidth(max_width + 8)
-        listwidget.setMinimumHeight(height + 12)
-
     def edit_system_files(self):
         Options.load_config(Options.config_file_path)
         content_widget = QWidget()
@@ -432,11 +398,7 @@ class SystemManagerOptions(QDialog):
             self.original_system_files.append(file_info)
 
             container_widget = self._create_file_list_widget(file_source, file_destination, file_info)
-
-            if hasattr(container_widget, 'list_widget'):
-                list_widget = container_widget.list_widget
-            else:
-                list_widget = container_widget
+            list_widget = getattr(container_widget, 'list_widget', container_widget)
 
             display_text = f"{file_source}  --->  {file_destination}"
             display_text = self._apply_text_replacements(display_text)
@@ -447,10 +409,8 @@ class SystemManagerOptions(QDialog):
             self.system_files_widgets.append(container_widget)
 
         for container_widget in self.system_files_widgets:
-            if hasattr(container_widget, 'list_widget'):
-                container_widget.list_widget.setMinimumWidth(max_text_width)
-            else:
-                container_widget.setMinimumWidth(max_text_width)
+            list_widget = getattr(container_widget, 'list_widget', container_widget)
+            list_widget.setMinimumWidth(max_text_width)
 
         if self.system_files_widgets:
             select_all_checkbox = self._create_select_all_checkbox()
@@ -460,6 +420,7 @@ class SystemManagerOptions(QDialog):
             self._setup_system_files_select_all(select_all_checkbox)
 
     def _setup_system_files_select_all(self, select_all_checkbox):
+
         def toggle_all_system_files():
             checked = select_all_checkbox.checkState() == Qt.CheckState.Checked
             for list_widget_item in self.system_files_widgets:
@@ -471,6 +432,7 @@ class SystemManagerOptions(QDialog):
         def update_select_all_state():
             if not self.system_files_widgets:
                 return
+
             checked_count = 0
             partially_checked_count = 0
             total_count = 0
@@ -541,14 +503,15 @@ class SystemManagerOptions(QDialog):
             QTimer.singleShot(0, self.edit_system_files)
             return
 
-        sources, destination_dir = None, None
+        sources = None
         if clicked_button == file_button:
             files, _ = QFileDialog.getOpenFileNames(self, "Select 'System File'")
-            if files: sources = files
+            sources = files if files else None
         elif clicked_button == dir_button:
             directory = QFileDialog.getExistingDirectory(self, "Select 'System Directory'")
-            if directory: sources = [directory]
+            sources = [directory] if directory else None
 
+        destination_dir = None
         if sources:
             destination_dir = QFileDialog.getExistingDirectory(self, "Select Destination Directory")
 
@@ -560,15 +523,18 @@ class SystemManagerOptions(QDialog):
     def _process_new_system_files(self, sources, destination_dir):
         Options.system_files = Options.system_files or []
         added_items = []
+
         for source in sources:
             try:
                 source_path = Path(source)
-                if not source_path.exists(): continue
+                if not source_path.exists():
+                    continue
+
                 source_str = str(source_path.resolve())
                 destination = str(Path(destination_dir) / source_path.name)
 
-                if not any(isinstance(item, dict) and str(item.get('source', '')) == source_str for item in
-                           Options.system_files):
+                if not any(isinstance(item, dict) and str(item.get('source', '')) == source_str
+                           for item in Options.system_files):
                     Options.system_files.append({'source': source_str, 'destination': destination})
                     added_items.append(source_path.name)
             except Exception as e:
@@ -576,15 +542,18 @@ class SystemManagerOptions(QDialog):
 
         if Options.system_files:
             Options.system_files.sort(
-                key=lambda x: x.get('source', '').lower() if isinstance(x, dict) else str(x).lower())
+                key=lambda x: x.get('source', '').lower() if isinstance(x, dict) else str(x).lower()
+            )
 
         self._handle_added_files_result(added_items)
 
     def _handle_added_files_result(self, added_items):
         if added_items:
             Options.save_config()
-            msg = f"'{added_items[0]}' was successfully added!" if len(
-                added_items) == 1 else f"The following items have been successfully added:\n{chr(10).join(added_items)}"
+            if len(added_items) == 1:
+                msg = f"'{added_items[0]}' was successfully added!"
+            else:
+                msg = f"The following items have been successfully added:\n{chr(10).join(added_items)}"
             QMessageBox.information(self, "'System Files'", msg)
         else:
             QMessageBox.information(self, "No changes", "No new items have been added.")
@@ -596,26 +565,21 @@ class SystemManagerOptions(QDialog):
 
         item = QListWidgetItem(display_text)
         item.setData(Qt.ItemDataRole.UserRole, {'source': file_source, 'destination': file_destination})
-
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
 
         if isinstance(file_data, dict):
             is_disabled = file_data.get('disabled', False)
-            if is_disabled:
-                item.setCheckState(Qt.CheckState.PartiallyChecked)
-            else:
-                item.setCheckState(Qt.CheckState.Checked)
+            item.setCheckState(Qt.CheckState.PartiallyChecked if is_disabled else Qt.CheckState.Checked)
         else:
             item.setCheckState(Qt.CheckState.Checked)
 
         list_widget = QListWidget()
         list_widget.addItem(item)
         list_widget.setMaximumHeight(40)
-
         list_widget.itemClicked.connect(lambda widget_item: self._handle_tristate_click(widget_item))
-
         list_widget.setToolTip(
-            "☑ = Active (will be copied)\n▣ = Disabled (will be skipped)\n☐ = Delete (will be removed)")
+            "☑ = Active (will be copied)\n▣ = Disabled (will be skipped)\n☐ = Delete (will be removed)"
+        )
 
         return list_widget
 
@@ -635,19 +599,15 @@ class SystemManagerOptions(QDialog):
 
             item = QListWidgetItem(item_text)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-
-            if is_disabled:
-                item.setCheckState(Qt.CheckState.PartiallyChecked)  # Disabled state
-            else:
-                item.setCheckState(Qt.CheckState.Checked)  # Active state
+            item.setCheckState(Qt.CheckState.PartiallyChecked if is_disabled else Qt.CheckState.Checked)
 
             list_widget = QListWidget()
             list_widget.addItem(item)
             list_widget.setMaximumHeight(60 if is_specific else 40)
             list_widget.setProperty("tristate_enabled", True)
-
             list_widget.setToolTip(
-                "☑ = Active (will be installed)\n▣ = Disabled (will be skipped)\n☐ = Delete (will be removed)")
+                "☑ = Active (will be installed)\n▣ = Disabled (will be skipped)\n☐ = Delete (will be removed)"
+            )
 
             widgets.append(list_widget)
         return widgets
@@ -658,12 +618,11 @@ class SystemManagerOptions(QDialog):
             return
 
         current_state = item.checkState()
-
         if current_state == Qt.CheckState.Checked:
             item.setCheckState(Qt.CheckState.PartiallyChecked)
         elif current_state == Qt.CheckState.PartiallyChecked:
             item.setCheckState(Qt.CheckState.Unchecked)
-        else:  # Unchecked
+        else:
             item.setCheckState(Qt.CheckState.Checked)
 
     def manage_packages(self, title, option_type, add_button_text, is_specific=False):
@@ -671,8 +630,10 @@ class SystemManagerOptions(QDialog):
         content_widget = QWidget()
         grid_layout = QGridLayout(content_widget)
         Options.load_config(Options.config_file_path)
+
         packages = getattr(Options, option_type, [])
-        if not isinstance(packages, list): packages = []
+        if not isinstance(packages, list):
+            packages = []
 
         package_widgets = self._create_package_list_widget(packages, is_specific)
 
@@ -700,18 +661,19 @@ class SystemManagerOptions(QDialog):
 
     @staticmethod
     def _setup_packages_select_all(select_all_checkbox, package_widgets):
+
         def toggle_all_packages():
             checked = select_all_checkbox.checkState() == Qt.CheckState.Checked
             for list_widget_item in package_widgets:
                 if list_widget_item.count() > 0:
                     item = list_widget_item.item(0)
                     if item:
-                        # Toggle between checked and unchecked (skip partially checked)
                         item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
 
         def update_select_all_state():
             if not package_widgets:
                 return
+
             checked_count = 0
             partially_checked_count = 0
             total_count = 0
@@ -757,6 +719,7 @@ class SystemManagerOptions(QDialog):
         add_package_button = QPushButton(add_button_text)
         add_package_button.clicked.connect(lambda: self.add_package(option_type))
         layout.insertWidget(2, add_package_button)
+
         if not is_specific:
             batch_button = QPushButton(f"Add '{option_type.replace('_', ' ').title()}' in Batches")
             batch_button.clicked.connect(lambda: self.batch_add_packages(option_type))
@@ -803,61 +766,56 @@ class SystemManagerOptions(QDialog):
     def batch_add_packages(self, option_type):
         self.close_current_dialog()
 
-        # Create custom dialog instead of using QInputDialog.getMultiLineText()
         dialog = QDialog(self)
         dialog.setWindowTitle(f"Add '{option_type.replace('_', ' ').title()}' in Batches")
         layout = QVBoxLayout(dialog)
 
-        # Add instruction label
         label = QLabel("Enter package names (one per line):")
         layout.addWidget(label)
 
-        # Create text edit with proper height
         text_edit = QTextEdit()
-        text_edit.setMinimumHeight(300)  # Set minimum height to 300px
+        text_edit.setMinimumHeight(300)
         text_edit.setPlaceholderText("package1\npackage2\npackage3\n...")
         layout.addWidget(text_edit)
 
-        # Add button box
-        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel) # type: ignore
         button_box.accepted.connect(dialog.accept)
         button_box.rejected.connect(dialog.reject)
         layout.addWidget(button_box)
 
-        # Set dialog size
         dialog.setMinimumSize(750, 550)
         dialog.resize(750, 600)
 
-        # Execute dialog
-        result = dialog.exec()
-
-        if result == QDialog.DialogCode.Accepted:
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             text = text_edit.toPlainText().strip()
             if text:
                 packages = [pkg.strip() for pkg in text.splitlines() if pkg.strip()]
                 current_packages = set(getattr(Options, option_type, []))
                 added_packages = []
                 duplicates = []
+
                 for package in packages:
                     if package not in current_packages:
                         added_packages.append(package)
                         current_packages.add(package)
                     else:
                         duplicates.append(package)
+
                 setattr(Options, option_type, list(current_packages))
                 Options.save_config()
+
                 if duplicates:
                     dup_list = "\n".join(duplicates)
                     title = "Duplicate Package" if len(duplicates) == 1 else "Duplicate Packages"
                     plural = 's already exist' if len(duplicates) > 1 else ' already exists'
-                    QMessageBox.warning(self, title, f"The following package{plural}:\n\n{dup_list}",
-                                        QMessageBox.StandardButton.Ok)
+                    QMessageBox.warning(self, title, f"The following package{plural}:\n\n{dup_list}")
+
                 if added_packages:
                     added_list = "\n".join(added_packages)
                     title = "Add Package" if len(added_packages) == 1 else "Add Packages"
                     message = (f"The following package{'s have been' if len(added_packages) > 1 else ' has been'} "
                                f"successfully added:\n\n{added_list}")
-                    QMessageBox.information(self, title, message, QMessageBox.StandardButton.Ok)
+                    QMessageBox.information(self, title, message)
 
         QTimer.singleShot(0, lambda: self.edit_packages(option_type))
 
@@ -866,10 +824,12 @@ class SystemManagerOptions(QDialog):
         dialog.setWindowTitle("Add 'Specific Package'")
         layout = QVBoxLayout(dialog)
         field_height = 38
+
         form_layout = QFormLayout()
         package_input = QLineEdit()
         package_input.setFixedHeight(field_height)
         form_layout.addRow("Package Name:", package_input)
+
         session_combo = QComboBox()
         session_combo.setStyleSheet("color: #ffffff; background-color: #555582; padding: 5px 5px;")
 
@@ -882,102 +842,38 @@ class SystemManagerOptions(QDialog):
         session_combo.setFixedHeight(field_height)
         form_layout.addRow("Session:", session_combo)
         layout.addLayout(form_layout)
-        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel) # type: ignore
         button_box.accepted.connect(dialog.accept)
         button_box.rejected.connect(dialog.reject)
         layout.addWidget(button_box)
         dialog.setFixedWidth(650)
-        result = dialog.exec()
-        if result == QDialog.DialogCode.Accepted:
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             package_name = package_input.text().strip()
             session = session_combo.currentText()
+
             if not package_name:
-                QMessageBox.warning(self, "Missing Information", "Package name is required.", QMessageBox.StandardButton.Ok)
+                QMessageBox.warning(self, "Missing Information", "Package name is required.")
                 return
 
             if not hasattr(Options, 'specific_packages') or Options.specific_packages is None:
                 Options.specific_packages = []
 
             new_package = {'package': package_name, 'session': session}
-            exists = any(isinstance(pkg, dict) and pkg.get('package') == package_name and pkg.get('session') == session for pkg
-                in Options.specific_packages)
+            exists = any(isinstance(pkg, dict) and pkg.get('package') == package_name and pkg.get('session') == session
+                         for pkg in Options.specific_packages)
+
             if not exists:
                 Options.specific_packages.append(new_package)
                 Options.save_config()
-                QMessageBox.information(self, "Package Added", f"Package '{package_name}' for '{session}' "
-                                                               f"successfully added!", QMessageBox.StandardButton.Ok)
+                QMessageBox.information(self, "Package Added",
+                                        f"Package '{package_name}' for '{session}' successfully added!")
             else:
-                QMessageBox.warning(self, "Duplicate Package", f"Package '{package_name}' for '{session}' "
-                                                               f"already exists.", QMessageBox.StandardButton.Ok)
+                QMessageBox.warning(self, "Duplicate Package",
+                                    f"Package '{package_name}' for '{session}' already exists.")
+
             self.edit_packages("specific_packages")
-
-    def _get_checked_items(self, widgets, option_type):
-        if option_type == "system_files":
-            return self._get_system_files_from_widgets()
-        elif option_type == "specific_packages":
-            return self._get_specific_packages_from_widgets()
-        else:
-            return self._get_checked_items_from_widgets(widgets)
-
-    @staticmethod
-    def _get_checked_items_from_widgets(widget_list):
-        items = []
-        for list_widget in widget_list:
-            for i in range(list_widget.count()):
-                item = list_widget.item(i)
-                if item:
-                    check_state = item.checkState()
-                    if check_state in [Qt.CheckState.Checked, Qt.CheckState.PartiallyChecked]:
-                        items.append({
-                            'name': item.text(),
-                            'disabled': check_state == Qt.CheckState.PartiallyChecked
-                        })
-        return items
-
-    def _get_system_files_from_widgets(self):
-        files = []
-        for list_widget in self.system_files_widgets:
-            for i in range(list_widget.count()):
-                item = list_widget.item(i)
-                if item:
-                    check_state = item.checkState()
-                    if check_state in [Qt.CheckState.Checked, Qt.CheckState.PartiallyChecked]:
-                        original_data = item.data(Qt.ItemDataRole.UserRole)
-                        if original_data and isinstance(original_data, dict):
-                            source = original_data.get('source', '')
-                            destination = original_data.get('destination', '')
-                            if source and destination:
-                                file_entry = {
-                                    'source': source,
-                                    'destination': destination,
-                                    'disabled': check_state == Qt.CheckState.PartiallyChecked
-                                }
-                                files.append(file_entry)
-        return files
-
-    def _get_specific_packages_from_widgets(self):
-        packages = []
-        if not hasattr(self, 'specific_packages_widgets'):
-            return packages
-
-        for list_widget in self.specific_packages_widgets:
-            for i in range(list_widget.count()):
-                item = list_widget.item(i)
-                if item:
-                    check_state = item.checkState()
-                    if check_state in [Qt.CheckState.Checked, Qt.CheckState.PartiallyChecked]:
-                        item_text = item.text()
-                        if '\n' in item_text:
-                            parts = item_text.split('\n', 1)
-                            if len(parts) >= 2:
-                                package_name = parts[0].strip()
-                                session_part = parts[1].strip('()')
-                                packages.append({
-                                    'package': package_name,
-                                    'session': session_part,
-                                    'disabled': check_state == Qt.CheckState.PartiallyChecked
-                                })
-        return packages
 
     def save_system_manager_options(self, dialog=None, option_type=None):
         current_type = option_type or self.current_option_type
@@ -986,6 +882,7 @@ class SystemManagerOptions(QDialog):
         if current_type == "system_manager_operations":
             selected_ops = [key for checkbox, key in self.system_manager_operations_widgets if checkbox.isChecked()]
             Options.system_manager_operations = selected_ops
+
         elif current_type == "system_files":
             new_files = []
             for list_widget in self.system_files_widgets:
