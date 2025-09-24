@@ -202,6 +202,7 @@ class MainWindow(QMainWindow):
         dlg.setDefaultButton(QMessageBox.StandardButton.No)
         return dlg.exec() == QMessageBox.StandardButton.Yes
 
+
 class BackupRestoreWindow(BaseWindow):
     def __init__(self, parent=None, window_type="backup"):
         super().__init__(parent, window_type)
