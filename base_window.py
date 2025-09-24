@@ -1,8 +1,8 @@
 import logging.handlers
 from options import Options
+from global_style import THEMES
 from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtCore import Qt, pyqtSignal
-from global_style import THEMES, get_current_style
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QDialog, QLabel, QGridLayout,
                              QScrollArea, QCheckBox, QSpacerItem, QSizePolicy, QComboBox, QMessageBox, QDialogButtonBox)
 
@@ -99,7 +99,7 @@ class BaseWindow(QDialog):
     def create_top_controls(self, column_text):
         self._clear_layout(self.top_controls)
         self.selectall = QCheckBox("Select All")
-        self.selectall.setStyleSheet(f"{get_current_style()}")
+        self.selectall.setStyleSheet("")
         self.selectall.clicked.connect(self.toggle_checkboxes_manually)
         config_path_text = str(Options.config_file_path)
         if hasattr(Options, "text_replacements"):
@@ -183,7 +183,7 @@ class BaseWindow(QDialog):
 
             for entry in ents:
                 checkbox = QCheckBox(entry["title"])
-                ch_style = f"{get_current_style()} QCheckBox {{color: {header_color}}} QToolTip {{color: '#07e392';}}"
+                ch_style = f"QCheckBox {{ color: {header_color}; }} QToolTip {{ color: #07e392; }}"
                 checkbox.setStyleSheet(ch_style)
 
                 if header == "Games" and self.window_type in ("restore", "settings") and sublayout_entries:
@@ -191,19 +191,15 @@ class BaseWindow(QDialog):
                     for i in range(1, 5):
                         key = f'sublayout_games_{i}'
                         if entry["title"] in sublayout_entries[key]:
-                            checkbox.setStyleSheet(
-                                f"{get_current_style()} QCheckBox {{color: {header_color};}} QToolTip {{color: '#07e392';}}")
                             sublayout = getattr(self, key, None)
                             if sublayout:
                                 sublayout.addWidget(checkbox)
                                 added = True
                             break
                     if not added:
-                        checkbox.setStyleSheet(ch_style)
                         layout.addWidget(checkbox, row, col)
                         col += 1
                 else:
-                    checkbox.setStyleSheet(ch_style)
                     layout.addWidget(checkbox, row, col)
                     col += 1
 
@@ -495,7 +491,9 @@ class BaseWindow(QDialog):
         import global_style
         global_style.current_theme = theme_name
         style = global_style.get_current_style()
-        QApplication.instance().setStyleSheet(style)
+        app = QApplication.instance()
+        app.setStyleSheet(style)
+        app.processEvents()
         self.adjust_window_size()
 
     @staticmethod
@@ -517,16 +515,23 @@ class BaseWindow(QDialog):
         import global_style
         global_style.current_theme = theme_name
         style = global_style.get_current_style()
-        QApplication.instance().setStyleSheet(style)
+        app = QApplication.instance()
+        app.setStyleSheet(style)
         Options.save_config()
         dialog.accept()
-        self.hide()
-        self._last_entries_hash = None
-        self._last_ui_state = None
-        self._tooltip_cache = None
-        self.clear_layout_contents()
-        self.setup_ui()
-        self.show()
+
+        try:
+            self.setUpdatesEnabled(False)
+            self._last_entries_hash = None
+            self._last_ui_state = None
+            self._tooltip_cache = None
+            self.clear_layout_contents()
+            self.setup_ui()
+            self.adjust_window_size()
+        finally:
+            self.setUpdatesEnabled(True)
+
+        app.processEvents()
         self.show_message("Success", f"Theme changed to {theme_name}, font set to {font_family} {font_size}px!")
         if hasattr(self, 'parent') and self.parent():
             self.parent().update()
