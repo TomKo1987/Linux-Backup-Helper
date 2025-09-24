@@ -4,21 +4,42 @@ import json, os, tempfile, functools, pwd, logging
 from PyQt6.QtCore import QObject, pyqtSignal, QMutex, QMutexLocker, QUuid
 
 user = pwd.getpwuid(os.getuid()).pw_name
-home_user = os.getenv("HOME")
+home_user = Path.home()
 
 logger = logging.getLogger(__name__)
 if not logger.hasHandlers():
     handler = logging.StreamHandler()
-    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-    handler.setFormatter(formatter)
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
 
 MAX_MOUNT_OPTIONS = 3
-SESSIONS = ["GNOME", "KDE", "XFCE", "LXQt", "LXDE", "Cinnamon", "Mate", "Deepin", "Budgie", "Enlightenment",
-            "Hyprland", "sway", "i3", "bspwm", "openbox", "awesome", "herbstluftwm", "icewm", "fluxbox",
-            "xmonad", "spectrwm", "qtile", "pekwm", "wmii", "dwm"]
+SESSIONS = [
+    "GNOME", "KDE", "XFCE", "LXQt", "LXDE", "Cinnamon", "Mate", "Deepin", "Budgie", "Enlightenment",
+    "Hyprland", "sway", "i3", "bspwm", "openbox", "awesome", "herbstluftwm", "icewm", "fluxbox",
+    "xmonad", "spectrwm", "qtile", "pekwm", "wmii", "dwm"
+]
 USER_SHELL = ["Bash", "Fish", "Zsh", "Elvish", "Nushell", "Powershell", "Xonsh", "Ngs"]
+
+DETAIL_KEYS = (
+    'no_backup', 'no_restore',
+    'sublayout_games_1', 'sublayout_games_2',
+    'sublayout_games_3', 'sublayout_games_4'
+)
+
+def _new_uuid():
+    return QUuid.createUuid().toString(QUuid.StringFormat.WithoutBraces)
+
+def _to_list_str(x):
+    return [str(i) for i in (x if isinstance(x, list) else [x])]
+
+def _normalize_newlines(item):
+    return item.replace('\\n', '\n') if isinstance(item, str) else item
+
+def _process_path_list(raw_data):
+    if isinstance(raw_data, list):
+        return [_normalize_newlines(i) for i in raw_data if i]
+    return [_normalize_newlines(raw_data)] if raw_data else ['']
 
 
 class Options(QObject):
@@ -28,18 +49,11 @@ class Options(QObject):
     run_mount_command_on_launch = False
     user_shell = USER_SHELL[0]
     entries_mutex = QMutex()
-    all_entries = []
-    entries_sorted = []
-    mount_options = []
-    headers = []
-    header_order = []
-    header_inactive = []
-    header_colors = {}
-    system_manager_operations = []
-    system_files = []
-    essential_packages = []
-    additional_packages = []
-    specific_packages = []
+
+    all_entries, entries_sorted = [], []
+    mount_options, headers, header_order, header_inactive = [], [], [], []
+    header_colors, system_manager_operations = {}, []
+    system_files, essential_packages, additional_packages, specific_packages = [], [], [], []
     sublayout_names = {f'sublayout_games_{i}': '' for i in range(1, 5)}
     ui_settings = {
         "backup_window_columns": 2,
@@ -51,45 +65,43 @@ class Options(QObject):
     }
 
     text_replacements = [
-        (home_user, '~'),
+        (home_user.as_posix(), '~'),
         (f"/run/media/{user}/", ''),
-        ("[1m", ""),
-        ("[0m", "")
-    ]
-    text_replacements.extend([(env, env) for env in SESSIONS])
+        ("[1m", ""), ("[0m", "")
+    ] + [(env, env) for env in SESSIONS]
+
     system_manager_tooltips = {}
 
     def __init__(self, header, title, source, destination, details=None):
         super().__init__()
-        self.header = str(header) if header else ""
-        self.title = str(title) if title else ""
+        self.header = str(header or "")
+        self.title = str(title or "")
         self.source = source
         self.destination = destination
-
-        self.details = {
-            'no_backup': False,
-            'no_restore': False,
-            'sublayout_games_1': False,
-            'sublayout_games_2': False,
-            'sublayout_games_3': False,
-            'sublayout_games_4': False,
-            'unique_id': QUuid.createUuid().toString(QUuid.StringFormat.WithoutBraces)
-        }
+        self.details = dict.fromkeys(DETAIL_KEYS, False)
+        self.details['unique_id'] = _new_uuid()# type: ignore
 
         if details:
             self.details.update({k: bool(v) for k, v in details.items() if k in self.details})
-            if 'unique_id' in details and details['unique_id']:
+            if details.get('unique_id'):
                 self.details['unique_id'] = details['unique_id']
 
     @staticmethod
-    def set_main_window(main_window):
-        Options.main_window = main_window
+    def set_main_window(main_window): Options.main_window = main_window
 
     @staticmethod
     def mount_drives_on_startup():
         if Options.run_mount_command_on_launch:
             from drive_manager import DriveManager
             DriveManager().mount_drives_at_launch()
+
+    @staticmethod
+    def _ensure_unique_id(entry):
+        if not hasattr(entry, 'details') or not isinstance(entry.details, dict):
+            return False
+        if not entry.details.get('unique_id'):
+            entry.details['unique_id'] = _new_uuid()
+        return True
 
     @staticmethod
     def sort_entries():
@@ -101,29 +113,21 @@ class Options(QObject):
 
                 header_order_map = {h: i for i, h in enumerate(Options.header_order)}
                 sorted_entries = []
-
                 for entry in Options.all_entries:
-                    if not all(hasattr(entry, attr) for attr in ('header', 'title', 'details')):
-                        continue
-
+                    if not all(hasattr(entry, a) for a in ('header', 'title', 'details')): continue
                     entry_dict = {
                         'header': entry.header,
                         'title': entry.title,
                         'source': entry.source,
                         'destination': entry.destination,
-                        'unique_id': entry.details.get('unique_id',
-                                                       QUuid.createUuid().toString(QUuid.StringFormat.WithoutBraces))
+                        'unique_id': entry.details.get('unique_id', _new_uuid())
                     }
-
-                    detail_keys = ('no_backup', 'no_restore', 'sublayout_games_1', 'sublayout_games_2',
-                                   'sublayout_games_3', 'sublayout_games_4')
-                    entry_dict.update({key: entry.details.get(key, False) for key in detail_keys})
+                    entry_dict.update({k: entry.details.get(k, False) for k in DETAIL_KEYS})
                     sorted_entries.append(entry_dict)
 
                 sorted_entries.sort(key=lambda x: (header_order_map.get(x['header'], 999), x['title'].lower()))
                 Options.entries_sorted = sorted_entries
                 return sorted_entries
-
         except Exception as e:
             logger.error(f"Error in sort_entries: {e}")
             with QMutexLocker(Options.entries_mutex):
@@ -131,13 +135,11 @@ class Options(QObject):
             return []
 
     @staticmethod
-    def delete_entry(entry):
-        try:
-            with QMutexLocker(Options.entries_mutex):
-                Options.all_entries.remove(entry)
-            Options.save_config()
-        except ValueError:
-            pass
+    def format_package_list(pkgs):
+        pkgs = [str(p) for p in pkgs or []]
+        if len(pkgs) == 1: return pkgs[0]
+        if len(pkgs) == 2: return f"{pkgs[0]} and {pkgs[1]}"
+        return ", ".join(pkgs[:-1]) + (f" and {pkgs[-1]}" if pkgs else "")
 
     @staticmethod
     def get_system_manager_operation_text(distro_helper):
@@ -189,59 +191,38 @@ class Options(QObject):
         }
 
     @staticmethod
-    def format_package_list(pkgs):
-        if not pkgs:
-            return ""
-        pkgs_quoted = [str(pkg) for pkg in pkgs]
-        if len(pkgs_quoted) == 1:
-            return pkgs_quoted[0]
-        elif len(pkgs_quoted) == 2:
-            return f"{pkgs_quoted[0]} and {pkgs_quoted[1]}"
-        else:
-            return ", ".join(pkgs_quoted[:-1]) + f" and {pkgs_quoted[-1]}"
-
-    @staticmethod
-    def _ensure_unique_id(entry):
-        if not hasattr(entry, 'details') or not isinstance(entry.details, dict):
-            return False
-        if not entry.details.get('unique_id'):
-            entry.details['unique_id'] = QUuid.createUuid().toString(QUuid.StringFormat.WithoutBraces)
-        return True
-
-    @staticmethod
     def _prepare_config_data():
         with QMutexLocker(Options.entries_mutex):
             Options.all_entries = [e for e in Options.all_entries if Options._ensure_unique_id(e)]
-
-            for entry in Options.all_entries:
-                if entry.header not in Options.header_order:
-                    Options.header_order.append(entry.header)
+            for e in Options.all_entries:
+                if e.header not in Options.header_order:
+                    Options.header_order.append(e.header)
 
         header_data = {
-            header: {
-                "inactive": header in Options.header_inactive,
-                "header_color": Options.header_colors.get(header, '#ffffff')
-            } for header in Options.header_order + Options.header_inactive
+            h: {"inactive": h in Options.header_inactive,
+                "header_color": Options.header_colors.get(h, '#ffffff')}
+            for h in Options.header_order + Options.header_inactive
         }
 
         def sort_by_name(items):
             return sorted(items, key=lambda x: x.get('name', '').lower() if isinstance(x, dict) else str(x).lower())
 
         mount_options = sorted(
-            [opt for opt in Options.mount_options if isinstance(opt, dict) and opt.get("drive_name")],
-            key=lambda x: x.get("drive_name", ""))
+            [o for o in Options.mount_options if isinstance(o, dict) and o.get("drive_name")],
+            key=lambda x: x.get("drive_name", "")
+        )
 
-        essential_packages = sort_by_name(Options.essential_packages.copy() if Options.essential_packages else [])
-        additional_packages = sort_by_name(Options.additional_packages.copy() if Options.additional_packages else [])
+        essential_packages = sort_by_name(Options.essential_packages.copy())
+        additional_packages = sort_by_name(Options.additional_packages.copy())
 
-        specific_packages = Options.specific_packages.copy() if Options.specific_packages else []
-        if isinstance(specific_packages, list) and all(isinstance(item, dict) for item in specific_packages):
+        specific_packages = Options.specific_packages.copy()
+        if isinstance(specific_packages, list) and all(isinstance(i, dict) for i in specific_packages):
             specific_packages.sort(key=lambda x: (x.get('package', '').lower(), x.get('session', '').lower()))
         else:
             specific_packages = []
 
-        system_files = Options.system_files.copy() if Options.system_files else []
-        if isinstance(system_files, list) and all(isinstance(item, dict) for item in system_files):
+        system_files = Options.system_files.copy()
+        if isinstance(system_files, list) and all(isinstance(i, dict) for i in system_files):
             system_files.sort(key=lambda x: x.get('source', '').lower())
         else:
             system_files = []
@@ -272,25 +253,16 @@ class Options(QObject):
 
         try:
             entries_data = Options._prepare_config_data()
-
-            detail_keys = ('no_backup', 'no_restore', 'sublayout_games_1', 'sublayout_games_2', 'sublayout_games_3',
-                           'sublayout_games_4')
-
             with QMutexLocker(Options.entries_mutex):
                 for e in Options.all_entries:
-                    entry = {
+                    entries_data["entries"].append({
                         "header": e.header,
                         "title": e.title,
-                        "source": [str(src) for src in (e.source if isinstance(e.source, list) else [e.source])],
-                        "destination": [str(dest) for dest in
-                                        (e.destination if isinstance(e.destination, list) else [e.destination])],
-                        "details": {
-                            **{k: e.details.get(k, False) for k in detail_keys},
-                            "unique_id": e.details.get('unique_id',
-                                                       QUuid.createUuid().toString(QUuid.StringFormat.WithoutBraces))
-                        }
-                    }
-                    entries_data["entries"].append(entry)
+                        "source": _to_list_str(e.source),
+                        "destination": _to_list_str(e.destination),
+                        "details": {**{k: e.details.get(k, False) for k in DETAIL_KEYS},
+                                    "unique_id": e.details.get('unique_id', _new_uuid())}
+                    })
 
             with tempfile.NamedTemporaryFile(dir=config_dir, delete=False, mode='w', encoding='utf-8') as temp_file:
                 temp_path = temp_file.name
@@ -302,43 +274,37 @@ class Options(QObject):
             Options.sort_entries()
 
             if Options.main_window:
-                try:
-                    Options.main_window.settings_changed.emit()
-                except Exception as e:
-                    logger.error(f"Error emitting settings_changed signal: {e}")
+                try: Options.main_window.settings_changed.emit()
+                except Exception as e: logger.error(f"Error emitting settings_changed signal: {e}")
 
             return True
 
         except Exception as e:
             logger.error(f"Error saving config: {e}")
             if 'temp_path' in locals() and os.path.exists(temp_path):
-                try:
-                    os.unlink(temp_path)
-                except OSError:
-                    pass
+                try: os.unlink(temp_path)
+                except OSError: pass
             return False
 
     @staticmethod
     def _normalize_package_list(pkg_list):
-        updated_list = []
+        updated = []
         for pkg in pkg_list:
             if isinstance(pkg, str):
-                updated_list.append({"name": pkg, "disabled": False})
+                updated.append({"name": pkg, "disabled": False})
             elif isinstance(pkg, dict):
                 pkg.setdefault('disabled', False)
-                updated_list.append(pkg)
-        return sorted(updated_list, key=lambda x: x.get('name', '').lower())
+                updated.append(pkg)
+        return sorted(updated, key=lambda x: x.get('name', '').lower())
 
     @staticmethod
     def load_config(file_path):
         if not os.path.exists(file_path):
             logger.warning(f"Config file not found: {file_path}")
             return
-
         try:
-            with open(file_path, encoding='utf-8') as file:
-                entries_data = json.load(file)
-
+            with open(file_path, encoding='utf-8') as f:
+                entries_data = json.load(f)
             if not isinstance(entries_data, dict):
                 logger.warning("Invalid config format: expected dictionary")
                 return
@@ -346,13 +312,8 @@ class Options(QObject):
             header_data = entries_data.get('header', {})
             Options.header_order = list(header_data.keys())
             Options.headers = Options.header_order.copy()
-            Options.header_colors = {}
-            Options.header_inactive = []
-
-            for header, data in header_data.items():
-                Options.header_colors[header] = data.get('header_color', '#ffffff')
-                if data.get('inactive', False):
-                    Options.header_inactive.append(header)
+            Options.header_colors = {h: d.get('header_color', '#ffffff') for h, d in header_data.items()}
+            Options.header_inactive = [h for h, d in header_data.items() if d.get('inactive', False)]
 
             Options.sublayout_names = entries_data.get("sublayout_names", Options.sublayout_names)
             Options.system_manager_operations = entries_data.get("system_manager_operations", [])
@@ -364,64 +325,42 @@ class Options(QObject):
             if not config_changed:
                 Options.run_mount_command_on_launch = entries_data.get("run_mount_command_on_launch", False)
 
-            system_files_raw = entries_data.get("system_files", [])
-            if isinstance(system_files_raw, list):
-                Options.system_files = sorted(system_files_raw,
-                                              key=lambda x: x.get('source', '').lower() if isinstance(x, dict) else '')
-                for file_item in Options.system_files:
-                    if isinstance(file_item, dict):
-                        file_item.setdefault('disabled', False)
-            else:
-                Options.system_files = []
+            raw_sys_files = entries_data.get("system_files", [])
+            Options.system_files = sorted(raw_sys_files,
+                                          key=lambda x: x.get('source', '').lower() if isinstance(x, dict) else '')
+            for f in Options.system_files:
+                if isinstance(f, dict): f.setdefault('disabled', False)
 
             Options.essential_packages = Options._normalize_package_list(entries_data.get("essential_packages", []))
             Options.additional_packages = Options._normalize_package_list(entries_data.get("additional_packages", []))
 
-            specific_packages_raw = entries_data.get("specific_packages", [])
-            if isinstance(specific_packages_raw, list):
-                Options.specific_packages = sorted(specific_packages_raw, key=lambda x: (x.get('package', '').lower(),
-                                                                                         x.get('session',
-                                                                                               '').lower()) if isinstance(
-                    x, dict) else '')
-                for pkg_item in Options.specific_packages:
-                    if isinstance(pkg_item, dict):
-                        pkg_item.setdefault('disabled', False)
+            raw_spec_pkgs = entries_data.get("specific_packages", [])
+            if isinstance(raw_spec_pkgs, list):
+                Options.specific_packages = sorted(raw_spec_pkgs, key=lambda x: (x.get('package', '').lower(),
+                                                                                 x.get('session',
+                                                                                       '').lower()) if isinstance(x,
+                                                                                                                  dict) else '')
+                for pkg in Options.specific_packages:
+                    if isinstance(pkg, dict): pkg.setdefault('disabled', False)
             else:
                 Options.specific_packages = []
 
             with QMutexLocker(Options.entries_mutex):
                 Options.all_entries = []
-                for entry_data in entries_data.get('entries', []):
-                    header = entry_data.get('header', '')
+                for e_data in entries_data.get('entries', []):
+                    header = e_data.get('header', '')
                     if header and header not in Options.header_order:
                         Options.header_order.append(header)
-
-                    normalize_newlines = lambda item: item.replace('\\n', '\n') if isinstance(item, str) else item
-
-                    title = normalize_newlines(entry_data.get('title', ''))
-
-                    def process_path_list(raw_data):
-                        if isinstance(raw_data, list):
-                            return [normalize_newlines(item) for item in raw_data if item]
-                        return [normalize_newlines(raw_data)] if raw_data else ['']
-
-                    source = process_path_list(entry_data.get('source', []))
-                    destination = process_path_list(entry_data.get('destination', []))
-
-                    new_entry = Options(header, title, source, destination)
-
-                    details = entry_data.get('details', {})
-                    detail_keys = ('no_backup', 'no_restore', 'sublayout_games_1', 'sublayout_games_2',
-                                   'sublayout_games_3', 'sublayout_games_4')
-                    for key in detail_keys:
-                        new_entry.details[key] = details.get(key, False)
-
-                    new_entry.details['unique_id'] = details.get('unique_id', QUuid.createUuid().toString(
-                        QUuid.StringFormat.WithoutBraces))
+                    title = _normalize_newlines(e_data.get('title', ''))
+                    src, dest = _process_path_list(e_data.get('source', [])), _process_path_list(
+                        e_data.get('destination', []))
+                    new_entry = Options(header, title, src, dest)
+                    details = e_data.get('details', {})
+                    for k in DETAIL_KEYS: new_entry.details[k] = details.get(k, False)
+                    new_entry.details['unique_id'] = details.get('unique_id', _new_uuid())
                     Options.all_entries.append(new_entry)
 
-            if config_changed:
-                Options.save_config()
+            if config_changed: Options.save_config()
 
         except (IOError, json.JSONDecodeError) as e:
             error_type = "JSON decoding" if isinstance(e, json.JSONDecodeError) else "loading"
@@ -431,41 +370,37 @@ class Options(QObject):
 
     @staticmethod
     def generate_tooltip():
-        def apply_replacements(text, max_iterations=10):
-            for _ in range(max_iterations):
+        def apply_replacements(text, max_iter=10):
+            for _ in range(max_iter):
                 original = text
-                text = functools.reduce(lambda t, repl: t.replace(*repl), Options.text_replacements, text)
-                if text == original:
-                    break
+                text = functools.reduce(lambda t, r: t.replace(*r), Options.text_replacements, text)
+                if text == original: break
             return text
 
-        def format_html(entry_title, entry_source_text, entry_dest_text):
+        def format_html(title_item, src_text_item, dest_text_item):
             return f"""<table style='border-collapse: collapse; width: 100%; font-family: FiraCode Nerd Font Mono;'>
-                <tr style='background-color: #121212;'><td colspan='2' style='font-size: 13px; 
-                color: #ffc1c2; text-align: center; padding: 5px 5px; white-space: nowrap;'>{entry_title}</td>
-                </tr><tr style='background-color: #2a2a2a;'><td colspan='2' style='font-size: 12px; 
-                color: #00fa9a; text-align: left; padding: 6px; font-family: FiraCode Nerd Font Mono; white-space: nowrap;'>
-                Source:<br><br>{entry_source_text}</td></tr><tr style='background-color: #1e1e1e;'><td colspan='2' style=
-                'font-size: 12px; color: #00fa9a; text-align: left; padding: 6px; font-family: 
-                FiraCode Nerd Font Mono; white-space: nowrap;'>Destination:<br><br>{entry_dest_text}</td></tr></table>"""
+    <tr style='background-color: #121212;'>
+    <td colspan='2' style='font-size: 13px;color: #ffc1c2;text-align: center;padding: 5px 5px;white-space: nowrap;'>{title_item}</td></tr>
+    <tr style='background-color: #2a2a2a;'>
+    <td colspan='2' style='font-size: 12px;color: #00fa9a;text-align: left;padding: 6px;white-space: nowrap;'>
+    Source:<br><br>{src_text_item}</td></tr>
+    <tr style='background-color: #1e1e1e;'>
+    <td colspan='2' style='font-size: 12px;color: #00fa9a;text-align: left;padding: 6px;white-space: nowrap;'>
+    Destination:<br><br>{dest_text_item}</td></tr></table>"""
 
-        backup_tooltips = {}
-        restore_tooltips = {}
-
-        for entry in Options.entries_sorted:
-            title = entry["title"]
+        backup_tooltips, restore_tooltips = {}, {}
+        for e in Options.entries_sorted:
+            title = e["title"]
             tooltip_key = f"{title}_tooltip"
-
-            source = entry['source'] if isinstance(entry['source'], list) else [entry['source']]
-            destination = entry['destination'] if isinstance(entry['destination'], list) else [entry['destination']]
-
-            source_text = "<br/>".join(map(str, source))
-            destination_text = "<br/>".join(map(str, destination))
-
-            backup_tooltips[tooltip_key] = apply_replacements(format_html(title, source_text, destination_text))
-            restore_tooltips[tooltip_key] = apply_replacements(format_html(title, destination_text, source_text))
+            src = e['source'] if isinstance(e['source'], list) else [e['source']]
+            dest = e['destination'] if isinstance(e['destination'], list) else [e['destination']]
+            src_text, dest_text = "<br/>".join(map(str, src)), "<br/>".join(map(str, dest))
+            backup_tooltips[tooltip_key] = apply_replacements(format_html(title, src_text, dest_text))
+            restore_tooltips[tooltip_key] = apply_replacements(format_html(title, dest_text, src_text))
 
         system_manager_tooltips = {}
+        distro_helper = LinuxDistroHelper()
+        op_text = Options.get_system_manager_operation_text(distro_helper)
         operation_keys = {
             "copy_system_files": "system_files",
             "install_essential_packages": "essential_packages",
@@ -474,69 +409,57 @@ class Options(QObject):
             "set_user_shell": "user_shell"
         }
 
-        distro_helper = LinuxDistroHelper()
-        system_manager_operation_text = Options.get_system_manager_operation_text(distro_helper)
+        label_maps = {
+            "system_files": {"source": "Source:<br>", "destination": "<br>Destination:<br>"},
+            "specific_packages": {"package": lambda v: f"{v}", "session": lambda v: f"<br>({v})"},
+            "user_shell": lambda v: f"Selected shell: {v}"
+        }
 
-        for operation, config_key in operation_keys.items():
-            if operation not in system_manager_operation_text:
-                continue
-
-            raw_items = getattr(Options, config_key, None)
-            if not raw_items:
-                continue
-
-            if config_key in ["system_files", "essential_packages", "additional_packages", "specific_packages"]:
-                items = [item for item in raw_items if
-                         isinstance(item, dict) and not item.get('disabled', False) or not isinstance(item, dict)]
+        for op, key in operation_keys.items():
+            if op not in op_text: continue
+            raw_items = getattr(Options, key, None)
+            if not raw_items: continue
+            if key in ["system_files", "essential_packages", "additional_packages", "specific_packages"]:
+                items = [i for i in raw_items if
+                         (isinstance(i, dict) and not i.get('disabled')) or not isinstance(i, dict)]
             else:
                 items = raw_items
 
-            column_width = 1 if config_key == "system_files" else 4
+            column_width = 1 if key == "system_files" else 4
+            mapped = label_maps.get(key)
 
-            label_maps = {
-                "system_files": {"source": "Source:<br>", "destination": "<br>Destination:<br>"},
-                "specific_packages": {"package": lambda v: f"{v}", "session": lambda v: f"<br>({v})"},
-                "user_shell": lambda v: f"Selected shell: {v}"
-            }
+            if key == "user_shell":
+                items = [mapped(items)]
+            elif mapped:
+                def format_val(m, k, v):
+                    val = m.get(k)
+                    return val(v) if callable(val) else f"{val}{v}" if val else f"{k}: {v}"
 
-            if config_key in label_maps:
-                mapped = label_maps[config_key]
+                items = [{k: format_val(mapped, k, v) for k, v in i.items() if k != 'disabled'}
+                         for i in items]
+            elif key in ["essential_packages", "additional_packages"]:
+                items = [i.get('name', str(i)) if isinstance(i, dict) else str(i) for i in items]
 
-                def apply_map(k, v):
-                    if config_key == "user_shell":
-                        return mapped(v)
-                    value = mapped.get(k)
-                    return value(v) if callable(value) else f"{value}{v}" if value else f"{k}: {v}"
-
-                if config_key == "user_shell":
-                    items = [mapped(items)]
-                else:
-                    items = [{k: apply_map(k, v) for k, v in item.items() if k != 'disabled'} for item in items]
-            else:
-                if config_key in ["essential_packages", "additional_packages"]:
-                    items = [item.get('name', str(item)) if isinstance(item, dict) else str(item) for item in items]
-
-            item_format = "".join if config_key == "specific_packages" else lambda l: "<br>".join(l)
+            item_format = "".join if key == "specific_packages" else lambda l: "<br>".join(l)
             item_strings = [
-                item_format([str(v) for v in item.values()]) if isinstance(item, dict) else str(item)
-                for item in items
+                item_format([str(v) for v in i.values()]) if isinstance(i, dict) else str(i)
+                for i in items
             ]
 
             rows = []
-            for i in range(0, len(item_strings), column_width):
-                bg_color = "#2a2a2a" if (i // column_width) % 2 == 0 else "#1e1e1e"
+            for idx in range(0, len(item_strings), column_width):
+                bg = "#2a2a2a" if (idx // column_width) % 2 == 0 else "#1e1e1e"
                 cells = ''.join(
                     f'<td style="padding: 5px 5px; border: 1px solid #444; color: #00fa9a; font-family: FiraCode Nerd Font Mono;">{item}</td>'
-                    for item in item_strings[i:i + column_width]
+                    for item in item_strings[idx:idx + column_width]
                 )
-                rows.append(f'<tr style="background-color: {bg_color};">{cells}</tr>')
+                rows.append(f'<tr style="background-color: {bg};">{cells}</tr>')
 
             tooltip = (
-                f"<div style='white-space: nowrap; font-size: 14px; color: #00fa9a; font-family: FiraCode Nerd Font Mono; "
-                f"background-color: #121212; padding: 5px 5px; border: 1px solid #444;'>"
+                f"<div style='white-space: nowrap; font-size: 14px; color: #00fa9a; font-family: FiraCode Nerd Font Mono; background-color: #121212; padding: 5px 5px; border: 1px solid #444;'>"
                 f"<table style='border-collapse: collapse; table-layout: auto;'>{''.join(rows)}</table></div>"
             )
-            system_manager_tooltips[operation] = apply_replacements(tooltip)
+            system_manager_tooltips[op] = apply_replacements(tooltip)
 
         Options.system_manager_tooltips = system_manager_tooltips
         return backup_tooltips, restore_tooltips, system_manager_tooltips
