@@ -143,11 +143,6 @@ class MainWindow(QMainWindow):
                 self.backup_restore_window.settings_changed.emit()
             except RuntimeError:
                 pass
-        if self.settings_window and hasattr(self.settings_window, 'settings_changed'):
-            try:
-                self.settings_window.settings_changed.emit()
-            except RuntimeError:
-                pass
         if self.system_manager_launcher and hasattr(self.system_manager_launcher, 'config'):
             self.system_manager_launcher.config = self.config
 
