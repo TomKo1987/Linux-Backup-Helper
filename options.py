@@ -67,7 +67,7 @@ class Options(QObject):
     text_replacements = [
         (home_user.as_posix(), '~'),
         (f"/run/media/{user}/", ''),
-        ("[1m", ""), ("[0m", "")
+        ("[1m", ""), ("[0m", ""), ("", "")
     ] + [(env, env) for env in SESSIONS]
 
     system_manager_tooltips = {}
