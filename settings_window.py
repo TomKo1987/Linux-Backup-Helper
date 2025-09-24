@@ -1,13 +1,14 @@
 import logging.handlers
 from options import Options
+from functools import partial
 from PyQt6.QtGui import QColor
 from base_window import BaseWindow
 from PyQt6.QtCore import Qt, QMutexLocker
 from global_style import get_current_style
 from system_manager_options import SystemManagerOptions
 from PyQt6.QtWidgets import (QMessageBox, QDialog, QVBoxLayout, QLabel, QFormLayout, QComboBox, QLineEdit, QPushButton,
-    QSizePolicy, QHBoxLayout, QWidget, QCheckBox, QGridLayout, QDialogButtonBox, QColorDialog, QFileDialog, QTextEdit,
-    QListWidget, QListWidgetItem, QInputDialog)
+                             QSizePolicy, QHBoxLayout, QWidget, QCheckBox, QGridLayout, QDialogButtonBox, QColorDialog,
+                             QFileDialog, QTextEdit, QListWidget, QListWidgetItem, QInputDialog)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -24,27 +25,73 @@ class SettingsWindow(BaseWindow):
         super().__init__(parent, "settings")
         self._color_cache = {}
         self.mount_options_dialog = None
+        self._ensure_options_defaults()
 
-    def get_checked_entries(self):
-        return [(checkbox, sources, destinations, unique_id) for checkbox, sources, destinations, unique_id in self.checkbox_dirs if checkbox.isChecked()]
-
-    def show_message(self, title, message, icon=QMessageBox.Icon.Information):
-        QMessageBox(icon, title, message, QMessageBox.StandardButton.Ok, self).exec()
+    @staticmethod
+    def _ensure_options_defaults():
+        if not hasattr(Options, 'headers') or not Options.headers:
+            Options.headers = getattr(Options, 'header_order', []).copy() or ['Default']
+        if not hasattr(Options, 'header_order'):
+            Options.header_order = getattr(Options, 'header_order', [])
+        if not hasattr(Options, 'header_colors'):
+            Options.header_colors = {}
+        if not hasattr(Options, 'header_inactive'):
+            Options.header_inactive = []
+        if not hasattr(Options, 'sublayout_names'):
+            Options.sublayout_names = {}
+        if not hasattr(Options, 'all_entries'):
+            Options.all_entries = []
+        if not hasattr(Options, 'mount_options'):
+            Options.mount_options = []
+        if not hasattr(Options, 'run_mount_command_on_launch'):
+            Options.run_mount_command_on_launch = False
+        if not hasattr(Options, 'entries_mutex'):
+            class _Dummy:
+                def __enter__(self): pass
+                def __exit__(self, exc_type, exc, tb): pass
+            Options.entries_mutex = getattr(Options, 'entries_mutex', _Dummy())
 
     @staticmethod
     def format_list_message(items, suffix):
         if not items:
-            return f"{suffix}"
+            return suffix
         if len(items) == 1:
             return f"{items[0]}{suffix}"
         if len(items) == 2:
             return f"{items[0]} and {items[1]}{suffix}"
         return f"{', '.join(items[:-1])}, and {items[-1]}{suffix}"
 
+    def show_message(self, title, message, icon=QMessageBox.Icon.Information):
+        QMessageBox(icon, title, message, QMessageBox.StandardButton.Ok, self).exec()
+
+    def _create_dialog(self, title, size=(800, 600)):
+        d = QDialog(self)
+        d.setMinimumSize(*size)
+        d.setWindowTitle(title)
+        layout = QVBoxLayout(d)
+        return d, layout
+
+    def _create_select_button(self, label, line_edit, height=60):
+        btn = QPushButton(f"Select {label}")
+        btn.setMaximumHeight(height)
+        btn.setFixedWidth(300)
+        btn.clicked.connect(partial(self.select_directory, line_edit))
+        return btn
+
+    def _get_cached_darker_color(self, color):
+        if color not in self._color_cache:
+            self._color_cache[color] = self.darken_color(color)
+        return self._color_cache[color]
+
     def system_manager_options(self):
         self.hide()
         SystemManagerOptions(self).exec()
         self.show()
+
+    def get_checked_entries(self):
+        return [(checkbox, sources, destinations, unique_id)
+                for checkbox, sources, destinations, unique_id in getattr(self, 'checkbox_dirs', [])
+                if checkbox.isChecked()]
 
     def entry_dialog(self, edit_mode=False):
         checked_entries = self.get_checked_entries()
@@ -59,7 +106,6 @@ class SettingsWindow(BaseWindow):
             dialog = QDialog(self)
             dialog.setFixedSize(1350, 750)
             dialog.setWindowTitle("Edit Entry" if edit_mode else "Add New Entry")
-
             main_layout = QVBoxLayout(dialog)
             main_layout.setContentsMargins(2, 2, 2, 2)
 
@@ -82,20 +128,13 @@ class SettingsWindow(BaseWindow):
 
             header_combo = QComboBox()
             header_combo.setStyleSheet("color: #ffffff; background-color: #555582; padding: 5px 5px;")
-
-            if not hasattr(Options, 'headers') or not Options.headers:
-                Options.headers = getattr(Options, 'header_order', []).copy()
-                if not Options.headers:
-                    Options.headers = ['Default']
-
             header_combo.addItems(Options.headers)
             header_combo.setMaximumHeight(field_height)
 
             entry_obj = None
             if edit_mode and hasattr(Options, 'all_entries'):
                 entry_obj = next(
-                    (e for e in Options.all_entries
-                     if hasattr(e, 'details') and e.details.get('unique_id') == unique_id),
+                    (e for e in Options.all_entries if hasattr(e, 'details') and e.details.get('unique_id') == unique_id),
                     None
                 )
                 if entry_obj:
@@ -116,9 +155,7 @@ class SettingsWindow(BaseWindow):
                     btn = QPushButton(f"Edit {field_type} Entries")
                     btn.setMaximumHeight(field_height)
                     btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-                    btn.clicked.connect(
-                        lambda _, d=data, t=title_checkbox, f=field_type.lower(): self.open_text_editor(d, t, f)
-                    )
+                    btn.clicked.connect(partial(self.open_text_editor, data, title_checkbox, field_type.lower()))
                     form_layout.addRow(QLabel(f"{field_type}:"), btn)
             else:
                 for field_type in ["Source", "Destination"]:
@@ -126,10 +163,7 @@ class SettingsWindow(BaseWindow):
                     field_edit.setMaximumHeight(field_height)
                     field_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
 
-                    btn = QPushButton(f"Select {field_type}")
-                    btn.setMaximumHeight(field_height)
-                    btn.setFixedWidth(300)
-                    btn.clicked.connect(lambda _, le=field_edit: self.select_directory(le))
+                    btn = self._create_select_button(field_type, field_edit, field_height)
 
                     hbox = QHBoxLayout()
                     hbox.setSpacing(2)
@@ -144,20 +178,16 @@ class SettingsWindow(BaseWindow):
 
                     setattr(self, f"{field_type.lower()}_edit", field_edit)
 
-            checkboxes = {}
             checkbox_texts = {
                 'no_backup': 'No Backup',
                 'no_restore': 'No Restoring'
             }
-
-            if not hasattr(Options, 'sublayout_names'):
-                Options.sublayout_names = {}
-
             for i in range(1, 5):
                 key = f'sublayout_games_{i}'
                 name = Options.sublayout_names.get(key, f'Sublayout Games {i}')
                 checkbox_texts[key] = f"Add to Sublayout-Games {i}:\n'{name}'"
 
+            checkboxes = {}
             for key, text in checkbox_texts.items():
                 cb = QCheckBox(text)
                 cb.setChecked(entry_obj.details.get(key, False) if entry_obj else False)
@@ -175,18 +205,17 @@ class SettingsWindow(BaseWindow):
             for key, row, col in positions:
                 checkbox_grid.addWidget(checkboxes[key], row, col)
 
-            form_layout.addRow(QLabel(""), QLabel(""))  # Spacer
+            form_layout.addRow(QLabel(""), QLabel(""))
             form_layout.addRow(checkbox_grid)
 
-            main_layout.addStretch()
             main_layout.addLayout(form_layout)
 
             def update_restore(state):
                 disabled = state == Qt.CheckState.Checked
-                for entry_i in range(1, 5):
-                    entry_key = f'sublayout_games_{entry_i}'
-                    checkboxes[entry_key].setChecked(False)
-                    checkboxes[entry_key].setEnabled(not disabled)
+                for item in range(1, 5):
+                    k = f'sublayout_games_{item}'
+                    checkboxes[k].setChecked(False)
+                    checkboxes[k].setEnabled(not disabled)
 
             def make_sublayout_handler(num):
                 def entry_handler(state):
@@ -213,12 +242,10 @@ class SettingsWindow(BaseWindow):
             for i in range(1, 5):
                 checkboxes[f'sublayout_games_{i}'].stateChanged.connect(make_sublayout_handler(i))
 
-            button_box = QDialogButtonBox(
-                QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel) # type: ignore
+            button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)# type: ignore
             button_box.button(QDialogButtonBox.StandardButton.Ok).setText("Save")
             button_box.button(QDialogButtonBox.StandardButton.Cancel).setText("Close")
             button_box.setMaximumHeight(field_height)
-            main_layout.addStretch()
             main_layout.addWidget(button_box, alignment=Qt.AlignmentFlag.AlignRight)
 
             def save_entry():
@@ -317,7 +344,11 @@ class SettingsWindow(BaseWindow):
                 logger.error(f"Error removing entries: {e}")
 
             Options.save_config()
-            self.settings_changed.emit()
+            try:
+                self.settings_changed.emit()
+            except Exception as e:
+                logger.error(f"Error removing entries: {e}")
+                pass
 
             info_message = self.format_list_message(checked_titles_quoted, " successfully deleted!")
             self.show_message("Success", info_message)
@@ -336,7 +367,11 @@ class SettingsWindow(BaseWindow):
         text_edit = QTextEdit()
         text_edit.setPlainText("\n".join(map(str, entries_list)) if isinstance(entries_list, list) else entries_list)
         button_layout = QHBoxLayout()
-        buttons = [("Back", dialog.reject), ("File Browser", lambda: self.browse_files(text_edit)), ("Save", lambda: self.save_config_from_editor(text_edit, entries_list, field))]
+        buttons = [
+            ("Back", dialog.reject),
+            ("File Browser", lambda: self.browse_files(text_edit)),
+            ("Save", lambda: self.save_config_from_editor(text_edit, entries_list, field))
+        ]
         for btn_text, callback in buttons:
             button = QPushButton(btn_text)
             button.clicked.connect(callback)
@@ -349,7 +384,7 @@ class SettingsWindow(BaseWindow):
         files, _ = QFileDialog.getOpenFileNames(self, "Select Files")
         if files:
             current_text = text_edit.toPlainText()
-            text_edit.setPlainText(current_text + "\n" + "\n".join(files))
+            text_edit.setPlainText(current_text + ("\n" if current_text else "") + "\n".join(files))
 
     def save_config_from_editor(self, text_edit, entries_list, field):
         new_entries = text_edit.toPlainText().splitlines()
@@ -365,22 +400,15 @@ class SettingsWindow(BaseWindow):
         return entries_list
 
     def header_settings(self):
-        if not hasattr(Options, 'sublayout_names'):
-            Options.sublayout_names = {}
+        self._ensure_options_defaults()
         self.hide()
-        dialog = QDialog(self)
-        dialog.setMinimumSize(1100, 1000)
-        dialog.setWindowTitle("Header Settings")
-        layout = QVBoxLayout(dialog)
+        dialog, layout = self._create_dialog("Header Settings", size=(1100, 1000))
         list_widget = QListWidget(dialog)
         list_widget.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         list_widget.setDragDropMode(QListWidget.DragDropMode.InternalMove)
         list_widget.setDragEnabled(True)
         list_widget.setAcceptDrops(True)
         list_widget.setDefaultDropAction(Qt.DropAction.MoveAction)
-
-        if not hasattr(Options, 'header_order'):
-            Options.header_order = []
 
         header_order = getattr(Options, 'header_order', [])
         for header in list(header_order):
@@ -389,20 +417,18 @@ class SettingsWindow(BaseWindow):
             item.setSizeHint(item_widget.sizeHint())
             list_widget.addItem(item)
             list_widget.setItemWidget(item, item_widget)
+
         layout.addWidget(list_widget)
-        layout.addWidget(QLabel(
-            "Click and hold headers to move them.\nCreating header 'Games' provides sublayouts for this header."))
+        layout.addWidget(QLabel("Click and hold headers to move them.\nCreating header 'Games' provides sublayouts for this header."))
         new_header_button = QPushButton("New Header")
-        new_header_button.clicked.connect(lambda: self.add_new_header(list_widget))
+        new_header_button.clicked.connect(partial(self.add_new_header, list_widget))
         layout.addWidget(new_header_button)
 
         sublayout_buttons_height = 60
-
         sublayout_buttons = []
         for i in range(1, 5):
-            btn = QPushButton(
-                f"Sublayout-Games {i}:\n{Options.sublayout_names.get(f'sublayout_games_{i}', f'Sublayout Games {i}')}")
-            btn.clicked.connect(lambda _, num=i: self.prompt_for_name(dialog, num))
+            btn = QPushButton(f"Sublayout-Games {i}:\n{Options.sublayout_names.get(f'sublayout_games_{i}', f'Sublayout Games {i}')}")
+            btn.clicked.connect(partial(self.prompt_for_name, dialog, i))
             btn.setFixedHeight(sublayout_buttons_height)
             sublayout_buttons.append(btn)
 
@@ -413,8 +439,7 @@ class SettingsWindow(BaseWindow):
                 hbox.addWidget(sublayout_buttons[i + 1])
             layout.addLayout(hbox)
 
-        button_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel) # type: ignore
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)# type: ignore
         button_box.button(QDialogButtonBox.StandardButton.Ok).setText("Save")
         button_box.button(QDialogButtonBox.StandardButton.Cancel).setText("Close")
         layout.addWidget(button_box)
@@ -432,9 +457,6 @@ class SettingsWindow(BaseWindow):
         if not hasattr(Options, 'header_inactive'):
             Options.header_inactive = []
 
-        if not hasattr(self, '_color_cache'):
-            self._color_cache = {}
-
         header_color = Options.header_colors.get(header, '#ffffff')
         darker = self._get_cached_darker_color(header_color)
 
@@ -443,7 +465,7 @@ class SettingsWindow(BaseWindow):
         color_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         color_btn.setFixedHeight(26)
         color_btn.setStyleSheet(f"QPushButton {{{btn_style} background-color: {darker};}}")
-        color_btn.clicked.connect(lambda _, h=header: self.choose_color(h))
+        color_btn.clicked.connect(partial(self.choose_color, header))
 
         inactive_cb = QCheckBox("Inactive")
         inactive_cb.setObjectName("inactive_checkbox")
@@ -460,31 +482,20 @@ class SettingsWindow(BaseWindow):
 
         del_btn = QPushButton("Delete Header")
         del_btn.setStyleSheet("margin-left: 10px;")
-        del_btn.clicked.connect(lambda _, h=header: self.delete_header(h, list_widget))
+        del_btn.clicked.connect(partial(self.delete_header, header, list_widget))
 
         item_layout.addWidget(color_btn)
         item_layout.addWidget(inactive_cb)
         item_layout.addWidget(del_btn)
         return item_widget
 
-    def _get_cached_darker_color(self, color):
-        if not hasattr(self, '_color_cache'):
-            self._color_cache = {}
-
-        if color not in self._color_cache:
-            self._color_cache[color] = self.darken_color(color)
-
-        return self._color_cache[color]
-
     def add_new_header(self, list_widget):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("New Header")
-        layout = QVBoxLayout(dialog)
+        dialog, layout = self._create_dialog("New Header", size=(600, 200))
         layout.addWidget(QLabel("Enter new Header:"))
         input_field = QLineEdit(dialog)
         input_field.setMinimumWidth(450)
         layout.addWidget(input_field)
-        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel) # type: ignore
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)# type: ignore
         button_box.button(QDialogButtonBox.StandardButton.Ok).setText("Save")
         button_box.button(QDialogButtonBox.StandardButton.Cancel).setText("Close")
         layout.addWidget(button_box)
@@ -497,9 +508,6 @@ class SettingsWindow(BaseWindow):
         if not new_header:
             return
 
-        if not hasattr(Options, 'header_colors'):
-            Options.header_colors = {}
-
         if new_header in Options.header_colors:
             self.show_message("Duplicate Header", "Header already exists. Please choose a different name.")
             return
@@ -510,10 +518,6 @@ class SettingsWindow(BaseWindow):
             return
 
         Options.header_colors[new_header] = color_dialog.currentColor().name()
-
-        if not hasattr(Options, 'header_order'):
-            Options.header_order = []
-
         item_widget = self.create_header_list_item(new_header, list_widget)
         item = QListWidgetItem()
         item.setSizeHint(item_widget.sizeHint())
@@ -575,13 +579,6 @@ class SettingsWindow(BaseWindow):
                                   QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, self)
         confirm_box.setDefaultButton(QMessageBox.StandardButton.No)
         if confirm_box.exec() == QMessageBox.StandardButton.Yes:
-            if not hasattr(Options, 'header_colors'):
-                Options.header_colors = {}
-            if not hasattr(Options, 'header_order'):
-                Options.header_order = []
-            if not hasattr(Options, 'header_inactive'):
-                Options.header_inactive = []
-
             Options.header_colors.pop(header, None)
             if header in Options.header_order:
                 Options.header_order.remove(header)
@@ -590,8 +587,7 @@ class SettingsWindow(BaseWindow):
 
             for i in range(list_widget.count()):
                 item_widget = list_widget.itemWidget(list_widget.item(i))
-                if item_widget and item_widget.findChild(QPushButton) and item_widget.findChild(
-                        QPushButton).text() == header:
+                if item_widget and item_widget.findChild(QPushButton) and item_widget.findChild(QPushButton).text() == header:
                     list_widget.takeItem(i)
                     break
             Options.save_config()
@@ -606,20 +602,16 @@ class SettingsWindow(BaseWindow):
             Options.header_inactive = []
 
         new_header_order, new_header_inactive = [], []
-
         for i in range(list_widget.count()):
             item_widget = list_widget.itemWidget(list_widget.item(i))
             if not item_widget:
                 continue
-
             header_btn = item_widget.findChild(QPushButton)
             if not header_btn:
                 continue
-
             header = header_btn.text().strip()
             if not header:
                 continue
-
             new_header_order.append(header)
             cb = item_widget.findChild(QCheckBox, "inactive_checkbox")
             if cb and cb.isChecked():
@@ -647,14 +639,10 @@ class SettingsWindow(BaseWindow):
         self.show()
 
     def manage_mount_options(self):
-        if not hasattr(Options, 'mount_options'):
-            Options.mount_options = []
-        if not hasattr(Options, 'run_mount_command_on_launch'):
-            Options.run_mount_command_on_launch = False
-
+        self._ensure_options_defaults()
         self.hide()
 
-        if hasattr(self, 'mount_options_dialog') and self.mount_options_dialog:
+        if getattr(self, 'mount_options_dialog', None):
             try:
                 if not self.mount_options_dialog.isHidden():
                     self.mount_options_dialog.close()
@@ -677,9 +665,9 @@ class SettingsWindow(BaseWindow):
         for option in Options.mount_options:
             btn_layout = QHBoxLayout()
             drive_btn = QPushButton(option.get('drive_name', 'Unknown'))
-            drive_btn.clicked.connect(lambda _, opt=option: self._edit_mount_option(opt, dialog))
+            drive_btn.clicked.connect(partial(self._edit_mount_option, option, dialog))
             delete_btn = QPushButton("Delete")
-            delete_btn.clicked.connect(lambda _, opt=option: self._delete_mount_option(opt, dialog))
+            delete_btn.clicked.connect(partial(self._delete_mount_option, option, dialog))
             btn_layout.addWidget(drive_btn, 3)
             btn_layout.addWidget(delete_btn, 1)
             layout.addLayout(btn_layout)
@@ -695,7 +683,7 @@ class SettingsWindow(BaseWindow):
 
         if len(Options.mount_options) < 3:
             add_btn = QPushButton("New Mount Option")
-            add_btn.clicked.connect(lambda: self._edit_mount_option({}, dialog))
+            add_btn.clicked.connect(partial(self._edit_mount_option, {}, dialog))
             layout.addWidget(add_btn)
 
         close_btn = QPushButton("Close")
@@ -717,9 +705,7 @@ class SettingsWindow(BaseWindow):
         self.show_message('Success', 'Mount Options successfully saved!')
 
     def _edit_mount_option(self, option=None, parent_dialog=None):
-        if option is None:
-            option = {}
-
+        option = option or {}
         dialog = QDialog(self)
         dialog.setMinimumSize(825, 450)
         title = f"Edit Mount Option: {option.get('drive_name', '')}" if option.get('drive_name') else "New Mount Option"
@@ -764,13 +750,13 @@ class SettingsWindow(BaseWindow):
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(dialog.close)
         save_btn = QPushButton("Save")
-        save_btn.clicked.connect(lambda: self._save_mount_option(fields, option, dialog))
+        save_btn.clicked.connect(partial(self._save_mount_option, fields, option, dialog))
         btn_layout.addWidget(close_btn)
         btn_layout.addWidget(save_btn)
         layout.addLayout(btn_layout)
 
         dialog.exec()
-        if not dialog.result() == QDialog.DialogCode.Rejected:
+        if dialog.result() != QDialog.DialogCode.Rejected:
             self.manage_mount_options()
 
     def _delete_mount_option(self, option, parent_dialog=None):
