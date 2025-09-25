@@ -306,6 +306,11 @@ class SettingsWindow(BaseWindow):
             dialog.exec()
 
         Options.save_config()
+        try:
+            self.settings_changed.emit()
+        except Exception as e:
+            logger.error(f"Error saving entries: {e}")
+            pass
         self.show()
 
     def delete_entry(self):
@@ -525,6 +530,11 @@ class SettingsWindow(BaseWindow):
         list_widget.setItemWidget(item, item_widget)
         Options.header_order.append(new_header)
         Options.save_config()
+        try:
+            self.settings_changed.emit()
+        except Exception as e:
+            logger.error(f"Error saving header: {e}")
+            pass
         self.show_message("Success", "Header successfully created!")
 
     def prompt_for_name(self, parent_dialog, sublayout_num):
@@ -538,6 +548,11 @@ class SettingsWindow(BaseWindow):
                     break
             self.show_message('Success', 'Sublayout name successfully saved!')
             Options.save_config()
+            try:
+                self.settings_changed.emit()
+            except Exception as e:
+                logger.error(f"Error: {e}")
+                pass
 
     @staticmethod
     def darken_color(color_str):
@@ -554,6 +569,11 @@ class SettingsWindow(BaseWindow):
             Options.header_colors[header] = color_dialog.currentColor().name()
             self.update_button_color(header)
             Options.save_config()
+            try:
+                self.settings_changed.emit()
+            except Exception as e:
+                logger.error(f"Error: {e}")
+                pass
             self.show_message("Success", "Header color successfully saved!")
 
     def update_button_color(self, header):
@@ -591,6 +611,11 @@ class SettingsWindow(BaseWindow):
                     list_widget.takeItem(i)
                     break
             Options.save_config()
+            try:
+                self.settings_changed.emit()
+            except Exception as e:
+                logger.error(f"Error removing header: {e}")
+                pass
             self.show_message("Success", f"Header '{header}' has been successfully deleted!")
 
     def save_header_options(self, list_widget):
@@ -630,6 +655,11 @@ class SettingsWindow(BaseWindow):
                 continue
 
         Options.save_config()
+        try:
+            self.settings_changed.emit()
+        except Exception as e:
+            logger.error(f"Error saving headers: {e}")
+            pass
         self.show_message("Success", "Header-Settings successfully saved!")
 
     def open_samba_password_dialog(self):
