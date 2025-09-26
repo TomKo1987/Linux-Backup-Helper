@@ -507,8 +507,8 @@ class BaseWindow(QDialog):
         app.processEvents()
         self.adjust_window_size()
 
-    @staticmethod
-    def restore_theme_and_font(original_theme, original_font, original_size, dialog):
+    def restore_theme_and_font(self, original_theme, original_font, original_size, dialog):
+        self.hide()
         Options.ui_settings["theme"] = original_theme
         Options.ui_settings["font_family"] = original_font
         Options.ui_settings["font_size"] = original_size
@@ -518,6 +518,8 @@ class BaseWindow(QDialog):
             style = global_style.get_current_style()
             QApplication.instance().setStyleSheet(style)
         dialog.reject()
+        self.adjust_window_size()
+        self.show()
 
     def save_theme_and_font(self, theme_name, font_family, font_size, dialog):
         Options.ui_settings["theme"] = theme_name
