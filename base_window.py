@@ -425,7 +425,14 @@ class BaseWindow(QDialog):
         self.checkbox_dirs.clear()
 
     def change_theme(self):
-        dialog = QDialog(self)
+        class ThemeDialog(QDialog):
+            def keyPressEvent(self, event):
+                if event.key() == Qt.Key.Key_Escape:
+                    event.ignore()
+                else:
+                    super().keyPressEvent(event)
+
+        dialog = ThemeDialog(self)
         dialog.setWindowTitle("Theme and Font Settings")
         dialog.setMinimumSize(500, 400)
         dialog.setWindowModality(Qt.WindowModality.NonModal)
@@ -440,8 +447,7 @@ class BaseWindow(QDialog):
 
         layout.addWidget(QLabel("Select Font:"))
         font_combo = QComboBox()
-        available_fonts = sorted(QFontDatabase.families())
-        font_combo.addItems(available_fonts)
+        font_combo.addItems(sorted(QFontDatabase.families()))
         current_font = Options.ui_settings.get("font_family", "DejaVu Sans")
         font_combo.setCurrentText(current_font)
         layout.addWidget(font_combo)
@@ -454,10 +460,6 @@ class BaseWindow(QDialog):
         size_combo.setCurrentText(current_size)
         layout.addWidget(size_combo)
 
-        original_theme = current_theme
-        original_font = current_font
-        original_size = current_size
-
         preview_btn = QPushButton("Preview")
         preview_btn.clicked.connect(lambda: self.preview_theme_and_font(
             theme_combo.currentText(),
@@ -469,6 +471,10 @@ class BaseWindow(QDialog):
         button_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel  # type: ignore
         )
+        original_theme = current_theme
+        original_font = current_font
+        original_size = current_size
+
         button_box.accepted.connect(lambda: self.save_theme_and_font(
             theme_combo.currentText(),
             font_combo.currentText(),
@@ -479,6 +485,11 @@ class BaseWindow(QDialog):
             original_theme, original_font, int(original_size), dialog
         ))
         layout.addWidget(button_box)
+
+        def close_event(event):
+            event.ignore()
+
+        dialog.closeEvent = close_event
 
         dialog.show()
         dialog.raise_()
