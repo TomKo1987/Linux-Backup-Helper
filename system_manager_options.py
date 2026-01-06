@@ -753,7 +753,9 @@ class SystemManagerOptions(QDialog):
 
         if ok and package_name.strip():
             current_packages = getattr(Options, option_type, [])
-            if package_name not in current_packages:
+            existing_names = [p.get('name') if isinstance(p, dict) else p for p in current_packages]
+
+            if package_name.strip() not in existing_names:
                 current_packages.append(package_name.strip())
                 setattr(Options, option_type, current_packages)
                 Options.save_config()
@@ -790,14 +792,17 @@ class SystemManagerOptions(QDialog):
             text = text_edit.toPlainText().strip()
             if text:
                 packages = [pkg.strip() for pkg in text.splitlines() if pkg.strip()]
-                current_packages = set(getattr(Options, option_type, []))
+                current_packages = getattr(Options, option_type, [])
+                existing_names = {p.get('name') if isinstance(p, dict) else p for p in current_packages}
+
                 added_packages = []
                 duplicates = []
 
                 for package in packages:
-                    if package not in current_packages:
+                    if package not in existing_names:
                         added_packages.append(package)
-                        current_packages.add(package)
+                        existing_names.add(package)
+                        current_packages.append(package)
                     else:
                         duplicates.append(package)
 
