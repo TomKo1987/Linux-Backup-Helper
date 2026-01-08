@@ -189,7 +189,7 @@ class SystemManagerOptions(QDialog):
     @staticmethod
     def _create_select_all_checkbox():
         select_all_checkbox = QCheckBox("Check/Uncheck All")
-        select_all_checkbox.setStyleSheet(f"{global_style} QCheckBox {{color: '#6ffff5'}}")
+        select_all_checkbox.setStyleSheet(f"{global_style} QCheckBox {{color: #6ffff5;}}")
         return select_all_checkbox
 
     def _create_operation_checkboxes(self, grid_layout):
@@ -206,7 +206,7 @@ class SystemManagerOptions(QDialog):
             else:
                 self._configure_enabled_checkbox(checkbox, operation_key)
 
-            grid_layout.addWidget(checkbox, index, 0)
+            grid_layout.addWidget(checkbox, index + 1, 0)
             self.system_manager_operations_widgets.append((checkbox, operation_key))
 
     @staticmethod
@@ -410,7 +410,7 @@ class SystemManagerOptions(QDialog):
 
         for container_widget in self.system_files_widgets:
             list_widget = getattr(container_widget, 'list_widget', container_widget)
-            list_widget.setMinimumWidth(max_text_width)
+            list_widget.setMinimumWidth(max_text_width + 50)
 
         if self.system_files_widgets:
             select_all_checkbox = self._create_select_all_checkbox()
