@@ -108,7 +108,8 @@ class Options(QObject):
         try:
             with QMutexLocker(Options.entries_mutex):
                 if not Options.all_entries:
-                    Options.entries_sorted = []
+                    with QMutexLocker(Options.entries_mutex):
+                        Options.entries_sorted = []
                     return []
 
                 header_order_map = {h: i for i, h in enumerate(Options.header_order)}
@@ -122,7 +123,8 @@ class Options(QObject):
                         'destination': entry.destination,
                         'unique_id': entry.details.get('unique_id', _new_uuid())
                     }
-                    entry_dict.update({k: entry.details.get(k, False) for k in DETAIL_KEYS})
+                    if hasattr(entry, 'details') and isinstance(entry.details, dict):
+                        entry_dict.update({k: entry.details.get(k, False) for k in DETAIL_KEYS})
                     sorted_entries.append(entry_dict)
 
                 sorted_entries.sort(key=lambda x: (header_order_map.get(x['header'], 999), x['title'].lower()))
@@ -389,11 +391,13 @@ class Options(QObject):
     Destination:<br><br>{dest_text_item}</td></tr></table>"""
 
         backup_tooltips, restore_tooltips = {}, {}
-        for e in Options.entries_sorted:
+        with QMutexLocker(Options.entries_mutex):
+            entries_snapshot = Options.entries_sorted.copy()
+        for e in entries_snapshot:
             title = e["title"]
             tooltip_key = f"{title}_tooltip"
-            src = e['source'] if isinstance(e['source'], list) else [e['source']]
-            dest = e['destination'] if isinstance(e['destination'], list) else [e['destination']]
+            src = e.get('source', []) if isinstance(e.get('source'), list) else [e.get('source', '')]
+            dest = e.get('destination', []) if isinstance(e.get('destination'), list) else [e.get('destination', '')]
             src_text, dest_text = "<br/>".join(map(str, src)), "<br/>".join(map(str, dest))
             backup_tooltips[tooltip_key] = apply_replacements(format_html(title, src_text, dest_text))
             restore_tooltips[tooltip_key] = apply_replacements(format_html(title, dest_text, src_text))
