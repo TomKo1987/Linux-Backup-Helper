@@ -248,15 +248,15 @@ class LinuxDistroHelper:
 
     def get_samba_packages(self):
         if self.distro_id in ["debian", "ubuntu", "pop", "mint", "elementary"]:
-            return ["gvfs-backends", "samba", "samba-common-bin"]
+            return ["samba", "samba-common-bin"]
         elif self.distro_id in ["fedora", "rhel", "centos", "rocky", "almalinux"]:
-            return ["gvfs-smb", "samba", "samba-common"]
+            return ["samba", "samba-common"]
         elif self.distro_id in ["opensuse", "opensuse-leap", "opensuse-tumbleweed", "suse"]:
-            return ["gvfs-smb", "samba"]
+            return ["samba"]
         elif self.distro_id in ["arch", "manjaro"]:
-            return ["gvfs-smb", "samba"]
+            return ["samba"]
         else:
-            return ["gvfs-smb", "samba"]
+            return ["samba"]
 
     def get_bluetooth_packages(self):
         if self.distro_id in ["arch", "manjaro"]:
