@@ -709,7 +709,7 @@ class SystemManagerOptions(QDialog):
 
     def _add_search_functionality(self, layout, package_widgets):
         search_layout = QHBoxLayout()
-        search_input = QLineEdit("Search:")
+        search_input = QLineEdit()
         search_input.setPlaceholderText("Type to filter packages...")
         search_input.textChanged.connect(lambda text: self._filter_packages(text, package_widgets))
         search_layout.addWidget(search_input)
