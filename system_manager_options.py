@@ -66,7 +66,7 @@ class SystemManagerOptions(QDialog):
             f"First you can select 'System Files' in System Manager. These files will be copied using 'sudo', "
             f"for root privilege. If you have 'System Files' selected, System Manager will copy these first. "
             f"This allows you to copy files such as 'pacman.conf' or 'smb.conf' to '/etc/'.\n\n"
-            f"Under 'Installer Operations' you can specify how you would like to proceed. "
+            f"Under 'System Manager Operations' you can specify how you would like to proceed. "
             f"Each action is executed one after the other. Uncheck actions to disable them.\n\n"
             f"Tips:\n\n"
             f"It is possible to copy to and from samba shares if samba is set up correctly. "
