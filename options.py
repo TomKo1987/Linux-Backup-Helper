@@ -108,8 +108,7 @@ class Options(QObject):
         try:
             with QMutexLocker(Options.entries_mutex):
                 if not Options.all_entries:
-                    with QMutexLocker(Options.entries_mutex):
-                        Options.entries_sorted = []
+                    Options.entries_sorted = []
                     return []
 
                 header_order_map = {h: i for i, h in enumerate(Options.header_order)}
@@ -302,7 +301,8 @@ class Options(QObject):
     @staticmethod
     def load_config(file_path):
         if not os.path.exists(file_path):
-            logger.warning(f"Config file not found: {file_path}")
+            logger.warning(f"Config file not found: {file_path}. Creating default config.")
+            Options.save_config()
             return
         try:
             with open(file_path, encoding='utf-8') as f:
