@@ -79,7 +79,7 @@ class Options(QObject):
         self.source = source
         self.destination = destination
         self.details = dict.fromkeys(DETAIL_KEYS, False)
-        self.details['unique_id'] = _new_uuid()# type: ignore
+        self.details['unique_id'] = _new_uuid()  # type: ignore
 
         if details:
             self.details.update({k: bool(v) for k, v in details.items() if k in self.details})
