@@ -220,9 +220,11 @@ class LinuxDistroHelper:
                 return f"kernel-devel-{kernel_version}"
             elif self.distro_id in ["opensuse", "opensuse-leap", "opensuse-tumbleweed", "suse"]:
                 return "kernel-default-devel"
+            else:
+                return self.kernel_headers
         except Exception as e:
             logger.error(f"Error when determining the kernel header: {e}")
-        return self.kernel_headers
+            return self.kernel_headers
 
     def get_shell_package_name(self, shell_name):
         shell_map = {
