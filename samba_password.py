@@ -36,7 +36,7 @@ class SambaPasswordDialog(QDialog):
                 self.has_existing_credentials = True
             else:
                 info_text = "(No password found. Create new entry in system keyring.)"
-        except Exception as e:
+        except (OSError, RuntimeError, KeyError) as e:
             username = current_user
             password = None
             info_text = f"(Error retrieving credentials: {type(e).__name__})"
