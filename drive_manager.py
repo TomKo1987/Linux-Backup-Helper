@@ -238,7 +238,7 @@ class DriveManager:
             for opt in Options.mount_options:
                 if not self.is_drive_mounted(opt):
                     logger.info(f"[mount_drives_at_launch] Mounting drive '{opt.get('drive_name', '')}' at launch.")
-                    self.mount_drive(opt)
+                    self.mount_drive(opt, parent=None, remember_unmount=False)
 
     @staticmethod
     def _show_message(title, text, icon, parent):
