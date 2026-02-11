@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (QVBoxLayout, QHBoxLayout, QPushButton, QListWidgetI
 import ast, getpass, os, pwd, shutil, socket, subprocess, tempfile, threading, time, urllib.error, urllib.request, queue, logging.handlers
 
 user = pwd.getpwuid(os.getuid()).pw_name
-home_user = os.getenv("HOME")
+home_user = os.getenv("HOME") or str(Path.home())
 home_config = Path(home_user).joinpath(".config")
 
 logger = logging.getLogger(__name__)
@@ -154,7 +154,7 @@ class SystemManagerLauncher:
     def start_system_manager_thread(self, sudo_password):
         self.system_manager_thread = SystemManagerThread(sudo_password)
         self.system_manager_dialog = SystemManagerDialog(self.parent)
-        self.system_manager_thread.started.connect(self.show_system_manager_dialog)
+        self.system_manager_thread.thread_started.connect(self.show_system_manager_dialog)
         self.system_manager_thread.passwordFailed.connect(self.on_password_failed)
         self.system_manager_thread.passwordSuccess.connect(self.on_password_success)
         self.system_manager_thread.outputReceived.connect(self.system_manager_dialog.update_operation_dialog)
@@ -329,7 +329,7 @@ class SystemManagerDialog(QDialog):
         self.setFixedSize(*self.DIALOG_SIZE)
 
         self.shadow = self._create_shadow_effect()
-        self.layout = QHBoxLayout(self)
+        self.main_layout = QHBoxLayout(self)
         self.left_panel = QVBoxLayout()
         self.right_panel = QVBoxLayout()
         self.scroll_area = QScrollArea()
@@ -454,9 +454,9 @@ class SystemManagerDialog(QDialog):
         button_container.addStretch()
         button_container.addWidget(self.ok_button)
         self.right_panel.addLayout(button_container)
-        self.layout.addLayout(self.left_panel, 3)
-        self.layout.addSpacing(10)
-        self.layout.addLayout(self.right_panel, 1)
+        self.main_layout.addLayout(self.left_panel, 3)
+        self.main_layout.addSpacing(10)
+        self.main_layout.addLayout(self.right_panel, 1)
 
     def _setup_failed_attempts_label(self):
         self.failed_attempts_label.setStyleSheet(f"""
@@ -730,7 +730,7 @@ class SystemManagerDialog(QDialog):
 
 # noinspection PyUnresolvedReferences
 class SystemManagerThread(QThread):
-    started = pyqtSignal()
+    thread_started = pyqtSignal()
     outputReceived = pyqtSignal(str, str)
     passwordFailed = pyqtSignal()
     passwordSuccess = pyqtSignal()
@@ -760,7 +760,7 @@ class SystemManagerThread(QThread):
             self.package_cache = None
 
     def run(self):
-        self.started.emit()
+        self.thread_started.emit()
         self.prepare_tasks()
         try:
             if self.terminated:
