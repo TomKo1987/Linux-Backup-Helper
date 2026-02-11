@@ -1025,7 +1025,6 @@ class SmbFileHandler:
                             os.rmdir(mount_point)
                         except Exception as e:
                             logger.warning(f"{e}")
-                            pass
                 except Exception as e:
                     logger.exception(f"Force cleanup error (ignored): {e}")
             self._mounted_shares.clear()
