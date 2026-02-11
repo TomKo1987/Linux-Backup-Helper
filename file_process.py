@@ -1,7 +1,8 @@
 from pathlib import Path
 from options import Options
 from PyQt6.QtGui import QColor
-from global_style import global_style
+from global_style import get_current_style as _get_global_style
+global_style = _get_global_style()
 from samba_password import SambaPasswordManager
 import os, re, time, shutil, psutil, tempfile, subprocess, logging.handlers
 from PyQt6.QtCore import (QThread, QTimer, QElapsedTimer, QMutex, QMutexLocker, QWaitCondition, QDateTime, pyqtSignal,
@@ -165,7 +166,6 @@ class FileProcessDialog(QDialog):
         center_layout.addWidget(self.summary_table)
         center_layout.addStretch(1)
         center_wrapper.setGraphicsEffect(self.shadow)
-        self.summary_table.setGraphicsEffect(self.shadow)
         layout.addStretch(1)
         layout.addWidget(center_wrapper)
         layout.addStretch(1)
@@ -415,7 +415,7 @@ class FileCopyThread(QThread):
                 worker = FileWorkerThread(self, i)
                 self.worker_threads.append(worker)
                 worker.start()
-                self.workers_ready.emit()
+            self.workers_ready.emit()
             for worker in self.worker_threads:
                 worker.wait()
         except Exception as e:
@@ -591,8 +591,6 @@ class FileCopyThread(QThread):
     def _get_file_size(self, file_path):
         try:
             if SmbFileHandler.is_smb_path(file_path):
-                if not self._smb_handler:
-                    self._smb_handler = SmbFileHandler(self.samba_password_manager, self)
                 return self.smb_handler.get_smb_file_size(file_path)
             else:
                 return Path(file_path).stat().st_size
