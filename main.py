@@ -10,6 +10,7 @@ import json, sys, logging.handlers, global_style
 from PyQt6.QtCore import Qt, pyqtSignal, QCoreApplication, QTimer
 from system_manager_launcher_dialog_thread import SystemManagerLauncher
 from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QMessageBox, QMainWindow
+# pip install pyqt6 psutil keyring
 
 sys.setrecursionlimit(5000)
 logger = logging.getLogger(__name__)
