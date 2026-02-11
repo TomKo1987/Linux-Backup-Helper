@@ -191,7 +191,7 @@ class SettingsWindow(BaseWindow):
             for key, text in checkbox_texts.items():
                 cb = QCheckBox(text)
                 cb.setChecked(entry_obj.details.get(key, False) if entry_obj else False)
-                cb.setStyleSheet(f"{get_current_style()} QCheckBox {{color: '#6ffff5'}}")
+                cb.setStyleSheet(f"{get_current_style()} QCheckBox {{color: #6ffff5}}")
                 cb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
                 cb.setMaximumHeight(field_height)
                 checkboxes[key] = cb
@@ -751,7 +751,6 @@ class SettingsWindow(BaseWindow):
                     logger.warning(f"Error closing parent dialog: {error}")
 
         try:
-            dialog.show()
             close_parent_safely()
         except Exception as e:
             logger.error(f"Error showing mount options dialog: {e}")
@@ -806,7 +805,7 @@ class SettingsWindow(BaseWindow):
         new_option = {field: fields[field].text().strip() for field in ['drive_name', 'mount_command', 'unmount_command']}
         field_labels = {'drive_name': 'Drive Name', 'mount_command': 'Mount Command', 'unmount_command': 'Unmount Command'}
         for field, label in field_labels.items():
-            if not new_option[field] or not new_option[field].strip():
+            if not new_option[field]:
                 self.show_message("Incomplete Fields", f"{label} is required.")
                 return
         for field, label in field_labels.items():
