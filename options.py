@@ -323,9 +323,10 @@ class Options(QObject):
             Options.mount_options = entries_data.get("mount_options", [])
             Options.ui_settings = entries_data.get("ui_settings", Options.ui_settings)
 
-            config_changed = not Options.mount_options and entries_data.get("run_mount_command_on_launch", False)
-            if not config_changed:
-                Options.run_mount_command_on_launch = entries_data.get("run_mount_command_on_launch", False)
+            Options.run_mount_command_on_launch = entries_data.get("run_mount_command_on_launch", False)
+            config_changed = not Options.mount_options and Options.run_mount_command_on_launch
+            if config_changed:
+                Options.run_mount_command_on_launch = False
 
             raw_sys_files = entries_data.get("system_files", [])
             Options.system_files = sorted(raw_sys_files,
