@@ -143,7 +143,7 @@ QProgressBar {
     background-color: #6d7582;
     border-radius: 8px;
     border: 3px solid #7aa2f7;
-    height: 22,5px;
+    height: 22.5px;
     text-align: center;
     margin: 10px 0;
     font-weight: bold;
@@ -267,7 +267,7 @@ QProgressBar {
     background-color: #2b2b2b;
     border-radius: 4px;
     border: 1px solid #444;
-    height: 22,5px;
+    height: 22.5px;
     text-align: center;
 }
 QProgressBar::chunk {
@@ -376,7 +376,7 @@ QProgressBar {
     background-color: #e0e0e0;
     border-radius: 4px;
     border: 1px solid #d0d0d0;
-    height: 22,5px;
+    height: 22.5px;
     text-align: center;
 }
 QProgressBar::chunk {
@@ -482,7 +482,7 @@ QProgressBar {
     background-color: #073642;
     border: 1px solid #268bd2;
     border-radius: 6px;
-    height: 22,5px;
+    height: 22.5px;
     text-align: center;
 }
 QProgressBar::chunk {
@@ -588,7 +588,7 @@ QProgressBar {
     background-color: #44475a;
     border: 1px solid #bd93f9;
     border-radius: 6px;
-    height: 22,5px;
+    height: 22.5px;
     text-align: center;
 }
 QProgressBar::chunk {
@@ -688,7 +688,7 @@ QProgressBar {
     background-color: #504945;
     border-radius: 6px;
     border: 1px solid #b8bb26;
-    height: 22,5px;
+    height: 22.5px;
     text-align: center;
 }
 QProgressBar::chunk {
@@ -788,7 +788,7 @@ QProgressBar {
     background-color: #3b4252;
     border-radius: 6px;
     border: 1px solid #88c0d0;
-    height: 22,5px;
+    height: 22.5px;
     text-align: center;
 }
 QProgressBar::chunk {
@@ -888,7 +888,7 @@ QProgressBar {
     background-color: #313244;
     border-radius: 6px;
     border: 1px solid #89b4fa;
-    height: 22,5px;
+    height: 22.5px;
     text-align: center;
 }
 QProgressBar::chunk {
@@ -988,7 +988,7 @@ QProgressBar {
     background-color: #403e41;
     border-radius: 6px;
     border: 1px solid #66d9ef;
-    height: 22,5px;
+    height: 22.5px;
     text-align: center;
 }
 QProgressBar::chunk {
