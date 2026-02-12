@@ -1,18 +1,13 @@
 from pathlib import Path
+import json, os, tempfile, functools, pwd
 from linux_distro_helper import LinuxDistroHelper
-import json, os, tempfile, functools, pwd, logging
 from PyQt6.QtCore import QObject, pyqtSignal, QMutex, QMutexLocker, QUuid
 
 user = pwd.getpwuid(os.getuid()).pw_name
 home_user = Path.home()
 
-logger = logging.getLogger(__name__)
-if not logger.hasHandlers():
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
-
+from logging_config import setup_logger
+logger = setup_logger(__name__)
 MAX_MOUNT_OPTIONS = 3
 SESSIONS = [
     "GNOME", "KDE", "XFCE", "LXQt", "LXDE", "Cinnamon", "Mate", "Deepin", "Budgie", "Enlightenment",
@@ -67,8 +62,8 @@ class Options(QObject):
     text_replacements = [
         (home_user.as_posix(), '~'),
         (f"/run/media/{user}/", ''),
-        ("[1m", ""), ("[0m", ""), ("", "")
-    ] + [(env, env) for env in SESSIONS]
+        ("[1m", ""), ("[0m", ""), ("[1m", ""), ("[0m", "")
+    ]
 
     system_manager_tooltips = {}
 
@@ -131,8 +126,7 @@ class Options(QObject):
                 return sorted_entries
         except Exception as e:
             logger.error(f"Error in sort_entries: {e}")
-            with QMutexLocker(Options.entries_mutex):
-                Options.entries_sorted = []
+            Options.entries_sorted = []
             return []
 
     @staticmethod
@@ -199,10 +193,11 @@ class Options(QObject):
                 if e.header not in Options.header_order:
                     Options.header_order.append(e.header)
 
+        seen_headers = list(dict.fromkeys(Options.header_order + Options.header_inactive))
         header_data = {
             h: {"inactive": h in Options.header_inactive,
                 "header_color": Options.header_colors.get(h, '#ffffff')}
-            for h in Options.header_order + Options.header_inactive
+            for h in seen_headers
         }
 
         def sort_by_name(items):
@@ -321,7 +316,8 @@ class Options(QObject):
             Options.system_manager_operations = entries_data.get("system_manager_operations", [])
             Options.user_shell = entries_data.get("user_shell", USER_SHELL[0])
             Options.mount_options = entries_data.get("mount_options", [])
-            Options.ui_settings = entries_data.get("ui_settings", Options.ui_settings)
+            loaded_ui = entries_data.get("ui_settings", {})
+            Options.ui_settings = {**Options.ui_settings, **loaded_ui}
 
             Options.run_mount_command_on_launch = entries_data.get("run_mount_command_on_launch", False)
             config_changed = not Options.mount_options and Options.run_mount_command_on_launch
