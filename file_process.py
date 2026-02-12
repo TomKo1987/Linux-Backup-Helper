@@ -2,20 +2,16 @@ from pathlib import Path
 from options import Options
 from PyQt6.QtGui import QColor
 from global_style import get_current_style as _get_global_style
-global_style = _get_global_style()
+_cached_style = _get_global_style()
 from samba_password import SambaPasswordManager
-import os, re, time, shutil, psutil, tempfile, subprocess, logging.handlers
+import os, re, time, shutil, psutil, tempfile, subprocess
 from PyQt6.QtCore import (QThread, QTimer, QElapsedTimer, QMutex, QMutexLocker, QWaitCondition, QDateTime, pyqtSignal,
                           QAbstractListModel, QModelIndex, Qt, QVariant, QCoreApplication)
 from PyQt6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar, QTabWidget, QLineEdit,
                              QDialogButtonBox, QInputDialog, QMessageBox, QListView, QGraphicsDropShadowEffect)
 
-logger = logging.getLogger(__name__)
-if not logger.hasHandlers():
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
+from logging_config import setup_logger
+logger = setup_logger(__name__)
 
 
 # noinspection PyUnresolvedReferences
@@ -44,7 +40,7 @@ class FileProcessDialog(QDialog):
         self.elapsed_time_label.setStyleSheet("font-weight: bold; font-size: 17px;")
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(0)
-        self.progress_bar.setStyleSheet(global_style)
+        self.progress_bar.setStyleSheet(_cached_style)
         self.tab_widget = QTabWidget()
         self.copied_tab = VirtualLogTabWidget()
         self.skipped_tab = VirtualLogTabWidget()
@@ -130,7 +126,7 @@ class FileProcessDialog(QDialog):
         self.cancel_button.setFixedSize(125, 35)
         self.cancel_button.clicked.connect(self.cancel_operation)
         self.cancel_button.setEnabled(False)
-        self.cancel_button.setStyleSheet(global_style)
+        self.cancel_button.setStyleSheet(_cached_style)
         container_layout = QVBoxLayout(self.container)
         container_layout.addWidget(self.status_label)
         container_layout.addWidget(self.tab_widget)
@@ -288,7 +284,7 @@ class FileProcessDialog(QDialog):
             self.current_file_label.setStyleSheet(err_style)
             self.elapsed_time_label.setStyleSheet(err_style)
             self.progress_bar.setStyleSheet(
-                f"""{global_style} QProgressBar::chunk {{background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, 
+                f"""{_cached_style} QProgressBar::chunk {{background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, 
                 y2:0, stop:0 #fd7e14, stop:1 #ff8587); border-radius: 2px;}}""")
         else:
             self.status_label.setText(f"{self.operation_type} successfully completed!\n")
@@ -334,7 +330,7 @@ class FileProcessDialog(QDialog):
                 self.status_label.setStyleSheet(
                     "color: #ff8587; font-weight: bold; font-size: 20px; background-color: transparent;")
                 self.current_file_label.setText("Please wait while operations are being cancelled...\n")
-                self.progress_bar.setStyleSheet(f"""{global_style} QProgressBar::chunk 
+                self.progress_bar.setStyleSheet(f"""{_cached_style} QProgressBar::chunk 
                 {{background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 #fd7e14, stop:1 
                 #ff8587); border-radius: 2px;}}""")
                 QCoreApplication.processEvents()
@@ -359,8 +355,8 @@ class FileProcessDialog(QDialog):
                 event.accept()
             else:
                 event.ignore()
-                return
-        event.accept()
+        else:
+            event.accept()
 
 
 # noinspection PyUnresolvedReferences
@@ -566,10 +562,12 @@ class FileCopyThread(QThread):
                                 break
                             offset += sent
                             remaining -= sent
+                    if not self.cancelled and offset != file_size:
+                        raise OSError(f"sendfile incomplete: {offset}/{file_size} bytes transferred")
                     shutil.copystat(source, destination)
                     return
             except Exception as e:
-                logger.debug(f"sendfile fallback engaged for: %s {e}", source)
+                logger.debug("sendfile fallback engaged for: %s %s", source, e)
             try:
                 with open(source, 'rb') as fsrc, open(destination, 'wb') as fdst:
                     mv = memoryview(bytearray(buffer_size))
@@ -811,7 +809,7 @@ class SmbFileHandler:
             opts = [f'username={username}', f'password={password}']
             if domain:
                 opts.append(f'domain={domain}')
-            opts += ['uid=1000', 'gid=1000', 'iocharset=utf8']
+            opts += [f'uid={os.getuid()}', f'gid={os.getgid()}', 'iocharset=utf8']
             cmd.extend(['-o', ','.join(opts)])
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
             if proc.returncode == 0:
