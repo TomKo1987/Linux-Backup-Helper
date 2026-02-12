@@ -7,20 +7,14 @@ from PyQt6.QtGui import QTextCursor, QColor, QIcon
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, QElapsedTimer, QTimer
 from PyQt6.QtWidgets import (QVBoxLayout, QHBoxLayout, QPushButton, QListWidgetItem, QApplication, QListWidget, QWidget,
                              QCheckBox, QTextEdit, QGraphicsDropShadowEffect, QDialogButtonBox, QDialog, QLabel, QScrollArea)
-import ast, getpass, os, pwd, shutil, socket, subprocess, tempfile, threading, time, urllib.error, urllib.request, queue, logging.handlers
+import ast, getpass, os, pwd, shutil, socket, subprocess, tempfile, threading, time, urllib.error, urllib.request, queue
 
 user = pwd.getpwuid(os.getuid()).pw_name
 home_user = os.getenv("HOME") or str(Path.home())
 home_config = Path(home_user).joinpath(".config")
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
-if not logger.hasHandlers():
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+from logging_config import setup_logger
+logger = setup_logger(__name__)
 
 
 # noinspection PyUnresolvedReferences
@@ -999,8 +993,8 @@ class SystemManagerThread(QThread):
                     return None
 
             class MockProcess:
-                def __init__(self, returncode):
-                    self.returncode = returncode
+                def __init__(self, returnee):
+                    self.returnee = returnee
 
             return MockProcess(return_code)
 
@@ -1073,7 +1067,7 @@ class SystemManagerThread(QThread):
             cmd.extend([str(src), str(dest)])
             result = self.run_sudo_command(cmd)
 
-            if result and result.returncode == 0:
+            if result and result.returnee == 0:
                 label = src if is_dir else filename
                 self.outputReceived.emit(f"Successfully copied: '{label}' to '{dest}'", "success")
             else:
@@ -1094,7 +1088,7 @@ class SystemManagerThread(QThread):
             return False
 
         result = self.run_sudo_command(['sudo', 'mkdir', '-p', str(dest_path)])
-        success = result and result.returncode == 0
+        success = result and result.returnee == 0
         self.outputReceived.emit(f"{'Created' if success else 'Error creating'} directory: '{dest_path}'",
                                  "info" if success else "error")
         return success
@@ -1109,7 +1103,7 @@ class SystemManagerThread(QThread):
 
         cmd = self.distro.get_pkg_install_cmd(package)
         result = self.run_sudo_command(cmd.split())
-        success = result and result.returncode == 0
+        success = result and result.returnee == 0
 
         if success:
             self.package_cache.mark_installed(package)
@@ -1222,7 +1216,7 @@ class SystemManagerThread(QThread):
         else:
             self.outputReceived.emit("Unable to detect country. Searching globally instead.", "info")
         result = self.run_sudo_command(command)
-        success = result and result.returncode == 0
+        success = result and result.returnee == 0
         status = "success" if success else "error"
         self.outputReceived.emit(f"Mirrors {'successfully updated' if success else 'failed to update'}...", status)
         self.taskStatusChanged.emit(task_id, status)
@@ -1275,14 +1269,14 @@ class SystemManagerThread(QThread):
                 self.outputReceived.emit(f"Adding '{shell_bin}' to /etc/shells...", "info")
                 append_cmd = ['sudo', 'sh', '-c', f'echo "{shell_bin}" >> /etc/shells']
                 append_result = self.run_sudo_command(append_cmd)
-                if not append_result or append_result.returncode != 0:
+                if not append_result or append_result.returnee != 0:
                     self.outputReceived.emit(f"Error when adding the shell to /etc/shells.", "error")
                     self.taskStatusChanged.emit(task_id, "error")
                     return False
             self.outputReceived.emit(f"Changing user shell for '{actual_user}' to '{shell_bin}'...", "info")
             chsh_cmd = ['sudo', 'chsh', '-s', shell_bin, actual_user]
             chsh_result = self.run_sudo_command(chsh_cmd)
-            if chsh_result and chsh_result.returncode == 0:
+            if chsh_result and chsh_result.returnee == 0:
                 self.outputReceived.emit(f"Shell for user '{actual_user}' successfully changed to '{config_shell}'...",
                                          "success")
                 self.taskStatusChanged.emit(task_id, "success")
@@ -1302,7 +1296,7 @@ class SystemManagerThread(QThread):
         else:
             cmd = self.distro.get_pkg_update_cmd()
         result = self.run_sudo_command(cmd.split())
-        success = result and result.returncode == 0
+        success = result and result.returnee == 0
         status = "success" if success else "error"
         self.outputReceived.emit(f"System {'successfully updated' if success else 'update failed'}...", status)
         self.taskStatusChanged.emit(task_id, status)
@@ -1335,7 +1329,7 @@ class SystemManagerThread(QThread):
             return True
         self.outputReceived.emit("\n", "info")
         result = self.run_sudo_command(['sudo', 'systemctl', 'enable', '--now', f'{service}.service'])
-        success = result and result.returncode == 0
+        success = result and result.returnee == 0
         if success:
             self.outputReceived.emit(f"'{service}.service' successfully enabled...", "success")
             if service == "ufw":
@@ -1390,9 +1384,9 @@ class SystemManagerThread(QThread):
         to_remove = [pkg for pkg in ['yay-debug', 'go'] if self.distro.package_is_installed(pkg)]
         if to_remove:
             result = self.run_sudo_command(['sudo', 'pacman', '-R', '--noconfirm'] + to_remove)
-            self.outputReceived.emit(f"{'Successfully removed' if result and result.returncode == 0
+            self.outputReceived.emit(f"{'Successfully removed' if result and result.returnee == 0
             else 'Error during uninstallation of'}: '{', '.join(to_remove)}'",
-                                     "subprocess" if result and result.returncode == 0 else "warning")
+                                     "subprocess" if result and result.returnee == 0 else "warning")
         pkg_files = sorted(f for f in os.listdir(yay_build_path) if f.endswith('.pkg.tar.zst'))
         if not pkg_files:
             self.outputReceived.emit("No package file found for installation.", "warning")
@@ -1400,7 +1394,7 @@ class SystemManagerThread(QThread):
             return False
         pkg_path = os.path.join(str(yay_build_path), pkg_files[0])
         result = self.run_sudo_command(['sudo', 'pacman', '-U', '--noconfirm', str(pkg_path)])
-        success = result and result.returncode == 0
+        success = result and result.returnee == 0
         shutil.rmtree(yay_build_path, ignore_errors=True)
         shutil.rmtree(Path(home_config) / "go", ignore_errors=True)
         self.outputReceived.emit(f"'yay' {'successfully installed' if success else 'installation failed'}...",
@@ -1470,7 +1464,7 @@ class SystemManagerThread(QThread):
         if orphaned_packages:
             packages_list = orphaned_packages.split('\n')
             result = self.run_sudo_command(self.distro.get_pkg_remove_cmd(' '.join(packages_list)).split())
-            success = result and result.returncode == 0
+            success = result and result.returnee == 0
             self.outputReceived.emit(
                 f"Orphaned packages {'successfully removed' if success else 'could not be removed'}...",
                 "success" if success else "error")
@@ -1483,14 +1477,14 @@ class SystemManagerThread(QThread):
     def clean_cache(self):
         task_id = "clean_cache"
         result = self.run_sudo_command(self.distro.get_clean_cache_cmd().split())
-        success = result and result.returncode == 0
+        success = result and result.returnee == 0
         self.outputReceived.emit(
             "Cache of system package manager successfully cleaned..." if success else "Error cleaning cache...",
             "success" if success else "error")
         if self.distro.package_is_installed('yay'):
             self.outputReceived.emit("<br>Cleaning 'yay' cache...", "info")
             result_yay = self.run_sudo_command(['yay', '-Scc', '--noconfirm'])
-            if result_yay and result_yay.returncode == 0:
+            if result_yay and result_yay.returnee == 0:
                 self.outputReceived.emit("'yay' cache successfully cleaned...", "success")
             else:
                 self.outputReceived.emit("Error cleaning 'yay' cache...", "error")
