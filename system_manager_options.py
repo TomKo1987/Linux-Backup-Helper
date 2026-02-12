@@ -1,4 +1,3 @@
-import logging.handlers
 from pathlib import Path
 from PyQt6.QtCore import Qt, QTimer
 from linux_distro_helper import LinuxDistroHelper
@@ -8,13 +7,8 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QFo
                              QComboBox, QCheckBox, QListWidget, QListWidgetItem, QScrollArea, QDialogButtonBox, QLineEdit,
                              QMessageBox, QFileDialog, QInputDialog, QTextEdit, QApplication, QSizePolicy)
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-if not logger.hasHandlers():
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+from logging_config import setup_logger
+logger = setup_logger(__name__)
 
 
 # noinspection PyUnresolvedReferences
