@@ -1,16 +1,11 @@
-import subprocess, logging
+import subprocess
 from global_style import get_current_style
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QTextOption, QFontMetrics
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QPushButton, QLabel
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-if not logger.hasHandlers():
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+from logging_config import setup_logger
+logger = setup_logger(__name__)
 
 
 # noinspection PyUnresolvedReferences
@@ -20,10 +15,6 @@ class InxiWorker(QThread):
 
     def run(self):
         try:
-            check = subprocess.run(['inxi', '--version'], capture_output=True)
-            if check.returncode != 0:
-                raise FileNotFoundError
-
             result = subprocess.run(
                 self.default_args,
                 capture_output=True,
