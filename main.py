@@ -6,21 +6,15 @@ from drive_manager import DriveManager
 from file_process import SmbFileHandler
 from settings_window import SettingsWindow
 from system_info_window import SystemInfoWindow
-import json, sys, logging.handlers, global_style
+import json, sys, global_style
 from PyQt6.QtCore import Qt, pyqtSignal, QCoreApplication, QTimer
 from system_manager_launcher_dialog_thread import SystemManagerLauncher
 from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QMessageBox, QMainWindow
+# pip install pyqt6 psutil keyring
 
 sys.setrecursionlimit(5000)
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
-if not logger.hasHandlers():
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-
+from logging_config import setup_logger
+logger = setup_logger(__name__)
 def flatten_paths(*args):
     for item in args:
         if isinstance(item, list):
