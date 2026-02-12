@@ -1,4 +1,3 @@
-import logging.handlers
 from options import Options
 from global_style import THEMES
 from PyQt6.QtGui import QFontDatabase
@@ -6,14 +5,8 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QDialog, QLabel, QGridLayout,
                              QScrollArea, QCheckBox, QSpacerItem, QSizePolicy, QComboBox, QMessageBox, QDialogButtonBox)
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
-if not logger.hasHandlers():
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+from logging_config import setup_logger
+logger = setup_logger(__name__)
 
 
 # noinspection PyUnresolvedReferences
@@ -42,6 +35,7 @@ class BaseWindow(QDialog):
         self.columns = 4
         self.checkbox_dirs = []
         self.settings_changed.connect(self.setup_ui)
+        self._shown_once = False
         self.setup_ui()
 
     def setup_ui(self):
@@ -403,6 +397,7 @@ class BaseWindow(QDialog):
                 widget.deleteLater()
             elif item.layout():
                 self._clear_layout(item.layout())
+            # QSpacerItems have neither widget nor layout – takeAt already removes them
 
     def clear_layout_contents(self):
         self._tooltip_cache = None
@@ -653,9 +648,11 @@ class BaseWindow(QDialog):
     def showEvent(self, event):
         super().showEvent(event)
 
-        for cb, *_ in self.checkbox_dirs:
-            if cb.isChecked():
-                cb.setChecked(False)
+        if not getattr(self, '_shown_once', False):
+            for cb, *_ in self.checkbox_dirs:
+                if cb.isChecked():
+                    cb.setChecked(False)
+            self._shown_once = True
 
         if hasattr(self, 'selectall') and self.selectall:
             self.selectall.setFocus()
