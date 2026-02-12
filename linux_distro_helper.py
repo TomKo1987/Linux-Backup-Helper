@@ -1,14 +1,7 @@
-import subprocess, platform, os, logging.handlers, re, concurrent.futures
+import subprocess, platform, os, re, concurrent.futures
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
-if not logger.hasHandlers():
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-
+from logging_config import setup_logger
+logger = setup_logger(__name__)
 PACKAGE_NAME_REGEX = re.compile(r'^[a-zA-Z0-9._+:-]+$')
 
 class LinuxDistroHelper:
@@ -50,11 +43,12 @@ class LinuxDistroHelper:
     @staticmethod
     def detect_session():
         from options import SESSIONS
+        sessions_lower = {env.lower(): env for env in SESSIONS}
         for var in ['XDG_CURRENT_DESKTOP', 'XDG_SESSION_DESKTOP', 'DESKTOP_SESSION']:
             val = os.getenv(var)
             if val:
                 for part in val.split(':'):
-                    match = next((env for env in SESSIONS if part.strip().lower() == env.lower()), None)
+                    match = sessions_lower.get(part.strip().lower())
                     if match:
                         return match
         return None
@@ -95,7 +89,7 @@ class LinuxDistroHelper:
             self.pkg_update = "sudo dnf upgrade -y"
             self.pkg_remove = "sudo dnf remove -y {package}"
             self.pkg_clean_cache = "sudo dnf clean all && sudo dnf autoremove -y"
-            self.find_orphans = "dnf repoquery --extras"
+            self.find_orphans = "dnf repo-query --extras"
             self.install_yay = "echo 'AUR/yay is not supported on Fedora/CentOS/RHEL'"
             self.has_aur = False
             try:
