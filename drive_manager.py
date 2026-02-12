@@ -1,17 +1,12 @@
 from pathlib import Path
 from PyQt6.QtWidgets import QMessageBox, QCheckBox
-import subprocess, pwd, os, logging.handlers, shlex, threading, time
+import subprocess, pwd, os, shlex, threading, time
 
 user = pwd.getpwuid(os.getuid()).pw_name
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+from logging_config import setup_logger
+logger = setup_logger(__name__)
 
-if not logger.hasHandlers():
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
 
 class DriveManager:
     def __init__(self):
@@ -140,8 +135,8 @@ class DriveManager:
         try:
             logger.info(f"[mount_drive] Mounting drive '{name}' with command: {cmd}")
             result = subprocess.run(
-                cmd,
-                shell=True,
+                shlex.split(cmd),
+                shell=False,
                 capture_output=True,
                 text=True,
                 check=False,
@@ -187,7 +182,7 @@ class DriveManager:
             return False
         try:
             logger.info(f"[unmount_drive] Unmounting drive '{name}' with command: {cmd}")
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(shlex.split(cmd), shell=False, capture_output=True, text=True, timeout=30)
             if result.returncode != 0:
                 logger.warning(f"[unmount_drive] Unmount command for drive '{name}' returned code {result.returncode}")
             return result.returncode == 0
