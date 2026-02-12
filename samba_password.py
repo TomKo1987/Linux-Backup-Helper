@@ -1,16 +1,10 @@
 from keyring import errors
 from keyring.backends import SecretService
-import os, json, subprocess, getpass, keyring, logging.handlers
+import os, json, subprocess, getpass, keyring
 from PyQt6.QtWidgets import QDialog, QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout, QMessageBox, QCheckBox, QErrorMessage
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
-if not logger.hasHandlers():
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+from logging_config import setup_logger
+logger = setup_logger(__name__)
 
 
 # noinspection PyUnresolvedReferences
