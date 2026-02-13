@@ -433,7 +433,7 @@ class SystemManagerDialog(QDialog):
     def _setup_timers(self):
         self.update_timer.timeout.connect(self.update_elapsed_time)
         self.timer.start()
-        self.update_timer.start(1000) 
+        self.update_timer.start(1000)
 
     def _setup_layout(self):
         self.left_panel.addWidget(self.scroll_area)
@@ -596,7 +596,7 @@ class SystemManagerDialog(QDialog):
             ]
             return "\n".join(lines) + "<br>"
 
-    def _finalize_text_edit(self, cursor: QTextCursor, html_content: str = None):
+    def _finalize_text_edit(self, cursor: QTextCursor, html_content: str = ""):
         try:
             if not cursor:
                 cursor = self.text_edit.textCursor()
@@ -813,14 +813,16 @@ class SystemManagerThread(QThread):
         }
 
     def _define_service_tasks(self):
-        get = lambda method: getattr(self.distro, method, lambda: [])()
+        def get_packages(method):
+            return getattr(self.distro, method, lambda: [])()
+
         return {
-            "enable_printer_support": ("Initializing printer support...", "cups", get("get_printer_packages")),
-            "enable_samba_network_filesharing": ("Initializing samba...", "smb", get("get_samba_packages")),
-            "enable_bluetooth_service": ("Initializing bluetooth...", "bluetooth", get("get_bluetooth_packages")),
-            "enable_atd_service": ("Initializing atd...", "atd", get("get_at_packages")),
-            "enable_cronie_service": ("Initializing cronie...", "cronie", get("get_cron_packages")),
-            "enable_firewall": ("Initializing firewall...", "ufw", get("get_firewall_packages")),
+            "enable_printer_support":            ("Initializing printer support...",   "cups",      get_packages("get_printer_packages")),
+            "enable_samba_network_filesharing":  ("Initializing samba...",              "smb",       get_packages("get_samba_packages")),
+            "enable_bluetooth_service":          ("Initializing bluetooth...",          "bluetooth", get_packages("get_bluetooth_packages")),
+            "enable_atd_service":                ("Initializing atd...",                "atd",       get_packages("get_at_packages")),
+            "enable_cronie_service":             ("Initializing cronie...",             "cronie",    get_packages("get_cron_packages")),
+            "enable_firewall":                   ("Initializing firewall...",           "ufw",       get_packages("get_firewall_packages")),
         }
 
     def reset_sudo_timeout(self):
@@ -1333,9 +1335,11 @@ class SystemManagerThread(QThread):
         if success:
             self.outputReceived.emit(f"'{service}.service' successfully enabled...", "success")
             if service == "ufw":
-                for ufw_cmd in (['sudo', 'ufw', 'default', 'deny'], ['sudo', 'ufw', 'enable'],
+                for ufw_cmd in (['sudo', 'ufw', 'default', 'deny'],
+                                ['sudo', 'ufw', 'enable'],
                                 ['sudo', 'ufw', 'reload']):
-                    if not (self.run_sudo_command(ufw_cmd) or False):
+                    result = self.run_sudo_command(ufw_cmd)
+                    if not result or result.returnee != 0:
                         success = False
         else:
             error = getattr(result, 'stderr', 'Unknown error')
@@ -1355,7 +1359,8 @@ class SystemManagerThread(QThread):
         required_pkgs = ["base-devel", "git", "go"]
         missing_pkgs = [pkg for pkg in required_pkgs if not self.distro.package_is_installed(pkg)]
         if missing_pkgs:
-            if not (self.run_sudo_command(self.distro.get_pkg_install_cmd(" ".join(missing_pkgs)).split()) or False):
+            result = self.run_sudo_command(self.distro.get_pkg_install_cmd(" ".join(missing_pkgs)).split())
+            if not result or result.returnee != 0:
                 self.taskStatusChanged.emit(task_id, "error")
                 return False
         yay_build_path = Path(home_user) / "yay"
@@ -1384,9 +1389,9 @@ class SystemManagerThread(QThread):
         to_remove = [pkg for pkg in ['yay-debug', 'go'] if self.distro.package_is_installed(pkg)]
         if to_remove:
             result = self.run_sudo_command(['sudo', 'pacman', '-R', '--noconfirm'] + to_remove)
-            self.outputReceived.emit(f"{'Successfully removed' if result and result.returnee == 0
-            else 'Error during uninstallation of'}: '{', '.join(to_remove)}'",
-                                     "subprocess" if result and result.returnee == 0 else "warning")
+            removed_ok = result and result.returnee == 0
+            msg = f"{'Successfully removed' if removed_ok else 'Error during uninstallation of'}: '{', '.join(to_remove)}'"
+            self.outputReceived.emit(msg, "subprocess" if removed_ok else "warning")
         pkg_files = sorted(f for f in os.listdir(yay_build_path) if f.endswith('.pkg.tar.zst'))
         if not pkg_files:
             self.outputReceived.emit("No package file found for installation.", "warning")
@@ -1530,7 +1535,6 @@ class PackageCache:
                 self._cache.pop(package, None)
             else:
                 self._cache.clear()
-
 
 def _sanitize_package_name(pkg_name):
     pkg_name = str(pkg_name).strip()
