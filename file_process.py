@@ -16,10 +16,20 @@ logger = setup_logger(__name__)
 
 # noinspection PyUnresolvedReferences
 class FileProcessDialog(QDialog):
-    TAB_CONFIG = {'summary': {'index': 0, 'color': '#6ffff5', 'display': 'Summary'},
-                  'copied':  {'index': 1, 'color': 'lightgreen', 'display': 'Copied'},
-                  'skipped': {'index': 2, 'color': '#ffff7f', 'display': 'Skipped'},
-                  'error':   {'index': 3, 'color': '#ff8587', 'display': 'Errors'}}
+    UPDATE_TIMER_INTERVAL = 350
+    ELAPSED_UPDATE_INTERVAL = 250
+    
+    SMB_MOUNT_TIMEOUT = 10
+    SMB_UNMOUNT_TIMEOUT = 2
+    SMB_OPERATION_DELAY = 0.5
+    SMB_CLEANUP_DELAY = 0.5
+    
+    TAB_CONFIG = {
+        'summary': {'index': 0, 'color': '#6ffff5', 'display': 'Summary'},
+        'copied':  {'index': 1, 'color': 'lightgreen', 'display': 'Copied'},
+        'skipped': {'index': 2, 'color': '#ffff7f', 'display': 'Skipped'},
+        'error':   {'index': 3, 'color': '#ff8587', 'display': 'Errors'}
+    }
 
     def __init__(self, parent, checkbox_dirs, operation_type):
         super().__init__(parent)
@@ -90,7 +100,7 @@ class FileProcessDialog(QDialog):
                 self.sudo_password = password if ok and password else None
                 self.sudo_password_event.wakeAll()
             self.timer.restart()
-            self.update_timer.start(250)
+            self.update_timer.start(self.ELAPSED_UPDATE_INTERVAL)
         finally:
             self.sudo_dialog_open = False
 
@@ -136,7 +146,7 @@ class FileProcessDialog(QDialog):
 
     def start_process(self):
         self.timer.start()
-        self.update_timer.start(350)
+        self.update_timer.start(self.UPDATE_TIMER_INTERVAL)
         self.thread.start()
 
     def setup_tabs(self):
@@ -763,11 +773,8 @@ class SmbFileHandler:
         if self._sudo_password:
             return self._sudo_password
         if self.thread and getattr(self.thread, 'parent_dialog', None):
-            try:
-                self._sudo_password = self.thread.parent_dialog.get_sudo_password()
-                return self._sudo_password
-            except RuntimeError as e:
-                raise e
+            self._sudo_password = self.thread.parent_dialog.get_sudo_password()
+            return self._sudo_password
         raise RuntimeError("Cannot request sudo password - no parent dialog available")
 
     def _mount_smb_share(self, server, share):
@@ -827,7 +834,6 @@ class SmbFileHandler:
                             os.rmdir(mount_point)
                         except Exception as e:
                             logger.warning(f"{e}")
-                            pass
                     raise RuntimeError(f"Mount failed: {proc_2.stderr}")
                 with QMutexLocker(self.mutex):
                     self._mounted_shares[key] = mount_point
@@ -838,7 +844,6 @@ class SmbFileHandler:
                     os.rmdir(mount_point)
                 except Exception as e:
                     logger.warning(f"{e}")
-                    pass
             raise RuntimeError("Mount operation timed out")
         except Exception as e:
             logger.warning(f"{e}")
@@ -847,7 +852,6 @@ class SmbFileHandler:
                     os.rmdir(mount_point)
                 except Exception as e:
                     logger.warning(f"{e}")
-                    pass
             raise
         finally:
             with QMutexLocker(self.mutex):
@@ -871,7 +875,9 @@ class SmbFileHandler:
                 result = subprocess.run(cmd, input=input_str, capture_output=True, text=True, timeout=5)
                 if result.returncode == 0:
                     break
-            except (subprocess.TimeoutExpired, Exception) as e:
+            except subprocess.TimeoutExpired as e:
+                logger.warning(f"Warning during unmount attempt (timeout): {e}")
+            except Exception as e:
                 logger.warning(f"Warning during unmount attempt: {e}")
 
         try:
@@ -1120,7 +1126,9 @@ class LogEntryListModel(QAbstractListModel):
 
 
 # noinspection PyUnresolvedReferences
-class VirtualLogTabWidget(QWidget):
+class VirtualLogTabWidget(QWidget):    
+    FLUSH_TIMER_INTERVAL = 300
+    
     def __init__(self, parent=None):
         super().__init__(parent)
         self.entries = []
@@ -1147,7 +1155,7 @@ class VirtualLogTabWidget(QWidget):
 
         self.search_box.textChanged.connect(self.model.set_filter)
         self._flush_timer = QTimer(self)
-        self._flush_timer.setInterval(300)
+        self._flush_timer.setInterval(self.FLUSH_TIMER_INTERVAL)
         self._flush_timer.setSingleShot(True)
         self._flush_timer.timeout.connect(self.flush_entries)
 
