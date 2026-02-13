@@ -12,7 +12,11 @@ logger = setup_logger(__name__)
 
 
 # noinspection PyUnresolvedReferences
-class SystemManagerOptions(QDialog):
+class SystemManagerOptions(QDialog):    
+    DIALOG_WIDTH = 1500
+    DIALOG_HEIGHT = 750
+    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("System Manager Options")
@@ -63,10 +67,6 @@ class SystemManagerOptions(QDialog):
             f"Under 'System Manager Operations' you can specify how you would like to proceed. "
             f"Each action is executed one after the other. Uncheck actions to disable them.\n\n"
             f"Tips:\n\n"
-            f"It is possible to copy to and from samba shares if samba is set up correctly. "
-            f"Source and/or destination must be saved as follows:\n\n"
-            f"'smb://ip/rest of path'\n\n"
-            f"Example: 'smb://192.168.0.53/rest of smb share path'\n\n"
             f"'Essential Packages' will be installed using '{self.install_package_command}PACKAGE'.\n\n"
             f"'Additional Packages' provides access to the Arch User Repository. "
             f"Therefore 'yay' must and will be installed. This feature is available only on "
@@ -98,7 +98,7 @@ class SystemManagerOptions(QDialog):
 
         self._connect_signals()
         self.setStyleSheet(get_current_style())
-        self.setMinimumSize(1425, 950)
+        self.setMinimumSize(self.DIALOG_WIDTH, self.DIALOG_HEIGHT)
 
     def _add_distro_info(self, layout):
         yay_info = ""
@@ -570,7 +570,7 @@ class SystemManagerOptions(QDialog):
         list_widget = QListWidget()
         list_widget.addItem(item)
         list_widget.setMaximumHeight(40)
-        list_widget.itemClicked.connect(lambda widget_item: self._handle_tristate_click(widget_item))
+        list_widget.itemClicked.connect(self._handle_tristate_click)
         list_widget.setToolTip(
             "☑ = Active (will be copied)\n▣ = Disabled (will be skipped)\n☐ = Delete (will be removed)"
         )
@@ -599,6 +599,7 @@ class SystemManagerOptions(QDialog):
             list_widget.addItem(item)
             list_widget.setMaximumHeight(60 if is_specific else 40)
             list_widget.setProperty("tristate_enabled", True)
+            list_widget.itemClicked.connect(SystemManagerOptions._handle_tristate_click)
             list_widget.setToolTip(
                 "☑ = Active (will be installed)\n▣ = Disabled (will be skipped)\n☐ = Delete (will be removed)"
             )
@@ -630,9 +631,6 @@ class SystemManagerOptions(QDialog):
             packages = []
 
         package_widgets = self._create_package_list_widget(packages, is_specific)
-
-        for widget in package_widgets:
-            widget.itemClicked.connect(lambda item: self._handle_tristate_click(item))
 
         for index, widget in enumerate(package_widgets):
             grid_layout.addWidget(widget, index // 5, index % 5)
