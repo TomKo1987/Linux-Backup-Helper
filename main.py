@@ -12,7 +12,8 @@ from system_manager_launcher_dialog_thread import SystemManagerLauncher
 from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QMessageBox, QMainWindow
 # pip install pyqt6 psutil keyring
 
-sys.setrecursionlimit(5000)
+RECURSION_LIMIT = 5000
+sys.setrecursionlimit(RECURSION_LIMIT)
 from logging_config import setup_logger
 logger = setup_logger(__name__)
 def flatten_paths(*args):
@@ -131,7 +132,6 @@ class MainWindow(QMainWindow):
 
     def on_settings_changed(self):
         self.load_config()
-        self.set_exit_button()
         if self.backup_restore_window and hasattr(self.backup_restore_window, 'settings_changed'):
             try:
                 self.backup_restore_window.settings_changed.emit()
@@ -153,7 +153,11 @@ class MainWindow(QMainWindow):
     def confirm_exit(self):
         drives = [f"'{opt.get('drive_name')}'" for opt in Options.mount_options]
         is_unmounting = Options.run_mount_command_on_launch and drives
-        text = f"Unmount drive{'s' if len(drives) > 1 else ''} {' & '.join(drives)} and exit?" if is_unmounting else "Are you sure you want to exit?"
+        text = (
+            f"Unmount drive{'s' if len(drives) > 1 else ''} {' & '.join(drives)} and exit?"
+            if is_unmounting
+            else "Are you sure you want to exit?"
+        )
         if self._confirm_dialog("Exit Confirmation", text):
             if is_unmounting:
                 self.hide()
@@ -242,7 +246,7 @@ class BackupRestoreWindow(BaseWindow):
                 return True
             else:
                 return Path(path).exists()
-        except (OSError, ValueError, TypeError) as e:
+        except (OSError, ValueError, TypeError, RuntimeError) as e:
             logger.warning(f"Error checking path existence for '{path}': {e}")
             return False
 
