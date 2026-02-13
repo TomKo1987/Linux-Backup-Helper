@@ -6,6 +6,8 @@ from PyQt6.QtCore import QObject, pyqtSignal, QMutex, QMutexLocker, QUuid
 user = pwd.getpwuid(os.getuid()).pw_name
 home_user = Path.home()
 
+MAX_REPLACEMENT_ITERATIONS = 10 
+
 from logging_config import setup_logger
 logger = setup_logger(__name__)
 MAX_MOUNT_OPTIONS = 3
@@ -109,7 +111,8 @@ class Options(QObject):
                 header_order_map = {h: i for i, h in enumerate(Options.header_order)}
                 sorted_entries = []
                 for entry in Options.all_entries:
-                    if not all(hasattr(entry, a) for a in ('header', 'title', 'details')): continue
+                    if not all(hasattr(entry, a) for a in ('header', 'title', 'details')):
+                        continue
                     entry_dict = {
                         'header': entry.header,
                         'title': entry.title,
@@ -117,8 +120,7 @@ class Options(QObject):
                         'destination': entry.destination,
                         'unique_id': entry.details.get('unique_id', _new_uuid())
                     }
-                    if hasattr(entry, 'details') and isinstance(entry.details, dict):
-                        entry_dict.update({k: entry.details.get(k, False) for k in DETAIL_KEYS})
+                    entry_dict.update({k: entry.details.get(k, False) for k in DETAIL_KEYS})
                     sorted_entries.append(entry_dict)
 
                 sorted_entries.sort(key=lambda x: (header_order_map.get(x['header'], 999), x['title'].lower()))
@@ -132,9 +134,11 @@ class Options(QObject):
     @staticmethod
     def format_package_list(pkgs):
         pkgs = [str(p) for p in pkgs or []]
-        if len(pkgs) == 1: return pkgs[0]
-        if len(pkgs) == 2: return f"{pkgs[0]} and {pkgs[1]}"
-        return ", ".join(pkgs[:-1]) + (f" and {pkgs[-1]}" if pkgs else "")
+        if len(pkgs) == 1:
+            return pkgs[0]
+        if len(pkgs) == 2:
+            return f"{pkgs[0]} and {pkgs[1]}"
+        return ", ".join(pkgs[:-1]) + f" and {pkgs[-1]}"
 
     @staticmethod
     def get_system_manager_operation_text(distro_helper):
@@ -270,16 +274,21 @@ class Options(QObject):
             Options.sort_entries()
 
             if Options.main_window:
-                try: Options.main_window.settings_changed.emit()
-                except Exception as e: logger.error(f"Error emitting settings_changed signal: {e}")
+                try:
+                    Options.main_window.settings_changed.emit()
+                except Exception as e:
+                    logger.error(f"Error emitting settings_changed signal: {e}")
 
             return True
 
         except Exception as e:
             logger.error(f"Error saving config: {e}")
-            if 'temp_path' in locals() and os.path.exists(temp_path):
-                try: os.unlink(temp_path)
-                except OSError: pass
+            temp_path = locals().get('temp_path')
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
             return False
 
     @staticmethod
@@ -351,15 +360,17 @@ class Options(QObject):
                     if header and header not in Options.header_order:
                         Options.header_order.append(header)
                     title = _normalize_newlines(e_data.get('title', ''))
-                    src, dest = _process_path_list(e_data.get('source', [])), _process_path_list(
-                        e_data.get('destination', []))
+                    src = _process_path_list(e_data.get('source', []))
+                    dest = _process_path_list(e_data.get('destination', []))
                     new_entry = Options(header, title, src, dest)
                     details = e_data.get('details', {})
-                    for k in DETAIL_KEYS: new_entry.details[k] = details.get(k, False)
+                    for k in DETAIL_KEYS:
+                        new_entry.details[k] = details.get(k, False)
                     new_entry.details['unique_id'] = details.get('unique_id', _new_uuid())
                     Options.all_entries.append(new_entry)
 
-            if config_changed: Options.save_config()
+            if config_changed:
+                Options.save_config()
 
         except (IOError, json.JSONDecodeError) as e:
             error_type = "JSON decoding" if isinstance(e, json.JSONDecodeError) else "loading"
@@ -441,7 +452,7 @@ class Options(QObject):
             elif key in ["essential_packages", "additional_packages"]:
                 items = [i.get('name', str(i)) if isinstance(i, dict) else str(i) for i in items]
 
-            item_format = "".join if key == "specific_packages" else lambda l: "<br>".join(l)
+            item_format = (lambda l: "".join(l)) if key == "specific_packages" else (lambda l: "<br>".join(l))
             item_strings = [
                 item_format([str(v) for v in i.values()]) if isinstance(i, dict) else str(i)
                 for i in items
