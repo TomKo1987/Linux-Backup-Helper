@@ -15,6 +15,14 @@ logger = setup_logger(__name__)
 
 # noinspection PyUnresolvedReferences
 class SettingsWindow(BaseWindow):
+    DEFAULT_DIALOG_WIDTH = 800
+    DEFAULT_DIALOG_HEIGHT = 600
+    ENTRY_DIALOG_WIDTH = 1350
+    ENTRY_DIALOG_HEIGHT = 750
+    DEFAULT_FIELD_HEIGHT = 60
+    BUTTON_WIDTH = 300
+    
+
     def __init__(self, parent=None):
         super().__init__(parent, "settings")
         self._color_cache = {}
@@ -26,7 +34,7 @@ class SettingsWindow(BaseWindow):
         if not hasattr(Options, 'headers') or not Options.headers:
             Options.headers = getattr(Options, 'header_order', []).copy() or ['Default']
         if not hasattr(Options, 'header_order'):
-            Options.header_order = getattr(Options, 'header_order', [])
+            Options.header_order = []
         if not hasattr(Options, 'header_colors'):
             Options.header_colors = {}
         if not hasattr(Options, 'header_inactive'):
@@ -39,11 +47,6 @@ class SettingsWindow(BaseWindow):
             Options.mount_options = []
         if not hasattr(Options, 'run_mount_command_on_launch'):
             Options.run_mount_command_on_launch = False
-        if not hasattr(Options, 'entries_mutex'):
-            class _Dummy:
-                def __enter__(self): pass
-                def __exit__(self, exc_type, exc, tb): pass
-            Options.entries_mutex = getattr(Options, 'entries_mutex', _Dummy())
 
     @staticmethod
     def format_list_message(items, suffix):
@@ -76,6 +79,30 @@ class SettingsWindow(BaseWindow):
         if color not in self._color_cache:
             self._color_cache[color] = self.darken_color(color)
         return self._color_cache[color]
+
+
+    @staticmethod
+    def darken_color(color: str, factor: float = 0.7) -> str:
+        try:         
+            color = color.lstrip('#')
+            
+            r = int(color[0:2], 16)
+            g = int(color[2:4], 16)
+            b = int(color[4:6], 16)
+
+            r = int(r * factor)
+            g = int(g * factor)
+            b = int(b * factor)
+
+            r = max(0, min(255, r))
+            g = max(0, min(255, g))
+            b = max(0, min(255, b))
+
+            return f'#{r:02x}{g:02x}{b:02x}'
+        except (ValueError, IndexError) as e:
+            logger.warning(f"Fehler beim Verdunkeln der Farbe '{color}': {e}")
+            return color 
+
 
     def system_manager_options(self):
         self.hide()
@@ -252,7 +279,9 @@ class SettingsWindow(BaseWindow):
                     source = self.source_edit.text().strip()
                     destination = self.destination_edit.text().strip()
 
-                if not all([title, source, destination]):
+                source_valid = bool(source) if not isinstance(source, list) else any(source)
+                destination_valid = bool(destination) if not isinstance(destination, list) else any(destination)
+                if not all([title, source_valid, destination_valid]):
                     self.show_message("Error", "All fields must be filled in to add a new entry.")
                     return
 
@@ -303,8 +332,7 @@ class SettingsWindow(BaseWindow):
         try:
             self.settings_changed.emit()
         except Exception as e:
-            logger.error(f"Error saving entries: {e}")
-            pass
+            logger.error(f"Error emitting settings_changed after saving entries: {e}")
         self.show()
 
     def delete_entry(self):
@@ -346,8 +374,7 @@ class SettingsWindow(BaseWindow):
             try:
                 self.settings_changed.emit()
             except Exception as e:
-                logger.error(f"Error removing entries: {e}")
-                pass
+                logger.error(f"Error emitting settings_changed after deleting entries: {e}")
 
             info_message = self.format_list_message(checked_titles_quoted, " successfully deleted!")
             self.show_message("Success", info_message)
@@ -389,8 +416,7 @@ class SettingsWindow(BaseWindow):
         new_entries = text_edit.toPlainText().splitlines()
         if entries_list is None or not isinstance(entries_list, list):
             new_value = new_entries[0] if new_entries else ""
-            if new_value is not None:
-                text_edit.setPlainText(new_value)
+            text_edit.setPlainText(new_value)
             return new_value
         entries_list.clear()
         entries_list.extend(new_entries)
@@ -527,8 +553,7 @@ class SettingsWindow(BaseWindow):
         try:
             self.settings_changed.emit()
         except Exception as e:
-            logger.error(f"Error saving header: {e}")
-            pass
+            logger.error(f"Error emitting settings_changed after saving header: {e}")
         self.show_message("Success", "Header successfully created!")
 
     def prompt_for_name(self, parent_dialog, sublayout_num):
@@ -545,8 +570,7 @@ class SettingsWindow(BaseWindow):
             try:
                 self.settings_changed.emit()
             except Exception as e:
-                logger.error(f"Error: {e}")
-                pass
+                logger.error(f"Error emitting settings_changed after saving sublayout name: {e}")
 
     @staticmethod
     def darken_color(color_str):
@@ -566,8 +590,7 @@ class SettingsWindow(BaseWindow):
             try:
                 self.settings_changed.emit()
             except Exception as e:
-                logger.error(f"Error: {e}")
-                pass
+                logger.error(f"Error emitting settings_changed after choosing color: {e}")
             self.show_message("Success", "Header color successfully saved!")
 
     def update_button_color(self, header):
@@ -608,8 +631,7 @@ class SettingsWindow(BaseWindow):
             try:
                 self.settings_changed.emit()
             except Exception as e:
-                logger.error(f"Error removing header: {e}")
-                pass
+                logger.error(f"Error emitting settings_changed after removing header: {e}")
             self.show_message("Success", f"Header '{header}' has been successfully deleted!")
 
     def save_header_options(self, list_widget):
@@ -652,8 +674,7 @@ class SettingsWindow(BaseWindow):
         try:
             self.settings_changed.emit()
         except Exception as e:
-            logger.error(f"Error saving headers: {e}")
-            pass
+            logger.error(f"Error emitting settings_changed after saving headers: {e}")
         self.show_message("Success", "Header-Settings successfully saved!")
 
     def open_samba_password_dialog(self):
@@ -779,7 +800,7 @@ class SettingsWindow(BaseWindow):
         layout.addLayout(btn_layout)
 
         dialog.exec()
-        if dialog.result() != QDialog.DialogCode.Rejected:
+        if dialog.result() == QDialog.DialogCode.Accepted:
             self.manage_mount_options()
 
     def _delete_mount_option(self, option, parent_dialog=None):
