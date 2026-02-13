@@ -433,7 +433,7 @@ class SystemManagerDialog(QDialog):
     def _setup_timers(self):
         self.update_timer.timeout.connect(self.update_elapsed_time)
         self.timer.start()
-        self.update_timer.start(1000)  # Update every second
+        self.update_timer.start(1000) 
 
     def _setup_layout(self):
         self.left_panel.addWidget(self.scroll_area)
@@ -828,7 +828,7 @@ class SystemManagerThread(QThread):
             subprocess.run(['sudo', '-K'], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
             time.sleep(0.5)
         except Exception as e:
-            self.outputReceived.emit(f"Warning: Could not reset sudo state: {e}")
+            self.outputReceived.emit(f"Warning: Could not reset sudo state: {e}", "warning")
 
     def test_sudo_access(self):
         self.outputReceived.emit("Verifying sudo access...", "operation")
