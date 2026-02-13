@@ -252,7 +252,7 @@ class SettingsWindow(BaseWindow):
                     source = self.source_edit.text().strip()
                     destination = self.destination_edit.text().strip()
 
-                if not all([title, source, destination]) or not title.strip():
+                if not all([title, source, destination]):
                     self.show_message("Error", "All fields must be filled in to add a new entry.")
                     return
 
@@ -812,5 +812,5 @@ class SettingsWindow(BaseWindow):
         else:
             Options.mount_options.append(new_option)
         Options.save_config()
-        dialog.close()
+        dialog.accept()
         self.show_message('Success', 'Mount Options successfully saved!')
