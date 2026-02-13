@@ -1,5 +1,8 @@
 import secrets
+from typing import Optional
 from PyQt6.QtCore import pyqtSignal
+
+MAX_ATTEMPTS = 3 
 from PyQt6.QtWidgets import QDialog, QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout, QMessageBox
 
 
@@ -59,7 +62,7 @@ class SudoPasswordDialog(QDialog):
 
     def update_failed_attempts(self, failed_attempts):
         self.failed_attempts = failed_attempts
-        if self.failed_attempts >= 3:
+        if self.failed_attempts >= MAX_ATTEMPTS:
             msg = "Attention! Third attempt!\nPassword could be blocked temporarily if entered incorrectly."
             self.info_label.setStyleSheet("color: red; font-style: italic; font-weight: bold;")
         else:
@@ -72,14 +75,14 @@ class SudoPasswordDialog(QDialog):
         self.adjustSize()
 
 class SecureString:
-    def __init__(self, initial_value=None):
+    def __init__(self, initial_value: Optional[str] = None):
         self._value = bytearray(initial_value.encode('utf-8')) if initial_value else bytearray()
 
-    def get_value(self):
+    def get_value(self) -> str:
         return self._value.decode('utf-8') if self._value else ''
 
-    def clear(self):
+    def clear(self) -> None:
         if self._value:
             for i in range(len(self._value)):
-                self._value[i] = secrets.randbelow(256)
+                self._value[i] = 0  
             self._value.clear()
