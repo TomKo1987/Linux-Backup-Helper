@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Optional, List, Dict, Any, Tuple
 from PyQt6.QtWidgets import QMessageBox, QCheckBox
 import subprocess, pwd, os, shlex, threading, time
 
@@ -6,6 +7,12 @@ user = pwd.getpwuid(os.getuid()).pw_name
 
 from logging_config import setup_logger
 logger = setup_logger(__name__)
+
+MOUNT_CHECK_DELAY = 0.5 
+MOUNT_TIMEOUT = 45  
+UNMOUNT_TIMEOUT = 30  
+PROCESS_KILL_TIMEOUT = 10  
+
 
 
 class DriveManager:
@@ -20,7 +27,7 @@ class DriveManager:
             name = opt.get('drive_name', '')
             paths = [f"/run/media/{user}/{name}", f"/media/{user}/{name}", f"/mnt/{name}", name]
             return any(p in output for p in paths)
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError, ValueError) as e:
             logger.exception(f"[is_drive_mounted] Error checking mount status for drive '{opt.get('drive_name', '')}': {e}")
             return False
 
@@ -108,8 +115,9 @@ class DriveManager:
                 return False, "Contains suspicious arguments"
         except ValueError as e:
             return False, f"Invalid command syntax: {e}"
-        except Exception as e:
+        except (OSError, RuntimeError) as e:
             return False, f"Command validation error: {e}"
+
         return True, ""
 
     def mount_drive(self, drive, parent=None, remember_unmount=True):
@@ -140,7 +148,7 @@ class DriveManager:
                 capture_output=True,
                 text=True,
                 check=False,
-                timeout=45
+                timeout=MOUNT_TIMEOUT
             )
             if result.returncode != 0:
                 error_msg = f"Drive '{name}' could not be mounted (exit code: {result.returncode})"
@@ -149,7 +157,7 @@ class DriveManager:
                 logger.error(f"[mount_drive] {error_msg}")
                 self._show_message("Mount Error", error_msg, QMessageBox.Icon.Warning, parent)
                 return False
-            time.sleep(0.5)
+            time.sleep(MOUNT_CHECK_DELAY) 
             if not self.is_drive_mounted(drive):
                 error_msg = f"Drive '{name}' mount command succeeded but drive not detected as mounted"
                 logger.warning(f"[mount_drive] {error_msg}")
@@ -165,24 +173,29 @@ class DriveManager:
             error_msg = f"Mount command for drive '{name}' timed out after 45 seconds"
             logger.error(f"[mount_drive] {error_msg}")
             try:
-                subprocess.run(['pkill', '-f', cmd[:50]], timeout=10, check=False)
-            except Exception as kill_error:
+                subprocess.run(['pkill', '-f', cmd[:50]], timeout=PROCESS_KILL_TIMEOUT, check=False)
+            except (subprocess.SubprocessError, OSError) as kill_error:
                 logger.warning(f"[mount_drive] Could not kill mount process: {kill_error}")
             self._show_message("Mount Error", error_msg, QMessageBox.Icon.Warning, parent)
             return False
-        except Exception as e:
+        except (OSError, ValueError, RuntimeError) as e:
             error_msg = f"Unexpected error mounting drive '{name}': {str(e)[:200]}"
             logger.exception(f"[mount_drive] {error_msg}")
             self._show_message("Mount Error", error_msg, QMessageBox.Icon.Critical, parent)
             return False
 
     def unmount_drive(self, drive, parent=None):
-        name, cmd = drive.get('drive_name', ''), drive.get('unmount_command', '')
+        name = drive.get('drive_name', '')
+        cmd = drive.get('unmount_command', '')
         if not cmd:
+            return False
+        is_valid, error_msg = self._validate_mount_command(cmd)
+        if not is_valid:
+            logger.warning(f"[unmount_drive] Invalid unmount command for drive '{name}': {error_msg}")
             return False
         try:
             logger.info(f"[unmount_drive] Unmounting drive '{name}' with command: {cmd}")
-            result = subprocess.run(shlex.split(cmd), shell=False, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(shlex.split(cmd), shell=False, capture_output=True, text=True, timeout=UNMOUNT_TIMEOUT)
             if result.returncode != 0:
                 logger.warning(f"[unmount_drive] Unmount command for drive '{name}' returned code {result.returncode}")
             return result.returncode == 0
@@ -190,7 +203,7 @@ class DriveManager:
             logger.error(f"[unmount_drive] Unmount command for drive '{name}' timed out.")
             self._show_message("Unmount Error", f"Drive '{name}' unmount timed out.", QMessageBox.Icon.Warning, parent)
             return False
-        except Exception as e:
+        except (OSError, ValueError, RuntimeError) as e:
             logger.exception(f"[unmount_drive] Error unmounting drive '{name}': {e}")
             self._show_message("Unmount Error", f"Drive '{name}' could not be unmounted.\nError: {e}", QMessageBox.Icon.Critical, parent)
             return False
