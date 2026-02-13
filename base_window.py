@@ -396,8 +396,7 @@ class BaseWindow(QDialog):
                 widget.setParent(None)
                 widget.deleteLater()
             elif item.layout():
-                self._clear_layout(item.layout())
-            # QSpacerItems have neither widget nor layout – takeAt already removes them
+                self._clear_layout(item.layout())            
 
     def clear_layout_contents(self):
         self._tooltip_cache = None
@@ -406,7 +405,10 @@ class BaseWindow(QDialog):
             if hasattr(cb, '_tooltip_set'):
                 delattr(cb, '_tooltip_set')
             if hasattr(cb, 'enterEvent'):
-                cb.enterEvent = None
+                try:
+                    del cb.enterEvent
+                except AttributeError:
+                    pass
             cb.blockSignals(True)
 
         self._clear_layout(self.top_controls)
