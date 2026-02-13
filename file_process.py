@@ -278,7 +278,7 @@ class FileProcessDialog(QDialog):
             self.status_label.setText(f"{self.operation_type} canceled!\n")
             self.status_label.setStyleSheet(
                 "color: #ff8587; font-weight: bold; font-size: 20px; background-color: transparent;")
-            text = "ó°œº \nProcess aborted due to samba file error." if self._smb_error_occurred else "ó°œº \nProcess aborted by user."
+            text = "✖ \nProcess aborted due to samba file error." if self._smb_error_occurred else "✖ \nProcess aborted by user."
             self.current_file_label.setText(text)
             err_style = "color: #ff8587; font-weight: bold; font-size: 17px;"
             self.current_file_label.setStyleSheet(err_style)
@@ -594,7 +594,7 @@ class FileCopyThread(QThread):
                 return Path(file_path).stat().st_size
         except Exception as e:
             logger.error(f"Error getting file size for {file_path}: {e}")
-            if self._smb_handler and SmbFileHandler.is_smb_path(file_path):
+            if self._smb_handler is not None and SmbFileHandler.is_smb_path(file_path):
                 self.file_error.emit(file_path, f"File size cannot be determined. {e}")
                 self.smb_error_cancel.emit()
             return 0
@@ -952,7 +952,9 @@ class SmbFileHandler:
             return None
         fn = Path(source).name
         try:
-            os.makedirs(os.path.dirname(destination), exist_ok=True)
+            dest_dir = os.path.dirname(destination)
+            if dest_dir:
+                os.makedirs(dest_dir, exist_ok=True)
             if Path(source).is_dir():
                 shutil.copytree(source, destination, dirs_exist_ok=True)
                 total = sum(f.stat().st_size for f in Path(destination).rglob('*') if f.is_file())
