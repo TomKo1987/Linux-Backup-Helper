@@ -6,6 +6,8 @@ from PyQt6.QtWidgets import QDialog, QLabel, QLineEdit, QPushButton, QVBoxLayout
 from logging_config import setup_logger
 logger = setup_logger(__name__)
 
+KWALLET_TIMEOUT = 2 
+
 
 # noinspection PyUnresolvedReferences
 class SambaPasswordDialog(QDialog):
@@ -119,7 +121,7 @@ class SambaPasswordManager:
             return self.kwallet_entry
         try:
             result = subprocess.run(["kwallet-query", "--list-entries", self.kwallet_wallet],
-                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=2)
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=KWALLET_TIMEOUT)
             entries = result.stdout.strip().splitlines()
             for entry in entries:
                 if entry.startswith("smb-"):
@@ -136,7 +138,7 @@ class SambaPasswordManager:
             return None, None
         try:
             result = subprocess.run(["kwallet-query", "--read-password", entry, self.kwallet_wallet],
-                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=2)
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=KWALLET_TIMEOUT)
             raw = result.stdout.strip()
             if not raw:
                 return None, None
@@ -155,7 +157,7 @@ class SambaPasswordManager:
             data = json.dumps({"login": username, "password": password})
             with subprocess.Popen(["kwallet-query", "--write-password", entry, self.kwallet_wallet],
                                   stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as proc:
-                proc.communicate(input=data.encode(), timeout=2)
+                proc.communicate(input=data.encode(), timeout=KWALLET_TIMEOUT)
             logger.info(f"Saved samba credentials to KWallet entry: {entry}")
         except Exception as e:
             logger.exception(f"Failed to save credentials to KWallet: {type(e).__name__}")
@@ -196,7 +198,7 @@ class SambaPasswordManager:
         if entry:
             try:
                 subprocess.run(["kwallet-query", "--delete-entry", entry, self.kwallet_wallet],
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=KWALLET_TIMEOUT)
                 logger.info(f"Deleted KWallet entry: {entry}")
                 self.kwallet_entry = None
             except Exception as e:
