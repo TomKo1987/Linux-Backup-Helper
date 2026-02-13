@@ -4,6 +4,8 @@ from logging_config import setup_logger
 logger = setup_logger(__name__)
 PACKAGE_NAME_REGEX = re.compile(r'^[a-zA-Z0-9._+:-]+$')
 
+MIN_PACKAGES_FOR_PARALLEL = 5 
+
 class LinuxDistroHelper:
     def __init__(self):
         info = self._detect_distro_info()
@@ -166,7 +168,7 @@ class LinuxDistroHelper:
         if not valid_packages:
             return []
 
-        if len(valid_packages) <= 5:
+        if len(valid_packages) <= MIN_PACKAGES_FOR_PARALLEL:
             return [pkg for pkg in valid_packages if not self.package_is_installed(pkg)]
 
         return self._check_packages_parallel(valid_packages)
