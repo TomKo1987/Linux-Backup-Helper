@@ -7,6 +7,9 @@ from PyQt6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QPushButton, QLabel
 from logging_config import setup_logger
 logger = setup_logger(__name__)
 
+MAX_SCREEN_WIDTH_RATIO = 0.9  
+WORKER_WAIT_TIMEOUT = 2000
+
 
 # noinspection PyUnresolvedReferences
 class InxiWorker(QThread):
@@ -109,7 +112,7 @@ class SystemInfoWindow(QDialog):
                 optimal_width = max_line_width + 100
 
                 screen = self.screen().availableGeometry()
-                max_width = int(screen.width() * 0.9)
+                max_width = int(screen.width() * MAX_SCREEN_WIDTH_RATIO)
 
                 new_width = min(optimal_width, max_width)
                 if new_width > self.width():
@@ -133,7 +136,9 @@ class SystemInfoWindow(QDialog):
     def closeEvent(self, event):
         if self.worker and self.worker.isRunning():
             self.worker.terminate()
-            self.worker.wait()
+            if not self.worker.wait(WORKER_WAIT_TIMEOUT):
+                logger.warning("Worker-Thread konnte nicht rechtzeitig beendet werden")
+                self.worker.terminate()
 
         if self.parent():
             self.parent().show()
