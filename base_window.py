@@ -10,7 +10,13 @@ logger = setup_logger(__name__)
 
 
 # noinspection PyUnresolvedReferences
-class BaseWindow(QDialog):
+class BaseWindow(QDialog):    
+    COLUMN_COUNT_WIDE = 4
+    COLUMN_COUNT_NARROW = 2
+    DEFAULT_BUTTON_HEIGHT = 60
+    DEFAULT_FIELD_HEIGHT = 60
+    
+
     settings_changed = pyqtSignal()
 
     def __init__(self, parent=None, window_type="base"):
@@ -32,7 +38,7 @@ class BaseWindow(QDialog):
         self.main_layout.addWidget(self.scroll_area, stretch=1)
         self.selectall = QCheckBox("Select All")
         self.column_toggle = QPushButton()
-        self.columns = 4
+        self.columns = self.COLUMN_COUNT_WIDE
         self.checkbox_dirs = []
         self.settings_changed.connect(self.setup_ui)
         self._shown_once = False
@@ -65,7 +71,7 @@ class BaseWindow(QDialog):
             Options.headers = getattr(Options, 'header_order', []).copy()
 
         key = f"{self.window_type}_window_columns"
-        self.columns = 4 if Options.ui_settings.get(key, 2) == 4 else 2
+        self.columns = self.COLUMN_COUNT_WIDE if Options.ui_settings.get(key, 2) == 4 else 2
         self.create_top_controls(f"{2 if self.columns == 4 else 4} Columns")
 
         self.content_widget = QWidget()
@@ -107,7 +113,9 @@ class BaseWindow(QDialog):
             "- Files are copied if the source file is newer than the destination, or if the destination does not exist.<br>"
             "- For directories, all contained files are evaluated individually.<br>"
             "- File attributes (modification time, permissions) are preserved.<br>"
-            "- Network (SMB) paths are supported; files can be copied to and from SMB shares.<br><br>"
+            "- It is possible to copy to and from samba shares if samba is set up correctly. "
+            "Source and/or destination must be saved as follows: 'smb://ip/rest of path'<br>"
+            "Example: 'smb://192.168.0.53/rest of smb share path'<br><br>"
             "<b>Skipped Files:</b><br>"
             "- Files are skipped and <b>NOT</b> copied if:<br>"
             "&emsp;- The destination file already exists <b>and</b> has the same size <b>and</b> is at least as new as the source file (i.e., up to date).<br>"
@@ -396,17 +404,15 @@ class BaseWindow(QDialog):
                 widget.setParent(None)
                 widget.deleteLater()
             elif item.layout():
-                self._clear_layout(item.layout())            
+                self._clear_layout(item.layout())
 
     def clear_layout_contents(self):
         self._tooltip_cache = None
 
         for cb, *_ in self.checkbox_dirs:
-            if hasattr(cb, '_tooltip_set'):
-                delattr(cb, '_tooltip_set')
-            if hasattr(cb, 'enterEvent'):
+            for attr in ['_tooltip_set', 'enterEvent']:
                 try:
-                    del cb.enterEvent
+                    delattr(cb, attr)
                 except AttributeError:
                     pass
             cb.blockSignals(True)
@@ -668,8 +674,10 @@ class BaseWindow(QDialog):
         for cb, *_ in self.checkbox_dirs:
             cb.blockSignals(True)
             for attr in ['_tooltip_set', 'enterEvent', 'entry_data', 'window_type']:
-                if hasattr(cb, attr):
+                try:
                     delattr(cb, attr)
+                except AttributeError:
+                    pass
 
         self.clear_layout_contents()
 
