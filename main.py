@@ -264,7 +264,7 @@ class BackupRestoreWindow(BaseWindow):
 
     def _confirm_continue_with_missing(self, unprocessable_items):
         warning_message = "The following entries could not be processed because they do not exist:\n\n"
-        warning_message += "\n".join([f"• {item}" for item in unprocessable_items])
+        warning_message += "\n".join([f"- {item}" for item in unprocessable_items])
         warning_message += f"\n\nDo you want to continue with the available entries?"
         warning_title = f"{'Backup' if self.window_type == 'backup' else 'Restore'} Warning"
         warning_box = QMessageBox(QMessageBox.Icon.Warning, warning_title, warning_message, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, self)
