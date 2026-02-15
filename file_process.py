@@ -1126,7 +1126,7 @@ class LogEntryListModel(QAbstractListModel):
 
 
 # noinspection PyUnresolvedReferences
-class VirtualLogTabWidget(QWidget):    
+class VirtualLogTabWidget(QWidget):
     FLUSH_TIMER_INTERVAL = 300
     
     def __init__(self, parent=None):
