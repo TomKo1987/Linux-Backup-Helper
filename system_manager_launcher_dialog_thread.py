@@ -805,9 +805,9 @@ class SystemManagerThread(QThread):
             "install_essential_packages": ("Installing 'Essential Packages'...",
                                            lambda: self.batch_install(Options.essential_packages, "Essential Package")),
             "install_yay": ("Installing 'yay'...", self.install_yay),
-            "install_additional_packages": ("Installing 'Additional Packages' with 'yay'...",
-                                            lambda: self.batch_install(Options.additional_packages,
-                                                                       "Additional Package")),
+            "install_aur_packages": ("Installing 'AUR Packages' with 'yay'...",
+                                            lambda: self.batch_install(Options.aur_packages,
+                                                                       "AUR Package")),
             "install_specific_packages": ("Installing 'Specific Packages'...",
                                           self.install_specific_packages_based_on_session)
         }
@@ -1118,7 +1118,7 @@ class SystemManagerThread(QThread):
     def batch_install(self, packages, package_type):
         task_id_map = {
             "Essential Package": "install_essential_packages",
-            "Additional Package": "install_additional_packages"
+            "AUR Package": "install_aur_packages"
         }
         task_id = task_id_map.get(package_type)
 
