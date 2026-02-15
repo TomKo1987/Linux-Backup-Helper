@@ -50,7 +50,7 @@ class Options(QObject):
     all_entries, entries_sorted = [], []
     mount_options, headers, header_order, header_inactive = [], [], [], []
     header_colors, system_manager_operations = {}, []
-    system_files, essential_packages, additional_packages, specific_packages = [], [], [], []
+    system_files, essential_packages, aur_packages, specific_packages = [], [], [], []
     sublayout_names = {f'sublayout_games_{i}': '' for i in range(1, 5)}
     ui_settings = {
         "backup_window_columns": 2,
@@ -176,8 +176,8 @@ class Options(QObject):
             "update_system": f"System update<br>(Using '{'yay --noconfirm' if distro_helper.package_is_installed('yay') else pkg_update_cmd}'.)",
             "install_kernel_header": f"Check kernel version and install corresponding headers ({distro_helper.get_kernel_headers_pkg()})",
             "install_essential_packages": f"Install 'Essential Packages' (Using '{pkg_install_cmd}'.)",
-            "install_yay": "Install 'yay' (Necessary for 'Additional Packages'.)",
-            "install_additional_packages": "Install 'Additional Packages' ('yay' needed.)",
+            "install_yay": "Install 'yay' (Necessary for 'AUR Packages'.)",
+            "install_aur_packages": "Install 'AUR Packages' ('yay' needed.)",
             "install_specific_packages": f"Install 'Specific Packages' for {session}<br>(Using '{pkg_install_cmd}'.)",
             "enable_printer_support": f"Initialize printer support<br>(Install '{printer_pkgs}'.<br>Enable && start 'cups.service'.)",
             "enable_samba_network_filesharing": f"Initialize samba (Network filesharing via samba)<br>(Install '{samba_pkgs}'. Enable && start 'smb.service'.)",
@@ -213,7 +213,7 @@ class Options(QObject):
         )
 
         essential_packages = sort_by_name(Options.essential_packages.copy())
-        additional_packages = sort_by_name(Options.additional_packages.copy())
+        aur_packages = sort_by_name(Options.aur_packages.copy())
 
         specific_packages = Options.specific_packages.copy()
         if isinstance(specific_packages, list) and all(isinstance(i, dict) for i in specific_packages):
@@ -235,7 +235,7 @@ class Options(QObject):
             "system_manager_operations": Options.system_manager_operations,
             "system_files": system_files,
             "essential_packages": essential_packages,
-            "additional_packages": additional_packages,
+            "aur_packages": aur_packages,
             "specific_packages": specific_packages,
             "ui_settings": Options.ui_settings,
             "user_shell": Options.user_shell,
@@ -340,7 +340,7 @@ class Options(QObject):
                 if isinstance(f, dict): f.setdefault('disabled', False)
 
             Options.essential_packages = Options._normalize_package_list(entries_data.get("essential_packages", []))
-            Options.additional_packages = Options._normalize_package_list(entries_data.get("additional_packages", []))
+            Options.aur_packages = Options._normalize_package_list(entries_data.get("aur_packages", []))
 
             raw_spec_pkgs = entries_data.get("specific_packages", [])
             if isinstance(raw_spec_pkgs, list):
@@ -416,7 +416,7 @@ class Options(QObject):
         operation_keys = {
             "copy_system_files": "system_files",
             "install_essential_packages": "essential_packages",
-            "install_additional_packages": "additional_packages",
+            "install_aur_packages": "aur_packages",
             "install_specific_packages": "specific_packages",
             "set_user_shell": "user_shell"
         }
@@ -431,7 +431,7 @@ class Options(QObject):
             if op not in op_text: continue
             raw_items = getattr(Options, key, None)
             if not raw_items: continue
-            if key in ["system_files", "essential_packages", "additional_packages", "specific_packages"]:
+            if key in ["system_files", "essential_packages", "aur_packages", "specific_packages"]:
                 items = [i for i in raw_items if
                          (isinstance(i, dict) and not i.get('disabled')) or not isinstance(i, dict)]
             else:
@@ -449,7 +449,7 @@ class Options(QObject):
 
                 items = [{k: format_val(mapped, k, v) for k, v in i.items() if k != 'disabled'}
                          for i in items]
-            elif key in ["essential_packages", "additional_packages"]:
+            elif key in ["essential_packages", "aur_packages"]:
                 items = [i.get('name', str(i)) if isinstance(i, dict) else str(i) for i in items]
 
             item_format = (lambda l: "".join(l)) if key == "specific_packages" else (lambda l: "<br>".join(l))
