@@ -77,7 +77,7 @@ class SettingsWindow(BaseWindow):
 
     def _get_cached_darker_color(self, color):
         if color not in self._color_cache:
-            self._color_cache[color] = self.darken_color(color)
+            self._color_cache[color] = self.darken_header_color(color)
         return self._color_cache[color]
 
 
@@ -573,7 +573,7 @@ class SettingsWindow(BaseWindow):
                 logger.error(f"Error emitting settings_changed after saving sublayout name: {e}")
 
     @staticmethod
-    def darken_color(color_str):
+    def darken_header_color(color_str):
         color = QColor(color_str)
         h, s, v, a = color.getHsv()
         v = max(0, v - 120)
@@ -598,7 +598,7 @@ class SettingsWindow(BaseWindow):
             if child.text() == header:
                 color = Options.header_colors.get(header, '#ffffff')
                 child.setStyleSheet(
-                    f"color: black; font-weight: bold; font-size: 20px; background-color: {self.darken_color(color)};")
+                    f"color: black; font-weight: bold; font-size: 20px; background-color: {self.darken_header_color(color)};")
 
     def delete_header(self, header, list_widget):
         has_associated_entries = False
