@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Tuple
 from PyQt6.QtWidgets import QMessageBox, QCheckBox
 import subprocess, pwd, os, shlex, threading, time
 
@@ -12,7 +11,6 @@ MOUNT_CHECK_DELAY = 0.5
 MOUNT_TIMEOUT = 45  
 UNMOUNT_TIMEOUT = 30  
 PROCESS_KILL_TIMEOUT = 10  
-
 
 
 class DriveManager:
