@@ -39,7 +39,7 @@ class SystemManagerOptions(QDialog):
         self.system_files_widgets = []
         self.original_system_files = []
         self.essential_packages_widgets = []
-        self.additional_packages_widgets = []
+        self.aur_packages_widgets = []
         self.specific_packages_widgets = []
         self.current_option_type = None
 
@@ -68,7 +68,7 @@ class SystemManagerOptions(QDialog):
             f"Each action is executed one after the other. Uncheck actions to disable them.\n\n"
             f"Tips:\n\n"
             f"'Essential Packages' will be installed using '{self.install_package_command}PACKAGE'.\n\n"
-            f"'Additional Packages' provides access to the Arch User Repository. "
+            f"'AUR Packages' provides access to the Arch User Repository. "
             f"Therefore 'yay' must and will be installed. This feature is available only on "
             f"Arch Linux based distributions.\n\n"
             f"You can also define 'Specific Packages'. These packages will be installed only "
@@ -117,7 +117,7 @@ class SystemManagerOptions(QDialog):
         self.system_files_button = QPushButton("System Files")
         self.package_buttons = {
             "essential_packages": QPushButton("Essential Packages"),
-            "additional_packages": QPushButton("Additional Packages"),
+            "aur_packages": QPushButton("AUR Packages"),
             "specific_packages": QPushButton("Specific Packages")
         }
 
@@ -187,7 +187,7 @@ class SystemManagerOptions(QDialog):
         return select_all_checkbox
 
     def _create_operation_checkboxes(self, grid_layout):
-        arch_only_operations = {'update_mirrors', 'install_yay', 'install_additional_packages'}
+        arch_only_operations = {'update_mirrors', 'install_yay', 'install_aur_packages'}
         system_manager_operation_text = Options.get_system_manager_operation_text(self.distro_helper)
         operations = [(text.replace("<br>", "\n"), key) for key, text in system_manager_operation_text.items()]
 
@@ -212,7 +212,7 @@ class SystemManagerOptions(QDialog):
         tooltips = {
             'update_mirrors': "Mirror update is available on Arch Linux only",
             'install_yay': "Available only on Arch Linux based distributions",
-            'install_additional_packages': "Available only on Arch Linux based distributions"
+            'install_aur_packages': "Available only on Arch Linux based distributions"
         }
 
         if operation_key in tooltips:
@@ -225,11 +225,11 @@ class SystemManagerOptions(QDialog):
 
     def _setup_checkbox_interactions(self, select_all_checkbox):
         install_yay_checkbox = self._get_checkbox_by_key('install_yay')
-        install_additional_packages_checkbox = self._get_checkbox_by_key('install_additional_packages')
+        install_aur_packages_checkbox = self._get_checkbox_by_key('install_aur_packages')
 
         def handle_dependencies():
-            if install_additional_packages_checkbox and install_yay_checkbox:
-                if install_additional_packages_checkbox.isChecked():
+            if install_aur_packages_checkbox and install_yay_checkbox:
+                if install_aur_packages_checkbox.isChecked():
                     install_yay_checkbox.setEnabled(False)
                     install_yay_checkbox.setChecked(True)
                 elif self.distro_helper.supports_aur():
@@ -241,18 +241,18 @@ class SystemManagerOptions(QDialog):
         def toggle_all_checkboxes():
             checked = select_all_checkbox.checkState() == Qt.CheckState.Checked
             for operation_checkbox, key in self.system_manager_operations_widgets:
-                if key not in ['install_yay', 'install_additional_packages'] and operation_checkbox.isEnabled():
+                if key not in ['install_yay', 'install_aur_packages'] and operation_checkbox.isEnabled():
                     operation_checkbox.setChecked(checked)
 
-            if install_additional_packages_checkbox and install_additional_packages_checkbox.isEnabled():
-                install_additional_packages_checkbox.setChecked(checked)
+            if install_aur_packages_checkbox and install_aur_packages_checkbox.isEnabled():
+                install_aur_packages_checkbox.setChecked(checked)
 
         def update_select_all_state():
             enabled_checkboxes = [
                 cb for cb, key in self.system_manager_operations_widgets
                 if cb.isEnabled() and not (key == 'install_yay' and
-                                           install_additional_packages_checkbox and
-                                           install_additional_packages_checkbox.isChecked())
+                                           install_aur_packages_checkbox and
+                                           install_aur_packages_checkbox.isChecked())
             ]
 
             if not enabled_checkboxes:
@@ -273,7 +273,7 @@ class SystemManagerOptions(QDialog):
         select_all_checkbox.stateChanged.connect(toggle_all_checkboxes)
         for checkbox, option_key in self.system_manager_operations_widgets:
             checkbox.stateChanged.connect(update_select_all_state)
-            if option_key == 'install_additional_packages':
+            if option_key == 'install_aur_packages':
                 checkbox.stateChanged.connect(handle_dependencies)
 
         handle_dependencies()
@@ -901,7 +901,7 @@ class SystemManagerOptions(QDialog):
                 options_changed = True
             Options.system_files = new_files
 
-        elif current_type in ["essential_packages", "additional_packages", "specific_packages"]:
+        elif current_type in ["essential_packages", "aur_packages", "specific_packages"]:
             widgets = getattr(self, f"{current_type}_widgets", [])
             new_packages = []
             is_specific = (current_type == "specific_packages")
@@ -944,7 +944,7 @@ class SystemManagerOptions(QDialog):
         if options_changed:
             if current_type == "system_files":
                 QTimer.singleShot(0, self.edit_system_files)
-            elif current_type in ["essential_packages", "additional_packages", "specific_packages"]:
+            elif current_type in ["essential_packages", "aur_packages", "specific_packages"]:
                 QTimer.singleShot(0, lambda: self.edit_packages(current_type))
 
     def go_back(self):
