@@ -10,8 +10,8 @@ from system_info_window import SystemInfoWindow
 from file_process import FileProcessDialog, SmbFileHandler
 from PyQt6.QtCore import Qt, QCoreApplication, QTimer, pyqtSignal
 from system_manager_launcher_dialog_thread import SystemManagerLauncher
-from PyQt6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QMainWindow, QMenu, QMessageBox, QPushButton,
-                             QSystemTrayIcon, QTextEdit, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QMainWindow, QMenu, QMessageBox, QPushButton, QWidget,
+                             QSystemTrayIcon, QTextEdit, QVBoxLayout)
 
 from logging_config import get_log_file_path, setup_logger
 logger = setup_logger(__name__)
@@ -152,11 +152,14 @@ class MainWindow(QMainWindow):
         win = getattr(self, attr, None)
         if not win:
             return
-        for method in (win.close, win.deleteLater):
-            try:
-                method()
-            except RuntimeError as exc:
-                logger.debug("_close_window(%s) %s: %s", attr, method.__name__, exc)
+        try:
+            win.close()
+        except RuntimeError as exc:
+            logger.debug("_close_window(%s) close: %s", attr, exc)
+        try:
+            win.deleteLater()
+        except RuntimeError as exc:
+            logger.debug("_close_window(%s) deleteLater: %s", attr, exc)
         setattr(self, attr, None)
 
     def open_backup_restore(self, window_type: str) -> None:
@@ -293,7 +296,7 @@ class MainWindow(QMainWindow):
 
         if _confirm_dialog(self, "Exit Confirmation", text):
             event.accept()
-            QCoreApplication.exit(0)
+            QTimer.singleShot(0, lambda: QCoreApplication.exit(0))
         else:
             event.ignore()
 
