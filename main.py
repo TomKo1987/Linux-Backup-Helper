@@ -111,7 +111,6 @@ class MainWindow(QMainWindow):
             ("Restore Backup", lambda: self.open_backup_restore("restore")),
             ("Settings",       self.open_settings),
             ("View Logs",      self.open_log_viewer),
-            (None, None),
             ("Exit",           self.confirm_exit),
         ]
         for label, callback in tray_items:
@@ -238,7 +237,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(dlg, "Error", f"Copy failed:\n{exc}")
 
         btn_row = QHBoxLayout()
-        for label, fn in (("🗑️ Clear", _clear), ("📋 Copy", _copy), ("Close", dlg.accept)):
+        for label, fn in (("🗑️ Clear logs", _clear), ("📋 Copy to clipboard", _copy), ("Close", dlg.accept)):
             btn = QPushButton(label)
             btn.clicked.connect(fn)
             btn_row.addWidget(btn)
