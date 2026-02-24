@@ -1,55 +1,55 @@
-from options import Options
+from pathlib import Path
+import json, os, re, tempfile
 from functools import partial
 from PyQt6.QtGui import QColor
 from base_window import BaseWindow
 from PyQt6.QtCore import Qt, QMutexLocker
 from global_style import get_current_style
+from options import Options, MAX_MOUNT_OPTIONS
 from system_manager_options import SystemManagerOptions
-from PyQt6.QtWidgets import (QMessageBox, QDialog, QVBoxLayout, QLabel, QFormLayout, QComboBox, QLineEdit, QPushButton,
-                             QSizePolicy, QHBoxLayout, QWidget, QCheckBox, QGridLayout, QDialogButtonBox, QColorDialog,
-                             QFileDialog, QTextEdit, QListWidget, QListWidgetItem, QInputDialog)
+from PyQt6.QtWidgets import (QCheckBox, QColorDialog, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGridLayout,
+                             QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox,
+                             QPushButton, QSizePolicy, QTextEdit, QVBoxLayout, QWidget)
 
 from logging_config import setup_logger
 logger = setup_logger(__name__)
 
 
-# noinspection PyUnresolvedReferences
 class SettingsWindow(BaseWindow):
-    DEFAULT_DIALOG_WIDTH = 800
-    DEFAULT_DIALOG_HEIGHT = 600
-    ENTRY_DIALOG_WIDTH = 1350
-    ENTRY_DIALOG_HEIGHT = 750
-    DEFAULT_FIELD_HEIGHT = 60
-    BUTTON_WIDTH = 300
-    
 
-    def __init__(self, parent=None):
-        super().__init__(parent, "settings")
-        self._color_cache = {}
+    def __init__(self, parent=None) -> None:
+        self._color_cache:       dict = {}
         self.mount_options_dialog = None
-        self._ensure_options_defaults()
+        super().__init__(parent, "settings")
+        self._ensure_defaults()
 
     @staticmethod
-    def _ensure_options_defaults():
-        if not hasattr(Options, 'headers') or not Options.headers:
-            Options.headers = getattr(Options, 'header_order', []).copy() or ['Default']
-        if not hasattr(Options, 'header_order'):
-            Options.header_order = []
-        if not hasattr(Options, 'header_colors'):
-            Options.header_colors = {}
-        if not hasattr(Options, 'header_inactive'):
-            Options.header_inactive = []
-        if not hasattr(Options, 'sublayout_names'):
-            Options.sublayout_names = {}
-        if not hasattr(Options, 'all_entries'):
-            Options.all_entries = []
-        if not hasattr(Options, 'mount_options'):
-            Options.mount_options = []
-        if not hasattr(Options, 'run_mount_command_on_launch'):
-            Options.run_mount_command_on_launch = False
+    def _ensure_defaults() -> None:
+        for attr, default in (
+            ("headers",        lambda: getattr(Options, "header_order", []).copy() or ["Default"]),
+            ("header_order",   list),
+            ("header_colors",  dict),
+            ("header_inactive",list),
+            ("sublayout_names",dict),
+            ("all_entries",    list),
+            ("mount_options",  list),
+            ("run_mount_command_on_launch", lambda: False),
+        ):
+            if not hasattr(Options, attr):
+                setattr(Options, attr, default() if callable(default) else default)
+
+    def show_message(self, title: str, message: str,
+                     icon: QMessageBox.Icon = QMessageBox.Icon.Information) -> None:
+        QMessageBox(icon, title, message, QMessageBox.StandardButton.Ok, self).exec()
+
+    def _make_dialog(self, title: str, size: tuple = (800, 600)) -> tuple[QDialog, QVBoxLayout]:
+        dlg = QDialog(self)
+        dlg.setMinimumSize(*size)
+        dlg.setWindowTitle(title)
+        return dlg, QVBoxLayout(dlg)
 
     @staticmethod
-    def format_list_message(items, suffix):
+    def _format_list(items: list, suffix: str) -> str:
         if not items:
             return suffix
         if len(items) == 1:
@@ -58,636 +58,591 @@ class SettingsWindow(BaseWindow):
             return f"{items[0]} and {items[1]}{suffix}"
         return f"{', '.join(items[:-1])}, and {items[-1]}{suffix}"
 
-    def show_message(self, title, message, icon=QMessageBox.Icon.Information):
-        QMessageBox(icon, title, message, QMessageBox.StandardButton.Ok, self).exec()
+    def get_checked_entries(self) -> list:
+        return [
+            (cb, src, dst, uid)
+            for cb, src, dst, uid in getattr(self, "checkbox_dirs", [])
+            if cb.isChecked()
+        ]
 
-    def _create_dialog(self, title, size=(800, 600)):
-        d = QDialog(self)
-        d.setMinimumSize(*size)
-        d.setWindowTitle(title)
-        layout = QVBoxLayout(d)
-        return d, layout
-
-    def _create_select_button(self, label, line_edit, height=60):
-        btn = QPushButton(f"Select {label}")
-        btn.setMaximumHeight(height)
-        btn.setFixedWidth(300)
-        btn.clicked.connect(partial(self.select_directory, line_edit))
-        return btn
-
-    def _get_cached_darker_color(self, color):
-        if color not in self._color_cache:
-            self._color_cache[color] = self.darken_header_color(color)
-        return self._color_cache[color]
-
-
-    @staticmethod
-    def darken_color(color: str, factor: float = 0.7) -> str:
-        try:         
-            color = color.lstrip('#')
-            
-            r = int(color[0:2], 16)
-            g = int(color[2:4], 16)
-            b = int(color[4:6], 16)
-
-            r = int(r * factor)
-            g = int(g * factor)
-            b = int(b * factor)
-
-            r = max(0, min(255, r))
-            g = max(0, min(255, g))
-            b = max(0, min(255, b))
-
-            return f'#{r:02x}{g:02x}{b:02x}'
-        except (ValueError, IndexError) as e:
-            logger.warning(f"Fehler beim Verdunkeln der Farbe '{color}': {e}")
-            return color 
-
-
-    def system_manager_options(self):
+    def system_manager_options(self) -> None:
         self.hide()
         SystemManagerOptions(self).exec()
         self.show()
 
-    def get_checked_entries(self):
-        return [(checkbox, sources, destinations, unique_id)
-                for checkbox, sources, destinations, unique_id in getattr(self, 'checkbox_dirs', [])
-                if checkbox.isChecked()]
-
-    def entry_dialog(self, edit_mode=False):
-        checked_entries = self.get_checked_entries()
-        if edit_mode and not checked_entries:
-            self.show_message("Entry Editor Error", "Nothing selected or selected items cannot be edited.")
+    def entry_dialog(self, edit_mode: bool = False) -> None:
+        checked = self.get_checked_entries()
+        if edit_mode and not checked:
+            self.show_message("Entry Editor Error",
+                              "Nothing selected, or the selected items cannot be edited.")
             return
 
         self.hide()
-        entries_to_process = checked_entries if edit_mode else [None]
+        entries_to_process = checked if edit_mode else [None]
 
         for entry_data in entries_to_process:
-            dialog = QDialog(self)
-            dialog.setFixedSize(1350, 750)
-            dialog.setWindowTitle("Edit Entry" if edit_mode else "Add New Entry")
-            main_layout = QVBoxLayout(dialog)
-            main_layout.setContentsMargins(2, 2, 2, 2)
-
-            title_checkbox = entry_data[0].text() if edit_mode else ""
-            unique_id = entry_data[3] if edit_mode else None
-
-            header_label_text = (
-                f"\n'{title_checkbox}'\n\nType '\\n' for line break in title.\n\nFor samba shares use:\n'smb://ip/rest of samba path'"
-                if edit_mode else
-                "\nCreate a new entry.\n\nType '\\n' for line break in title.\n\nFor samba shares use:\n'smb://ip/rest of samba path'"
-            )
-            header_label = QLabel(header_label_text)
-            header_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
-            main_layout.addWidget(header_label)
-
-            form_layout = QFormLayout()
-            form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            form_layout.setFormAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
-            field_height = 60
-
-            header_combo = QComboBox()
-            header_combo.setStyleSheet("color: #ffffff; background-color: #555582; padding: 5px 5px;")
-            header_combo.addItems(Options.headers)
-            header_combo.setMaximumHeight(field_height)
-
-            entry_obj = None
-            if edit_mode and hasattr(Options, 'all_entries'):
-                entry_obj = next(
-                    (e for e in Options.all_entries if hasattr(e, 'details') and e.details.get('unique_id') == unique_id),
-                    None
-                )
-                if entry_obj:
-                    header_value = getattr(entry_obj, 'header', entry_obj.details.get('header', ''))
-                    idx = header_combo.findText(header_value)
-                    if idx >= 0:
-                        header_combo.setCurrentIndex(idx)
-
-            form_layout.addRow(QLabel("Header:"), header_combo)
-
-            title_edit = QLineEdit(title_checkbox)
-            title_edit.setMaximumHeight(field_height)
-            form_layout.addRow(QLabel("Title:"), title_edit)
-
-            if edit_mode:
-                sources, destinations = entry_data[1], entry_data[2]
-                for field_type, data in [("Source", sources), ("Destination", destinations)]:
-                    btn = QPushButton(f"Edit {field_type} Entries")
-                    btn.setMaximumHeight(field_height)
-                    btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-                    btn.clicked.connect(partial(self.open_text_editor, data, title_checkbox, field_type.lower()))
-                    form_layout.addRow(QLabel(f"{field_type}:"), btn)
-            else:
-                for field_type in ["Source", "Destination"]:
-                    field_edit = QLineEdit()
-                    field_edit.setMaximumHeight(field_height)
-                    field_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
-
-                    btn = self._create_select_button(field_type, field_edit, field_height)
-
-                    hbox = QHBoxLayout()
-                    hbox.setSpacing(2)
-                    hbox.setContentsMargins(2, 2, 2, 2)
-                    hbox.addWidget(field_edit)
-                    hbox.addWidget(btn)
-
-                    container = QWidget()
-                    container.setLayout(hbox)
-                    container.setMaximumHeight(field_height)
-                    form_layout.addRow(QLabel(f"{field_type}:"), container)
-
-                    setattr(self, f"{field_type.lower()}_edit", field_edit)
-
-            checkbox_texts = {
-                'no_backup': 'No Backup',
-                'no_restore': 'No Restoring'
-            }
-            for i in range(1, 5):
-                key = f'sublayout_games_{i}'
-                name = Options.sublayout_names.get(key, f'Sublayout Games {i}')
-                checkbox_texts[key] = f"Add to Sublayout-Games {i}:\n'{name}'"
-
-            checkboxes = {}
-            for key, text in checkbox_texts.items():
-                cb = QCheckBox(text)
-                cb.setChecked(entry_obj.details.get(key, False) if entry_obj else False)
-                cb.setStyleSheet(f"{get_current_style()} QCheckBox {{color: #6ffff5}}")
-                cb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-                cb.setMaximumHeight(field_height)
-                checkboxes[key] = cb
-
-            checkbox_grid = QGridLayout()
-            positions = [
-                ('no_backup', 0, 0), ('no_restore', 1, 0),
-                ('sublayout_games_1', 0, 1), ('sublayout_games_2', 1, 1),
-                ('sublayout_games_3', 0, 2), ('sublayout_games_4', 1, 2)
-            ]
-            for key, row, col in positions:
-                checkbox_grid.addWidget(checkboxes[key], row, col)
-
-            form_layout.addRow(QLabel(""), QLabel(""))
-            form_layout.addRow(checkbox_grid)
-
-            main_layout.addLayout(form_layout)
-
-            def update_restore(state):
-                disabled = state == Qt.CheckState.Checked
-                for item in range(1, 5):
-                    k = f'sublayout_games_{item}'
-                    checkboxes[k].setChecked(False)
-                    checkboxes[k].setEnabled(not disabled)
-
-            def make_sublayout_handler(num):
-                def entry_handler(state):
-                    if state == Qt.CheckState.Checked:
-                        checkboxes['no_restore'].blockSignals(True)
-                        checkboxes['no_restore'].setChecked(False)
-                        checkboxes['no_restore'].blockSignals(False)
-                        checkboxes['no_restore'].setEnabled(False)
-                        for entry_i in range(1, 5):
-                            if entry_i != num:
-                                entry_cb = checkboxes[f'sublayout_games_{entry_i}']
-                                entry_cb.blockSignals(True)
-                                entry_cb.setChecked(False)
-                                entry_cb.setEnabled(False)
-                                entry_cb.blockSignals(False)
-                    else:
-                        checkboxes['no_restore'].setEnabled(True)
-                        for entry_i in range(1, 5):
-                            if entry_i != num:
-                                checkboxes[f'sublayout_games_{entry_i}'].setEnabled(True)
-                return entry_handler
-
-            checkboxes['no_restore'].stateChanged.connect(update_restore)
-            for i in range(1, 5):
-                checkboxes[f'sublayout_games_{i}'].stateChanged.connect(make_sublayout_handler(i))
-
-            button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)# type: ignore
-            button_box.button(QDialogButtonBox.StandardButton.Ok).setText("Save")
-            button_box.button(QDialogButtonBox.StandardButton.Cancel).setText("Close")
-            button_box.setMaximumHeight(field_height)
-            main_layout.addWidget(button_box, alignment=Qt.AlignmentFlag.AlignRight)
-
-            def save_entry():
-                header = header_combo.currentText()
-                title = title_edit.text().strip()
-
-                if edit_mode:
-                    source, destination = sources, destinations
-                else:
-                    source = self.source_edit.text().strip()
-                    destination = self.destination_edit.text().strip()
-
-                source_valid = bool(source) if not isinstance(source, list) else any(source)
-                destination_valid = bool(destination) if not isinstance(destination, list) else any(destination)
-                if not all([title, source_valid, destination_valid]):
-                    self.show_message("Error", "All fields must be filled in to add a new entry.")
-                    return
-
-                existing_titles = set()
-                for entry in getattr(Options, 'all_entries', []):
-                    try:
-                        entry_title = entry.title if hasattr(entry, 'title') else entry.details.get('title', '')
-                        if entry_title and (not edit_mode or entry_title.lower() != title_checkbox.lower()):
-                            existing_titles.add(entry_title.lower())
-                    except (AttributeError, TypeError):
-                        continue
-
-                if title and title.lower() in existing_titles:
-                    self.show_message("Duplicate Title",
-                                      "An entry with this title already exists. Please choose a different title.")
-                    return
-
-                if edit_mode and entry_obj:
-                    if hasattr(entry_obj, 'header'):
-                        entry_obj.header = header
-                    else:
-                        entry_obj.details['header'] = header
-
-                    if hasattr(entry_obj, 'title'):
-                        entry_obj.title = title
-                    else:
-                        entry_obj.details['title'] = title
-
-                    new_entry = entry_obj
-                else:
-                    if not hasattr(Options, 'all_entries'):
-                        Options.all_entries = []
-                    new_entry = Options(header, title, source, destination)
-                    Options.all_entries.append(new_entry)
-
-                for entry_key, entry_cb in checkboxes.items():
-                    new_entry.details[entry_key] = entry_cb.isChecked()
-
-                self.show_message("Success",
-                                  f"Entry '{new_entry.title}' successfully {'updated' if edit_mode else 'added'}!")
-                dialog.accept()
-
-            button_box.accepted.connect(save_entry)
-            button_box.rejected.connect(dialog.reject)
-            dialog.exec()
+            self._run_entry_dialog(entry_data, edit_mode)
 
         Options.save_config()
         try:
             self.settings_changed.emit()
-        except Exception as e:
-            logger.error(f"Error emitting settings_changed after saving entries: {e}")
+        except Exception as exc:
+            logger.error("entry_dialog: error emitting settings_changed: %s", exc)
+
         self.show()
 
-    def delete_entry(self):
-        checked_entries = self.get_checked_entries()
-        if not checked_entries:
-            self.show_message("Delete Entry Error", "Nothing selected or selected items cannot be deleted.")
+    def _run_entry_dialog(self, entry_data, edit_mode: bool) -> None:
+        if edit_mode and entry_data is None:
             return
+        title_text  = entry_data[0].text() if edit_mode else ""
+        unique_id   = entry_data[3]        if edit_mode else None
+        entry_obj   = self._find_entry_by_id(unique_id) if edit_mode else None
 
-        titles = [entry_data[0].text() for entry_data in checked_entries]
-        checked_titles_quoted = [f"'{title}'" for title in titles]
-        confirm_message = "Are you sure you want to delete " + self.format_list_message(checked_titles_quoted, "?")
-
-        confirm_box = QMessageBox(QMessageBox.Icon.Question, "Confirm Deletion", confirm_message,
-                                  QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, self)
-        confirm_box.setDefaultButton(QMessageBox.StandardButton.No)
-
-        if confirm_box.exec() == QMessageBox.StandardButton.Yes:
-            self.hide()
-
-            entries_to_delete = []
-            unique_ids_to_delete = [entry_data[3] for entry_data in checked_entries]
-
-            if hasattr(Options, 'all_entries') and Options.all_entries:
-                for entry in Options.all_entries[:]:
-                    if (hasattr(entry, 'details') and
-                            isinstance(entry.details, dict) and
-                            entry.details.get('unique_id') in unique_ids_to_delete):
-                        entries_to_delete.append(entry)
-
-            try:
-                with QMutexLocker(Options.entries_mutex):
-                    for entry_obj in entries_to_delete:
-                        if entry_obj in Options.all_entries:
-                            Options.all_entries.remove(entry_obj)
-            except Exception as e:
-                logger.error(f"Error removing entries: {e}")
-
-            Options.save_config()
-            try:
-                self.settings_changed.emit()
-            except Exception as e:
-                logger.error(f"Error emitting settings_changed after deleting entries: {e}")
-
-            info_message = self.format_list_message(checked_titles_quoted, " successfully deleted!")
-            self.show_message("Success", info_message)
-            self.show()
-
-    def select_directory(self, line_edit):
-        directory = QFileDialog.getExistingDirectory(self, "Select Directory")
-        if directory:
-            line_edit.setText(directory)
-
-    def open_text_editor(self, entries_list, title, field):
         dialog = QDialog(self)
-        dialog.setMinimumSize(1200, 1000)
-        dialog.setWindowTitle(f"Edit {field.capitalize()} Entries for '{title}'")
-        layout = QVBoxLayout(dialog)
-        text_edit = QTextEdit()
-        text_edit.setPlainText("\n".join(map(str, entries_list)) if isinstance(entries_list, list) else entries_list)
-        button_layout = QHBoxLayout()
-        buttons = [
-            ("Back", dialog.reject),
-            ("File Browser", lambda: self.browse_files(text_edit)),
-            ("Save", lambda: self.save_config_from_editor(text_edit, entries_list, field))
+        dialog.setFixedSize(1300, 625)
+        dialog.setWindowTitle("Edit Entry" if edit_mode else "Add New Entry")
+        root = QVBoxLayout(dialog)
+        root.setContentsMargins(2, 2, 2, 2)
+
+        if edit_mode:
+            desc = (
+                f"\n'{title_text}'\n\nType '\\n' for a line-break in the title.\n\n"
+                "For Samba shares use:\n'smb://ip/rest-of-path'"
+            )
+        else:
+            desc = (
+                "\nCreate a new entry.\n\nType '\\n' for a line-break in the title.\n\n"
+                "For Samba shares use:\n'smb://ip/rest-of-path'"
+            )
+        desc_label = QLabel(desc)
+        desc_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        root.addWidget(desc_label)
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        fh = 60
+
+        header_combo = _styled_combo(Options.headers, fh)
+        if entry_obj:
+            idx = header_combo.findText(getattr(entry_obj, "header", ""))
+            if idx >= 0:
+                header_combo.setCurrentIndex(idx)
+        form.addRow(QLabel("Header:"), header_combo)
+
+        title_edit = QLineEdit(title_text)
+        title_edit.setMaximumHeight(fh)
+        form.addRow(QLabel("Title:"), title_edit)
+
+        if edit_mode:
+            sources, destinations = entry_data[1], entry_data[2]
+            for field_label, data in (("Source", sources), ("Destination", destinations)):
+                btn = QPushButton(f"Edit {field_label} Entries")
+                btn.setMaximumHeight(fh)
+                btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+                btn.clicked.connect(partial(self.open_text_editor, data, title_text,
+                                            field_label.lower()))
+                form.addRow(QLabel(f"{field_label}:"), btn)
+        else:
+            for field_label in ("Source", "Destination"):
+                field_edit = QLineEdit()
+                field_edit.setMaximumHeight(fh)
+                field_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+                browse_btn = QPushButton(f"Select {field_label}")
+                browse_btn.setMaximumHeight(fh)
+                browse_btn.setFixedWidth(300)
+                browse_btn.clicked.connect(partial(self._browse_dir, field_edit))
+                row_widget = QWidget()
+                row_widget.setMaximumHeight(fh)
+                hb = QHBoxLayout(row_widget)
+                hb.setContentsMargins(2, 2, 2, 2)
+                hb.setSpacing(2)
+                hb.addWidget(field_edit)
+                hb.addWidget(browse_btn)
+                form.addRow(QLabel(f"{field_label}:"), row_widget)
+                setattr(self, f"{field_label.lower()}_edit", field_edit)
+
+        checkbox_texts = {
+            "no_backup":  "No Backup",
+            "no_restore": "No Restoring",
+        }
+        for i in range(1, 5):
+            key  = f"sublayout_games_{i}"
+            name = Options.sublayout_names.get(key, f"Sublayout Games {i}")
+            checkbox_texts[key] = f"Add to Sublayout-Games {i}:\n'{name}'"
+
+        detail_cbs: dict[str, QCheckBox] = {}
+        for key, text in checkbox_texts.items():
+            cb = QCheckBox(text)
+            cb.setChecked(entry_obj.details.get(key, False) if entry_obj else False)
+            cb.setStyleSheet(f"{get_current_style()} QCheckBox{{color:#6ffff5}}")
+            cb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+            cb.setMaximumHeight(fh)
+            detail_cbs[key] = cb
+
+        cb_grid = QGridLayout()
+        positions = [
+            ("no_backup",  0, 0), ("no_restore", 1, 0),
+            ("sublayout_games_1", 0, 1), ("sublayout_games_2", 1, 1),
+            ("sublayout_games_3", 0, 2), ("sublayout_games_4", 1, 2),
         ]
-        for btn_text, callback in buttons:
-            button = QPushButton(btn_text)
-            button.clicked.connect(callback)
-            button_layout.addWidget(button)
-        layout.addWidget(text_edit)
-        layout.addLayout(button_layout)
+        for key, r, c in positions:
+            cb_grid.addWidget(detail_cbs[key], r, c)
+
+        form.addRow(QLabel(""), QLabel(""))
+        form.addRow(cb_grid)
+        root.addLayout(form)
+
+        def _on_no_restore(state):
+            disabled = state == Qt.CheckState.Checked.value
+            for item in range(1, 5):
+                k = f"sublayout_games_{item}"
+                detail_cbs[k].setChecked(False)
+                detail_cbs[k].setEnabled(not disabled)
+
+        def _make_sublayout_handler(num):
+            def _handler(state):
+                if state == Qt.CheckState.Checked.value:
+                    _block_set_cb(detail_cbs["no_restore"], False)
+                    detail_cbs["no_restore"].setEnabled(False)
+                    for j in range(1, 5):
+                        if j != num:
+                            _block_set_cb(detail_cbs[f"sublayout_games_{j}"], False)
+                            detail_cbs[f"sublayout_games_{j}"].setEnabled(False)
+                else:
+                    detail_cbs["no_restore"].setEnabled(True)
+                    for j in range(1, 5):
+                        if j != num:
+                            detail_cbs[f"sublayout_games_{j}"].setEnabled(True)
+            return _handler
+
+        detail_cbs["no_restore"].stateChanged.connect(_on_no_restore)
+        for i in range(1, 5):
+            detail_cbs[f"sublayout_games_{i}"].stateChanged.connect(_make_sublayout_handler(i))
+
+        btn_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel # type: ignore[attr-defined]
+        )
+        _set_button_text(btn_box, QDialogButtonBox.StandardButton.Ok, "Save")
+        _set_button_text(btn_box, QDialogButtonBox.StandardButton.Cancel, "Close")
+        btn_box.setMaximumHeight(fh)
+        root.addWidget(btn_box, alignment=Qt.AlignmentFlag.AlignRight)
+
+        def _save():
+            header = header_combo.currentText()
+            title  = title_edit.text().strip()
+
+            if edit_mode:
+                source, destination = sources, destinations
+            else:
+                source      = self.source_edit.text().strip()      # type: ignore[attr-defined]
+                destination = self.destination_edit.text().strip()  # type: ignore[attr-defined]
+
+            src_ok  = bool(source)      if not isinstance(source, list)      else any(source)
+            dst_ok  = bool(destination) if not isinstance(destination, list)  else any(destination)
+
+            if not all((title, src_ok, dst_ok)):
+                self.show_message("Error", "All fields must be filled in.")
+                return
+
+            existing = {
+                e.title.lower() for e in getattr(Options, "all_entries", [])
+                if hasattr(e, "title") and (not edit_mode or e.title.lower() != title_text.lower())
+            }
+            if title.lower() in existing:
+                self.show_message("Duplicate Title",
+                                  "An entry with this title already exists.")
+                return
+
+            if edit_mode and entry_obj:
+                entry_obj.header = header
+                entry_obj.title  = title
+                new_entry = entry_obj
+            else:
+                if not hasattr(Options, "all_entries"):
+                    Options.all_entries = []
+                new_entry = Options(header, title, source, destination)
+                Options.all_entries.append(new_entry)
+
+            for key_, cb_ in detail_cbs.items():
+                new_entry.details[key_] = cb_.isChecked()
+
+            self.show_message(
+                "Success",
+                f"Entry '{new_entry.title}' successfully {'updated' if edit_mode else 'added'}!"
+            )
+            dialog.accept()
+
+        btn_box.accepted.connect(_save)
+        btn_box.rejected.connect(dialog.reject)
         dialog.exec()
 
-    def browse_files(self, text_edit):
+    @staticmethod
+    def _find_entry_by_id(unique_id):
+        return next(
+            (e for e in getattr(Options, "all_entries", [])
+             if hasattr(e, "details") and e.details.get("unique_id") == unique_id),
+            None,
+        )
+
+    def delete_entry(self) -> None:
+        checked = self.get_checked_entries()
+        if not checked:
+            self.show_message("Delete Error", "Nothing selected.")
+            return
+
+        titles_quoted = [f"'{cb.text()}'" for cb, *_ in checked]
+        confirm = QMessageBox(
+            QMessageBox.Icon.Warning,
+            "Confirm Deletion",
+            f"Delete {self._format_list(titles_quoted, '?')}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            self,
+        )
+        confirm.setDefaultButton(QMessageBox.StandardButton.No)
+        if confirm.exec() != QMessageBox.StandardButton.Yes:
+            return
+
+        self.hide()
+        ids_to_delete = {entry_data[3] for entry_data in checked}
+
+        with QMutexLocker(Options.entries_mutex):
+            Options.all_entries = [
+                e for e in Options.all_entries
+                if not (hasattr(e, "details") and
+                        isinstance(e.details, dict) and
+                        e.details.get("unique_id") in ids_to_delete)
+            ]
+
+        Options.save_config()
+        try:
+            self.settings_changed.emit()
+        except Exception as exc:
+            logger.error("delete_entry: error emitting settings_changed: %s", exc)
+
+        self.show_message("Success", self._format_list(titles_quoted, " successfully deleted!"))
+        self.show()
+
+    def _browse_dir(self, line_edit: QLineEdit) -> None:
+        path = QFileDialog.getExistingDirectory(self, "Select Directory")
+        if path:
+            line_edit.setText(path)
+
+    def open_text_editor(self, entries_list, title: str, field: str) -> None:
+        dlg = QDialog(self)
+        dlg.setMinimumSize(1200, 1000)
+        dlg.setWindowTitle(f"Edit {field.capitalize()} Entries for '{title}'")
+        layout = QVBoxLayout(dlg)
+
+        text_edit = QTextEdit()
+        text_edit.setPlainText(
+            "\n".join(map(str, entries_list)) if isinstance(entries_list, list)
+            else str(entries_list or "")
+        )
+        layout.addWidget(text_edit)
+
+        btn_row = QHBoxLayout()
+        for label, fn in (
+            ("Back",         dlg.reject),
+            ("File Browser", lambda: self._browse_files(text_edit)),
+            ("Save",         lambda: self._save_from_editor(text_edit, entries_list, field)),
+        ):
+            btn = QPushButton(label)
+            btn.clicked.connect(fn)
+            btn_row.addWidget(btn)
+
+        layout.addLayout(btn_row)
+        dlg.exec()
+
+    def _browse_files(self, text_edit: QTextEdit) -> None:
         files, _ = QFileDialog.getOpenFileNames(self, "Select Files")
         if files:
-            current_text = text_edit.toPlainText()
-            text_edit.setPlainText(current_text + ("\n" if current_text else "") + "\n".join(files))
+            current = text_edit.toPlainText()
+            text_edit.setPlainText(
+                current + ("\n" if current else "") + "\n".join(files)
+            )
 
-    def save_config_from_editor(self, text_edit, entries_list, field):
+    def _save_from_editor(self, text_edit: QTextEdit, entries_list, field: str) -> None:
         new_entries = text_edit.toPlainText().splitlines()
-        if entries_list is None or not isinstance(entries_list, list):
-            new_value = new_entries[0] if new_entries else ""
-            text_edit.setPlainText(new_value)
-            return new_value
+        if not isinstance(entries_list, list):
+            return
         entries_list.clear()
         entries_list.extend(new_entries)
-        self.show_message("Success", f"{field.capitalize()} successfully edited!")
+        Options.save_config()
+        try:
+            self.settings_changed.emit()
+        except Exception as exc:
+            logger.error("_save_from_editor: error emitting settings_changed: %s", exc)
+        self.show_message("Success", f"{field.capitalize()} entries saved!")
         text_edit.setPlainText("\n".join(entries_list))
-        return entries_list
 
-    def header_settings(self):
-        self._ensure_options_defaults()
+    select_directory = _browse_dir
+
+    def header_settings(self) -> None:
+        self._ensure_defaults()
         self.hide()
-        dialog, layout = self._create_dialog("Header Settings", size=(1100, 1000))
-        list_widget = QListWidget(dialog)
+
+        dlg, layout = self._make_dialog("Header Settings", size=(1100, 1000))
+
+        list_widget = QListWidget(dlg)
         list_widget.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         list_widget.setDragDropMode(QListWidget.DragDropMode.InternalMove)
         list_widget.setDragEnabled(True)
         list_widget.setAcceptDrops(True)
         list_widget.setDefaultDropAction(Qt.DropAction.MoveAction)
 
-        header_order = getattr(Options, 'header_order', [])
-        for header in list(header_order):
-            item_widget = self.create_header_list_item(header, list_widget)
+        for header in list(Options.header_order):
+            item_widget = self._make_header_list_item(header, list_widget)
             item = QListWidgetItem()
             item.setSizeHint(item_widget.sizeHint())
             list_widget.addItem(item)
             list_widget.setItemWidget(item, item_widget)
 
         layout.addWidget(list_widget)
-        layout.addWidget(QLabel("Click and hold headers to move them.\nCreating header 'Games' provides sublayouts for this header."))
-        new_header_button = QPushButton("New Header")
-        new_header_button.clicked.connect(partial(self.add_new_header, list_widget))
-        layout.addWidget(new_header_button)
+        layout.addWidget(QLabel(
+            "Click and hold a header to drag it into a new position.\n"
+            "Creating a header named 'Games' enables game sublayouts."
+        ))
 
-        sublayout_buttons_height = 60
-        sublayout_buttons = []
-        for i in range(1, 5):
-            btn = QPushButton(f"Sublayout-Games {i}:\n{Options.sublayout_names.get(f'sublayout_games_{i}', f'Sublayout Games {i}')}")
-            btn.clicked.connect(partial(self.prompt_for_name, dialog, i))
-            btn.setFixedHeight(sublayout_buttons_height)
-            sublayout_buttons.append(btn)
+        new_header_btn = QPushButton("New Header")
+        new_header_btn.clicked.connect(partial(self._add_new_header, list_widget))
+        layout.addWidget(new_header_btn)
 
-        for i in range(0, 4, 2):
-            hbox = QHBoxLayout()
-            hbox.addWidget(sublayout_buttons[i])
-            if i + 1 < len(sublayout_buttons):
-                hbox.addWidget(sublayout_buttons[i + 1])
-            layout.addLayout(hbox)
+        for row_start in (0, 2):
+            hb = QHBoxLayout()
+            for i in (row_start + 1, row_start + 2):
+                key  = f"sublayout_games_{i}"
+                name = Options.sublayout_names.get(key, f"Sublayout Games {i}")
+                btn  = QPushButton(f"Sublayout-Games {i}:\n{name}")
+                btn.setFixedHeight(60)
+                btn.clicked.connect(partial(self._rename_sublayout, dlg, i))
+                hb.addWidget(btn)
+            layout.addLayout(hb)
 
-        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)# type: ignore
-        button_box.button(QDialogButtonBox.StandardButton.Ok).setText("Save")
-        button_box.button(QDialogButtonBox.StandardButton.Cancel).setText("Close")
-        layout.addWidget(button_box)
-        button_box.accepted.connect(lambda: (self.save_header_options(list_widget), dialog.accept()))
-        button_box.rejected.connect(dialog.reject)
-        dialog.exec()
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel # type: ignore[attr-defined]
+        )
+        _set_button_text(btns, QDialogButtonBox.StandardButton.Ok, "Save")
+        _set_button_text(btns, QDialogButtonBox.StandardButton.Cancel, "Close")
+        btns.accepted.connect(lambda: (self._save_header_options(list_widget), dlg.accept()))
+        btns.rejected.connect(dlg.reject)
+        layout.addWidget(btns)
+
+        dlg.exec()
         self.show()
 
-    def create_header_list_item(self, header, list_widget):
-        item_widget = QWidget()
-        item_layout = QHBoxLayout(item_widget)
+    def _make_header_list_item(self, header: str, list_widget: QListWidget) -> QWidget:
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
 
-        if not hasattr(Options, 'header_colors'):
-            Options.header_colors = {}
-        if not hasattr(Options, 'header_inactive'):
-            Options.header_inactive = []
+        color  = Options.header_colors.get(header, "#ffffff")
+        darker = self._darkened(color)
+        btn_style = "color:black;font-weight:bold;font-size:17px;"
 
-        header_color = Options.header_colors.get(header, '#ffffff')
-        darker = self._get_cached_darker_color(header_color)
-
-        btn_style = "color: black; font-weight: bold; font-size: 17px;"
         color_btn = QPushButton(header)
         color_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         color_btn.setFixedHeight(26)
-        color_btn.setStyleSheet(f"QPushButton {{{btn_style} background-color: {darker};}}")
-        color_btn.clicked.connect(partial(self.choose_color, header))
+        color_btn.setStyleSheet(f"QPushButton{{{btn_style}background-color:{darker};}}")
+        color_btn.clicked.connect(partial(self._pick_header_color, header))
 
         inactive_cb = QCheckBox("Inactive")
         inactive_cb.setObjectName("inactive_checkbox")
-        inactive_cb.setStyleSheet("margin-left: 10px;")
+        inactive_cb.setStyleSheet("margin-left:10px;")
         inactive_cb.setChecked(header in Options.header_inactive)
 
-        def update_inactive(checked):
-            color_btn.setEnabled(not checked)
+        def _on_inactive_toggled(checked):
             bg = "gray" if checked else darker
-            color_btn.setStyleSheet(f"QPushButton {{{btn_style} background-color: {bg}; padding: 0 10px;}}")
+            color_btn.setEnabled(not checked)
+            color_btn.setStyleSheet(f"QPushButton{{{btn_style}background-color:{bg};padding:0 10px;}}")
 
-        inactive_cb.stateChanged.connect(update_inactive)
-        update_inactive(inactive_cb.isChecked())
+        inactive_cb.stateChanged.connect(_on_inactive_toggled)
+        _on_inactive_toggled(inactive_cb.isChecked())
 
         del_btn = QPushButton("Delete Header")
-        del_btn.setStyleSheet("margin-left: 10px;")
-        del_btn.clicked.connect(partial(self.delete_header, header, list_widget))
+        del_btn.setStyleSheet("margin-left:10px;")
+        del_btn.clicked.connect(partial(self._delete_header, header, list_widget))
 
-        item_layout.addWidget(color_btn)
-        item_layout.addWidget(inactive_cb)
-        item_layout.addWidget(del_btn)
-        return item_widget
+        layout.addWidget(color_btn)
+        layout.addWidget(inactive_cb)
+        layout.addWidget(del_btn)
+        return widget
 
-    def add_new_header(self, list_widget):
-        dialog, layout = self._create_dialog("New Header", size=(600, 200))
-        layout.addWidget(QLabel("Enter new Header:"))
-        input_field = QLineEdit(dialog)
-        input_field.setMinimumWidth(450)
-        layout.addWidget(input_field)
-        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)# type: ignore
-        button_box.button(QDialogButtonBox.StandardButton.Ok).setText("Save")
-        button_box.button(QDialogButtonBox.StandardButton.Cancel).setText("Close")
-        layout.addWidget(button_box)
-        button_box.accepted.connect(lambda: self.handle_new_header(input_field, dialog, list_widget))
-        button_box.rejected.connect(dialog.reject)
-        dialog.exec()
+    def _add_new_header(self, list_widget: QListWidget) -> None:
+        dlg, layout = self._make_dialog("New Header", size=(600, 200))
+        layout.addWidget(QLabel("Enter new header name:"))
+        field = QLineEdit()
+        field.setMinimumWidth(450)
+        layout.addWidget(field)
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel # type: ignore[attr-defined]
+        )
+        _set_button_text(btns, QDialogButtonBox.StandardButton.Ok, "Save")
+        _set_button_text(btns, QDialogButtonBox.StandardButton.Cancel, "Close")
+        btns.accepted.connect(lambda: self._confirm_new_header(field, dlg, list_widget))
+        btns.rejected.connect(dlg.reject)
+        layout.addWidget(btns)
+        dlg.exec()
 
-    def handle_new_header(self, input_field, dialog, list_widget):
-        new_header = input_field.text().strip()
-        if not new_header:
+    def _confirm_new_header(self, field: QLineEdit, dlg: QDialog, list_widget: QListWidget) -> None:
+        name = field.text().strip()
+        if not name:
+            return
+        if name in Options.header_colors:
+            self.show_message("Duplicate", "A header with that name already exists.")
+            return
+        dlg.accept()
+
+        color_dlg = QColorDialog(self)
+        if color_dlg.exec() != QColorDialog.DialogCode.Accepted:
             return
 
-        if new_header in Options.header_colors:
-            self.show_message("Duplicate Header", "Header already exists. Please choose a different name.")
-            return
+        Options.header_colors[name] = color_dlg.currentColor().name()
+        Options.header_order.append(name)
 
-        dialog.accept()
-        color_dialog = QColorDialog(self)
-        if color_dialog.exec() != QColorDialog.DialogCode.Accepted:
-            return
-
-        Options.header_colors[new_header] = color_dialog.currentColor().name()
-        item_widget = self.create_header_list_item(new_header, list_widget)
+        item_widget = self._make_header_list_item(name, list_widget)
         item = QListWidgetItem()
         item.setSizeHint(item_widget.sizeHint())
         list_widget.addItem(item)
         list_widget.setItemWidget(item, item_widget)
-        Options.header_order.append(new_header)
+
         Options.save_config()
         try:
             self.settings_changed.emit()
-        except Exception as e:
-            logger.error(f"Error emitting settings_changed after saving header: {e}")
-        self.show_message("Success", "Header successfully created!")
+        except Exception as exc:
+            logger.error("_confirm_new_header: %s", exc)
 
-    def prompt_for_name(self, parent_dialog, sublayout_num):
-        name, ok = QInputDialog.getText(parent_dialog, "Enter Name", "   Enter name for sublayout:   ")
+        self.show_message("Success", "Header created!")
+
+    def _rename_sublayout(self, parent: QDialog, idx: int) -> None:
+        name, ok = QInputDialog.getText(parent, "Sublayout Name", "Enter name:")
         if ok and name:
-            key = f'sublayout_games_{sublayout_num}'
+            key = f"sublayout_games_{idx}"
             Options.sublayout_names[key] = name
-            for button in parent_dialog.findChildren(QPushButton):
-                if button.text().startswith(f"Sublayout-Games {sublayout_num}:"):
-                    button.setText(f"Sublayout-Games {sublayout_num}:\n{name}")
+            for btn in parent.findChildren(QPushButton):
+                btn_obj = btn  # type: QPushButton
+                if btn_obj.text().startswith(f"Sublayout-Games {idx}:"):
+                    btn_obj.setText(f"Sublayout-Games {idx}:\n{name}")
                     break
-            self.show_message('Success', 'Sublayout name successfully saved!')
             Options.save_config()
             try:
                 self.settings_changed.emit()
-            except Exception as e:
-                logger.error(f"Error emitting settings_changed after saving sublayout name: {e}")
+            except Exception as exc:
+                logger.error("_rename_sublayout: %s", exc)
+            self.show_message("Success", "Sublayout name saved!")
 
-    @staticmethod
-    def darken_header_color(color_str):
-        color = QColor(color_str)
-        h, s, v, a = color.getHsv()
-        v = max(0, v - 120)
-        return QColor.fromHsv(h, s, v, a).name()
-
-    def choose_color(self, header):
-        current_color = Options.header_colors.get(header, '#ffffff')
-        color_dialog = QColorDialog(self)
-        color_dialog.setCurrentColor(QColor(current_color))
-        if color_dialog.exec() == QColorDialog.DialogCode.Accepted:
-            Options.header_colors[header] = color_dialog.currentColor().name()
-            self.update_button_color(header)
+    def _pick_header_color(self, header: str) -> None:
+        dlg = QColorDialog(self)
+        dlg.setCurrentColor(QColor(Options.header_colors.get(header, "#ffffff")))
+        if dlg.exec() == QColorDialog.DialogCode.Accepted:
+            Options.header_colors[header] = dlg.currentColor().name()
+            self._refresh_header_button_color(header)
             Options.save_config()
             try:
                 self.settings_changed.emit()
-            except Exception as e:
-                logger.error(f"Error emitting settings_changed after choosing color: {e}")
-            self.show_message("Success", "Header color successfully saved!")
+            except Exception as exc:
+                logger.error("_pick_header_color: %s", exc)
+            self.show_message("Success", "Header color saved!")
 
-    def update_button_color(self, header):
-        for child in self.findChildren(QPushButton):
-            if child.text() == header:
-                color = Options.header_colors.get(header, '#ffffff')
-                child.setStyleSheet(
-                    f"color: black; font-weight: bold; font-size: 20px; background-color: {self.darken_header_color(color)};")
+    def choose_color(self, header: str) -> None:
+        self._pick_header_color(header)
 
-    def delete_header(self, header, list_widget):
-        has_associated_entries = False
-        if hasattr(Options, 'all_entries') and Options.all_entries:
-            has_associated_entries = any(
-                hasattr(entry, 'header') and entry.header == header for entry in Options.all_entries)
-        if has_associated_entries:
-            self.show_message("Cannot Delete Header",
-                              "Header has associated entries and cannot be deleted. Remove them first.",
-                              QMessageBox.Icon.Information)
+    def _refresh_header_button_color(self, header: str) -> None:
+        for btn in self.findChildren(QPushButton):
+            btn_obj = btn  # type: QPushButton
+            if btn_obj.text() == header:
+                color = Options.header_colors.get(header, "#ffffff")
+                btn_obj.setStyleSheet(
+                    f"color:black;font-weight:bold;font-size:20px;"
+                    f"background-color:{self._darkened(color)};"
+                )
+
+    def _delete_header(self, header: str, list_widget: QListWidget) -> None:
+        if any(getattr(e, "header", None) == header for e in getattr(Options, "all_entries", [])):
+            self.show_message(
+                "Cannot Delete",
+                "This header has associated entries. Remove them first.",
+                QMessageBox.Icon.Information,
+            )
             return
 
-        confirm_box = QMessageBox(QMessageBox.Icon.Question, "Confirm Deletion",
-                                  f"Are you sure you want to delete header '{header}'?",
-                                  QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, self)
-        confirm_box.setDefaultButton(QMessageBox.StandardButton.No)
-        if confirm_box.exec() == QMessageBox.StandardButton.Yes:
-            Options.header_colors.pop(header, None)
-            if header in Options.header_order:
-                Options.header_order.remove(header)
-            if header in Options.header_inactive:
-                Options.header_inactive.remove(header)
+        confirm = QMessageBox(
+            QMessageBox.Icon.Question, "Confirm Deletion",
+            f"Delete header '{header}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, self,
+        )
+        confirm.setDefaultButton(QMessageBox.StandardButton.No)
+        if confirm.exec() != QMessageBox.StandardButton.Yes:
+            return
 
-            for i in range(list_widget.count()):
-                item_widget = list_widget.itemWidget(list_widget.item(i))
-                if item_widget and item_widget.findChild(QPushButton) and item_widget.findChild(QPushButton).text() == header:
+        Options.header_colors.pop(header, None)
+        if header in Options.header_order:   Options.header_order.remove(header)
+        if header in Options.header_inactive: Options.header_inactive.remove(header)
+
+        for i in range(list_widget.count()):
+            item_widget = list_widget.itemWidget(list_widget.item(i))
+            if item_widget:
+                btn = item_widget.findChild(QPushButton)
+                if btn and isinstance(btn, QPushButton) and btn.text() == header:
                     list_widget.takeItem(i)
                     break
-            Options.save_config()
-            try:
-                self.settings_changed.emit()
-            except Exception as e:
-                logger.error(f"Error emitting settings_changed after removing header: {e}")
-            self.show_message("Success", f"Header '{header}' has been successfully deleted!")
 
-    def save_header_options(self, list_widget):
-        if not hasattr(Options, 'all_entries'):
-            Options.all_entries = []
-        if not hasattr(Options, 'header_order'):
-            Options.header_order = []
-        if not hasattr(Options, 'header_inactive'):
-            Options.header_inactive = []
+        Options.save_config()
+        try:
+            self.settings_changed.emit()
+        except Exception as exc:
+            logger.error("_delete_header: %s", exc)
 
-        new_header_order, new_header_inactive = [], []
+        self.show_message("Success", f"Header '{header}' deleted!")
+
+    def _save_header_options(self, list_widget: QListWidget) -> None:
+        new_order = []
+        new_inactive = []
         for i in range(list_widget.count()):
             item_widget = list_widget.itemWidget(list_widget.item(i))
             if not item_widget:
                 continue
-            header_btn = item_widget.findChild(QPushButton)
-            if not header_btn:
+            name = ""
+            btn = item_widget.findChild(QPushButton)
+
+            if btn and isinstance(btn, QPushButton):
+                name = btn.text().strip()
+            if not name:
                 continue
-            header = header_btn.text().strip()
-            if not header:
-                continue
-            new_header_order.append(header)
+
+            new_order.append(name)
+
             cb = item_widget.findChild(QCheckBox, "inactive_checkbox")
-            if cb and cb.isChecked():
-                new_header_inactive.append(header)
+            if cb and isinstance(cb, QCheckBox) and cb.isChecked():
+                new_inactive.append(name)
 
-        Options.header_order = new_header_order
-        Options.header_inactive = new_header_inactive
+        Options.header_order   = new_order
+        Options.header_inactive = new_inactive
 
-        for entry in Options.all_entries:
+        for entry in getattr(Options, "all_entries", []):
             try:
-                if hasattr(entry, 'details') and isinstance(entry.details, dict):
-                    entry_header = entry.header if hasattr(entry, 'header') else entry.details.get('header', '')
-                    entry.details['inactive'] = entry_header in new_header_inactive
-            except (AttributeError, TypeError) as e:
-                logger.warning(f"Error updating entry inactive status for entry {getattr(entry, 'title', 'unknown')}: {e}")
-                continue
+                if hasattr(entry, "details") and isinstance(entry.details, dict):
+                    h = getattr(entry, "header", entry.details.get("header", ""))
+                    entry.details["inactive"] = h in new_inactive
+            except (AttributeError, TypeError) as exc:
+                logger.warning("_save_header_options: %s", exc)
 
         Options.save_config()
         try:
             self.settings_changed.emit()
-        except Exception as e:
-            logger.error(f"Error emitting settings_changed after saving headers: {e}")
-        self.show_message("Success", "Header-Settings successfully saved!")
+        except Exception as exc:
+            logger.error("_save_header_options: %s", exc)
 
-    def open_samba_password_dialog(self):
+        self.show_message("Success", "Header settings saved!")
+
+    def open_samba_password_dialog(self) -> None:
         self.hide()
         from samba_password import SambaPasswordDialog
         SambaPasswordDialog(self).exec()
         self.show()
 
-    def manage_mount_options(self):
-        self._ensure_options_defaults()
-        self.hide()
+    def manage_mount_options(self) -> None:
+        self._ensure_defaults()
 
-        if getattr(self, 'mount_options_dialog', None):
+        if self.mount_options_dialog:
             try:
                 if not self.mount_options_dialog.isHidden():
                     self.mount_options_dialog.close()
@@ -695,143 +650,453 @@ class SettingsWindow(BaseWindow):
                 pass
             self.mount_options_dialog = None
 
-        self.mount_options_dialog = QDialog(self)
-        dialog = self.mount_options_dialog
+        self.hide()
 
-        def cleanup_dialog():
-            if hasattr(self, 'mount_options_dialog'):
-                self.mount_options_dialog = None
+        dlg = QDialog(self)
+        self.mount_options_dialog = dlg
+        dlg.finished.connect(lambda: setattr(self, "mount_options_dialog", None))
+        dlg.setMinimumSize(825, 450)
+        dlg.setWindowTitle("Mount Options")
 
-        dialog.finished.connect(cleanup_dialog)
-        dialog.setMinimumSize(825, 450)
-        dialog.setWindowTitle("Mount Options")
-        layout = QVBoxLayout(dialog)
+        layout = QVBoxLayout(dlg)
 
-        for option in Options.mount_options:
-            btn_layout = QHBoxLayout()
-            drive_btn = QPushButton(option.get('drive_name', 'Unknown'))
-            drive_btn.clicked.connect(partial(self._edit_mount_option, option, dialog))
-            delete_btn = QPushButton("Delete")
-            delete_btn.clicked.connect(partial(self._delete_mount_option, option, dialog))
-            btn_layout.addWidget(drive_btn, 3)
-            btn_layout.addWidget(delete_btn, 1)
-            layout.addLayout(btn_layout)
+        for opt in Options.mount_options:
+            row = QHBoxLayout()
+            drive_btn = QPushButton(opt.get("drive_name", "Unknown"))
+            drive_btn.clicked.connect(partial(self._edit_mount_option, opt, dlg))
+            del_btn = QPushButton("Delete")
+            del_btn.clicked.connect(partial(self._delete_mount_option, opt, dlg))
+            row.addWidget(drive_btn, 3)
+            row.addWidget(del_btn,   1)
+            layout.addLayout(row)
 
         layout.addStretch(1)
 
         if Options.mount_options:
-            mount_cb = QCheckBox("Mount drives at startup and unmount at shutdown")
-            mount_cb.setStyleSheet("color: #6ffff5;")
-            mount_cb.setChecked(Options.run_mount_command_on_launch)
-            mount_cb.toggled.connect(self._toggle_auto_mount)
-            layout.addWidget(mount_cb)
+            auto_cb = QCheckBox("Mount drives at startup and unmount at shutdown")
+            auto_cb.setStyleSheet("color:#6ffff5;")
+            auto_cb.setChecked(Options.run_mount_command_on_launch)
+            auto_cb.toggled.connect(self._toggle_auto_mount)
+            layout.addWidget(auto_cb)
 
-        if len(Options.mount_options) < 3:
+        if len(Options.mount_options) < MAX_MOUNT_OPTIONS:
             add_btn = QPushButton("New Mount Option")
-            add_btn.clicked.connect(partial(self._edit_mount_option, {}, dialog))
+            add_btn.clicked.connect(partial(self._edit_mount_option, {}, dlg))
             layout.addWidget(add_btn)
 
         close_btn = QPushButton("Close")
-        close_btn.clicked.connect(dialog.accept)
+        close_btn.clicked.connect(dlg.accept)
         layout.addWidget(close_btn)
 
         try:
-            dialog.exec()
-        except Exception as e:
-            logger.error(f"Error in mount options dialog: {e}")
+            dlg.exec()
+        except Exception as exc:
+            logger.error("manage_mount_options: %s", exc)
         finally:
+            self.mount_options_dialog = None
             self.show()
-            if hasattr(self, 'mount_options_dialog'):
-                self.mount_options_dialog = None
 
-    def _toggle_auto_mount(self, checked):
+    def _toggle_auto_mount(self, checked: bool) -> None:
         Options.run_mount_command_on_launch = checked
         Options.save_config()
-        self.show_message('Success', 'Mount Options successfully saved!')
+        self.show_message("Success", "Auto-mount setting saved!")
 
-    def _edit_mount_option(self, option=None, parent_dialog=None):
+    def _edit_mount_option(self, option: dict, parent_dlg: QDialog | None) -> None:
         option = option or {}
-        dialog = QDialog(self)
-        dialog.setMinimumSize(825, 450)
-        title = f"Edit Mount Option: {option.get('drive_name', '')}" if option.get('drive_name') else "New Mount Option"
-        dialog.setWindowTitle(title)
+        is_new = not option.get("drive_name")
 
-        def close_parent_safely():
-            if parent_dialog:
-                try:
-                    if hasattr(parent_dialog, 'close') and callable(parent_dialog.close):
-                        if hasattr(parent_dialog, 'isHidden') and not parent_dialog.isHidden():
-                            parent_dialog.close()
-                except (RuntimeError, AttributeError) as error:
-                    logger.warning(f"Error closing parent dialog: {error}")
+        title = (
+            "New Mount Option" if is_new
+            else f"Edit Mount Option: {option.get('drive_name', '')}"
+        )
+        dlg = QDialog(self)
+        dlg.setMinimumSize(825, 450)
+        dlg.setWindowTitle(title)
+        layout = QVBoxLayout(dlg)
 
-        try:
-            close_parent_safely()
-        except Exception as e:
-            logger.error(f"Error showing mount options dialog: {e}")
-            if parent_dialog and hasattr(parent_dialog, 'show'):
-                try:
-                    parent_dialog.show()
-                except (RuntimeError, AttributeError):
-                    pass
-            return
-
-        layout = QVBoxLayout(dialog)
-        fields = {}
-        field_labels = [
-            ('drive_name', "Drive Name:"),
-            ('mount_command', "Mount Command:"),
-            ('unmount_command', "Unmount Command:")
-        ]
-
-        for field, label in field_labels:
+        fields: dict[str, QLineEdit] = {}
+        for key, label in (
+            ("drive_name",       "Drive Name:"),
+            ("mount_command",    "Mount Command:"),
+            ("unmount_command",  "Unmount Command:"),
+        ):
             layout.addWidget(QLabel(label))
-            value = option.get(field, "")
-            fields[field] = QLineEdit(value)
-            layout.addWidget(fields[field])
+            edit = QLineEdit(option.get(key, ""))
+            fields[key] = edit
+            layout.addWidget(edit)
 
-        btn_layout = QHBoxLayout()
+        btn_row = QHBoxLayout()
         close_btn = QPushButton("Close")
-        close_btn.clicked.connect(dialog.close)
+        close_btn.clicked.connect(dlg.reject)
         save_btn = QPushButton("Save")
-        save_btn.clicked.connect(partial(self._save_mount_option, fields, option, dialog))
-        btn_layout.addWidget(close_btn)
-        btn_layout.addWidget(save_btn)
-        layout.addLayout(btn_layout)
+        save_btn.clicked.connect(partial(self._save_mount_option, fields, option, dlg))
+        btn_row.addWidget(close_btn)
+        btn_row.addWidget(save_btn)
+        layout.addLayout(btn_row)
 
-        dialog.exec()
-        if dialog.result() == QDialog.DialogCode.Accepted:
+        if parent_dlg:
+            try:
+                parent_dlg.accept()
+            except (RuntimeError, AttributeError) as exc:
+                logger.debug("_edit_mount_option: closing parent: %s", exc)
+
+        result = dlg.exec()
+        if result == QDialog.DialogCode.Accepted:
             self.manage_mount_options()
 
-    def _delete_mount_option(self, option, parent_dialog=None):
-        drive_name = option.get('drive_name', 'Unknown')
-        confirm = QMessageBox.question(self, "Confirm Deletion", f"Are you sure you want to delete '{drive_name}'?",
-                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+    def _delete_mount_option(self, option: dict, parent_dlg: QDialog | None) -> None:
+        name = option.get("drive_name", "Unknown")
+        confirm = QMessageBox.question(
+            self, "Confirm Deletion", f"Delete '{name}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
         if confirm == QMessageBox.StandardButton.Yes:
             if option in Options.mount_options:
                 Options.mount_options.remove(option)
                 Options.save_config()
-                self.show_message("Deleted", f"'{drive_name}' successfully deleted!")
-            if parent_dialog:
-                parent_dialog.close()
-                self.manage_mount_options()
+                self.show_message("Deleted", f"'{name}' deleted!")
+            if parent_dlg:
+                try:
+                    parent_dlg.accept()
+                except (RuntimeError, AttributeError):
+                    pass
+            self.manage_mount_options()
 
-    def _save_mount_option(self, fields, option, dialog):
-        new_option = {field: fields[field].text().strip() for field in ['drive_name', 'mount_command', 'unmount_command']}
-        field_labels = {'drive_name': 'Drive Name', 'mount_command': 'Mount Command', 'unmount_command': 'Unmount Command'}
-        for field, label in field_labels.items():
-            if not new_option[field]:
+    def _save_mount_option(self, fields: dict, original: dict, dlg: QDialog) -> None:
+        new_opt = {k: fields[k].text().strip() for k in ("drive_name", "mount_command", "unmount_command")}
+        required = {"drive_name": "Drive Name", "mount_command": "Mount Command"}
+        for key, label in required.items():
+            if not new_opt[key]:
                 self.show_message("Incomplete Fields", f"{label} is required.")
                 return
-        for field, label in field_labels.items():
-            if any(existing[field].lower() == new_option[field].lower() and existing != option for existing in Options.mount_options):
-                self.show_message(f'Duplicate {label}', f'{label} already exists. Please change your input.')
+        for key, label in required.items():
+            if any(
+                existing[key].lower() == new_opt[key].lower() and existing is not original
+                for existing in Options.mount_options
+            ):
+                self.show_message(f"Duplicate {label}", f"{label} already exists.")
                 return
-        if option and option in Options.mount_options:
-            index = Options.mount_options.index(option)
-            Options.mount_options[index] = new_option
+
+        if original and original in Options.mount_options:
+            idx = Options.mount_options.index(original)
+            Options.mount_options[idx] = new_opt
         else:
-            Options.mount_options.append(new_option)
+            Options.mount_options.append(new_opt)
+
         Options.save_config()
-        dialog.accept()
-        self.show_message('Success', 'Mount Options successfully saved!')
+        self.show_message("Success", "Mount option saved!")
+        dlg.accept()
+
+    def open_profile_manager(self) -> None:
+        self.hide()
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Profile Manager")
+        dlg.setMinimumSize(650, 520)
+        layout = QVBoxLayout(dlg)
+
+        info = QLabel()
+        info.setTextFormat(Qt.TextFormat.RichText)
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        profile_list = QListWidget()
+        layout.addWidget(profile_list)
+
+        row1 = QHBoxLayout()
+        save_btn   = QPushButton("💾  Save as Profile")
+        load_btn   = QPushButton("✅  Load Selected")
+        delete_btn = QPushButton("🗑  Delete Selected")
+        for btn in (save_btn, load_btn, delete_btn):
+            row1.addWidget(btn)
+        layout.addLayout(row1)
+
+        row2 = QHBoxLayout()
+        new_btn     = QPushButton("✨  New Empty Profile")
+        default_btn = QPushButton("⭐  Set as Default")
+        new_btn.setToolTip(
+            "Create a blank profile with default settings.\n"
+            "Use 'Load Selected' to activate it."
+        )
+        default_btn.setToolTip(
+            "Mark the selected profile as the default.\n"
+            "It will be loaded automatically on next launch."
+        )
+        row2.addWidget(new_btn)
+        row2.addWidget(default_btn)
+        layout.addLayout(row2)
+
+        row3 = QHBoxLayout()
+        export_btn = QPushButton("📤  Export All (ZIP)")
+        import_btn = QPushButton("📥  Import (ZIP or JSON)")
+        row3.addWidget(export_btn)
+        row3.addWidget(import_btn)
+        layout.addLayout(row3)
+
+        close_btn = QPushButton("Close")
+        layout.addWidget(close_btn)
+
+        def _refresh():
+            active  = Options.get_active_profile()
+            default = Options.get_default_profile()
+            info.setText(
+                f"Active profile: <b>{active}</b><br>"
+                f"Default on startup: <b>{default}</b><br>"
+                "Profiles are stored in <i>~/.config/Backup Helper/profiles/</i>.<br>"
+                "'Export' creates a ZIP of <b>all</b> profiles; "
+                "'Import' restores from a ZIP or single .json."
+            )
+            _refresh_list(profile_list, active, default)
+
+        def _selected_name() -> str | None:
+            item = profile_list.currentItem()
+            if not item:
+                return None
+            text = item.text()
+            for marker in (" ✔ ⭐", " ⭐ ✔", " ✔", " ⭐"):
+                text = text.replace(marker, "")
+            return text.strip() or None
+
+        _refresh()
+
+        def _save():
+            name, ok = QInputDialog.getText(dlg, "          Save Profile          ", "          Profile name:          ")
+            name = name.strip()
+            if not (ok and name):
+                return
+            if name in Options.list_profiles():
+                if not _confirm_overwrite(dlg, name):
+                    return
+            if Options.save_profile(name):
+                self.show_message("Saved", f"Profile '{name}' saved.")
+                _refresh()
+            else:
+                _error(dlg, "Save Failed",
+                       "Name may only contain letters, digits, spaces, hyphens, dots or underscores.")
+
+        def _load():
+            name = _selected_name()
+            if not name:
+                self.show_message("No Selection", "Select a profile to load.")
+                return
+            c = QMessageBox(QMessageBox.Icon.Question, "Load Profile",
+                            f"Load '{name}'? This replaces the current configuration.",
+                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, dlg)
+            c.setDefaultButton(QMessageBox.StandardButton.No)
+            if c.exec() != QMessageBox.StandardButton.Yes:
+                return
+            if Options.load_profile(name):
+                self.show_message("Loaded", f"Now using profile '{name}'.")
+                _refresh()
+                try:
+                    self.settings_changed.emit()
+                except Exception as exc:
+                    logger.error("open_profile_manager/_load: %s", exc)
+            else:
+                _error(dlg, "Load Failed", f"Could not load '{name}'.")
+
+        def _delete():
+            name = _selected_name()
+            if not name:
+                self.show_message("No Selection", "Select a profile to delete.")
+                return
+            if name == Options.get_active_profile():
+                self.show_message("Cannot Delete",
+                                  "The active profile cannot be deleted.\nLoad a different profile first.")
+                return
+            c = QMessageBox(QMessageBox.Icon.Warning, "Delete Profile",
+                            f"Delete '{name}'? This cannot be undone.",
+                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, dlg)
+            c.setDefaultButton(QMessageBox.StandardButton.No)
+            if c.exec() != QMessageBox.StandardButton.Yes:
+                return
+            if Options.delete_profile(name):
+                self.show_message("Deleted", f"Profile '{name}' deleted.")
+                _refresh()
+            else:
+                _error(dlg, "Delete Failed", f"Could not delete '{name}'.")
+
+        def _new_empty():
+            name, ok = QInputDialog.getText(dlg, "          New Empty Profile          ", "          Profile name:          ")
+            name = name.strip()
+            if not (ok and name):
+                return
+            if not re.match(r"^[\w\-. ]+$", name):
+                _error(dlg, "Invalid Name",
+                       "Name may only contain letters, digits, spaces, hyphens, dots or underscores.")
+                return
+            if name in Options.list_profiles() and not _confirm_overwrite(dlg, name):
+                return
+            _create_empty_profile(name, dlg)
+            _refresh()
+
+        def _set_default():
+            name = _selected_name()
+            if not name:
+                self.show_message("No Selection", "Select a profile to set as default.")
+                return
+            if Options.set_default_profile(name):
+                self.show_message("Default Set", f"'{name}' will be loaded on startup.")
+                _refresh()
+            else:
+                _error(dlg, "Failed", f"Could not set '{name}' as default.")
+
+        def _export():
+            dest, _ = QFileDialog.getSaveFileName(
+                dlg, "Export All Profiles",
+                str(Options.profiles_dir.parent / "profiles_backup.zip"),
+                "ZIP archives (*.zip);;All files (*)",
+            )
+            if not dest:
+                return
+            if Options.export_all_profiles(dest):
+                self.show_message("Exported", f"Profiles exported to:\n{dest}")
+            else:
+                _error(dlg, "Export Failed", "No profiles found or could not write ZIP.")
+
+        def _import():
+            src, _ = QFileDialog.getOpenFileName(
+                dlg, "Import Profiles",
+                str(Options.profiles_dir.parent),
+                "ZIP / JSON (*.zip *.json);;All files (*)",
+            )
+            if not src:
+                return
+            if src.lower().endswith(".zip"):
+                overwrite = (
+                    QMessageBox(QMessageBox.Icon.Question, "Overwrite Existing?",
+                                "Overwrite profiles with the same name?",
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, dlg
+                                ).exec() == QMessageBox.StandardButton.Yes
+                )
+                imported, skipped = Options.import_profiles_from_zip(src, overwrite=overwrite)
+                msg = f"Imported: {', '.join(imported) or 'none'}"
+                if skipped:
+                    msg += f"\nSkipped: {', '.join(skipped)}"
+                self.show_message("Import Complete", msg)
+            else:
+                name, ok = QInputDialog.getText(
+                    dlg, "Profile Name", "Name for the imported profile:", text=Path(src).stem
+                )
+                name = name.strip()
+                if not (ok and name):
+                    return
+                if name in Options.list_profiles() and not _confirm_overwrite(dlg, name):
+                    return
+                if Options.import_single_profile(src, name):
+                    self.show_message("Imported", f"Profile '{name}' imported.")
+                else:
+                    _error(dlg, "Import Failed", "The file is not a valid profile JSON.")
+            _refresh()
+
+        save_btn.clicked.connect(_save)
+        load_btn.clicked.connect(_load)
+        delete_btn.clicked.connect(_delete)
+        new_btn.clicked.connect(_new_empty)
+        default_btn.clicked.connect(_set_default)
+        export_btn.clicked.connect(_export)
+        import_btn.clicked.connect(_import)
+        close_btn.clicked.connect(dlg.accept)
+
+        dlg.exec()
+        self.show()
+
+    def _darkened(self, color_str: str) -> str:
+        if color_str not in self._color_cache:
+            color = QColor(color_str)
+            h, s, v, a = color.getHsv()
+            v = max(0, v - 120)
+            self._color_cache[color_str] = QColor.fromHsv(h, s, v, a).name()
+        return self._color_cache[color_str]
+
+    @staticmethod
+    def darken_header_color(color_str: str) -> str:
+        color = QColor(color_str)
+        h, s, v, a = color.getHsv()
+        v = max(0, v - 120)
+        return QColor.fromHsv(h, s, v, a).name()
+
+
+def _styled_combo(items: list, max_height: int = 60):
+    from PyQt6.QtWidgets import QComboBox
+    cb = QComboBox()
+    cb.setStyleSheet("color:#ffffff;background-color:#555582;padding:5px;")
+    cb.addItems(items)
+    cb.setMaximumHeight(max_height)
+    return cb
+
+
+def _confirm_overwrite(parent, name: str) -> bool:
+    c = QMessageBox(QMessageBox.Icon.Question, "Overwrite?",
+                    f"'{name}' exists. Overwrite?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, parent)
+    c.setDefaultButton(QMessageBox.StandardButton.No)
+    return c.exec() == QMessageBox.StandardButton.Yes
+
+
+def _error(parent, title: str, message: str) -> None:
+    QMessageBox(QMessageBox.Icon.Critical, title, message,
+                QMessageBox.StandardButton.Ok, parent).exec()
+
+
+def _refresh_list(list_widget: QListWidget, active: str, default: str) -> None:
+    list_widget.clear()
+    for name in Options.list_profiles():
+        markers = ""
+        if name == active:  markers += " ✔"
+        if name == default: markers += " ⭐"
+        list_widget.addItem(f"{name}{markers}")
+
+
+def _create_empty_profile(name: str, parent) -> None:
+    default = {
+        "is_default": False,
+        "mount_options": [],
+        "run_mount_command_on_launch": False,
+        "header": {},
+        "sublayout_names": {f"sublayout_games_{i}": "" for i in range(1, 5)},
+        "system_manager_operations": [],
+        "system_files": [],
+        "basic_packages": [],
+        "aur_packages": [],
+        "specific_packages": [],
+        "ui_settings": {
+            "backup_window_columns":   2,
+            "restore_window_columns":  2,
+            "settings_window_columns": 2,
+            "theme":       Options.ui_settings.get("theme", "Tokyo Night"),
+            "font_family": Options.ui_settings.get("font_family", "DejaVu Sans"),
+            "font_size":   Options.ui_settings.get("font_size", 14),
+        },
+        "user_shell": "Bash",
+        "entries": [],
+    }
+    try:
+        Options.profiles_dir.mkdir(parents=True, exist_ok=True)
+        target = Options.profiles_dir / f"{name}.json"
+        with tempfile.NamedTemporaryFile(
+            dir=Options.profiles_dir, delete=False, mode="w", encoding="utf-8"
+        ) as tmp:
+            tmp_path = tmp.name
+            json.dump(default, tmp, indent=4, ensure_ascii=False)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.replace(tmp_path, target)
+    except Exception as exc:
+        logger.error("_create_empty_profile: %s", exc)
+        _error(parent, "Error", f"Could not create profile:\n{exc}")
+
+
+def _block_set_cb(cb: QCheckBox, checked: bool) -> None:
+    cb.blockSignals(True)
+    cb.setChecked(checked)
+    cb.blockSignals(False)
+
+
+def _set_button_text(
+    btn_box: "QDialogButtonBox",
+    role: "QDialogButtonBox.StandardButton",
+    text: str,
+) -> None:
+    btn = btn_box.button(role)
+    if btn is not None:
+        btn.setText(text)
