@@ -3,9 +3,8 @@ from options import Options
 from global_style import THEMES
 from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QGridLayout, QHBoxLayout,
-                             QLabel, QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSpacerItem, QVBoxLayout,
-                             QWidget)
+from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QGridLayout, QLabel, QWidget,
+                             QHBoxLayout, QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSpacerItem, QVBoxLayout)
 
 from logging_config import setup_logger
 logger = setup_logger(__name__)
@@ -259,8 +258,9 @@ class BaseWindow(QDialog):
             if not title:
                 continue
             for i in range(1, 5):
-                if details.get(f"sublayout_games_{i}", False):
-                    result[f"sublayout_games_{i}"].append(title)
+                key = f"sublayout_games_{i}"
+                if details.get(key, False):
+                    result[key].append(title)
 
         return result
 
@@ -405,9 +405,9 @@ class BaseWindow(QDialog):
             if self._tooltip_cache is None:
                 backup_tips, restore_tips, sm_tips = Options.generate_tooltip()
                 self._tooltip_cache = {
-                    "backup":   backup_tips,
-                    "restore":  restore_tips,
-                    "settings": backup_tips,
+                    "backup":        backup_tips,
+                    "restore":       restore_tips,
+                    "settings":      backup_tips,
                     "system_manager": sm_tips,
                 }
 
@@ -415,7 +415,10 @@ class BaseWindow(QDialog):
             tip  = tips.get(f"{checkbox.text()}_tooltip", "No detailed information available.")
             checkbox.setToolTip(tip)
             checkbox.setToolTipDuration(600_000)
-            checkbox._tooltip_set = True
+            try:
+                checkbox._tooltip_set = True  # type: ignore[attr-defined]
+            except AttributeError:
+                pass
 
         QCheckBox.enterEvent(checkbox, event)
 
@@ -661,7 +664,7 @@ class BaseWindow(QDialog):
             for cb, *_ in self.checkbox_dirs:
                 cb.setChecked(False)
             self._shown_once = True
-        if self.selectall:
+        if self.selectall is not None:
             self.selectall.setChecked(False)
             self.selectall.setFocus()
 
