@@ -828,13 +828,13 @@ class SystemManagerThread(QThread):
                        if hasattr(self.distro, 'get_ssh_service_name') else 'sshd')
 
         return {
-            "enable_printer_support":           ("Initializing printer support...",  "cups",        get_packages("get_printer_packages")),
+            "enable_printer_support":           ("Initializing printer support...",   "cups",        get_packages("get_printer_packages")),
+            "enable_ssh_service":               ("Initializing SSH server...",        ssh_service,   get_packages("get_ssh_packages")),
             "enable_samba_network_filesharing": ("Initializing samba...",             "smb",         get_packages("get_samba_packages")),
             "enable_bluetooth_service":         ("Initializing bluetooth...",         "bluetooth",   get_packages("get_bluetooth_packages")),
             "enable_atd_service":               ("Initializing atd...",               "atd",         get_packages("get_at_packages")),
             "enable_cronie_service":            ("Initializing cronie...",            "cronie",      get_packages("get_cron_packages")),
             "enable_firewall":                  ("Initializing firewall...",          "ufw",         get_packages("get_firewall_packages")),
-            "enable_ssh_service":               ("Initializing SSH server...",        ssh_service,   get_packages("get_ssh_packages")),
         }
 
     def reset_sudo_timeout(self):
