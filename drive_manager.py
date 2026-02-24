@@ -1,9 +1,12 @@
+from __future__ import annotations
 from pathlib import Path
 import os, pwd, shlex, subprocess, threading, time
 from PyQt6.QtWidgets import QCheckBox, QMessageBox
 
 from logging_config import setup_logger
 logger = setup_logger(__name__)
+
+__all__ = ["DriveManager"]
 
 _USER = pwd.getpwuid(os.getuid()).pw_name
 
@@ -12,10 +15,14 @@ MOUNT_TIMEOUT        = 45
 UNMOUNT_TIMEOUT      = 30
 PROCESS_KILL_TIMEOUT = 10
 
-_ALLOWED_COMMANDS        = {"mount", "umount", "udisksctl"}
-_DANGEROUS_CHARS         = {";", "&&", "||", "|", "$(", "`", ">", "<", "&", "\n", "\r", "\x00"}
-_SUSPICIOUS_ARGS         = {"--exec", "--command", "-c", "--eval"}
-_SUSPICIOUS_PATH_PATTERNS= {"..", ";", "|", "&", "$(", "`", "<", ">", "\x00", "\n", "\r"}
+_ALLOWED_COMMANDS = {"mount", "umount", "udisksctl"}
+
+_DANGEROUS_SEQUENCES: tuple[str, ...] = (
+    "&&", "||", "$(", ";;", ";", "|", "`", ">", "<", "&", "\n", "\r", "\x00",
+)
+
+_SUSPICIOUS_ARGS          = {"--exec", "--command", "-c", "--eval"}
+_SUSPICIOUS_PATH_PATTERNS = {"..", ";", "|", "&", "$(", "`", "<", ">", "\x00", "\n", "\r"}
 
 
 def _mount_paths(name: str) -> tuple[str, ...]:
@@ -59,8 +66,8 @@ class DriveManager:
     def _validate_command(cmd: str) -> tuple[bool, str]:
         if not cmd or not cmd.strip():
             return False, "Empty command."
-        if any(bad in cmd for bad in _DANGEROUS_CHARS):
-            return False, "Command contains dangerous characters."
+        if any(seq in cmd for seq in _DANGEROUS_SEQUENCES):
+            return False, "Command contains dangerous characters or sequences."
         try:
             tokens = shlex.split(cmd)
         except ValueError as exc:
@@ -252,12 +259,25 @@ class DriveManager:
     def unmount_drives(self, parent=None) -> bool:
         with self._lock:
             queued = self.drives_to_unmount.copy()
-        all_ok = all(self.unmount_drive(d, parent) for d in queued)
-        if all_ok:
-            with self._lock:
-                self.drives_to_unmount.clear()
+
+        failed: list[dict] = []
+        for d in queued:
+            if self.unmount_drive(d, parent):
+                with self._lock:
+                    try:
+                        self.drives_to_unmount.remove(d)
+                    except ValueError:
+                        pass
+            else:
+                failed.append(d)
+
+        if not failed:
             logger.info("unmount_drives: all drives unmounted successfully.")
-        return all_ok
+        else:
+            names = [f.get("drive_name", "?") for f in failed]
+            logger.warning("unmount_drives: failed to unmount: %s", names)
+
+        return not failed
 
     def mount_drives_at_launch(self) -> None:
         from options import Options
@@ -277,6 +297,10 @@ class DriveManager:
     @staticmethod
     def _kill_process(cmd: str) -> None:
         try:
-            subprocess.run(["pkill", "-f", cmd[:50]], timeout=PROCESS_KILL_TIMEOUT, check=False)
+            subprocess.run(
+                ["pkill", "-f", cmd[:50]],
+                timeout=PROCESS_KILL_TIMEOUT,
+                check=False,
+            )
         except (subprocess.SubprocessError, OSError) as exc:
             logger.warning("Could not kill hung mount process: %s", exc)
