@@ -1,8 +1,8 @@
 from pathlib import Path
 from PyQt6.QtCore import Qt, QTimer
+from global_style import get_current_style
 from linux_distro_helper import LinuxDistroHelper
 from options import Options, SESSIONS, USER_SHELL
-from global_style import global_style, get_current_style
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout, QLabel, QPushButton, QWidget,
                              QComboBox, QCheckBox, QListWidget, QListWidgetItem, QScrollArea, QDialogButtonBox, QLineEdit,
                              QMessageBox, QFileDialog, QInputDialog, QTextEdit, QApplication, QSizePolicy)
@@ -38,7 +38,7 @@ class SystemManagerOptions(QDialog):
         self.system_manager_operations_widgets = []
         self.system_files_widgets = []
         self.original_system_files = []
-        self.essential_packages_widgets = []
+        self.basic_packages_widgets = []
         self.aur_packages_widgets = []
         self.specific_packages_widgets = []
         self.current_option_type = None
@@ -65,9 +65,9 @@ class SystemManagerOptions(QDialog):
             f"for root privilege. If you have 'System Files' selected, System Manager will copy these first. "
             f"This allows you to copy files such as 'pacman.conf' or 'smb.conf' to '/etc/'.\n\n"
             f"Under 'System Manager Operations' you can specify how you would like to proceed. "
-            f"Each action is executed one after the other. Uncheck actions to disable them.\n\n"
+            f"Each action is executed one after the other.\nUncheck actions to disable them.\n\n"
             f"Tips:\n\n"
-            f"'Essential Packages' will be installed using '{self.install_package_command}PACKAGE'.\n\n"
+            f"'Basic Packages' will be installed using '{self.install_package_command}PACKAGE'.\n\n"
             f"'AUR Packages' provides access to the Arch User Repository. "
             f"Therefore 'yay' must and will be installed. This feature is available only on "
             f"Arch Linux based distributions.\n\n"
@@ -116,7 +116,7 @@ class SystemManagerOptions(QDialog):
         self.system_manager_operations_button = QPushButton("System Manager Operations")
         self.system_files_button = QPushButton("System Files")
         self.package_buttons = {
-            "essential_packages": QPushButton("Essential Packages"),
+            "basic_packages": QPushButton("Basic Packages"),
             "aur_packages": QPushButton("AUR Packages"),
             "specific_packages": QPushButton("Specific Packages")
         }
@@ -183,7 +183,7 @@ class SystemManagerOptions(QDialog):
     @staticmethod
     def _create_select_all_checkbox():
         select_all_checkbox = QCheckBox("Check/Uncheck All")
-        select_all_checkbox.setStyleSheet(f"{global_style} QCheckBox {{color: #6ffff5;}}")
+        select_all_checkbox.setStyleSheet(f"{get_current_style()} QCheckBox {{color: #6ffff5;}}")
         return select_all_checkbox
 
     def _create_operation_checkboxes(self, grid_layout):
@@ -207,7 +207,7 @@ class SystemManagerOptions(QDialog):
     def _configure_disabled_checkbox(checkbox, operation_key):
         checkbox.setChecked(False)
         checkbox.setEnabled(False)
-        checkbox.setStyleSheet(f"{global_style} QCheckBox {{ color: #666666; }}")
+        checkbox.setStyleSheet(f"{get_current_style()} QCheckBox {{ color: #666666; }}")
 
         tooltips = {
             'update_mirrors': "Mirror update is available on Arch Linux only",
@@ -221,7 +221,7 @@ class SystemManagerOptions(QDialog):
     @staticmethod
     def _configure_enabled_checkbox(checkbox, operation_key):
         checkbox.setChecked(operation_key in Options.system_manager_operations)
-        checkbox.setStyleSheet(f"{global_style} QCheckBox {{ color: #c8beff; }}")
+        checkbox.setStyleSheet(f"{get_current_style()} QCheckBox {{ color: #c8beff; }}")
 
     def _setup_checkbox_interactions(self, select_all_checkbox):
         install_yay_checkbox = self._get_checkbox_by_key('install_yay')
@@ -337,14 +337,17 @@ class SystemManagerOptions(QDialog):
     def _adjust_dialog_size(dialog, content_widget, scroll_area):
         content_widget.adjustSize()
         content_size = content_widget.sizeHint()
-        screen = QApplication.primaryScreen().availableGeometry()
+        primary = QApplication.primaryScreen()
+        if primary is None:
+            return
+        screen = primary.availableGeometry()
 
         margin_w = dialog.geometry().width() - dialog.contentsRect().width()
         if margin_w <= 0:
-            margin_w = 350
+            margin_w = 400
         margin_h = dialog.geometry().height() - dialog.contentsRect().height()
         if margin_h <= 0:
-            margin_h = 200
+            margin_h = 250
 
         optimal_height = min(content_size.height() + margin_h, screen.height())
         optimal_width = min(content_size.width() + margin_w, screen.width())
@@ -445,14 +448,14 @@ class SystemManagerOptions(QDialog):
             if total_count == 0:
                 return
 
-            select_all_checkbox.blockSignals(True)
+            blocked = select_all_checkbox.blockSignals(True)
             if checked_count == total_count:
                 select_all_checkbox.setCheckState(Qt.CheckState.Checked)
             elif checked_count + partially_checked_count == 0:
                 select_all_checkbox.setCheckState(Qt.CheckState.Unchecked)
             else:
                 select_all_checkbox.setCheckState(Qt.CheckState.PartiallyChecked)
-            select_all_checkbox.blockSignals(False)
+            select_all_checkbox.blockSignals(blocked)
 
         select_all_checkbox.stateChanged.connect(toggle_all_system_files)
         for list_widget in self.system_files_widgets:
@@ -532,7 +535,7 @@ class SystemManagerOptions(QDialog):
                     Options.system_files.append({'source': source_str, 'destination': destination})
                     added_items.append(source_path.name)
             except Exception as e:
-                logger.error(f"Error when processing {source}: {e}")
+                logger.error("Error when processing %s: %s", source, e)
 
         if Options.system_files:
             Options.system_files.sort(
@@ -684,14 +687,14 @@ class SystemManagerOptions(QDialog):
             if total_count == 0:
                 return
 
-            select_all_checkbox.blockSignals(True)
+            blocked = select_all_checkbox.blockSignals(True)
             if checked_count == total_count:
                 select_all_checkbox.setCheckState(Qt.CheckState.Checked)
             elif checked_count + partially_checked_count == 0:
                 select_all_checkbox.setCheckState(Qt.CheckState.Unchecked)
             else:
                 select_all_checkbox.setCheckState(Qt.CheckState.PartiallyChecked)
-            select_all_checkbox.blockSignals(False)
+            select_all_checkbox.blockSignals(blocked)
 
         select_all_checkbox.stateChanged.connect(toggle_all_packages)
         for list_widget in package_widgets:
@@ -716,6 +719,15 @@ class SystemManagerOptions(QDialog):
             batch_button = QPushButton(f"Add '{option_type.replace('_', ' ').title()}' in Batches")
             batch_button.clicked.connect(lambda: self.batch_add_packages(option_type))
             layout.insertWidget(3, batch_button)
+
+            io_layout = QHBoxLayout()
+            import_btn = QPushButton("📥 Import from File (TXT/CSV)")
+            export_btn = QPushButton("📤 Export to File (TXT)")
+            import_btn.clicked.connect(lambda: self.import_packages_from_file(option_type))
+            export_btn.clicked.connect(lambda: self.export_packages_to_file(option_type))
+            io_layout.addWidget(import_btn)
+            io_layout.addWidget(export_btn)
+            layout.insertLayout(4, io_layout)
 
     @staticmethod
     def _filter_packages(search_text, package_widgets):
@@ -901,7 +913,7 @@ class SystemManagerOptions(QDialog):
                 options_changed = True
             Options.system_files = new_files
 
-        elif current_type in ["essential_packages", "aur_packages", "specific_packages"]:
+        elif current_type in ["basic_packages", "aur_packages", "specific_packages"]:
             widgets = getattr(self, f"{current_type}_widgets", [])
             new_packages = []
             is_specific = (current_type == "specific_packages")
@@ -944,10 +956,95 @@ class SystemManagerOptions(QDialog):
         if options_changed:
             if current_type == "system_files":
                 QTimer.singleShot(0, self.edit_system_files)
-            elif current_type in ["essential_packages", "aur_packages", "specific_packages"]:
+            elif current_type in ["basic_packages", "aur_packages", "specific_packages"]:
                 QTimer.singleShot(0, lambda: self.edit_packages(current_type))
 
     def go_back(self):
         self.close()
         if self.parent():
             self.parent().show()
+
+    def import_packages_from_file(self, option_type):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import Packages",
+            str(Path.home()),
+            "Text / CSV files (*.txt *.csv);;All files (*)"
+        )
+        if not path:
+            return
+
+        try:
+            with open(path, encoding="utf-8") as f:
+                raw_lines = f.readlines()
+        except OSError as e:
+            QMessageBox.critical(self, "Import Error", f"Cannot read file:\n{e}")
+            return
+
+        current_packages = getattr(Options, option_type, [])
+        existing_names = {
+            p.get('name') if isinstance(p, dict) else p
+            for p in current_packages
+        }
+
+        added, skipped_dup, skipped_inv = [], [], []
+
+        for raw in raw_lines:
+            name = raw.strip().strip('"\'').split(',')[0].strip()
+            if not name or name.startswith('#'):
+                continue
+            if name in existing_names:
+                skipped_dup.append(name)
+            elif not all(c.isalnum() or c in '-_.+:' for c in name):
+                skipped_inv.append(name)
+            else:
+                added.append(name)
+                existing_names.add(name)
+                current_packages.append({'name': name, 'disabled': False})
+
+        setattr(Options, option_type, current_packages)
+        Options.save_config()
+
+        summary = f"Import complete.\n\nAdded: {len(added)}"
+        if skipped_dup:
+            summary += f"\nSkipped (duplicates): {len(skipped_dup)}"
+        if skipped_inv:
+            summary += f"\nSkipped (invalid names): {len(skipped_inv)}"
+            summary += "\n  " + ", ".join(skipped_inv[:10])
+            if len(skipped_inv) > 10:
+                summary += f" … (+{len(skipped_inv) - 10} more)"
+
+        QMessageBox.information(self, "Import Result", summary)
+        QTimer.singleShot(0, lambda: self.edit_packages(option_type))
+
+    def export_packages_to_file(self, option_type):
+        packages = getattr(Options, option_type, [])
+        if not packages:
+            QMessageBox.information(self, "Export", "No packages to export.")
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Packages",
+            str(Path.home() / f"{option_type}.txt"),
+            "Text files (*.txt);;All files (*)"
+        )
+        if not path:
+            return
+
+        lines = []
+        for p in packages:
+            if isinstance(p, dict):
+                name = p.get('name', '')
+            else:
+                name = str(p)
+            if name:
+                lines.append(name)
+
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(lines) + '\n')
+            QMessageBox.information(self, "Export Complete",
+                                    f"Exported {len(lines)} package(s) to:\n{path}")
+        except OSError as e:
+            QMessageBox.critical(self, "Export Error", f"Cannot write file:\n{e}")
