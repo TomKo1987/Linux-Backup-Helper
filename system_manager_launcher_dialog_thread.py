@@ -27,6 +27,7 @@ class SystemManagerLauncher:
         self.system_manager_thread = None
         self.system_manager_dialog = None
         self.sudo_checkbox = None
+        self.distro_label = None
         self.distro_helper = LinuxDistroHelper()
         self.distro_name = self.distro_helper.distro_pretty_name
         self.session = self.distro_helper.detect_session()
@@ -817,6 +818,9 @@ class SystemManagerThread(QThread):
         }
 
     def _define_service_tasks(self):
+        if not self.distro:
+            return {}
+
         def get_packages(method):
             return getattr(self.distro, method, lambda: [])()
 
