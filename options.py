@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Optional
-import functools, json, os, pwd, re, tempfile
 from linux_distro_helper import LinuxDistroHelper
+import functools, json, os, pwd, re, shutil, tempfile, zipfile
 from PyQt6.QtCore import QMutex, QMutexLocker, QObject, QUuid, pyqtSignal
 
 from logging_config import setup_logger
@@ -554,7 +554,6 @@ class Options(QObject):
 
     @staticmethod
     def export_all_profiles(dest_zip: str) -> bool:
-        import zipfile
         if not Options.profiles_dir.exists() or not any(Options.profiles_dir.glob("*.json")):
             logger.warning("export_all_profiles: no profiles to export.")
             return False
@@ -571,7 +570,6 @@ class Options(QObject):
 
     @staticmethod
     def import_profiles_from_zip(src_zip: str, overwrite: bool = False) -> tuple[list, list]:
-        import zipfile
         try:
             Options.profiles_dir.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
@@ -624,7 +622,6 @@ class Options(QObject):
             logger.error("import_single_profile: cannot read file: %s", exc)
             return False
         try:
-            import shutil
             Options.profiles_dir.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src_json, Options.profiles_dir / f"{name}.json")
             logger.info("Profile '%s' imported.", name)
