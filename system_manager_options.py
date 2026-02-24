@@ -259,8 +259,7 @@ class SystemManagerOptions(QDialog):
                 return
 
             checked_count = sum(1 for cb in enabled_checkboxes if cb.isChecked())
-            block = select_all_checkbox.blockSignals(True)
-
+            blocked = select_all_checkbox.blockSignals(True)
             if checked_count == 0:
                 select_all_checkbox.setCheckState(Qt.CheckState.Unchecked)
             elif checked_count == len(enabled_checkboxes):
@@ -268,7 +267,7 @@ class SystemManagerOptions(QDialog):
             else:
                 select_all_checkbox.setCheckState(Qt.CheckState.PartiallyChecked)
 
-            select_all_checkbox.blockSignals(block)
+            select_all_checkbox.blockSignals(blocked)
 
         select_all_checkbox.stateChanged.connect(toggle_all_checkboxes)
         for checkbox, option_key in self.system_manager_operations_widgets:
