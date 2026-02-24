@@ -301,7 +301,10 @@ class FileProcessDialog(QDialog):
             self.progress_bar.setValue(100)
             self.animate_text_effect()
         self.cancel_button.setText("Close")
-        self.cancel_button.clicked.disconnect()
+        try:
+            self.cancel_button.clicked.disconnect()
+        except RuntimeError:
+            pass
         self.cancel_button.clicked.connect(self.accept)
         self.cancel_button.setFocus()
         self.update_summary()
@@ -309,7 +312,11 @@ class FileProcessDialog(QDialog):
             tab.flush_entries()
             tab.sort_entries()
 
-    def animate_text_effect(self):
+    def animate_text_effect(self) -> None:
+        try:
+            self.color_timer.timeout.disconnect(self.update_label_color)
+        except (RuntimeError, TypeError):
+            pass
         self.color_timer.timeout.connect(self.update_label_color)
         self.color_timer.start(50)
 
@@ -577,7 +584,13 @@ class FileCopyThread(QThread):
                             if sent == 0:
                                 break
                             sent_total += sent
-                    if not self.cancelled and sent_total != actual_size:
+                    if self.cancelled:
+                        try:
+                            os.unlink(destination)
+                        except OSError:
+                            pass
+                        return
+                    if sent_total != actual_size:
                         raise OSError(f"sendfile incomplete: {sent_total}/{actual_size} bytes transferred")
                     shutil.copystat(source, destination)
                     return
@@ -594,6 +607,12 @@ class FileCopyThread(QThread):
                         if not n:
                             break
                         fdst.write(mv[:n])
+                if self.cancelled:
+                    try:
+                        os.unlink(destination)
+                    except OSError:
+                        pass
+                    return
                 shutil.copystat(source, destination)
             except MemoryError:
                 shutil.copy2(source, destination)
@@ -618,22 +637,22 @@ class FileCopyThread(QThread):
             return 0
 
     def _update_file_progress(self, should_copy, source_file, dest_file, file_name, file_size):
+        self.mutex.lock()
         try:
-            self.mutex.lock()
-            try:
-                self.processed_files += 1
-                self.processed_bytes += self.file_sizes.get(source_file, file_size)
-                progress = int((self.processed_bytes / self.total_bytes) * 100) if self.total_bytes > 0 else 0
-                if should_copy:
-                    self.file_copied.emit(source_file, dest_file, file_size)
-                    self.progress_updated.emit(progress, f"Copying:\n{file_name}")
-                else:
-                    self.file_skipped.emit(source_file, "(Up to date)")
-                    self.progress_updated.emit(progress, f"Skipping (Up to date):\n{file_name}")
-            finally:
-                self.mutex.unlock()
+            self.processed_files += 1
+            self.processed_bytes += self.file_sizes.get(source_file, file_size)
+            progress = int((self.processed_bytes / self.total_bytes) * 100) if self.total_bytes > 0 else 0
+            if should_copy:
+                self.file_copied.emit(source_file, dest_file, file_size)
+                self.progress_updated.emit(progress, f"Copying:\n{file_name}")
+            else:
+                self.file_skipped.emit(source_file, "(Up to date)")
+                self.progress_updated.emit(progress, f"Skipping (Up to date):\n{file_name}")
         except Exception as e:
+            self.mutex.unlock()
             self.handle_file_error(source_file, str(e))
+            return
+        self.mutex.unlock()
 
     def handle_file_error(self, source_file, error_msg):
         self.mutex.lock()
@@ -756,7 +775,10 @@ class SmbFileHandler:
             if self._smb_credentials:
                 return
             creds = getattr(self.thread, 'get_smb_credentials', lambda: None)() if self.thread else None
-            valid_creds = creds if isinstance(creds, (list, tuple)) and all(creds) else None
+            valid_creds = (
+                creds if isinstance(creds, (list, tuple)) and len(creds) >= 2 and all(creds[:2])
+                else None
+            )
             self._smb_credentials = valid_creds or self.samba_password_manager.get_samba_credentials()
             if self.thread and hasattr(self.thread, 'set_smb_credentials') and not valid_creds:
                 self.thread.set_smb_credentials(self._smb_credentials)
@@ -819,6 +841,8 @@ class SmbFileHandler:
             if self.thread and getattr(self.thread, 'cancelled', False):
                 raise RuntimeError("Operation cancelled before mount")
             self.initialize()
+            if not self._smb_credentials or len(self._smb_credentials) < 2:
+                raise RuntimeError("SMB credentials are unavailable or incomplete.")
             username, password = self._smb_credentials[:2]
             domain = self._smb_credentials[2] if len(self._smb_credentials) > 2 else None
 
@@ -1225,7 +1249,8 @@ class VirtualLogTabWidget(QWidget):
             self.entries.extend(entries)
             self.entry_types.extend(types)
             self.model.endInsertRows()
-            self.model.set_filter(self.model.filter)
+            if self.model.filter:
+                self.model.set_filter(self.model.filter)
         if has_remaining:
             self._flush_timer.start()
 
