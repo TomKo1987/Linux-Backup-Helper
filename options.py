@@ -1,477 +1,849 @@
 from pathlib import Path
-import json, os, tempfile, functools, pwd
+from typing import Optional
+import functools, json, os, pwd, re, tempfile
 from linux_distro_helper import LinuxDistroHelper
-from PyQt6.QtCore import QObject, pyqtSignal, QMutex, QMutexLocker, QUuid
-
-user = pwd.getpwuid(os.getuid()).pw_name
-home_user = Path.home()
-
-MAX_REPLACEMENT_ITERATIONS = 10 
+from PyQt6.QtCore import QMutex, QMutexLocker, QObject, QUuid, pyqtSignal
 
 from logging_config import setup_logger
 logger = setup_logger(__name__)
-MAX_MOUNT_OPTIONS = 3
+
+_USER = pwd.getpwuid(os.getuid()).pw_name
+_HOME = Path.home()
+
+MAX_MOUNT_OPTIONS          = 3
+MAX_REPLACEMENT_ITERATIONS = 10
+
 SESSIONS = [
-    "GNOME", "KDE", "XFCE", "LXQt", "LXDE", "Cinnamon", "Mate", "Deepin", "Budgie", "Enlightenment",
-    "Hyprland", "sway", "i3", "bspwm", "openbox", "awesome", "herbstluftwm", "icewm", "fluxbox",
-    "xmonad", "spectrwm", "qtile", "pekwm", "wmii", "dwm"
+    "GNOME", "KDE", "XFCE", "LXQt", "LXDE", "Cinnamon", "Mate", "Deepin",
+    "Budgie", "Enlightenment", "Hyprland", "sway", "i3", "bspwm", "openbox",
+    "awesome", "herbstluftwm", "icewm", "fluxbox", "xmonad", "spectrwm",
+    "qtile", "pekwm", "wmii", "dwm",
 ]
+
 USER_SHELL = ["Bash", "Fish", "Zsh", "Elvish", "Nushell", "Powershell", "Xonsh", "Ngs"]
 
 DETAIL_KEYS = (
-    'no_backup', 'no_restore',
-    'sublayout_games_1', 'sublayout_games_2',
-    'sublayout_games_3', 'sublayout_games_4'
+    "no_backup", "no_restore",
+    "sublayout_games_1", "sublayout_games_2",
+    "sublayout_games_3", "sublayout_games_4",
 )
 
-def _new_uuid():
+_PROFILE_NAME_RE = re.compile(r"^[\w\-. ]+$")
+
+
+def _new_uuid() -> str:
     return QUuid.createUuid().toString(QUuid.StringFormat.WithoutBraces)
 
-def _to_list_str(x):
-    return [str(i) for i in (x if isinstance(x, list) else [x])]
 
-def _normalize_newlines(item):
-    return item.replace('\\n', '\n') if isinstance(item, str) else item
+def _to_str_list(value) -> list[str]:
+    if isinstance(value, list):
+        return [str(v) for v in value]
+    return [str(value)]
 
-def _process_path_list(raw_data):
-    if isinstance(raw_data, list):
-        return [_normalize_newlines(i) for i in raw_data if i]
-    return [_normalize_newlines(raw_data)] if raw_data else ['']
+
+def _normalise_newlines(value):
+    return value.replace("\\n", "\n") if isinstance(value, str) else value
+
+
+def _load_path_list(raw) -> list[str]:
+    if isinstance(raw, list):
+        return [_normalise_newlines(item) for item in raw if item]
+    return [_normalise_newlines(raw)] if raw else [""]
+
+
+def _atomic_json_write(path: Path, data: dict) -> None:
+    with tempfile.NamedTemporaryFile(
+        dir=path.parent, delete=False, mode="w", encoding="utf-8"
+    ) as tmp:
+        tmp_path = tmp.name
+        json.dump(data, tmp, indent=4, ensure_ascii=False)
+        tmp.flush()
+        os.fsync(tmp.fileno())
+    os.replace(tmp_path, path)
 
 
 class Options(QObject):
     settings_changed = pyqtSignal()
-    config_file_path = Path(home_user).joinpath(".config", "Backup Helper", "config.json")
-    main_window = None
-    run_mount_command_on_launch = False
-    user_shell = USER_SHELL[0]
-    entries_mutex = QMutex()
 
-    all_entries, entries_sorted = [], []
-    mount_options, headers, header_order, header_inactive = [], [], [], []
-    header_colors, system_manager_operations = {}, []
-    system_files, essential_packages, aur_packages, specific_packages = [], [], [], []
-    sublayout_names = {f'sublayout_games_{i}': '' for i in range(1, 5)}
-    ui_settings = {
-        "backup_window_columns": 2,
-        "restore_window_columns": 2,
+    _config_dir:  Path = _HOME / ".config" / "Backup Helper"
+    profiles_dir: Path = _config_dir / "profiles"
+
+    _active_profile: str = ""
+
+    main_window = None
+    run_mount_command_on_launch: bool = False
+    user_shell: str = USER_SHELL[0]
+
+    entries_mutex  = QMutex()
+    all_entries:   list = []
+    entries_sorted: list = []
+
+    mount_options:             list = []
+    headers:                   list = []
+    header_order:              list = []
+    header_inactive:           list = []
+    header_colors:             dict = {}
+    system_manager_operations: list = []
+    system_files:              list = []
+    basic_packages:            list = []
+    aur_packages:              list = []
+    specific_packages:         list = []
+    sublayout_names:           dict = {f"sublayout_games_{i}": "" for i in range(1, 5)}
+    system_manager_tooltips:   dict = {}
+
+    ui_settings: dict = {
+        "backup_window_columns":   2,
+        "restore_window_columns":  2,
         "settings_window_columns": 2,
-        "theme": "Tokyo Night",
+        "theme":       "Tokyo Night",
         "font_family": "DejaVu Sans",
-        "font_size": 14
+        "font_size":   14,
     }
 
-    text_replacements = [
-        (home_user.as_posix(), '~'),
-        (f"/run/media/{user}/", ''),
-        ("[1m", ""), ("[0m", "")
+    text_replacements: list = [
+        (_HOME.as_posix(), "~"),
+        (f"/run/media/{_USER}/", ""),
+        ("[1m", ""),
+        ("[0m", ""),
     ]
 
-    system_manager_tooltips = {}
+    class _ProfilePathDescriptor:
+        def __get__(self, obj, objtype=None) -> Optional[Path]:
+            path = Options.active_profile_path()
+            if path is None:
+                profiles = Options.list_profiles()
+                if profiles:
+                    Options._active_profile = profiles[0]
+                    Options._persist_active_profile()
+                    return Options.profiles_dir / f"{profiles[0]}.json"
+            return path
 
-    def __init__(self, header, title, source, destination, details=None):
+    config_file_path = _ProfilePathDescriptor()
+
+    def __init__(self, header: str, title: str, source, destination, details=None) -> None:
         super().__init__()
-        self.header = str(header or "")
-        self.title = str(title or "")
-        self.source = source
+        self.header      = str(header or "")
+        self.title       = str(title  or "")
+        self.source      = source
         self.destination = destination
-        self.details = dict.fromkeys(DETAIL_KEYS, False)
-        self.details['unique_id'] = _new_uuid()  # type: ignore
+
+        self.details: dict = dict.fromkeys(DETAIL_KEYS, False)
+        self.details["unique_id"] = _new_uuid()
 
         if details:
-            self.details.update({k: bool(v) for k, v in details.items() if k in self.details})
-            if details.get('unique_id'):
-                self.details['unique_id'] = details['unique_id']
+            for key in DETAIL_KEYS:
+                if key in details:
+                    self.details[key] = bool(details[key])
+            if details.get("unique_id"):
+                self.details["unique_id"] = details["unique_id"]
+
+    @classmethod
+    def active_profile_path(cls) -> Optional[Path]:
+        if not cls._active_profile:
+            return None
+        return cls.profiles_dir / f"{cls._active_profile}.json"
 
     @staticmethod
-    def set_main_window(main_window): Options.main_window = main_window
+    def set_main_window(window) -> None:
+        Options.main_window = window
 
     @staticmethod
-    def mount_drives_on_startup():
-        if Options.run_mount_command_on_launch:
-            from drive_manager import DriveManager
-            DriveManager().mount_drives_at_launch()
+    def _persist_active_profile() -> None:
+        legacy = Options._config_dir / "last_profile"
+        if legacy.exists():
+            try:
+                legacy.unlink()
+                logger.info("Removed legacy 'last_profile' file.")
+            except OSError as exc:
+                logger.warning("Could not remove legacy file: %s", exc)
+
+        if not Options._active_profile or not Options.profiles_dir.exists():
+            return
+
+        active_path = Options.profiles_dir / f"{Options._active_profile}.json"
+        for profile_path in Options.profiles_dir.glob("*.json"):
+            is_active = profile_path == active_path
+            try:
+                with open(profile_path, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                if data.get("is_default") == is_active:
+                    continue
+                data["is_default"] = is_active
+                _atomic_json_write(profile_path, data)
+            except Exception as exc:
+                logger.warning("Could not update is_default in '%s': %s", profile_path.name, exc)
 
     @staticmethod
-    def _ensure_unique_id(entry):
-        if not hasattr(entry, 'details') or not isinstance(entry.details, dict):
+    def startup_load() -> bool:
+        profiles = Options.list_profiles()
+
+        for name in profiles:
+            path = Options.profiles_dir / f"{name}.json"
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                if data.get("is_default", False):
+                    Options._active_profile = name
+                    Options.load_config(path)
+                    Options._persist_active_profile()
+                    logger.info("Startup: loaded default profile '%s'.", name)
+                    return True
+            except Exception as exc:
+                logger.error("Error reading profile '%s': %s", name, exc)
+
+        legacy = Options._config_dir / "last_profile"
+        if legacy.exists():
+            try:
+                name = legacy.read_text(encoding="utf-8").strip()
+                if name and (Options.profiles_dir / f"{name}.json").exists():
+                    Options._active_profile = name
+                    Options.load_config(Options.profiles_dir / f"{name}.json")
+                    Options._persist_active_profile()
+                    logger.info("Startup: migrated legacy profile '%s'.", name)
+                    return True
+            except OSError:
+                pass
+
+        if profiles:
+            name = profiles[0]
+            Options._active_profile = name
+            Options.load_config(Options.profiles_dir / f"{name}.json")
+            Options._persist_active_profile()
+            logger.info("Startup: no default set — using '%s'.", name)
+            return True
+
+        logger.info("No profiles found — first run.")
+        return False
+
+    @staticmethod
+    def _ensure_unique_id(entry) -> bool:
+        if not hasattr(entry, "details") or not isinstance(entry.details, dict):
             return False
-        if not entry.details.get('unique_id'):
-            entry.details['unique_id'] = _new_uuid()
+        if not entry.details.get("unique_id"):
+            entry.details["unique_id"] = _new_uuid()
         return True
 
     @staticmethod
-    def sort_entries():
+    def sort_entries() -> list:
         try:
             with QMutexLocker(Options.entries_mutex):
                 if not Options.all_entries:
                     Options.entries_sorted = []
                     return []
-
-                header_order_map = {h: i for i, h in enumerate(Options.header_order)}
-                sorted_entries = []
+                rank = {h: i for i, h in enumerate(Options.header_order)}
+                result = []
                 for entry in Options.all_entries:
-                    if not all(hasattr(entry, a) for a in ('header', 'title', 'details')):
+                    if not all(hasattr(entry, a) for a in ("header", "title", "details")):
                         continue
-                    entry_dict = {
-                        'header': entry.header,
-                        'title': entry.title,
-                        'source': entry.source,
-                        'destination': entry.destination,
-                        'unique_id': entry.details.get('unique_id', _new_uuid())
+                    row = {
+                        "header":      entry.header,
+                        "title":       entry.title,
+                        "source":      entry.source,
+                        "destination": entry.destination,
+                        "unique_id":   entry.details.get("unique_id", _new_uuid()),
                     }
-                    entry_dict.update({k: entry.details.get(k, False) for k in DETAIL_KEYS})
-                    sorted_entries.append(entry_dict)
-
-                sorted_entries.sort(key=lambda x: (header_order_map.get(x['header'], 999), x['title'].lower()))
-                Options.entries_sorted = sorted_entries
-                return sorted_entries
-        except Exception as e:
-            logger.error(f"Error in sort_entries: {e}")
+                    row.update({k: entry.details.get(k, False) for k in DETAIL_KEYS})
+                    result.append(row)
+                result.sort(key=lambda x: (rank.get(x["header"], 999), x["title"].lower()))
+                Options.entries_sorted = result
+                return result
+        except Exception as exc:
+            logger.error("sort_entries: %s", exc)
             Options.entries_sorted = []
             return []
 
     @staticmethod
-    def format_package_list(pkgs):
-        pkgs = [str(p) for p in pkgs or []]
-        if len(pkgs) == 1:
-            return pkgs[0]
-        if len(pkgs) == 2:
-            return f"{pkgs[0]} and {pkgs[1]}"
-        return ", ".join(pkgs[:-1]) + f" and {pkgs[-1]}"
+    def _serialise_entries() -> list[dict]:
+        result = []
+        for entry in Options.all_entries:
+            result.append({
+                "header":      entry.header,
+                "title":       entry.title,
+                "source":      _to_str_list(entry.source),
+                "destination": _to_str_list(entry.destination),
+                "details": {
+                    **{k: entry.details.get(k, False) for k in DETAIL_KEYS},
+                    "unique_id": entry.details.get("unique_id", _new_uuid()),
+                },
+            })
+        return result
 
     @staticmethod
-    def get_system_manager_operation_text(distro_helper):
-        pkg_install_cmd = distro_helper.pkg_install.replace("{package}", "PACKAGE")
-        pkg_update_cmd = distro_helper.pkg_update
-
-        if "pacman" in pkg_install_cmd:
-            pkg_manager = "pacman"
-        elif "apt" in pkg_install_cmd:
-            pkg_manager = "apt"
-        elif "dnf" in pkg_install_cmd:
-            pkg_manager = "dnf"
-        else:
-            pkg_manager = "zypper"
-
-        session = distro_helper.detect_session()
-
-        def format_pkgs(get_func):
-            return Options.format_package_list(get_func())
-
-        printer_pkgs = format_pkgs(distro_helper.get_printer_packages)
-        samba_pkgs = format_pkgs(distro_helper.get_samba_packages)
-        bluetooth_pkgs = format_pkgs(distro_helper.get_bluetooth_packages)
-        cron_pkgs = format_pkgs(distro_helper.get_cron_packages)
-        firewall_pkgs = format_pkgs(distro_helper.get_firewall_packages)
-        at_pkgs = format_pkgs(distro_helper.get_at_packages)
-
-        cron_service = "cronie" if pkg_manager == "pacman" or distro_helper.distro_id in ["fedora", "rhel",
-                                                                                          "centos"] else "cron"
-
-        return {
-            "copy_system_files": "Copy 'System Files' (Using 'sudo cp'.)",
-            "update_mirrors": "Mirror update<br>(Install 'reflector' and get the 10 fastest servers in your country, or worldwide if not detected.)",
-            "set_user_shell": "Change shell for current user<br>(Install corresponding package for selected shell and change it for the current user.)",
-            "update_system": f"System update<br>(Using '{'yay --noconfirm' if distro_helper.package_is_installed('yay') else pkg_update_cmd}'.)",
-            "install_kernel_header": f"Check kernel version and install corresponding headers ({distro_helper.get_kernel_headers_pkg()})",
-            "install_essential_packages": f"Install 'Essential Packages' (Using '{pkg_install_cmd}'.)",
-            "install_yay": "Install 'yay' (Necessary for 'AUR Packages'.)",
-            "install_aur_packages": "Install 'AUR Packages' ('yay' needed.)",
-            "install_specific_packages": f"Install 'Specific Packages' for {session}<br>(Using '{pkg_install_cmd}'.)",
-            "enable_printer_support": f"Initialize printer support<br>(Install '{printer_pkgs}'.<br>Enable && start 'cups.service'.)",
-            "enable_samba_network_filesharing": f"Initialize samba (Network filesharing via samba)<br>(Install '{samba_pkgs}'. Enable && start 'smb.service'.)",
-            "enable_bluetooth_service": f"Initialize bluetooth<br>(Install '{bluetooth_pkgs}'. Enable && start 'bluetooth.service'.)",
-            "enable_atd_service": f"Initialize atd<br>(Install '{at_pkgs}'. Enable && start 'atd.service'.)",
-            "enable_cronie_service": f"Initialize {cron_service}<br>(Install '{cron_pkgs}'. Enable && start '{cron_service}.service'.)",
-            "enable_firewall": f"Initialize firewall<br>(Install '{firewall_pkgs}'. Enable && start 'ufw.service' and set to 'deny all by default'.)",
-            "remove_orphaned_packages": "Remove orphaned package(s)",
-            "clean_cache": f"Clean cache (For '{pkg_manager}'{' and \'yay\'' if distro_helper.has_aur else ''}.)"
-        }
-
-    @staticmethod
-    def _prepare_config_data():
+    def _build_config_data() -> dict:
         with QMutexLocker(Options.entries_mutex):
             Options.all_entries = [e for e in Options.all_entries if Options._ensure_unique_id(e)]
-            for e in Options.all_entries:
-                if e.header not in Options.header_order:
-                    Options.header_order.append(e.header)
+            for entry in Options.all_entries:
+                if entry.header not in Options.header_order:
+                    Options.header_order.append(entry.header)
 
-        seen_headers = list(dict.fromkeys(Options.header_order + Options.header_inactive))
+        seen = list(dict.fromkeys(Options.header_order + Options.header_inactive))
         header_data = {
-            h: {"inactive": h in Options.header_inactive,
-                "header_color": Options.header_colors.get(h, '#ffffff')}
-            for h in seen_headers
+            h: {
+                "inactive":     h in Options.header_inactive,
+                "header_color": Options.header_colors.get(h, "#ffffff"),
+            }
+            for h in seen
         }
 
-        def sort_by_name(items):
-            return sorted(items, key=lambda x: x.get('name', '').lower() if isinstance(x, dict) else str(x).lower())
+        def _sort_by_name(items):
+            return sorted(
+                items,
+                key=lambda x: (x.get("name", "") if isinstance(x, dict) else str(x)).lower(),
+            )
 
-        mount_options = sorted(
+        mount_opts = sorted(
             [o for o in Options.mount_options if isinstance(o, dict) and o.get("drive_name")],
-            key=lambda x: x.get("drive_name", "")
+            key=lambda x: x.get("drive_name", ""),
         )
 
-        essential_packages = sort_by_name(Options.essential_packages.copy())
-        aur_packages = sort_by_name(Options.aur_packages.copy())
-
-        specific_packages = Options.specific_packages.copy()
-        if isinstance(specific_packages, list) and all(isinstance(i, dict) for i in specific_packages):
-            specific_packages.sort(key=lambda x: (x.get('package', '').lower(), x.get('session', '').lower()))
+        spec_pkgs = Options.specific_packages
+        if isinstance(spec_pkgs, list) and all(isinstance(i, dict) for i in spec_pkgs):
+            spec_pkgs = sorted(
+                spec_pkgs,
+                key=lambda x: (x.get("package", "").lower(), x.get("session", "").lower()),
+            )
         else:
-            specific_packages = []
+            spec_pkgs = []
 
-        system_files = Options.system_files.copy()
-        if isinstance(system_files, list) and all(isinstance(i, dict) for i in system_files):
-            system_files.sort(key=lambda x: x.get('source', '').lower())
+        sys_files = Options.system_files
+        if isinstance(sys_files, list) and all(isinstance(i, dict) for i in sys_files):
+            sys_files = sorted(sys_files, key=lambda x: x.get("source", "").lower())
         else:
-            system_files = []
+            sys_files = []
 
         return {
-            "mount_options": mount_options,
+            "is_default":                False,
+            "mount_options":             mount_opts,
             "run_mount_command_on_launch": Options.run_mount_command_on_launch,
-            "header": header_data,
-            "sublayout_names": Options.sublayout_names,
+            "header":                    header_data,
+            "sublayout_names":           Options.sublayout_names,
             "system_manager_operations": Options.system_manager_operations,
-            "system_files": system_files,
-            "essential_packages": essential_packages,
-            "aur_packages": aur_packages,
-            "specific_packages": specific_packages,
-            "ui_settings": Options.ui_settings,
-            "user_shell": Options.user_shell,
-            "entries": []
+            "system_files":              sys_files,
+            "basic_packages":            _sort_by_name(Options.basic_packages),
+            "aur_packages":              _sort_by_name(Options.aur_packages),
+            "specific_packages":         spec_pkgs,
+            "ui_settings":               Options.ui_settings,
+            "user_shell":                Options.user_shell,
+            "entries":                   [],
         }
 
     @staticmethod
-    def save_config():
-        config_dir = Path(Options.config_file_path).parent
-        try:
-            config_dir.mkdir(parents=True, exist_ok=True)
-        except OSError as e:
-            logger.error(f"Error creating config directory: {e}")
+    def save_config() -> bool:
+        target = Options.active_profile_path()
+        if not target:
+            logger.error("save_config: no active profile — cannot save.")
             return False
-
         try:
-            entries_data = Options._prepare_config_data()
+            Options.profiles_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            logger.error("save_config: cannot create profiles directory: %s", exc)
+            return False
+        try:
+            data = Options._build_config_data()
             with QMutexLocker(Options.entries_mutex):
-                for e in Options.all_entries:
-                    entries_data["entries"].append({
-                        "header": e.header,
-                        "title": e.title,
-                        "source": _to_list_str(e.source),
-                        "destination": _to_list_str(e.destination),
-                        "details": {**{k: e.details.get(k, False) for k in DETAIL_KEYS},
-                                    "unique_id": e.details.get('unique_id', _new_uuid())}
-                    })
-
-            with tempfile.NamedTemporaryFile(dir=config_dir, delete=False, mode='w', encoding='utf-8') as temp_file:
-                temp_path = temp_file.name
-                json.dump(entries_data, temp_file, indent=4, ensure_ascii=False)
-                temp_file.flush()
-                os.fsync(temp_file.fileno())
-
-            os.replace(temp_path, Options.config_file_path)
+                data["entries"] = Options._serialise_entries()
+            _atomic_json_write(target, data)
             Options.sort_entries()
-
+            Options._persist_active_profile()
             if Options.main_window:
                 try:
                     Options.main_window.settings_changed.emit()
-                except Exception as e:
-                    logger.error(f"Error emitting settings_changed signal: {e}")
-
+                except Exception as exc:
+                    logger.error("save_config: error emitting settings_changed: %s", exc)
             return True
-
-        except Exception as e:
-            logger.error(f"Error saving config: {e}")
-            temp_path = locals().get('temp_path')
-            if temp_path and os.path.exists(temp_path):
-                try:
-                    os.unlink(temp_path)
-                except OSError:
-                    pass
+        except Exception as exc:
+            logger.error("save_config: %s", exc)
             return False
 
     @staticmethod
-    def _normalize_package_list(pkg_list):
-        updated = []
-        for pkg in pkg_list:
-            if isinstance(pkg, str):
-                updated.append({"name": pkg, "disabled": False})
-            elif isinstance(pkg, dict):
-                pkg.setdefault('disabled', False)
-                updated.append(pkg)
-        return sorted(updated, key=lambda x: x.get('name', '').lower())
-
-    @staticmethod
-    def load_config(file_path):
-        if not os.path.exists(file_path):
-            logger.warning(f"Config file not found: {file_path}. Creating default config.")
-            Options.save_config()
+    def load_config(file_path=None) -> None:
+        if file_path is None:
+            file_path = Options.active_profile_path()
+        if file_path is None:
+            logger.warning("load_config: no active profile — nothing to load.")
             return
+
+        path = Path(file_path)
+        if not path.exists():
+            logger.warning("load_config: file not found: %s", path)
+            return
+
         try:
-            with open(file_path, encoding='utf-8') as f:
-                entries_data = json.load(f)
-            if not isinstance(entries_data, dict):
-                logger.warning("Invalid config format: expected dictionary")
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+
+            if not isinstance(data, dict):
+                logger.warning("load_config: unexpected format in %s", path)
                 return
 
-            header_data = entries_data.get('header', {})
-            Options.header_order = list(header_data.keys())
-            Options.headers = Options.header_order.copy()
-            Options.header_colors = {h: d.get('header_color', '#ffffff') for h, d in header_data.items()}
-            Options.header_inactive = [h for h, d in header_data.items() if d.get('inactive', False)]
+            header_data = data.get("header", {})
+            Options.header_order    = list(header_data.keys())
+            Options.headers         = Options.header_order.copy()
+            Options.header_colors   = {h: d.get("header_color", "#ffffff") for h, d in header_data.items()}
+            Options.header_inactive = [h for h, d in header_data.items() if d.get("inactive", False)]
 
-            Options.sublayout_names = entries_data.get("sublayout_names", Options.sublayout_names)
-            Options.system_manager_operations = entries_data.get("system_manager_operations", [])
-            Options.user_shell = entries_data.get("user_shell", USER_SHELL[0])
-            Options.mount_options = entries_data.get("mount_options", [])
-            loaded_ui = entries_data.get("ui_settings", {})
-            Options.ui_settings = {**Options.ui_settings, **loaded_ui}
+            Options.sublayout_names           = data.get("sublayout_names", Options.sublayout_names)
+            Options.system_manager_operations = data.get("system_manager_operations", [])
+            Options.user_shell                = data.get("user_shell", USER_SHELL[0])
+            Options.mount_options             = data.get("mount_options", [])
+            Options.run_mount_command_on_launch = data.get("run_mount_command_on_launch", False)
 
-            Options.run_mount_command_on_launch = entries_data.get("run_mount_command_on_launch", False)
-            config_changed = not Options.mount_options and Options.run_mount_command_on_launch
-            if config_changed:
+            _save_needed = False
+            if not Options.mount_options and Options.run_mount_command_on_launch:
                 Options.run_mount_command_on_launch = False
+                _save_needed = True
 
-            raw_sys_files = entries_data.get("system_files", [])
-            Options.system_files = sorted(raw_sys_files,
-                                          key=lambda x: x.get('source', '').lower() if isinstance(x, dict) else '')
+            Options.ui_settings = {**Options.ui_settings, **data.get("ui_settings", {})}
+
+            raw_sys_files = data.get("system_files", [])
+            Options.system_files = sorted(
+                [f for f in raw_sys_files if isinstance(f, dict)],
+                key=lambda x: x.get("source", "").lower(),
+            )
             for f in Options.system_files:
-                if isinstance(f, dict): f.setdefault('disabled', False)
+                f.setdefault("disabled", False)
 
-            Options.essential_packages = Options._normalize_package_list(entries_data.get("essential_packages", []))
-            Options.aur_packages = Options._normalize_package_list(entries_data.get("aur_packages", []))
+            Options.basic_packages = Options._normalise_packages(data.get("basic_packages", []))
+            Options.aur_packages   = Options._normalise_packages(data.get("aur_packages", []))
 
-            raw_spec_pkgs = entries_data.get("specific_packages", [])
-            if isinstance(raw_spec_pkgs, list):
-                Options.specific_packages = sorted(raw_spec_pkgs, key=lambda x: (x.get('package', '').lower(),
-                                                                                 x.get('session',
-                                                                                       '').lower()) if isinstance(x,
-                                                                                                                  dict) else '')
-                for pkg in Options.specific_packages:
-                    if isinstance(pkg, dict): pkg.setdefault('disabled', False)
-            else:
-                Options.specific_packages = []
+            raw_spec = data.get("specific_packages", [])
+            Options.specific_packages = sorted(
+                [p for p in raw_spec if isinstance(p, dict)],
+                key=lambda x: (x.get("package", "").lower(), x.get("session", "").lower()),
+            )
+            for p in Options.specific_packages:
+                p.setdefault("disabled", False)
 
             with QMutexLocker(Options.entries_mutex):
                 Options.all_entries = []
-                for e_data in entries_data.get('entries', []):
-                    header = e_data.get('header', '')
+                for edata in data.get("entries", []):
+                    header = edata.get("header", "")
                     if header and header not in Options.header_order:
                         Options.header_order.append(header)
-                    title = _normalize_newlines(e_data.get('title', ''))
-                    src = _process_path_list(e_data.get('source', []))
-                    dest = _process_path_list(e_data.get('destination', []))
-                    new_entry = Options(header, title, src, dest)
-                    details = e_data.get('details', {})
+                    entry = Options(
+                        header,
+                        _normalise_newlines(edata.get("title", "")),
+                        _load_path_list(edata.get("source", [])),
+                        _load_path_list(edata.get("destination", [])),
+                    )
+                    details = edata.get("details", {})
                     for k in DETAIL_KEYS:
-                        new_entry.details[k] = details.get(k, False)
-                    new_entry.details['unique_id'] = details.get('unique_id', _new_uuid())
-                    Options.all_entries.append(new_entry)
+                        entry.details[k] = details.get(k, False)
+                    entry.details["unique_id"] = details.get("unique_id", _new_uuid())
+                    Options.all_entries.append(entry)
 
-            if config_changed:
+            if _save_needed and Options._active_profile:
                 Options.save_config()
 
-        except (IOError, json.JSONDecodeError) as e:
-            error_type = "JSON decoding" if isinstance(e, json.JSONDecodeError) else "loading"
-            logger.error(f"Error {error_type} entries from {file_path}: {e}")
-        except Exception as e:
-            logger.error(f"Unexpected error loading config: {e}")
+        except (json.JSONDecodeError, IOError) as exc:
+            logger.error("load_config: error reading '%s': %s", path, exc)
+        except Exception as exc:
+            logger.error("load_config: unexpected error: %s", exc)
 
     @staticmethod
-    def generate_tooltip():
-        def apply_replacements(text, max_iter=10):
-            for _ in range(max_iter):
+    def _normalise_packages(raw: list) -> list[dict]:
+        result = []
+        for item in raw:
+            if isinstance(item, str):
+                result.append({"name": item, "disabled": False})
+            elif isinstance(item, dict):
+                item.setdefault("disabled", False)
+                result.append(item)
+        return sorted(result, key=lambda x: x.get("name", "").lower())
+
+    @staticmethod
+    def list_profiles() -> list[str]:
+        if not Options.profiles_dir.exists():
+            return []
+        return sorted(p.stem for p in Options.profiles_dir.glob("*.json") if p.is_file())
+
+    @staticmethod
+    def get_active_profile() -> str:
+        return Options._active_profile
+
+    @staticmethod
+    def get_default_profile() -> str:
+        if not Options.profiles_dir.exists():
+            return Options._active_profile
+        for p in Options.profiles_dir.glob("*.json"):
+            try:
+                with open(p, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                if data.get("is_default", False):
+                    return p.stem
+            except Exception as exc:
+                logger.error("get_default_profile: '%s': %s", p.name, exc)
+        return Options._active_profile
+
+    @staticmethod
+    def save_profile(name: str) -> bool:
+        if not name or not _PROFILE_NAME_RE.match(name):
+            logger.error("save_profile: invalid name '%s'.", name)
+            return False
+        try:
+            Options.profiles_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            logger.error("save_profile: cannot create profiles dir: %s", exc)
+            return False
+        target = Options.profiles_dir / f"{name}.json"
+        try:
+            data = Options._build_config_data()
+            data["is_default"] = (name == Options._active_profile)
+            with QMutexLocker(Options.entries_mutex):
+                data["entries"] = Options._serialise_entries()
+            _atomic_json_write(target, data)
+            logger.info("Profile '%s' saved.", name)
+            return True
+        except Exception as exc:
+            logger.error("save_profile: '%s': %s", name, exc)
+            return False
+
+    @staticmethod
+    def load_profile(name: str) -> bool:
+        path = Options.profiles_dir / f"{name}.json"
+        if not path.exists():
+            logger.error("load_profile: '%s' not found.", name)
+            return False
+        try:
+            Options._active_profile = name
+            Options._persist_active_profile()
+            Options.load_config(path)
+            logger.info("Switched to profile '%s'.", name)
+            if Options.main_window:
+                try:
+                    Options.main_window.settings_changed.emit()
+                except Exception as exc:
+                    logger.error("load_profile: error emitting settings_changed: %s", exc)
+            return True
+        except Exception as exc:
+            logger.error("load_profile: '%s': %s", name, exc)
+            return False
+
+    @staticmethod
+    def delete_profile(name: str) -> bool:
+        if name == Options._active_profile:
+            logger.error("delete_profile: cannot delete the active profile.")
+            return False
+        try:
+            (Options.profiles_dir / f"{name}.json").unlink()
+            logger.info("Profile '%s' deleted.", name)
+            return True
+        except OSError as exc:
+            logger.error("delete_profile: '%s': %s", name, exc)
+            return False
+
+    @staticmethod
+    def set_default_profile(name: str) -> bool:
+        target = Options.profiles_dir / f"{name}.json"
+        if not target.exists():
+            logger.error("set_default_profile: '%s' not found.", name)
+            return False
+        for path in Options.profiles_dir.glob("*.json"):
+            is_default = path == target
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                if data.get("is_default") == is_default:
+                    continue
+                data["is_default"] = is_default
+                _atomic_json_write(path, data)
+            except Exception as exc:
+                logger.warning("set_default_profile: '%s': %s", path.name, exc)
+        logger.info("Default profile set to '%s'.", name)
+        return True
+
+    @staticmethod
+    def export_all_profiles(dest_zip: str) -> bool:
+        import zipfile
+        if not Options.profiles_dir.exists() or not any(Options.profiles_dir.glob("*.json")):
+            logger.warning("export_all_profiles: no profiles to export.")
+            return False
+        try:
+            Options.save_config()
+            with zipfile.ZipFile(dest_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+                for p in sorted(Options.profiles_dir.glob("*.json")):
+                    zf.write(p, p.name)
+            logger.info("Exported all profiles to '%s'.", dest_zip)
+            return True
+        except Exception as exc:
+            logger.error("export_all_profiles: %s", exc)
+            return False
+
+    @staticmethod
+    def import_profiles_from_zip(src_zip: str, overwrite: bool = False) -> tuple[list, list]:
+        import zipfile
+        try:
+            Options.profiles_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            logger.error("import_profiles_from_zip: cannot create dir: %s", exc)
+            return [], []
+
+        imported, skipped = [], []
+        try:
+            with zipfile.ZipFile(src_zip, "r") as zf:
+                for member in zf.namelist():
+                    if not member.endswith(".json"):
+                        continue
+                    name = Path(member).stem
+                    if not _PROFILE_NAME_RE.match(name):
+                        skipped.append(member)
+                        continue
+                    dest = Options.profiles_dir / f"{name}.json"
+                    if dest.exists() and not overwrite:
+                        skipped.append(name)
+                        continue
+                    try:
+                        raw  = zf.read(member)
+                        data = json.loads(raw)
+                        if not isinstance(data, dict):
+                            raise ValueError("not a JSON object")
+                    except Exception as exc:
+                        logger.warning("Skipping invalid JSON '%s': %s", member, exc)
+                        skipped.append(name)
+                        continue
+                    dest.write_bytes(raw)
+                    imported.append(name)
+            logger.info("Imported %d profile(s).", len(imported))
+            return imported, skipped
+        except Exception as exc:
+            logger.error("import_profiles_from_zip: %s", exc)
+            return [], []
+
+    @staticmethod
+    def import_single_profile(src_json: str, name: str) -> bool:
+        if not name or not _PROFILE_NAME_RE.match(name):
+            logger.error("import_single_profile: invalid name '%s'.", name)
+            return False
+        try:
+            with open(src_json, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            if not isinstance(data, dict):
+                logger.error("import_single_profile: not a valid profile JSON.")
+                return False
+        except Exception as exc:
+            logger.error("import_single_profile: cannot read file: %s", exc)
+            return False
+        try:
+            import shutil
+            Options.profiles_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_json, Options.profiles_dir / f"{name}.json")
+            logger.info("Profile '%s' imported.", name)
+            return True
+        except Exception as exc:
+            logger.error("import_single_profile: %s", exc)
+            return False
+
+    @staticmethod
+    def generate_tooltip() -> tuple[dict, dict, dict]:
+        def apply_replacements(text: str) -> str:
+            for _ in range(MAX_REPLACEMENT_ITERATIONS):
                 original = text
                 text = functools.reduce(lambda t, r: t.replace(*r), Options.text_replacements, text)
-                if text == original: break
+                if text == original:
+                    break
             return text
 
-        def format_html(title_item, src_text_item, dest_text_item):
-            return f"""<table style='border-collapse: collapse; width: 100%; font-family: FiraCode Nerd Font Mono;'>
-    <tr style='background-color: #121212;'>
-    <td colspan='2' style='font-size: 13px;color: #ffc1c2;text-align: center;padding: 5px 5px;white-space: nowrap;'>{title_item}</td></tr>
-    <tr style='background-color: #2a2a2a;'>
-    <td colspan='2' style='font-size: 12px;color: #00fa9a;text-align: left;padding: 6px;white-space: nowrap;'>
-    Source:<br><br>{src_text_item}</td></tr>
-    <tr style='background-color: #1e1e1e;'>
-    <td colspan='2' style='font-size: 12px;color: #00fa9a;text-align: left;padding: 6px;white-space: nowrap;'>
-    Destination:<br><br>{dest_text_item}</td></tr></table>"""
+        def entry_tooltip_html(_title: str, src_lines: list, dst_lines: list) -> str:
+            src_html = "<br/>".join(map(str, src_lines))
+            dst_html = "<br/>".join(map(str, dst_lines))
+            return (
+                "<table style='border-collapse:collapse;width:100%;"
+                "font-family:FiraCode Nerd Font Mono;'>"
+                f"<tr style='background-color:#121212;'>"
+                f"<td colspan='2' style='font-size:13px;color:#ffc1c2;"
+                f"text-align:center;padding:5px;white-space:nowrap;'>{_title}</td></tr>"
+                f"<tr style='background-color:#2a2a2a;'>"
+                f"<td colspan='2' style='font-size:12px;color:#00fa9a;"
+                f"text-align:left;padding:6px;white-space:nowrap;'>"
+                f"Source:<br><br>{src_html}</td></tr>"
+                f"<tr style='background-color:#1e1e1e;'>"
+                f"<td colspan='2' style='font-size:12px;color:#00fa9a;"
+                f"text-align:left;padding:6px;white-space:nowrap;'>"
+                f"Destination:<br><br>{dst_html}</td></tr>"
+                "</table>"
+            )
 
-        backup_tooltips, restore_tooltips = {}, {}
+        backup_tips:  dict = {}
+        restore_tips: dict = {}
+
         with QMutexLocker(Options.entries_mutex):
-            entries_snapshot = Options.entries_sorted.copy()
-        for e in entries_snapshot:
-            title = e["title"]
-            tooltip_key = f"{title}_tooltip"
-            src = e.get('source', []) if isinstance(e.get('source'), list) else [e.get('source', '')]
-            dest = e.get('destination', []) if isinstance(e.get('destination'), list) else [e.get('destination', '')]
-            src_text, dest_text = "<br/>".join(map(str, src)), "<br/>".join(map(str, dest))
-            backup_tooltips[tooltip_key] = apply_replacements(format_html(title, src_text, dest_text))
-            restore_tooltips[tooltip_key] = apply_replacements(format_html(title, dest_text, src_text))
+            snapshot = Options.entries_sorted.copy()
 
-        system_manager_tooltips = {}
-        distro_helper = LinuxDistroHelper()
-        op_text = Options.get_system_manager_operation_text(distro_helper)
-        operation_keys = {
-            "copy_system_files": "system_files",
-            "install_essential_packages": "essential_packages",
-            "install_aur_packages": "aur_packages",
-            "install_specific_packages": "specific_packages",
-            "set_user_shell": "user_shell"
+        for entry in snapshot:
+            title = entry["title"]
+            key   = f"{title}_tooltip"
+            src   = entry.get("source", [])
+            dst   = entry.get("destination", [])
+            src   = src if isinstance(src, list) else [src]
+            dst   = dst if isinstance(dst, list) else [dst]
+            backup_tips[key]  = apply_replacements(entry_tooltip_html(title, src, dst))
+            restore_tips[key] = apply_replacements(entry_tooltip_html(title, dst, src))
+
+        sm_tips: dict = {}
+        distro = LinuxDistroHelper()
+        op_texts = Options.get_system_manager_operation_text(distro)
+
+        op_data_keys = {
+            "copy_system_files":          "system_files",
+            "install_basic_packages":     "basic_packages",
+            "install_aur_packages":       "aur_packages",
+            "install_specific_packages":  "specific_packages",
+            "set_user_shell":             "user_shell",
         }
-
         label_maps = {
             "system_files": {"source": "Source:<br>", "destination": "<br>Destination:<br>"},
-            "specific_packages": {"package": lambda v: f"{v}", "session": lambda v: f"<br>({v})"},
-            "user_shell": lambda v: f"Selected shell: {v}"
+            "specific_packages": {
+                "package": lambda v: str(v),
+                "session": lambda v: f"<br>({v})",
+            },
+            "user_shell": lambda v: f"Selected shell: {v}",
         }
 
-        for op, key in operation_keys.items():
-            if op not in op_text: continue
-            raw_items = getattr(Options, key, None)
-            if not raw_items: continue
-            if key in ["system_files", "essential_packages", "aur_packages", "specific_packages"]:
-                items = [i for i in raw_items if
-                         (isinstance(i, dict) and not i.get('disabled')) or not isinstance(i, dict)]
+        for op, data_key in op_data_keys.items():
+            if op not in op_texts:
+                continue
+            raw = getattr(Options, data_key, None)
+            if not raw:
+                continue
+
+            if data_key in ("system_files", "basic_packages", "aur_packages", "specific_packages"):
+                items = [i for i in raw if not (isinstance(i, dict) and i.get("disabled"))]
             else:
-                items = raw_items
+                items = raw
 
-            column_width = 1 if key == "system_files" else 4
-            mapped = label_maps.get(key)
+            col_width = 1 if data_key == "system_files" else 4
+            mapped    = label_maps.get(data_key)
 
-            if key == "user_shell":
-                items = [mapped(items)]
-            elif mapped:
-                def format_val(m, k, v):
-                    val = m.get(k)
-                    return val(v) if callable(val) else f"{val}{v}" if val else f"{k}: {v}"
-
-                items = [{k: format_val(mapped, k, v) for k, v in i.items() if k != 'disabled'}
-                         for i in items]
-            elif key in ["essential_packages", "aur_packages"]:
-                items = [i.get('name', str(i)) if isinstance(i, dict) else str(i) for i in items]
-
-            item_format = (lambda l: "".join(l)) if key == "specific_packages" else (lambda l: "<br>".join(l))
-            item_strings = [
-                item_format([str(v) for v in i.values()]) if isinstance(i, dict) else str(i)
-                for i in items
-            ]
+            if data_key == "user_shell":
+                item_strings = [mapped(items)]
+            elif data_key in ("basic_packages", "aur_packages"):
+                item_strings = [i.get("name", str(i)) if isinstance(i, dict) else str(i) for i in items]
+            elif mapped and data_key in ("system_files", "specific_packages"):
+                formatted = []
+                for item in items:
+                    if isinstance(item, dict):
+                        parts = []
+                        for field_key, field_val in item.items():
+                            if field_key == "disabled":
+                                continue
+                            m = mapped.get(field_key)
+                            parts.append(
+                                m(field_val) if callable(m)
+                                else f"{m}{field_val}" if m
+                                else f"{field_key}: {field_val}"
+                            )
+                        formatted.append("".join(parts))
+                    else:
+                        formatted.append(str(item))
+                item_strings = formatted
+            else:
+                item_strings = [str(i) for i in items]
 
             rows = []
-            for idx in range(0, len(item_strings), column_width):
-                bg = "#2a2a2a" if (idx // column_width) % 2 == 0 else "#1e1e1e"
-                cells = ''.join(
-                    f'<td style="padding: 5px 5px; border: 1px solid #444; color: #00fa9a; font-family: FiraCode Nerd Font Mono;">{item}</td>'
-                    for item in item_strings[idx:idx + column_width]
+            for idx in range(0, len(item_strings), col_width):
+                bg    = "#2a2a2a" if (idx // col_width) % 2 == 0 else "#1e1e1e"
+                cells = "".join(
+                    f"<td style='padding:5px;border:1px solid #444;"
+                    f"color:#00fa9a;font-family:FiraCode Nerd Font Mono;'>{cell}</td>"
+                    for cell in item_strings[idx:idx + col_width]
                 )
-                rows.append(f'<tr style="background-color: {bg};">{cells}</tr>')
+                rows.append(f"<tr style='background-color:{bg};'>{cells}</tr>")
 
-            tooltip = (
-                f"<div style='white-space: nowrap; font-size: 14px; color: #00fa9a; font-family: FiraCode Nerd Font Mono; background-color: #121212; padding: 5px 5px; border: 1px solid #444;'>"
-                f"<table style='border-collapse: collapse; table-layout: auto;'>{''.join(rows)}</table></div>"
+            sm_tips[op] = apply_replacements(
+                "<div style='white-space:nowrap;font-size:14px;color:#00fa9a;"
+                "font-family:FiraCode Nerd Font Mono;background-color:#121212;"
+                "padding:5px;border:1px solid #444;'>"
+                f"<table style='border-collapse:collapse;table-layout:auto;'>{''.join(rows)}</table></div>"
             )
-            system_manager_tooltips[op] = apply_replacements(tooltip)
 
-        Options.system_manager_tooltips = system_manager_tooltips
-        return backup_tooltips, restore_tooltips, system_manager_tooltips
+        Options.system_manager_tooltips = sm_tips
+        return backup_tips, restore_tips, sm_tips
+
+    @staticmethod
+    def format_package_list(pkgs: list) -> str:
+        pkgs = [str(p) for p in (pkgs or [])]
+        if len(pkgs) == 0: return ""
+        if len(pkgs) == 1: return pkgs[0]
+        if len(pkgs) == 2: return f"{pkgs[0]} and {pkgs[1]}"
+        return ", ".join(pkgs[:-1]) + f" and {pkgs[-1]}"
+
+    @staticmethod
+    def get_system_manager_operation_text(distro: LinuxDistroHelper) -> dict:
+        install_cmd = distro.pkg_install.replace("{package}", "PACKAGE")
+        update_cmd  = distro.pkg_update
+        pkg_mgr = (
+            "pacman" if "pacman" in install_cmd else
+            "apt"    if "apt"    in install_cmd else
+            "dnf"    if "dnf"    in install_cmd else
+            "zypper"
+        )
+
+        has_yay  = distro.package_is_installed("yay")
+        session  = distro.detect_session()
+
+        def pkglist(fn): return Options.format_package_list(fn())
+
+        cron_svc = (
+            "cronie"
+            if pkg_mgr == "pacman" or distro.distro_id in ("fedora", "rhel", "centos")
+            else "cron"
+        )
+
+        return {
+            "copy_system_files":
+                "Copy 'System Files' (using 'sudo cp'.)",
+            "update_mirrors":
+                "Mirror update<br>(Installs 'reflector' and fetches the 10 fastest servers in your country, "
+                "or worldwide if location is not detected.)",
+            "set_user_shell":
+                "Change shell for current user<br>"
+                "(Installs the package for the selected shell and sets it as the default.)",
+            "update_system":
+                f"System update<br>(Using '{'yay --noconfirm' if has_yay else update_cmd}'.)",
+            "install_kernel_header":
+                f"Check kernel version and install corresponding headers ({distro.get_kernel_headers_pkg()})",
+            "install_basic_packages":
+                f"Install 'Basic Packages' (using '{install_cmd}'.)",
+            "install_yay":
+                "Install 'yay' (required for 'AUR Packages'.)",
+            "install_aur_packages":
+                "Install 'AUR Packages' ('yay' required.)",
+            "install_specific_packages":
+                f"Install 'Specific Packages' for {session}<br>(using '{install_cmd}'.)",
+            "enable_printer_support":
+                f"Initialise printer support<br>"
+                f"(Install '{pkglist(distro.get_printer_packages)}'. Enable & start 'cups.service'.)",
+            "enable_ssh_service":
+                f"Initialise SSH server<br>"
+                f"(Install '{pkglist(distro.get_ssh_packages)}'. "
+                f"Enable & start '{distro.get_ssh_service_name()}.service'.)",
+            "enable_samba_network_filesharing":
+                f"Initialise Samba (network file-sharing)<br>"
+                f"(Install '{pkglist(distro.get_samba_packages)}'. Enable & start 'smb.service'.)",
+            "enable_bluetooth_service":
+                f"Initialise Bluetooth<br>"
+                f"(Install '{pkglist(distro.get_bluetooth_packages)}'. Enable & start 'bluetooth.service'.)",
+            "enable_atd_service":
+                f"Initialise atd<br>"
+                f"(Install '{pkglist(distro.get_at_packages)}'. Enable & start 'atd.service'.)",
+            "enable_cronie_service":
+                f"Initialise {cron_svc}<br>"
+                f"(Install '{pkglist(distro.get_cron_packages)}'. Enable & start '{cron_svc}.service'.)",
+            "enable_firewall":
+                f"Initialise firewall<br>"
+                f"(Install '{pkglist(distro.get_firewall_packages)}'. "
+                f"Enable & start 'ufw.service', set to 'deny all by default'.)",
+            "install_flatpak":
+                f"Install Flatpak<br>"
+                f"(Install '{pkglist(distro.get_flatpak_packages)}' and add Flathub remote.)",
+            "install_snap":
+                f"Install Snap<br>"
+                f"(Install '{pkglist(distro.get_snap_packages)}' and enable snapd.service.)",
+            "remove_orphaned_packages":
+                "Remove orphaned package(s).",
+            "clean_cache":
+                "Clean cache (for '{mgr}'{extra}.)".format(
+                    mgr=pkg_mgr,
+                    extra=" and 'yay'" if distro.has_aur else "",
+                ),
+        }
