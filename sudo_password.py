@@ -1,87 +1,103 @@
 from typing import Optional
 from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout)
 
-MAX_ATTEMPTS = 3 
-from PyQt6.QtWidgets import QDialog, QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout, QMessageBox
+MAX_ATTEMPTS = 3
 
 
-# noinspection PyUnresolvedReferences
 class SudoPasswordDialog(QDialog):
+
     sudo_password_entered = pyqtSignal(str)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Sudo-Authentication")
+        self.setWindowTitle("Sudo Authentication")
         self.failed_attempts = 0
+        self._build_ui()
 
-        self.layout = QVBoxLayout(self)
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
 
-        self.label = QLabel(
-            "Please enter your sudo password to run Package Installer.\n"
-            "This will be used for all sudo commands during execution."
+        intro = QLabel(
+            "Enter your sudo password to run Package Installer.\n"
+            "It will be used for all privileged commands during this session."
         )
-        self.label.setWordWrap(True)
-        self.layout.addWidget(self.label)
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
 
-        self.password_layout = QHBoxLayout()
-        self.password_label = QLabel("Password:")
-        self.password_layout.addWidget(self.password_label)
-        self.password_input = QLineEdit(self)
-        self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.password_input.setPlaceholderText("Enter your sudo password")
-        self.password_layout.addWidget(self.password_input)
-        self.layout.addLayout(self.password_layout)
+        pw_row = QHBoxLayout()
+        pw_row.addWidget(QLabel("Password:"))
+        self._pw_input = QLineEdit()
+        self._pw_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self._pw_input.setPlaceholderText("Enter your sudo password")
+        pw_row.addWidget(self._pw_input)
+        layout.addLayout(pw_row)
 
-        self.info_label = QLabel("Note: For security, only one authentication attempt will be made.")
-        self.info_label.setStyleSheet("color: #666; font-style: italic;")
-        self.layout.addWidget(self.info_label)
-        self.layout.addSpacing(10)
+        self._note_label = QLabel("Note: Only one authentication attempt will be made.")
+        self._note_label.setStyleSheet("color: #666; font-style: italic;")
+        layout.addWidget(self._note_label)
+        layout.addSpacing(10)
 
-        self.button_layout = QHBoxLayout()
-        self.close_button = QPushButton("Close", self)
-        self.close_button.clicked.connect(self.reject)
-        self.button_layout.addWidget(self.close_button)
-        self.ok_button = QPushButton("Authenticate", self)
-        self.ok_button.clicked.connect(self.on_ok_clicked)
-        self.ok_button.setDefault(True)
-        self.button_layout.addWidget(self.ok_button)
-        self.layout.addLayout(self.button_layout)
+        btn_row = QHBoxLayout()
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.reject)
+        btn_row.addWidget(close_btn)
 
-        self.password_input.setFocus()
-        self.password_input.returnPressed.connect(self.ok_button.click)
+        auth_btn = QPushButton("Authenticate")
+        auth_btn.setDefault(True)
+        auth_btn.clicked.connect(self._on_authenticate)
+        btn_row.addWidget(auth_btn)
+        layout.addLayout(btn_row)
 
-    def on_ok_clicked(self):
-        sudo_password = self.password_input.text()
-        if sudo_password:
-            self.sudo_password_entered.emit(sudo_password)
-            self.password_input.clear()
-            self.accept()
-        else:
-            QMessageBox.warning(self, "Empty Password", "Please enter your sudo password or click Close.")
+        self._pw_input.setFocus()
+        self._pw_input.returnPressed.connect(auth_btn.click)
 
-    def update_failed_attempts(self, failed_attempts):
-        self.failed_attempts = failed_attempts
-        if self.failed_attempts >= MAX_ATTEMPTS:
-            msg = "Attention! Third attempt!\nPassword could be blocked temporarily if entered incorrectly."
-            self.info_label.setStyleSheet("color: red; font-style: italic; font-weight: bold;")
-        else:
+    def _on_authenticate(self) -> None:
+        password = self._pw_input.text()
+        if not password:
+            QMessageBox.warning(self, "Empty Password",
+                                "Please enter your sudo password or click Close.")
+            return
+        self.sudo_password_entered.emit(password)
+        self._pw_input.clear()
+        self.accept()
+
+    def update_failed_attempts(self, count: int) -> None:
+        self.failed_attempts = count
+        if count >= MAX_ATTEMPTS:
             msg = (
-                f"Note: For security, only one authentication attempt will be made."
-                f"\nFailed attempts: {self.failed_attempts}"
+                "⚠  Third attempt!\n"
+                "Your password may be temporarily blocked if entered incorrectly again."
             )
-            self.info_label.setStyleSheet("color: #666; font-style: italic; font-weight: normal;")
-        self.info_label.setText(msg)
+            self._note_label.setStyleSheet("color: red; font-style: italic; font-weight: bold;")
+        else:
+            msg = "Note: Only one authentication attempt will be made."
+            if count:
+                msg += f"\nFailed attempts: {count}"
+            self._note_label.setStyleSheet("color: #666; font-style: italic;")
+        self._note_label.setText(msg)
         self.adjustSize()
 
-class SecureString:
-    def __init__(self, initial_value: Optional[str] = None):
-        self._value = bytearray(initial_value.encode('utf-8')) if initial_value else bytearray()
 
-    def get_value(self) -> str:
-        return self._value.decode('utf-8') if self._value else ''
+class SecureString:    
+
+    __slots__ = ("_buf",)
+
+    def __init__(self, value: Optional[str] = None) -> None:
+        self._buf = bytearray(value.encode("utf-8")) if value else bytearray()
+
+    def get(self) -> str:
+        return self._buf.decode("utf-8") if self._buf else ""
+
+    get_value = get
 
     def clear(self) -> None:
-        if self._value:
-            for i in range(len(self._value)):
-                self._value[i] = 0  
-            self._value.clear()
+        if self._buf:
+            memoryview(self._buf)[:] = bytes(len(self._buf))
+            self._buf.clear()
+
+    def __bool__(self) -> bool:
+        return bool(self._buf)
+
+    def __repr__(self) -> str:
+        return f"SecureString(len={len(self._buf)})"
