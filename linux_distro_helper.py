@@ -1,3 +1,4 @@
+from __future__ import annotations
 import subprocess, platform, os, re, concurrent.futures, shutil
 
 from logging_config import setup_logger
@@ -144,8 +145,8 @@ _BLUETOOTH_PACKAGES = {
 def _kernel_version() -> str:
     try:
         return subprocess.check_output(["uname", "-r"], text=True).strip()
-    except Exception as e:
-        logger.error(f"Kernel Version: {e}")
+    except Exception as exc:
+        logger.error("Could not determine kernel version: %s", exc)
         return ""
 
 
@@ -263,7 +264,7 @@ class LinuxDistroHelper:
         valid = [p.strip() for p in packages if self._is_valid_package_name(p)]
         if not valid:
             return []
-        if len(valid) <= MIN_PACKAGES_FOR_PARALLEL:
+        if len(valid) < MIN_PACKAGES_FOR_PARALLEL:
             return [p for p in valid if not self.package_is_installed(p)]
         return self._check_packages_parallel(valid)
 
@@ -341,9 +342,9 @@ class LinuxDistroHelper:
         return _pkg_lookup(_SSH_PACKAGES, fam)
 
     def get_ssh_service_name(self) -> str:
-        return _pkg_lookup(_SSH_SERVICE, self._family()) if isinstance(
-            _pkg_lookup(_SSH_SERVICE, self._family()), str
-        ) else (_SSH_SERVICE.get(self._family()) or _SSH_SERVICE[None])
+        fam = self._family()
+        result = _SSH_SERVICE.get(fam) or _SSH_SERVICE.get(None, "sshd")
+        return result if isinstance(result, str) else "sshd"
 
     @staticmethod
     def get_flatpak_packages() -> list:
