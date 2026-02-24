@@ -7,7 +7,7 @@ logger = setup_logger(__name__)
 PACKAGE_NAME_REGEX = re.compile(r'^[a-zA-Z0-9._+:-]+$')
 MIN_PACKAGES_FOR_PARALLEL = 5
 
-_ARCH    = {"arch", "manjaro", "garuda", "endeavouros"}
+_ARCH    = {"arch", "manjaro", "garuda", "endeavouros", "omarchy", "archman", "rebornos", "cachyos"}
 _DEBIAN  = {"debian", "ubuntu", "pop", "mint", "elementary"}
 _FEDORA  = {"fedora", "rhel", "centos", "rocky", "almalinux"}
 _SUSE    = {"opensuse", "opensuse-leap", "opensuse-tumbleweed", "suse"}
