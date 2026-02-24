@@ -1,12 +1,15 @@
+from __future__ import annotations
 from typing import Optional
 import getpass, json, os, subprocess, keyring
 from keyring.backends import SecretService
 from keyring import errors as keyring_errors
-from PyQt6.QtWidgets import (QCheckBox, QDialog, QErrorMessage, QHBoxLayout, QLabel,
-                             QLineEdit, QMessageBox, QPushButton, QVBoxLayout)
+from PyQt6.QtWidgets import (QCheckBox, QDialog, QErrorMessage, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
+                             QPushButton, QVBoxLayout)
 
 from logging_config import setup_logger
 logger = setup_logger(__name__)
+
+__all__ = ["SambaPasswordManager", "SambaPasswordDialog"]
 
 _KWALLET_TIMEOUT = 2
 _KEYRING_SERVICE = "backup-helper-samba"
@@ -26,8 +29,8 @@ class SambaPasswordManager:
         self._kwallet_entry: Optional[str] = None
         try:
             keyring.set_keyring(SecretService.Keyring())
-        except keyring_errors.KeyringError:
-            pass
+        except (keyring_errors.KeyringError, Exception) as exc:  # noqa: BLE001
+            logger.debug("Could not set SecretService keyring backend: %s", exc)
 
     @staticmethod
     def _run_kwallet(args: list[str], input_data: bytes | None = None) -> Optional[str]:
