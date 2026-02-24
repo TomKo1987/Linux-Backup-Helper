@@ -1,145 +1,120 @@
 import subprocess
 from global_style import get_current_style
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QFont, QTextOption, QFontMetrics
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QPushButton, QLabel
+from PyQt6.QtGui import QFont, QFontMetrics, QTextOption
+from PyQt6.QtWidgets import QDialog, QPushButton, QTextEdit, QVBoxLayout
 
 from logging_config import setup_logger
 logger = setup_logger(__name__)
 
-MAX_SCREEN_WIDTH_RATIO = 0.9  
-WORKER_WAIT_TIMEOUT = 2000
+_MAX_WIDTH_RATIO = 0.90
+_WORKER_WAIT_MS  = 2000
+_INXI_ARGS       = ["inxi", "-SMCGAz", "--no-host", "--color", "0"]
+_INXI_TIMEOUT    = 10
 
 
-# noinspection PyUnresolvedReferences
-class InxiWorker(QThread):
+class _InxiWorker(QThread):
+
     finished = pyqtSignal(str)
-    default_args = ['inxi', '-SMCGAz', '--no-host', '--color', '0']
 
-    def run(self):
+    def run(self) -> None:
         try:
-            result = subprocess.run(
-                self.default_args,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-
+            result = subprocess.run(_INXI_ARGS, capture_output=True, text=True, timeout=_INXI_TIMEOUT)
             if result.returncode == 0 and result.stdout.strip():
                 self.finished.emit(result.stdout.strip())
             else:
-                error_msg = result.stderr.strip() or "Unknown error while running inxi."
-                self.finished.emit(f"Error: {error_msg}")
-
+                self.finished.emit(f"Error: {result.stderr.strip() or 'Unknown error while running inxi.'}")
         except FileNotFoundError:
             self.finished.emit(
                 "The tool 'inxi' is not installed on your system.\n\n"
-                "To install:\n"
-                "Ubuntu/Debian:   sudo apt install inxi\n"
-                "Arch/Manjaro:    sudo pacman -S inxi\n"
-                "Fedora:          sudo dnf install inxi"
+                "Install it with one of:\n"
+                "  Ubuntu/Debian:  sudo apt install inxi\n"
+                "  Arch/Manjaro:   sudo pacman -S inxi\n"
+                "  Fedora:         sudo dnf install inxi"
             )
         except subprocess.TimeoutExpired:
-            self.finished.emit("Error: Timed out while collecting system information with inxi.")
-        except Exception as e:
-            self.finished.emit(f"Unexpected error: {e}")
+            self.finished.emit("Error: inxi timed out while collecting system information.")
+        except Exception as exc:
+            self.finished.emit(f"Unexpected error: {exc}")
 
 
 # noinspection PyUnresolvedReferences
 class SystemInfoWindow(QDialog):
-    def __init__(self, parent=None):
+
+    def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.text_edit = QTextEdit()
-        self.close_btn = QPushButton("Close")
         self.setWindowTitle("System Information")
         self.setMinimumSize(1250, 950)
+        self._worker: _InxiWorker | None = None
+        self._text_edit = QTextEdit()
+        self._close_btn = QPushButton("Close")
+        self._build_ui()
+        self._start_loading()
 
-        self.worker = None
-        self.init_ui()
-        self.load_system_info()
-
-    def init_ui(self):
-        layout = QVBoxLayout()
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
 
-        header = QLabel("System Information")
-        header_font = QFont()
-        header_font.setPointSize(14)
-        header_font.setBold(True)
-        header.setFont(header_font)
-        header.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        header.setStyleSheet(get_current_style())
-        layout.addWidget(header)
-
-        self.text_edit.setReadOnly(True)
-        self.text_edit.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
-        self.text_edit.setWordWrapMode(QTextOption.WrapMode.NoWrap)
+        self._text_edit.setReadOnly(True)
+        self._text_edit.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        self._text_edit.setWordWrapMode(QTextOption.WrapMode.NoWrap)
+        self._text_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._text_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
         font = QFont("Monospace")
         font.setStyleHint(QFont.StyleHint.Monospace)
         font.setFixedPitch(True)
-        self.text_edit.setFont(font)
+        self._text_edit.setFont(font)
+        self._text_edit.setTabStopDistance(4 * QFontMetrics(font).horizontalAdvance(" "))
+        self._text_edit.setStyleSheet(get_current_style())
+        layout.addWidget(self._text_edit)
 
-        self.text_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.text_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._close_btn.setStyleSheet(get_current_style())
+        self._close_btn.clicked.connect(self.close)
+        layout.addWidget(self._close_btn)
 
-        font_metrics = QFontMetrics(font)
-        tab_width = 4 * font_metrics.horizontalAdvance(' ')
-        self.text_edit.setTabStopDistance(tab_width)
+    def _start_loading(self) -> None:
+        self._text_edit.setPlainText("Loading system information…")
+        self._worker = _InxiWorker()
+        self._worker.finished.connect(self._on_info_loaded)
+        self._worker.start()
 
-        self.text_edit.setStyleSheet(get_current_style())
-        layout.addWidget(self.text_edit)
+    def _on_info_loaded(self, info: str) -> None:
+        self._text_edit.setPlainText(info)
+        self._close_btn.setFocus()
+        self._fit_width_to_content()
 
-        self.close_btn.setStyleSheet(get_current_style())
-        self.close_btn.clicked.connect(self.close)
-        layout.addWidget(self.close_btn)
-
-        self.setLayout(layout)
-
-    def on_info_loaded(self, info):
-        self.text_edit.setPlainText(info)
-        self.close_btn.setFocus()
-        self.adjust_window_width()
-
-    def adjust_window_width(self):
+    def _fit_width_to_content(self) -> None:
         try:
-            font_metrics = QFontMetrics(self.text_edit.font())
-            text = self.text_edit.toPlainText()
-            lines = text.split('\n')
+            metrics = QFontMetrics(self._text_edit.font())
+            lines   = self._text_edit.toPlainText().split("\n")
+            if not lines:
+                return
+            max_px  = max((metrics.horizontalAdvance(l) for l in lines), default=0)
+            screen  = self.screen()
+            if screen is None:
+                return
+            capped = min(max_px + 100, int(screen.availableGeometry().width() * _MAX_WIDTH_RATIO))
+            if capped > self.width():
+                self.resize(capped, self.height())
+        except Exception as exc:
+            logger.debug("Could not auto-fit window width: %s", exc)
 
-            if lines:
-                max_line_width = max(font_metrics.horizontalAdvance(line) for line in lines)
-                optimal_width = max_line_width + 100
-
-                screen = self.screen().availableGeometry()
-                max_width = int(screen.width() * MAX_SCREEN_WIDTH_RATIO)
-
-                new_width = min(optimal_width, max_width)
-                if new_width > self.width():
-                    self.resize(new_width, self.height())
-        except Exception as e:
-            logger.debug(f"Could not adjust window width: {e}")
-
-    def load_system_info(self):
-        self.text_edit.setPlainText("Loading system information...")
-
-        self.worker = InxiWorker()
-        self.worker.finished.connect(self.on_info_loaded)
-        self.worker.start()
-
-    def keyPressEvent(self, event):
+    def keyPressEvent(self, event) -> None:
         if event.key() in (Qt.Key.Key_Enter, Qt.Key.Key_Return, Qt.Key.Key_Escape):
             self.close()
         else:
             super().keyPressEvent(event)
 
-    def closeEvent(self, event):
-        if self.worker and self.worker.isRunning():
-            self.worker.terminate()
-            if not self.worker.wait(WORKER_WAIT_TIMEOUT):
-                logger.warning("Worker-Thread konnte nicht rechtzeitig beendet werden")
-                self.worker.terminate()
-
-        if self.parent():
-            self.parent().show()
-        event.accept()
+    def closeEvent(self, event) -> None:
+        if self._worker and self._worker.isRunning():
+            self._worker.terminate()
+            if not self._worker.wait(_WORKER_WAIT_MS):
+                logger.warning("SystemInfoWindow: worker thread did not stop in time.")
+        parent = self.parent()
+        try:
+            if parent:
+                parent.show()
+        except RuntimeError:
+            pass
+        super().closeEvent(event)
