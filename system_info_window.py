@@ -1,3 +1,4 @@
+from __future__ import annotations
 import subprocess
 from global_style import get_current_style
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
@@ -8,9 +9,9 @@ from logging_config import setup_logger
 logger = setup_logger(__name__)
 
 _MAX_WIDTH_RATIO = 0.90
-_WORKER_WAIT_MS  = 2000
+_WORKER_WAIT_MS  = 3000
 _INXI_ARGS       = ["inxi", "-SMCGAz", "--no-host", "--color", "0"]
-_INXI_TIMEOUT    = 10
+_INXI_TIMEOUT    = 15
 
 
 class _InxiWorker(QThread):
@@ -19,11 +20,17 @@ class _InxiWorker(QThread):
 
     def run(self) -> None:
         try:
-            result = subprocess.run(_INXI_ARGS, capture_output=True, text=True, timeout=_INXI_TIMEOUT)
+            result = subprocess.run(
+                _INXI_ARGS,
+                capture_output=True,
+                text=True,
+                timeout=_INXI_TIMEOUT,
+            )
             if result.returncode == 0 and result.stdout.strip():
                 self.finished.emit(result.stdout.strip())
             else:
-                self.finished.emit(f"Error: {result.stderr.strip() or 'Unknown error while running inxi.'}")
+                err = result.stderr.strip() or "Unknown error while running inxi."
+                self.finished.emit(f"Error: {err}")
         except FileNotFoundError:
             self.finished.emit(
                 "The tool 'inxi' is not installed on your system.\n\n"
@@ -108,9 +115,11 @@ class SystemInfoWindow(QDialog):
 
     def closeEvent(self, event) -> None:
         if self._worker and self._worker.isRunning():
-            self._worker.terminate()
+            self._worker.requestInterruption()
             if not self._worker.wait(_WORKER_WAIT_MS):
-                logger.warning("SystemInfoWindow: worker thread did not stop in time.")
+                logger.warning("SystemInfoWindow: worker thread did not stop in time — terminating.")
+                self._worker.terminate()
+                self._worker.wait(500)
         parent = self.parent()
         try:
             if parent:
