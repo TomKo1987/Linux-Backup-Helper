@@ -1,12 +1,11 @@
 from pathlib import Path
 from options import Options
 from PyQt6.QtGui import QColor
-from global_style import get_current_style as _get_global_style
-_cached_style = _get_global_style()
 from samba_password import SambaPasswordManager
 import os, re, time, shutil, psutil, tempfile, subprocess
+from global_style import get_current_style as _get_global_style
 from PyQt6.QtCore import (QThread, QTimer, QElapsedTimer, QMutex, QMutexLocker, QWaitCondition, QDateTime, pyqtSignal,
-                          QAbstractListModel, QModelIndex, Qt, QVariant, QCoreApplication)
+                          QAbstractListModel, QModelIndex, Qt, QCoreApplication)
 from PyQt6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar, QTabWidget, QLineEdit,
                              QDialogButtonBox, QInputDialog, QMessageBox, QListView, QGraphicsDropShadowEffect)
 
@@ -18,17 +17,17 @@ logger = setup_logger(__name__)
 class FileProcessDialog(QDialog):
     UPDATE_TIMER_INTERVAL = 350
     ELAPSED_UPDATE_INTERVAL = 250
-    
+
     SMB_MOUNT_TIMEOUT = 10
     SMB_UNMOUNT_TIMEOUT = 2
     SMB_OPERATION_DELAY = 0.5
     SMB_CLEANUP_DELAY = 0.5
-    
+
     TAB_CONFIG = {
         'summary': {'index': 0, 'color': '#6ffff5', 'display': 'Summary'},
-        'copied':  {'index': 1, 'color': 'lightgreen', 'display': 'Copied'},
+        'copied': {'index': 1, 'color': 'lightgreen', 'display': 'Copied'},
         'skipped': {'index': 2, 'color': '#ffff7f', 'display': 'Skipped'},
-        'error':   {'index': 3, 'color': '#ff8587', 'display': 'Errors'}
+        'error': {'index': 3, 'color': '#ff8587', 'display': 'Errors'}
     }
 
     def __init__(self, parent, checkbox_dirs, operation_type):
@@ -50,7 +49,7 @@ class FileProcessDialog(QDialog):
         self.elapsed_time_label.setStyleSheet("font-weight: bold; font-size: 17px;")
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(0)
-        self.progress_bar.setStyleSheet(_cached_style)
+        self.progress_bar.setStyleSheet(_get_global_style())
         self.tab_widget = QTabWidget()
         self.copied_tab = VirtualLogTabWidget()
         self.skipped_tab = VirtualLogTabWidget()
@@ -136,7 +135,7 @@ class FileProcessDialog(QDialog):
         self.cancel_button.setFixedSize(125, 35)
         self.cancel_button.clicked.connect(self.cancel_operation)
         self.cancel_button.setEnabled(False)
-        self.cancel_button.setStyleSheet(_cached_style)
+        self.cancel_button.setStyleSheet(_get_global_style())
         container_layout = QVBoxLayout(self.container)
         container_layout.addWidget(self.status_label)
         container_layout.addWidget(self.tab_widget)
@@ -166,7 +165,6 @@ class FileProcessDialog(QDialog):
         layout = QVBoxLayout(self.summary_tab)
         center_wrapper = QWidget()
         center_layout = QHBoxLayout(center_wrapper)
-        self.summary_table.setLayout(self.summary_layout)
         self.summary_layout.setContentsMargins(5, 5, 5, 5)
         center_layout.addStretch(1)
         center_layout.addWidget(self.summary_table)
@@ -246,7 +244,8 @@ class FileProcessDialog(QDialog):
 
     def update_summary(self):
         now = QDateTime.currentMSecsSinceEpoch()
-        if hasattr(self, 'thread') and self.thread and self.thread.isRunning() and now - self._last_summary_update_time < 250:
+        if hasattr(self,
+                   'thread') and self.thread and self.thread.isRunning() and now - self._last_summary_update_time < 250:
             return
         self._last_summary_update_time = now
         self.update_summary_widget(self.copied_count, self.skipped_count, self.error_count)
@@ -294,7 +293,7 @@ class FileProcessDialog(QDialog):
             self.current_file_label.setStyleSheet(err_style)
             self.elapsed_time_label.setStyleSheet(err_style)
             self.progress_bar.setStyleSheet(
-                f"""{_cached_style} QProgressBar::chunk {{background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, 
+                f"""{_get_global_style()} QProgressBar::chunk {{background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, 
                 y2:0, stop:0 #fd7e14, stop:1 #ff8587); border-radius: 2px;}}""")
         else:
             self.status_label.setText(f"{self.operation_type} successfully completed!\n")
@@ -340,7 +339,7 @@ class FileProcessDialog(QDialog):
                 self.status_label.setStyleSheet(
                     "color: #ff8587; font-weight: bold; font-size: 20px; background-color: transparent;")
                 self.current_file_label.setText("Please wait while operations are being cancelled...\n")
-                self.progress_bar.setStyleSheet(f"""{_cached_style} QProgressBar::chunk 
+                self.progress_bar.setStyleSheet(f"""{_get_global_style()} QProgressBar::chunk 
                 {{background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 #fd7e14, stop:1 
                 #ff8587); border-radius: 2px;}}""")
                 QCoreApplication.processEvents()
@@ -425,7 +424,7 @@ class FileCopyThread(QThread):
             for worker in self.worker_threads:
                 worker.wait()
         except Exception as e:
-            logger.error(f"Error in file copy thread: {e}")
+            logger.error("Error in file copy thread: %s", e)
         finally:
             self.operation_completed.emit()
 
@@ -439,10 +438,14 @@ class FileCopyThread(QThread):
             for source, destination in zip(sources, destinations):
                 if SmbFileHandler.is_smb_path(source):
                     if self.smb_handler.is_directory(source):
-                        for smb_file in self.smb_handler.list_smb_directory(source):
-                            full_smb_path = os.path.join(source.rstrip("/"), smb_file)
+                        for smb_file in self.smb_handler.list_smb_directory_recursive(source):
+                            full_smb_path = source.rstrip("/") + "/" + smb_file
                             if not self._should_skip_file(full_smb_path):
-                                dst_file = str(Path(destination))
+                                try:
+                                    rel = Path(str(smb_file))
+                                    dst_file = str(Path(str(destination)) / rel)
+                                except (TypeError, ValueError):
+                                    dst_file = str(Path(str(destination)) / Path(str(smb_file)).name)
                                 file_size = self._get_file_size(full_smb_path)
                                 all_files.append((full_smb_path, dst_file))
                                 file_sizes[full_smb_path] = file_size
@@ -545,11 +548,12 @@ class FileCopyThread(QThread):
         except Exception as e:
             self.handle_file_error(source_file, str(e))
 
-    def fast_copy(self, source, destination):
+    def fast_copy(self, source, destination, file_size=None):
         if self.cancelled:
             return
         try:
-            file_size = os.path.getsize(source)
+            if file_size is None:
+                file_size = os.path.getsize(source)
             if file_size >= 64 * 1024 * 1024:
                 buffer_size = 1024 * 1024
             elif file_size >= 1 * 1024 * 1024:
@@ -564,23 +568,27 @@ class FileCopyThread(QThread):
                     with open(source, 'rb') as fsrc, open(destination, 'wb') as fdst:
                         src_fd = fsrc.fileno()
                         dst_fd = fdst.fileno()
-                        offset = 0
-                        remaining = file_size
-                        while remaining > 0 and not self.cancelled:
-                            sent = os.sendfile(dst_fd, src_fd, offset, remaining)
+                        actual_size = os.fstat(src_fd).st_size
+                        sent_total = 0
+                        chunk = 1024 * 1024
+                        while sent_total < actual_size and not self.cancelled:
+                            to_send = min(chunk, actual_size - sent_total)
+                            sent = os.sendfile(dst_fd, src_fd, None, to_send)
                             if sent == 0:
                                 break
-                            offset += sent
-                            remaining -= sent
-                    if not self.cancelled and offset != file_size:
-                        raise OSError(f"sendfile incomplete: {offset}/{file_size} bytes transferred")
+                            sent_total += sent
+                    if not self.cancelled and sent_total != actual_size:
+                        raise OSError(f"sendfile incomplete: {sent_total}/{actual_size} bytes transferred")
                     shutil.copystat(source, destination)
                     return
+            except OSError as e:
+                logger.debug("sendfile fallback engaged (OSError) for: %s %s", source, e)
             except Exception as e:
                 logger.debug("sendfile fallback engaged for: %s %s", source, e)
             try:
+                buf = bytearray(buffer_size)
                 with open(source, 'rb') as fsrc, open(destination, 'wb') as fdst:
-                    mv = memoryview(bytearray(buffer_size))
+                    mv = memoryview(buf)
                     while not self.cancelled:
                         n = fsrc.readinto(mv)
                         if not n:
@@ -603,7 +611,7 @@ class FileCopyThread(QThread):
             else:
                 return Path(file_path).stat().st_size
         except Exception as e:
-            logger.error(f"Error getting file size for {file_path}: {e}")
+            logger.error("Error getting file size for %s: %s", file_path, e)
             if self._smb_handler is not None and SmbFileHandler.is_smb_path(file_path):
                 self.file_error.emit(file_path, f"File size cannot be determined. {e}")
                 self.smb_error_cancel.emit()
@@ -691,7 +699,7 @@ class FileCopyThread(QThread):
             try:
                 self._smb_handler.force_cleanup()
             except Exception as e:
-                logger.warning(f"Warning during SMB cleanup: {e}")
+                logger.warning("Warning during SMB cleanup: %s", e)
             finally:
                 self._smb_handler = None
                 self._smb_credentials = None
@@ -806,17 +814,27 @@ class SmbFileHandler:
                 self._mount_wait_conditions[key] = QWaitCondition()
 
         mount_point = tempfile.mkdtemp(prefix=f"smb_{server}_{share}_")
+        cred_file_path: str | None = None
         try:
             if self.thread and getattr(self.thread, 'cancelled', False):
                 raise RuntimeError("Operation cancelled before mount")
             self.initialize()
             username, password = self._smb_credentials[:2]
             domain = self._smb_credentials[2] if len(self._smb_credentials) > 2 else None
+
+            with tempfile.NamedTemporaryFile(
+                mode='w', prefix='smb_cred_', suffix='.tmp',
+                delete=False, encoding='utf-8'
+            ) as cred_file:
+                cred_file_path = cred_file.name
+                cred_file.write(f"username={username}\npassword={password}\n")
+                if domain:
+                    cred_file.write(f"domain={domain}\n")
+            os.chmod(cred_file_path, 0o600)
+
             cmd = ['sudo', 'mount.cifs', f'//{server}/{share}', mount_point]
-            opts = [f'username={username}', f'password={password}']
-            if domain:
-                opts.append(f'domain={domain}')
-            opts += [f'uid={os.getuid()}', f'gid={os.getgid()}', 'iocharset=utf8']
+            opts = [f'credentials={cred_file_path}',
+                    f'uid={os.getuid()}', f'gid={os.getgid()}', 'iocharset=utf8']
             cmd.extend(['-o', ','.join(opts)])
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
             if proc.returncode == 0:
@@ -833,7 +851,7 @@ class SmbFileHandler:
                         try:
                             os.rmdir(mount_point)
                         except Exception as e:
-                            logger.warning(f"{e}")
+                            logger.warning("%s", e)
                     raise RuntimeError(f"Mount failed: {proc_2.stderr}")
                 with QMutexLocker(self.mutex):
                     self._mounted_shares[key] = mount_point
@@ -842,18 +860,23 @@ class SmbFileHandler:
             if os.path.exists(mount_point):
                 try:
                     os.rmdir(mount_point)
-                except Exception as e:
-                    logger.warning(f"{e}")
+                except Exception as rmdir_error:
+                    logger.warning("Could not remove temp mount point after timeout: %s", rmdir_error)
             raise RuntimeError("Mount operation timed out")
         except Exception as e:
-            logger.warning(f"{e}")
+            logger.warning("%s", e)
             if os.path.exists(mount_point):
                 try:
                     os.rmdir(mount_point)
-                except Exception as e:
-                    logger.warning(f"{e}")
+                except Exception as rmdir_error:
+                    logger.warning("Could not remove temp mount point: %s", rmdir_error)
             raise
         finally:
+            if cred_file_path and os.path.exists(cred_file_path):
+                try:
+                    os.unlink(cred_file_path)
+                except OSError as exc:
+                    logger.warning("Could not remove SMB credentials file: %s", exc)
             with QMutexLocker(self.mutex):
                 self._mounting_shares.discard(key)
                 if key in self._mount_wait_conditions:
@@ -876,15 +899,15 @@ class SmbFileHandler:
                 if result.returncode == 0:
                     break
             except subprocess.TimeoutExpired as e:
-                logger.warning(f"Warning during unmount attempt (timeout): {e}")
+                logger.warning("Warning during unmount attempt (timeout): %s", e)
             except Exception as e:
-                logger.warning(f"Warning during unmount attempt: {e}")
+                logger.warning("Warning during unmount attempt: %s", e)
 
         try:
             if os.path.exists(mount_point) and not os.listdir(mount_point):
                 os.rmdir(mount_point)
         except Exception as e:
-            logger.warning(f"Could not remove mount point {mount_point}: {e}")
+            logger.warning("Could not remove mount point %s: %s", mount_point, e)
 
     def _smb_path_to_local(self, smb_path):
         server, share, path = self.parse_smb_url(smb_path)
@@ -980,7 +1003,7 @@ class SmbFileHandler:
             try:
                 return os.path.isdir(self._smb_path_to_local(path))
             except Exception as e:
-                logger.error(f"Error in is_directory: {e}")
+                logger.error("Error in is_directory: %s", e)
                 return False
         return Path(path).is_dir()
 
@@ -995,7 +1018,7 @@ class SmbFileHandler:
                 return sum(f.stat().st_size for f in Path(local_path).rglob('*') if f.is_file())
             return 0
         except Exception as e:
-            logger.error(f"Error in get_smb_file_size: {e}")
+            logger.error("Error in get_smb_file_size: %s", e)
             return 0
 
     def list_smb_directory(self, path):
@@ -1005,40 +1028,61 @@ class SmbFileHandler:
             local_path = self._smb_path_to_local(path)
             return [f for f in os.listdir(local_path) if not f.startswith('.')] if os.path.isdir(local_path) else []
         except Exception as e:
-            logger.error(f"Error in list_smb_directory: {e}")
+            logger.error("Error in list_smb_directory: %s", e)
+            return []
+
+    def list_smb_directory_recursive(self, path):
+        if not self.is_smb_path(path):
+            return []
+        try:
+            local_path = self._smb_path_to_local(path)
+            if not os.path.isdir(local_path):
+                return []
+            result = []
+            for dirpath, dirnames, filenames in os.walk(local_path):
+                dirnames[:] = [d for d in dirnames if not d.startswith('.')]
+                for fname in filenames:
+                    if fname.startswith('.'):
+                        continue
+                    abs_path = os.path.join(dirpath, fname)
+                    rel = os.path.relpath(str(abs_path), str(local_path))
+                    result.append(rel)
+            return result
+        except Exception as e:
+            logger.error("Error in list_smb_directory_recursive: %s", e)
             return []
 
     def cleanup(self):
-        for (_, _), mount_point in list(self._mounted_shares.items()):
+        for (_server, _share), mount_point in list(self._mounted_shares.items()):
             try:
                 time.sleep(0.5)
                 self._unmount_smb_share(mount_point, self._sudo_password)
             except Exception as e:
-                logger.warning(f"Cleanup warning: {e}")
+                logger.warning("Cleanup warning: %s", e)
         self._mounted_shares.clear()
         self._mounting_shares.clear()
         self._mount_wait_conditions.clear()
 
     def force_cleanup(self):
         try:
-            for (_, _), mount_point in list(self._mounted_shares.items()):
+            for (_server, _share), mount_point in list(self._mounted_shares.items()):
                 try:
                     subprocess.run(['sudo', 'umount', '-l', mount_point], timeout=2, capture_output=True)
                     if os.path.exists(mount_point):
                         try:
                             os.rmdir(mount_point)
                         except Exception as e:
-                            logger.warning(f"{e}")
+                            logger.warning("%s", e)
                 except Exception as e:
-                    logger.exception(f"Force cleanup error (ignored): {e}")
+                    logger.exception("Force cleanup error (ignored): %s", e)
             self._mounted_shares.clear()
             self._mounting_shares.clear()
             with QMutexLocker(self.mutex):
                 for condition in self._mount_wait_conditions.values():
                     condition.wakeAll()
-            self._mount_wait_conditions.clear()
+                self._mount_wait_conditions.clear()
         except Exception as e:
-            logger.exception(f"Force cleanup error (ignored): {e}")
+            logger.exception("Force cleanup error (ignored): %s", e)
 
 
 class LogEntryListModel(QAbstractListModel):
@@ -1054,15 +1098,15 @@ class LogEntryListModel(QAbstractListModel):
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
-            return QVariant()
+            return None
         row = self._filtered_indices[index.row()]
         if role == Qt.ItemDataRole.DisplayRole:
             return self._entries[row]
         if role == Qt.ItemDataRole.ForegroundRole:
             t = self._types[row]
             colors = {"error": Qt.GlobalColor.red, "skipped": Qt.GlobalColor.yellow, "copied": Qt.GlobalColor.green}
-            return colors.get(t, QVariant())
-        return QVariant()
+            return colors.get(t)
+        return None
 
     def set_filter(self, text):
         self.filter = text.lower()
@@ -1100,7 +1144,7 @@ class LogEntryListModel(QAbstractListModel):
                             return line.strip().lower()
                     return sorted_entry.lower()
                 except Exception as error:
-                    logger.error(f"Error in sort_entries: {error}")
+                    logger.error("Error in sort_entries: %s", error)
                     return sorted_entry.lower()
 
             replaced_sorted = sorted(replaced, key=lambda x: extract_path(x[0]))
@@ -1112,7 +1156,7 @@ class LogEntryListModel(QAbstractListModel):
                     else:
                         entry = re.sub(r"^\d+:", f"{i + 1}:", entry, count=1)
                 except Exception as e:
-                    logger.error(f"Error in sort_entries: {e}")
+                    logger.error("Error in sort_entries: %s", e)
                     entry = f"{i + 1}: {entry}"
                 new_entries.append(entry)
                 new_types.append(entry_type)
@@ -1122,13 +1166,13 @@ class LogEntryListModel(QAbstractListModel):
             self.set_filter(self.filter)
         except Exception as e:
             self.endResetModel()
-            logger.exception(f"Error in sort_entries: {e}")
+            logger.exception("Error in sort_entries: %s", e)
 
 
 # noinspection PyUnresolvedReferences
 class VirtualLogTabWidget(QWidget):
     FLUSH_TIMER_INTERVAL = 300
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.entries = []
@@ -1166,6 +1210,8 @@ class VirtualLogTabWidget(QWidget):
             self._flush_timer.start()
 
     def flush_entries(self):
+        entries_to_add = []
+        has_remaining = False
         with QMutexLocker(self._mutex):
             if not self.pending_entries:
                 return
