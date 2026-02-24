@@ -136,12 +136,14 @@ class SystemManagerLauncher:
         button_layout.addWidget(button_box)
         content_widget.layout().addWidget(confirm_label)
         content_widget.layout().addLayout(button_layout)
-        screen_geometry = QApplication.primaryScreen().availableGeometry()
-        content_size = content_widget.sizeHint()
-        dialog.resize(
-            min(content_size.width() + 40, screen_geometry.width()),
-            min(content_size.height() + 40, screen_geometry.height())
-        )
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            screen_geometry = screen.availableGeometry()
+            content_size = content_widget.sizeHint()
+            dialog.resize(
+                min(content_size.width() + 40, screen_geometry.width()),
+                min(content_size.height() + 40, screen_geometry.height())
+            )
         button_box.button(QDialogButtonBox.StandardButton.No).setFocus()
         return dialog.exec() == QDialog.DialogCode.Accepted
 
@@ -608,7 +610,7 @@ class SystemManagerDialog(QDialog):
             if scrollbar:
                 scrollbar.setValue(scrollbar.maximum())
         except Exception as e:
-            logger.exception(f"Text edit update failed: {e}")
+            logger.exception("Text edit update failed: %s", e)
 
     def _show_completion_message(self):
         if self.completed_message_shown or self.auth_failed:
@@ -663,7 +665,7 @@ class SystemManagerDialog(QDialog):
             time_text = self._format_elapsed_time(elapsed)
             self.elapsed_time_label.setText(time_text)
         except Exception as e:
-            logger.error(f"Error in update_elapsed_time: {e}")
+            logger.error("Error in update_elapsed_time: %s", e)
             self.elapsed_time_label.setText("\nElapsed time:\n--\n")
 
     @staticmethod
@@ -749,7 +751,7 @@ class SystemManagerThread(QThread):
             self.distro = LinuxDistroHelper()
             self.package_cache = PackageCache(self.distro)
         except Exception as e:
-            logger.warning(f"Could not initialize distro helper: {e}")
+            logger.warning("Could not initialize distro helper: %s", e)
             self.distro = None
             self.package_cache = None
 
@@ -802,27 +804,33 @@ class SystemManagerThread(QThread):
             "update_system": ("Updating system...", lambda: self.update_system("update_system")),
             "install_kernel_header": ("Installing kernel headers...",
                                       lambda: self.install_kernel_header("install_kernel_header")),
-            "install_essential_packages": ("Installing 'Essential Packages'...",
-                                           lambda: self.batch_install(Options.essential_packages, "Essential Package")),
+            "install_basic_packages": ("Installing 'Basic Packages'...",
+                                           lambda: self.batch_install(Options.basic_packages, "Basic Package")),
             "install_yay": ("Installing 'yay'...", self.install_yay),
             "install_aur_packages": ("Installing 'AUR Packages' with 'yay'...",
                                             lambda: self.batch_install(Options.aur_packages,
                                                                        "AUR Package")),
             "install_specific_packages": ("Installing 'Specific Packages'...",
-                                          self.install_specific_packages_based_on_session)
+                                          self.install_specific_packages_based_on_session),
+            "install_flatpak": ("Installing Flatpak...", self.install_flatpak),
+            "install_snap": ("Installing Snap...", self.install_snap),
         }
 
     def _define_service_tasks(self):
         def get_packages(method):
             return getattr(self.distro, method, lambda: [])()
 
+        ssh_service = (self.distro.get_ssh_service_name()
+                       if hasattr(self.distro, 'get_ssh_service_name') else 'sshd')
+
         return {
-            "enable_printer_support":            ("Initializing printer support...",   "cups",      get_packages("get_printer_packages")),
-            "enable_samba_network_filesharing":  ("Initializing samba...",              "smb",       get_packages("get_samba_packages")),
-            "enable_bluetooth_service":          ("Initializing bluetooth...",          "bluetooth", get_packages("get_bluetooth_packages")),
-            "enable_atd_service":                ("Initializing atd...",                "atd",       get_packages("get_at_packages")),
-            "enable_cronie_service":             ("Initializing cronie...",             "cronie",    get_packages("get_cron_packages")),
-            "enable_firewall":                   ("Initializing firewall...",           "ufw",       get_packages("get_firewall_packages")),
+            "enable_printer_support":           ("Initializing printer support...",  "cups",        get_packages("get_printer_packages")),
+            "enable_samba_network_filesharing": ("Initializing samba...",             "smb",         get_packages("get_samba_packages")),
+            "enable_bluetooth_service":         ("Initializing bluetooth...",         "bluetooth",   get_packages("get_bluetooth_packages")),
+            "enable_atd_service":               ("Initializing atd...",               "atd",         get_packages("get_at_packages")),
+            "enable_cronie_service":            ("Initializing cronie...",            "cronie",      get_packages("get_cron_packages")),
+            "enable_firewall":                  ("Initializing firewall...",          "ufw",         get_packages("get_firewall_packages")),
+            "enable_ssh_service":               ("Initializing SSH server...",        ssh_service,   get_packages("get_ssh_packages")),
         }
 
     def reset_sudo_timeout(self):
@@ -844,7 +852,7 @@ class SystemManagerThread(QThread):
             env['SUDO_ASKPASS'] = str(self.askpass_script_path)
             process = subprocess.run(
                 ['sudo', '-A', 'echo', 'Sudo access successfully verified...'],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, timeout=0.5
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, timeout=5
             )
             if process.stdout:
                 self.outputReceived.emit(process.stdout.strip(), "success")
@@ -900,14 +908,14 @@ class SystemManagerThread(QThread):
                             os.fsync(f.fileno())
 
                     file_path.unlink()
-                    logger.info(f"Securely deleted {filename}")
+                    logger.info("Securely deleted %s", filename)
 
                 except (OSError, IOError) as e:
-                    logger.warning(f"Secure deletion failed for {filename}: {e}")
+                    logger.warning("Secure deletion failed for %s: %s", filename, e)
                     try:
                         file_path.unlink()
                     except (OSError, IOError) as e:
-                        logger.warning(f"Secure deletion failed for {filename}: {e}")
+                        logger.warning("Secure deletion failed for %s: %s", filename, e)
 
         if 'SUDO_PASSWORD_FILE' in os.environ:
             del os.environ['SUDO_PASSWORD_FILE']
@@ -917,7 +925,7 @@ class SystemManagerThread(QThread):
             self.temp_dir = None
             self.askpass_script_path = None
         except Exception as e:
-            logger.warning(f"Temp directory cleanup failed: {e}")
+            logger.warning("Temp directory cleanup failed: %s", e)
 
     def run_sudo_command(self, command):
         if self.terminated:
@@ -995,8 +1003,8 @@ class SystemManagerThread(QThread):
                     return None
 
             class MockProcess:
-                def __init__(self, returnee):
-                    self.returnee = returnee
+                def __init__(self, returncode):
+                    self.returncode = returncode
 
             return MockProcess(return_code)
 
@@ -1069,7 +1077,7 @@ class SystemManagerThread(QThread):
             cmd.extend([str(src), str(dest)])
             result = self.run_sudo_command(cmd)
 
-            if result and result.returnee == 0:
+            if result and result.returncode == 0:
                 label = src if is_dir else filename
                 self.outputReceived.emit(f"Successfully copied: '{label}' to '{dest}'", "success")
             else:
@@ -1090,7 +1098,7 @@ class SystemManagerThread(QThread):
             return False
 
         result = self.run_sudo_command(['sudo', 'mkdir', '-p', str(dest_path)])
-        success = result and result.returnee == 0
+        success = result and result.returncode == 0
         self.outputReceived.emit(f"{'Created' if success else 'Error creating'} directory: '{dest_path}'",
                                  "info" if success else "error")
         return success
@@ -1105,7 +1113,7 @@ class SystemManagerThread(QThread):
 
         cmd = self.distro.get_pkg_install_cmd(package)
         result = self.run_sudo_command(cmd.split())
-        success = result and result.returnee == 0
+        success = result and result.returncode == 0
 
         if success:
             self.package_cache.mark_installed(package)
@@ -1117,7 +1125,7 @@ class SystemManagerThread(QThread):
 
     def batch_install(self, packages, package_type):
         task_id_map = {
-            "Essential Package": "install_essential_packages",
+            "Basic Package": "install_basic_packages",
             "AUR Package": "install_aur_packages"
         }
         task_id = task_id_map.get(package_type)
@@ -1147,7 +1155,7 @@ class SystemManagerThread(QThread):
                 self.outputReceived.emit(f"Skipping disabled '{package_type}': '{pkg_name}'", "info")
                 continue
 
-            if pkg_name and all(c.isalnum() or c in '-_.' for c in pkg_name):
+            if pkg_name and all(c.isalnum() or c in '-_.+' for c in pkg_name):
                 pkgs.append(pkg_name)
             elif pkg_name:
                 self.outputReceived.emit(f"Invalid package name skipped: '{pkg_name}'", "warning")
@@ -1163,7 +1171,7 @@ class SystemManagerThread(QThread):
         total_failed = []
         total_installed = []
 
-        batch_size = 15 if package_type == "Essential Package" else 25
+        batch_size = 15 if package_type == "Basic Package" else 25
 
         for batch in package_batches_items(pkgs_to_install, batch_size):
             if self.terminated:
@@ -1171,7 +1179,7 @@ class SystemManagerThread(QThread):
 
             self.outputReceived.emit(f"Installing {len(batch)} package(s): {', '.join(batch)}...", "info")
 
-            if package_type == "Essential Package":
+            if package_type == "Basic Package":
                 cmd = self.distro.get_pkg_install_cmd(" ".join(batch))
             else:
                 cmd = f"yay -S --noconfirm --needed {' '.join(batch)}"
@@ -1179,10 +1187,11 @@ class SystemManagerThread(QThread):
             self.run_sudo_command(cmd.split())
 
             for pkg in batch:
-                if self.package_cache.is_installed(pkg):
+                if self.distro.package_is_installed(pkg):
                     total_installed.append(pkg)
                     self.package_cache.mark_installed(pkg)
                 else:
+                    self.package_cache.invalidate(pkg)
                     total_failed.append(pkg)
 
         if total_failed:
@@ -1218,7 +1227,7 @@ class SystemManagerThread(QThread):
         else:
             self.outputReceived.emit("Unable to detect country. Searching globally instead.", "info")
         result = self.run_sudo_command(command)
-        success = result and result.returnee == 0
+        success = result and result.returncode == 0
         status = "success" if success else "error"
         self.outputReceived.emit(f"Mirrors {'successfully updated' if success else 'failed to update'}...", status)
         self.taskStatusChanged.emit(task_id, status)
@@ -1271,14 +1280,14 @@ class SystemManagerThread(QThread):
                 self.outputReceived.emit(f"Adding '{shell_bin}' to /etc/shells...", "info")
                 append_cmd = ['sudo', 'sh', '-c', f'echo "{shell_bin}" >> /etc/shells']
                 append_result = self.run_sudo_command(append_cmd)
-                if not append_result or append_result.returnee != 0:
+                if not append_result or append_result.returncode != 0:
                     self.outputReceived.emit(f"Error when adding the shell to /etc/shells.", "error")
                     self.taskStatusChanged.emit(task_id, "error")
                     return False
             self.outputReceived.emit(f"Changing user shell for '{actual_user}' to '{shell_bin}'...", "info")
             chsh_cmd = ['sudo', 'chsh', '-s', shell_bin, actual_user]
             chsh_result = self.run_sudo_command(chsh_cmd)
-            if chsh_result and chsh_result.returnee == 0:
+            if chsh_result and chsh_result.returncode == 0:
                 self.outputReceived.emit(f"Shell for user '{actual_user}' successfully changed to '{config_shell}'...",
                                          "success")
                 self.taskStatusChanged.emit(task_id, "success")
@@ -1298,7 +1307,7 @@ class SystemManagerThread(QThread):
         else:
             cmd = self.distro.get_pkg_update_cmd()
         result = self.run_sudo_command(cmd.split())
-        success = result and result.returnee == 0
+        success = result and result.returncode == 0
         status = "success" if success else "error"
         self.outputReceived.emit(f"System {'successfully updated' if success else 'update failed'}...", status)
         self.taskStatusChanged.emit(task_id, status)
@@ -1312,10 +1321,16 @@ class SystemManagerThread(QThread):
         return success
 
     def setup_service_with_packages(self, service, packages):
-        task_id = {'cups': "enable_printer_support", 'smb': "enable_samba_network_filesharing",
-                   'bluetooth': "enable_bluetooth_service",
-                   'atd': "enable_atd_service", 'cronie': "enable_cronie_service", 'ufw': "enable_firewall"}.get(
-            service)
+        task_id = {
+            'cups':      "enable_printer_support",
+            'smb':       "enable_samba_network_filesharing",
+            'bluetooth': "enable_bluetooth_service",
+            'atd':       "enable_atd_service",
+            'cronie':    "enable_cronie_service",
+            'ufw':       "enable_firewall",
+            'sshd':      "enable_ssh_service",
+            'ssh':       "enable_ssh_service",
+        }.get(service)
         success = all(self.install_package_generic(pkg, package_type="Service Package") for pkg in packages)
         service_success = self.enable_service(service)
         if task_id:
@@ -1331,7 +1346,7 @@ class SystemManagerThread(QThread):
             return True
         self.outputReceived.emit("\n", "info")
         result = self.run_sudo_command(['sudo', 'systemctl', 'enable', '--now', f'{service}.service'])
-        success = result and result.returnee == 0
+        success = result and result.returncode == 0
         if success:
             self.outputReceived.emit(f"'{service}.service' successfully enabled...", "success")
             if service == "ufw":
@@ -1339,11 +1354,11 @@ class SystemManagerThread(QThread):
                                 ['sudo', 'ufw', 'enable'],
                                 ['sudo', 'ufw', 'reload']):
                     result = self.run_sudo_command(ufw_cmd)
-                    if not result or result.returnee != 0:
+                    if not result or result.returncode != 0:
                         success = False
         else:
-            error = getattr(result, 'stderr', 'Unknown error')
-            self.outputReceived.emit(f"Error enabling '{service}.service': {error}", "error")
+            error_code = getattr(result, 'returncode', 'N/A')
+            self.outputReceived.emit(f"Error enabling '{service}.service' (exit code: {error_code})", "error")
         return success
 
     def install_yay(self):
@@ -1360,7 +1375,7 @@ class SystemManagerThread(QThread):
         missing_pkgs = [pkg for pkg in required_pkgs if not self.distro.package_is_installed(pkg)]
         if missing_pkgs:
             result = self.run_sudo_command(self.distro.get_pkg_install_cmd(" ".join(missing_pkgs)).split())
-            if not result or result.returnee != 0:
+            if not result or result.returncode != 0:
                 self.taskStatusChanged.emit(task_id, "error")
                 return False
         yay_build_path = Path(home_user) / "yay"
@@ -1389,7 +1404,7 @@ class SystemManagerThread(QThread):
         to_remove = [pkg for pkg in ['yay-debug', 'go'] if self.distro.package_is_installed(pkg)]
         if to_remove:
             result = self.run_sudo_command(['sudo', 'pacman', '-R', '--noconfirm'] + to_remove)
-            removed_ok = result and result.returnee == 0
+            removed_ok = result and result.returncode == 0
             msg = f"{'Successfully removed' if removed_ok else 'Error during uninstallation of'}: '{', '.join(to_remove)}'"
             self.outputReceived.emit(msg, "subprocess" if removed_ok else "warning")
         pkg_files = sorted(f for f in os.listdir(yay_build_path) if f.endswith('.pkg.tar.zst'))
@@ -1399,7 +1414,7 @@ class SystemManagerThread(QThread):
             return False
         pkg_path = os.path.join(str(yay_build_path), pkg_files[0])
         result = self.run_sudo_command(['sudo', 'pacman', '-U', '--noconfirm', str(pkg_path)])
-        success = result and result.returnee == 0
+        success = result and result.returncode == 0
         shutil.rmtree(yay_build_path, ignore_errors=True)
         shutil.rmtree(Path(home_config) / "go", ignore_errors=True)
         self.outputReceived.emit(f"'yay' {'successfully installed' if success else 'installation failed'}...",
@@ -1461,15 +1476,68 @@ class SystemManagerThread(QThread):
         self.taskStatusChanged.emit(task_id, "success" if success else "error")
         return success
 
+    def install_flatpak(self):
+        task_id = "install_flatpak"
+        if not hasattr(self.distro, 'get_flatpak_packages'):
+            self.outputReceived.emit("Flatpak installation is not supported on this distro.", "warning")
+            self.taskStatusChanged.emit(task_id, "warning")
+            return True
+
+        packages = self.distro.get_flatpak_packages()
+        success = all(self.install_package_generic(pkg, package_type="Flatpak Package") for pkg in packages)
+
+        if success:
+            flathub_cmd = self.distro.flatpak_add_flathub()
+            self.outputReceived.emit("Adding Flathub remote...", "info")
+            try:
+                result = subprocess.run(flathub_cmd.split(), capture_output=True, text=True, timeout=30)
+                if result.returncode == 0:
+                    self.outputReceived.emit("Flathub remote successfully added...", "success")
+                else:
+                    self.outputReceived.emit(f"Warning: Could not add Flathub: {result.stderr.strip()}", "warning")
+            except Exception as e:
+                self.outputReceived.emit(f"Warning: Flathub remote setup failed: {e}", "warning")
+
+        status = "success" if success else "error"
+        self.taskStatusChanged.emit(task_id, status)
+        return success
+
+    def install_snap(self):
+        task_id = "install_snap"
+        if not hasattr(self.distro, 'get_snap_packages'):
+            self.outputReceived.emit("Snap installation is not supported on this distro.", "warning")
+            self.taskStatusChanged.emit(task_id, "warning")
+            return True
+
+        packages = self.distro.get_snap_packages()
+        success = all(self.install_package_generic(pkg, package_type="Snap Package") for pkg in packages)
+        if success:
+            service_success = self.enable_service("snapd")
+            success = success and service_success
+
+        status = "success" if success else "error"
+        self.taskStatusChanged.emit(task_id, status)
+        return success
+
     def remove_orphaned_packages(self):
         task_id = "remove_orphaned_packages"
         find_orphans_cmd = self.distro.get_find_orphans_cmd()
-        orphaned_packages = subprocess.run(find_orphans_cmd.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                           text=True).stdout.strip()
+        try:
+            orphaned_packages = subprocess.run(
+                find_orphans_cmd,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            ).stdout.strip()
+        except Exception as e:
+            self.outputReceived.emit(f"Error finding orphaned packages: {e}", "error")
+            self.taskStatusChanged.emit(task_id, "error")
+            return False
         if orphaned_packages:
             packages_list = orphaned_packages.split('\n')
             result = self.run_sudo_command(self.distro.get_pkg_remove_cmd(' '.join(packages_list)).split())
-            success = result and result.returnee == 0
+            success = result and result.returncode == 0
             self.outputReceived.emit(
                 f"Orphaned packages {'successfully removed' if success else 'could not be removed'}...",
                 "success" if success else "error")
@@ -1482,14 +1550,14 @@ class SystemManagerThread(QThread):
     def clean_cache(self):
         task_id = "clean_cache"
         result = self.run_sudo_command(self.distro.get_clean_cache_cmd().split())
-        success = result and result.returnee == 0
+        success = result and result.returncode == 0
         self.outputReceived.emit(
             "Cache of system package manager successfully cleaned..." if success else "Error cleaning cache...",
             "success" if success else "error")
         if self.distro.package_is_installed('yay'):
             self.outputReceived.emit("<br>Cleaning 'yay' cache...", "info")
             result_yay = self.run_sudo_command(['yay', '-Scc', '--noconfirm'])
-            if result_yay and result_yay.returnee == 0:
+            if result_yay and result_yay.returncode == 0:
                 self.outputReceived.emit("'yay' cache successfully cleaned...", "success")
             else:
                 self.outputReceived.emit("Error cleaning 'yay' cache...", "error")
@@ -1521,7 +1589,7 @@ class PackageCache:
                 try:
                     self._cache[package] = self.distro.package_is_installed(package)
                 except Exception as e:
-                    logger.warning(f"Package check failed for {package}: {e}")
+                    logger.warning("Package check failed for %s: %s", package, e)
                     return False
             return self._cache[package]
 
@@ -1535,12 +1603,3 @@ class PackageCache:
                 self._cache.pop(package, None)
             else:
                 self._cache.clear()
-
-def _sanitize_package_name(pkg_name):
-    pkg_name = str(pkg_name).strip()
-    return pkg_name if all(c.isalnum() or c in '-_.' for c in pkg_name) else None
-
-
-def package_batches(pkg_list, size):
-    for i in range(0, len(pkg_list), size):
-        yield pkg_list[i:i + size]
