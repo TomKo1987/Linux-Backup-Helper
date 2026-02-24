@@ -105,6 +105,7 @@ class Options(QObject):
         (f"/run/media/{_USER}/", ""),
         ("[1m", ""),
         ("[0m", ""),
+        ("", "")
     ]
 
     class _ProfilePathDescriptor:
