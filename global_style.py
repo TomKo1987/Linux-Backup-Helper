@@ -269,6 +269,9 @@ QProgressBar {
     border: 1px solid #444;
     height: 22.5px;
     text-align: center;
+    margin: 10px 0;
+    font-weight: bold;
+    color: #000000;
 }
 QProgressBar::chunk {
     background-color: #4a9eff;
@@ -378,6 +381,9 @@ QProgressBar {
     border: 1px solid #d0d0d0;
     height: 22.5px;
     text-align: center;
+    margin: 10px 0;
+    font-weight: bold;
+    color: #000000;
 }
 QProgressBar::chunk {
     background-color: #0078d4;
@@ -484,6 +490,9 @@ QProgressBar {
     border-radius: 6px;
     height: 22.5px;
     text-align: center;
+    margin: 10px 0;
+    font-weight: bold;
+    color: #000000;
 }
 QProgressBar::chunk {
     background-color: #268bd2;
@@ -590,6 +599,9 @@ QProgressBar {
     border-radius: 6px;
     height: 22.5px;
     text-align: center;
+    margin: 10px 0;
+    font-weight: bold;
+    color: #000000;
 }
 QProgressBar::chunk {
     background-color: #50fa7b;
@@ -690,6 +702,9 @@ QProgressBar {
     border: 1px solid #b8bb26;
     height: 22.5px;
     text-align: center;
+    margin: 10px 0;
+    font-weight: bold;
+    color: #000000;
 }
 QProgressBar::chunk {
     background-color: #b8bb26;
@@ -790,6 +805,9 @@ QProgressBar {
     border: 1px solid #88c0d0;
     height: 22.5px;
     text-align: center;
+    margin: 10px 0;
+    font-weight: bold;
+    color: #000000;
 }
 QProgressBar::chunk {
     background-color: #81a1c1;
@@ -890,6 +908,9 @@ QProgressBar {
     border: 1px solid #89b4fa;
     height: 22.5px;
     text-align: center;
+    margin: 10px 0;
+    font-weight: bold;
+    color: #000000;
 }
 QProgressBar::chunk {
     background-color: #89b4fa;
@@ -990,6 +1011,9 @@ QProgressBar {
     border: 1px solid #66d9ef;
     height: 22.5px;
     text-align: center;
+    margin: 10px 0;
+    font-weight: bold;
+    color: #000000;
 }
 QProgressBar::chunk {
     background-color: #66d9ef;
@@ -1018,8 +1042,6 @@ QPushButton, QCheckBox, QLabel, QProgressBar, QTabBar::tab {{
         return base_style + font_style
     except ImportError:
         return base_style
-
-global_style = get_current_style()
 
 def apply_theme_to_widget(widget, theme_name=None):
     if theme_name is None:
