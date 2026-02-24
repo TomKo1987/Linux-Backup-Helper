@@ -1,8 +1,10 @@
+from __future__ import annotations
 from typing import Optional
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout)
 
 MAX_ATTEMPTS = 3
+__all__ = ["SudoPasswordDialog", "SecureString"]
 
 
 class SudoPasswordDialog(QDialog):
@@ -54,12 +56,14 @@ class SudoPasswordDialog(QDialog):
 
     def _on_authenticate(self) -> None:
         password = self._pw_input.text()
+        self._pw_input.clear()
         if not password:
-            QMessageBox.warning(self, "Empty Password",
-                                "Please enter your sudo password or click Close.")
+            QMessageBox.warning(
+                self, "Empty Password",
+                "Please enter your sudo password or click Close.",
+            )
             return
         self.sudo_password_entered.emit(password)
-        self._pw_input.clear()
         self.accept()
 
     def update_failed_attempts(self, count: int) -> None:
@@ -79,7 +83,7 @@ class SudoPasswordDialog(QDialog):
         self.adjustSize()
 
 
-class SecureString:    
+class SecureString:
 
     __slots__ = ("_buf",)
 
