@@ -1,4 +1,3 @@
-from __future__ import annotations
 from pathlib import Path
 from PyQt6.QtCore import Qt, QTimer
 from global_style import get_current_style
@@ -13,9 +12,10 @@ logger = setup_logger(__name__)
 
 
 # noinspection PyUnresolvedReferences
-class SystemManagerOptions(QDialog):
+class SystemManagerOptions(QDialog):    
     DIALOG_WIDTH = 1500
     DIALOG_HEIGHT = 750
+    
 
     def __init__(self, parent=None):
         super().__init__(parent)
