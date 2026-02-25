@@ -522,7 +522,7 @@ class SettingsWindow(BaseWindow):
                 if isinstance(btn, QPushButton):
                     if btn.text().startswith(f"Sublayout-Games {idx}:"):
                         btn.setText(f"Sublayout-Games {idx}:\n{name}")
-                    break
+                        break
             Options.save_config()
             try:
                 self.settings_changed.emit()
