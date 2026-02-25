@@ -299,7 +299,10 @@ class DriveManager:
             stripped = cmd.strip()
             if not stripped:
                 return
-            tokens = stripped.split()
+            try:
+                tokens = shlex.split(stripped)
+            except ValueError:
+                tokens = stripped.split()
             if not tokens:
                 return
             pattern_tokens = [t for t in tokens if t != "sudo"]
