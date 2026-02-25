@@ -1,4 +1,3 @@
-from __future__ import annotations
 from pathlib import Path
 import json, os, re, tempfile
 from functools import partial
@@ -519,10 +518,10 @@ class SettingsWindow(BaseWindow):
             key = f"sublayout_games_{idx}"
             Options.sublayout_names[key] = name
             for btn in parent.findChildren(QPushButton):
-                if isinstance(btn, QPushButton):
-                    if btn.text().startswith(f"Sublayout-Games {idx}:"):
-                        btn.setText(f"Sublayout-Games {idx}:\n{name}")
-                        break
+                btn_obj = btn  # type: QPushButton
+                if btn_obj.text().startswith(f"Sublayout-Games {idx}:"):
+                    btn_obj.setText(f"Sublayout-Games {idx}:\n{name}")
+                    break
             Options.save_config()
             try:
                 self.settings_changed.emit()
@@ -548,9 +547,10 @@ class SettingsWindow(BaseWindow):
 
     def _refresh_header_button_color(self, header: str) -> None:
         for btn in self.findChildren(QPushButton):
-            if isinstance(btn, QPushButton) and btn.text() == header:
+            btn_obj = btn  # type: QPushButton
+            if btn_obj.text() == header:
                 color = Options.header_colors.get(header, "#ffffff")
-                btn.setStyleSheet(
+                btn_obj.setStyleSheet(
                     f"color:black;font-weight:bold;font-size:20px;"
                     f"background-color:{self._darkened(color)};"
                 )
@@ -1002,7 +1002,10 @@ class SettingsWindow(BaseWindow):
 
     def _darkened(self, color_str: str) -> str:
         if color_str not in self._color_cache:
-            self._color_cache[color_str] = SettingsWindow.darken_header_color(color_str)
+            color = QColor(color_str)
+            h, s, v, a = color.getHsv()
+            v = max(0, v - 120)
+            self._color_cache[color_str] = QColor.fromHsv(h, s, v, a).name()
         return self._color_cache[color_str]
 
     @staticmethod
