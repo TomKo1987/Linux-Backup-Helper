@@ -1,4 +1,3 @@
-from __future__ import annotations
 from pathlib import Path
 from options import Options
 import global_style, sys, json
@@ -27,7 +26,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Backup Helper")
-        self.setMinimumSize(400, 350)
+        self.setMinimumSize(375, 320)
 
         Options.set_main_window(self)
 
@@ -198,7 +197,7 @@ class MainWindow(QMainWindow):
         text_edit = QTextEdit()
         text_edit.setReadOnly(True)
         text_edit.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
-        text_edit.setStyleSheet("font-family:monospace;font-size:14px;")
+        text_edit.setStyleSheet("font-family:monospace;font-size:13px;")
         layout.addWidget(text_edit)
 
         def _load() -> None:
@@ -275,11 +274,7 @@ class MainWindow(QMainWindow):
 
         if auto_unmount:
             self.hide()
-            mount_output = self.drive_manager.get_mount_output()
-            self.drive_manager.drives_to_unmount = [
-                opt for opt in Options.mount_options
-                if self.drive_manager.is_drive_mounted(opt, mount_output)
-            ]
+            self.drive_manager.drives_to_unmount = list(Options.mount_options)
             self.drive_manager.unmount_drives()
 
         QCoreApplication.exit(0)
