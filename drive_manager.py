@@ -17,7 +17,9 @@ PROCESS_KILL_TIMEOUT = 10
 
 _ALLOWED_COMMANDS = {"mount", "umount", "udisksctl"}
 
-_DANGEROUS_SEQUENCES: tuple[str, ...] = ("&&", "||", "$(", ";;", ";", "|", "`", ">", "<", "&", "\n", "\r", "\x00")
+_DANGEROUS_SEQUENCES: tuple[str, ...] = (
+    "&&", "||", "$(", ";;", ";", "|", "`", ">", "<", "&", "\n", "\r", "\x00",
+)
 
 _SUSPICIOUS_ARGS          = {"--exec", "--command", "-c", "--eval"}
 _SUSPICIOUS_PATH_PATTERNS = {"..", ";", "|", "&", "$(", "`", "<", ">", "\x00", "\n", "\r"}
@@ -52,10 +54,9 @@ class DriveManager:
             name = opt.get("drive_name", "").strip()
             if not name:
                 return False
-            paths = _mount_paths(name)
             return any(
                 f"{path} " in output or f"{path}\n" in output or output.endswith(path)
-                for path in paths
+                for path in _mount_paths(name)
             )
         except Exception as exc:
             logger.exception("is_drive_mounted: error checking '%s': %s", opt.get("drive_name"), exc)
@@ -296,21 +297,8 @@ class DriveManager:
     @staticmethod
     def _kill_process(cmd: str) -> None:
         try:
-            stripped = cmd.strip()
-            if not stripped:
-                return
-            try:
-                tokens = shlex.split(stripped)
-            except ValueError:
-                tokens = stripped.split()
-            if not tokens:
-                return
-            pattern_tokens = [t for t in tokens if t != "sudo"]
-            if not pattern_tokens:
-                return
-            pattern = " ".join(pattern_tokens[:2])[:80]
             subprocess.run(
-                ["pkill", "-f", pattern],
+                ["pkill", "-f", cmd[:50]],
                 timeout=PROCESS_KILL_TIMEOUT,
                 check=False,
             )
