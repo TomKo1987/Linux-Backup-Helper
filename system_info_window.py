@@ -9,10 +9,9 @@ from logging_config import setup_logger
 logger = setup_logger(__name__)
 
 _MAX_WIDTH_RATIO = 0.90
-_WORKER_WAIT_MS  = 3_000
+_WORKER_WAIT_MS  = 3000
 _INXI_ARGS       = ["inxi", "-SMCGAz", "--no-host", "--color", "0"]
 _INXI_TIMEOUT    = 15
-_WORKER_TERM_WAIT_MS = 500
 
 
 class _InxiWorker(QThread):
@@ -120,7 +119,7 @@ class SystemInfoWindow(QDialog):
             if not self._worker.wait(_WORKER_WAIT_MS):
                 logger.warning("SystemInfoWindow: worker thread did not stop in time — terminating.")
                 self._worker.terminate()
-                self._worker.wait(_WORKER_TERM_WAIT_MS)
+                self._worker.wait(500)
         parent = self.parent()
         try:
             if parent:
