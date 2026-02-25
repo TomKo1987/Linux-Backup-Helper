@@ -1,3 +1,4 @@
+from __future__ import annotations
 from pathlib import Path
 from options import Options, SESSIONS
 from sudo_password import SecureString
@@ -222,7 +223,9 @@ class SystemManagerLauncher:
         if self.system_manager_thread:
             self.system_manager_thread.terminated = True
             self.system_manager_thread.quit()
-            self.system_manager_thread.wait(2000)
+            if not self.system_manager_thread.wait(5000):
+                self.system_manager_thread.terminate()
+                self.system_manager_thread.wait(2000)
 
     def on_password_success(self):
         self.failed_attempts = 0
@@ -722,7 +725,9 @@ class SystemManagerDialog(QDialog):
         if self.installer_thread and self.installer_thread.isRunning():
             self.installer_thread.terminated = True
             self.installer_thread.quit()
-            self.installer_thread.wait(2000)
+            if not self.installer_thread.wait(5000):
+                self.installer_thread.terminate()
+                self.installer_thread.wait(2000)
 
 
 # noinspection PyUnresolvedReferences
@@ -904,9 +909,10 @@ class SystemManagerThread(QThread):
                     patterns = [b'\x00' * 1024, b'\xFF' * 1024, os.urandom(1024)]
 
                     for pattern in patterns:
-                        with open(file_path, 'wb') as f:
-                            for offset in range(0, file_size, len(pattern)):
-                                remaining = min(len(pattern), file_size - offset)
+                        with open(file_path, 'r+b') as f:
+                            f.seek(0)
+                            for pos in range(0, file_size, len(pattern)):
+                                remaining = min(len(pattern), file_size - pos)
                                 f.write(pattern[:remaining])
                             f.flush()
                             os.fsync(f.fileno())
@@ -937,10 +943,10 @@ class SystemManagerThread(QThread):
         try:
             env = os.environ.copy()
             env['SUDO_ASKPASS'] = str(self.askpass_script_path)
-            if isinstance(command, list):
-                if command and command[0] == 'sudo' and '-A' not in command:
+            if isinstance(command, list) and command:
+                if command[0] == 'sudo' and '-A' not in command:
                     command.insert(1, '-A')
-                elif command and command[0] == 'yay' and not any(arg.startswith('--sudoflags=') for arg in command):
+                elif command[0] == 'yay' and not any(arg.startswith('--sudoflags=') for arg in command):
                     command.insert(1, '--sudoflags=-A')
             process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
                                        bufsize=4096)
@@ -991,6 +997,9 @@ class SystemManagerThread(QThread):
                 timeout_counter += 1
                 if self.terminated or timeout_counter > max_idle_time:
                     break
+
+        for t in threads:
+            t.join(timeout=5)
 
         try:
             return_code = process.poll()
