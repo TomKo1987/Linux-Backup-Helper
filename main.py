@@ -275,7 +275,11 @@ class MainWindow(QMainWindow):
 
         if auto_unmount:
             self.hide()
-            self.drive_manager.drives_to_unmount = list(Options.mount_options)
+            mount_output = self.drive_manager.get_mount_output()
+            self.drive_manager.drives_to_unmount = [
+                opt for opt in Options.mount_options
+                if self.drive_manager.is_drive_mounted(opt, mount_output)
+            ]
             self.drive_manager.unmount_drives()
 
         QCoreApplication.exit(0)
