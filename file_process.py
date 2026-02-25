@@ -787,7 +787,7 @@ class SmbFileHandler:
 
     @staticmethod
     def is_smb_path(path):
-        return str(path).startswith(("smb:", "//"))
+        return str(path).startswith(("smb://", "//"))
 
     @staticmethod
     def parse_smb_url(path):
