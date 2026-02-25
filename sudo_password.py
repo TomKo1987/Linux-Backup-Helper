@@ -1,4 +1,5 @@
 from __future__ import annotations
+from typing import Optional
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout)
 
@@ -86,7 +87,7 @@ class SecureString:
 
     __slots__ = ("_buf",)
 
-    def __init__(self, value: str | None = None) -> None:
+    def __init__(self, value: Optional[str] = None) -> None:
         self._buf = bytearray(value.encode("utf-8")) if value else bytearray()
 
     def get(self) -> str:
@@ -96,8 +97,7 @@ class SecureString:
 
     def clear(self) -> None:
         if self._buf:
-            for i in range(len(self._buf)):
-                self._buf[i] = 0
+            memoryview(self._buf)[:] = bytes(len(self._buf))
             self._buf.clear()
 
     def __bool__(self) -> bool:
