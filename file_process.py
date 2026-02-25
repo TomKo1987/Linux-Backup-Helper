@@ -1,3 +1,5 @@
+from __future__ import annotations
+from collections import deque
 from pathlib import Path
 from options import Options
 from PyQt6.QtGui import QColor
@@ -1201,15 +1203,17 @@ class VirtualLogTabWidget(QWidget):
         super().__init__(parent)
         self.entries = []
         self.entry_types = []
-        self.pending_entries = []
+        self.pending_entries = deque()
         self._mutex = QMutex()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
+
         search_label = QLabel("Search:")
         search_label.setStyleSheet("color: #e0e0e0;")
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("Filter entries...")
+
         layout.addWidget(search_label)
         layout.addWidget(self.search_box)
 
@@ -1222,6 +1226,7 @@ class VirtualLogTabWidget(QWidget):
         layout.addWidget(self.list_view)
 
         self.search_box.textChanged.connect(self.model.set_filter)
+
         self._flush_timer = QTimer(self)
         self._flush_timer.setInterval(self.FLUSH_TIMER_INTERVAL)
         self._flush_timer.setSingleShot(True)
@@ -1230,29 +1235,55 @@ class VirtualLogTabWidget(QWidget):
     def add_entry(self, entry, entry_type):
         with QMutexLocker(self._mutex):
             self.pending_entries.append((entry, entry_type))
-        if not self._flush_timer.isActive():
-            self._flush_timer.start()
+
+        try:
+            if not self._flush_timer.isActive():
+                self._flush_timer.start()
+        except RuntimeError:
+            pass
 
     def flush_entries(self):
+        try:
+            if not self.isVisible() and not self.pending_entries:
+                return
+        except RuntimeError:
+            return
+
         entries_to_add = []
         has_remaining = False
+
         with QMutexLocker(self._mutex):
-            if not self.pending_entries:
-                return
-            entries_to_add = self.pending_entries[:100]
-            self.pending_entries = self.pending_entries[100:]
-            has_remaining = bool(self.pending_entries)
+            count = 0
+            while self.pending_entries and count < 100:
+                entries_to_add.append(self.pending_entries.popleft())
+                count += 1
+            has_remaining = len(self.pending_entries) > 0
+
         if entries_to_add:
             start = len(self.entries)
-            entries, types = zip(*entries_to_add)
-            self.model.beginInsertRows(QModelIndex(), start, start + len(entries) - 1)
-            self.entries.extend(entries)
-            self.entry_types.extend(types)
+            new_entries, new_types = zip(*entries_to_add)
+
+            self.model.beginInsertRows(QModelIndex(), start, start + len(new_entries) - 1)
+            self.entries.extend(new_entries)
+            self.entry_types.extend(new_types)
             self.model.endInsertRows()
+
             if self.model.filter:
                 self.model.set_filter(self.model.filter)
+
         if has_remaining:
-            self._flush_timer.start()
+            try:
+                self._flush_timer.start()
+            except RuntimeError:
+                pass
 
     def sort_entries(self):
-        self.model.sort_entries()
+        try:
+            self.model.sort_entries()
+        except RuntimeError:
+            pass
+
+    def closeEvent(self, event):
+        if self._flush_timer.isActive():
+            self._flush_timer.stop()
+        super().closeEvent(event)
