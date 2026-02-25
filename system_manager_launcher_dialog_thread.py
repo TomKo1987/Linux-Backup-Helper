@@ -157,7 +157,7 @@ class SystemManagerLauncher:
         self.system_manager_thread.passwordSuccess.connect(self.on_password_success)
         self.system_manager_thread.outputReceived.connect(self.system_manager_dialog.update_operation_dialog)
         self.system_manager_thread.taskStatusChanged.connect(self.system_manager_dialog.update_task_checklist_status)
-        self.system_manager_thread.finished.connect(self.on_system_manager_finished)
+        self.system_manager_thread.task_finished.connect(self.on_system_manager_finished)
         self.system_manager_thread.start()
 
     def _handle_dialog_accepted(self, system_manager_operations):
@@ -570,7 +570,7 @@ class SystemManagerDialog(QDialog):
             self.task_descriptions = ast.literal_eval(output)
             self.initialize_checklist()
         except (SyntaxError, ValueError) as e:
-            self.outputReceived.emit(f"Error parsing task list: {e}", "error")
+            self.update_operation_dialog(f"Error parsing task list: {e}", "error")
 
     def _process_regular_output(self, output: str, message_type: str):
         cursor = self.text_edit.textCursor()
@@ -737,7 +737,7 @@ class SystemManagerThread(QThread):
     passwordFailed = pyqtSignal()
     passwordSuccess = pyqtSignal()
     taskStatusChanged = pyqtSignal(str, str)
-    finished = pyqtSignal()
+    task_finished = pyqtSignal()
 
     def __init__(self, sudo_password):
         super().__init__()
@@ -750,6 +750,7 @@ class SystemManagerThread(QThread):
         self.temp_dir = None
         self.askpass_script_path = None
         self.current_task = None
+        self.password_file = None
         self.task_status = {}
         self._installed_packages_cache = {}
 
@@ -781,7 +782,7 @@ class SystemManagerThread(QThread):
             self.cleanup_temp_files()
             if hasattr(self.sudo_password, 'clear') and callable(self.sudo_password.clear):
                 self.sudo_password.clear()
-            self.finished.emit()
+            self.task_finished.emit()
 
     def prepare_tasks(self):
         Options.load_config(Options.config_file_path)
@@ -859,6 +860,8 @@ class SystemManagerThread(QThread):
         try:
             env = os.environ.copy()
             env['SUDO_ASKPASS'] = str(self.askpass_script_path)
+            if hasattr(self, 'password_file') and self.password_file:
+                env['SUDO_PASSWORD_FILE'] = str(self.password_file)
             process = subprocess.run(
                 ['sudo', '-A', 'echo', 'Sudo access successfully verified...'],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, timeout=5
@@ -886,7 +889,7 @@ class SystemManagerThread(QThread):
             password_file = Path(self.temp_dir, 'sudo_pass')
             password_file.write_text(self.sudo_password.get_value(), encoding='utf-8')
             os.chmod(password_file, 0o600)
-            os.environ['SUDO_PASSWORD_FILE'] = str(password_file)
+            self.password_file = password_file
             return True
         except Exception as e:
             self.outputReceived.emit(f"Error creating askpass script: {e}", "error")
@@ -927,8 +930,8 @@ class SystemManagerThread(QThread):
                     except (OSError, IOError) as e:
                         logger.warning("Secure deletion failed for %s: %s", filename, e)
 
-        if 'SUDO_PASSWORD_FILE' in os.environ:
-            del os.environ['SUDO_PASSWORD_FILE']
+        if hasattr(self, 'password_file'):
+            self.password_file = None
 
         try:
             shutil.rmtree(temp_path, ignore_errors=True)
@@ -943,6 +946,8 @@ class SystemManagerThread(QThread):
         try:
             env = os.environ.copy()
             env['SUDO_ASKPASS'] = str(self.askpass_script_path)
+            if hasattr(self, 'password_file') and self.password_file:
+                env['SUDO_PASSWORD_FILE'] = str(self.password_file)
             if isinstance(command, list) and command:
                 if command[0] == 'sudo' and '-A' not in command:
                     command.insert(1, '-A')
@@ -1291,8 +1296,20 @@ class SystemManagerThread(QThread):
                 shells = [line.strip() for line in f if line.strip()]
             if shell_bin not in shells:
                 self.outputReceived.emit(f"Adding '{shell_bin}' to /etc/shells...", "info")
-                append_cmd = ['sudo', 'sh', '-c', f'echo "{shell_bin}" >> /etc/shells']
-                append_result = self.run_sudo_command(append_cmd)
+                try:
+                    env = os.environ.copy()
+                    env['SUDO_ASKPASS'] = str(self.askpass_script_path)
+                    append_result = subprocess.run(
+                        ['sudo', '-A', 'tee', '-a', '/etc/shells'],
+                        input=f"{shell_bin}\n",
+                        capture_output=True,
+                        text=True,
+                        env=env,
+                    )
+                except Exception as _tee_exc:
+                    self.outputReceived.emit(f"Error adding shell to /etc/shells: {_tee_exc}", "error")
+                    self.taskStatusChanged.emit(task_id, "error")
+                    return False
                 if not append_result or append_result.returncode != 0:
                     self.outputReceived.emit(f"Error when adding the shell to /etc/shells.", "error")
                     self.taskStatusChanged.emit(task_id, "error")
@@ -1411,7 +1428,7 @@ class SystemManagerThread(QThread):
             self.taskStatusChanged.emit(task_id, "error")
             return False
         self.outputReceived.emit("Building package 'yay'...", "subprocess")
-        if not run_and_stream(['makepkg', '-c', '--noconfirm'], yay_build_path):
+        if not run_and_stream(['makepkg', '-si', '--noconfirm'], yay_build_path):
             self.taskStatusChanged.emit(task_id, "error")
             return False
         to_remove = [pkg for pkg in ['yay-debug', 'go'] if self.distro.package_is_installed(pkg)]
@@ -1548,7 +1565,11 @@ class SystemManagerThread(QThread):
             self.taskStatusChanged.emit(task_id, "error")
             return False
         if orphaned_packages:
-            packages_list = orphaned_packages.split('\n')
+            packages_list = [p for p in orphaned_packages.split('\n') if p.strip()]
+            if not packages_list:
+                self.outputReceived.emit("No orphaned packages found...", "success")
+                self.taskStatusChanged.emit(task_id, "success")
+                return True
             result = self.run_sudo_command(self.distro.get_pkg_remove_cmd(' '.join(packages_list)).split())
             success = result and result.returncode == 0
             self.outputReceived.emit(
