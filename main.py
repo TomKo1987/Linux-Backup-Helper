@@ -1,3 +1,4 @@
+from __future__ import annotations
 from pathlib import Path
 from options import Options
 import global_style, sys, json
@@ -26,7 +27,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Backup Helper")
-        self.setMinimumSize(375, 320)
+        self.setMinimumSize(400, 350)
 
         Options.set_main_window(self)
 
@@ -197,7 +198,7 @@ class MainWindow(QMainWindow):
         text_edit = QTextEdit()
         text_edit.setReadOnly(True)
         text_edit.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
-        text_edit.setStyleSheet("font-family:monospace;font-size:13px;")
+        text_edit.setStyleSheet("font-family:monospace;font-size:14px;")
         layout.addWidget(text_edit)
 
         def _load() -> None:
