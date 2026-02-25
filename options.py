@@ -780,7 +780,7 @@ class Options(QObject):
         )
 
         has_yay  = distro.package_is_installed("yay")
-        session  = distro.detect_session()
+        session  = distro.detect_session() or "Unknown"
 
         def pkglist(fn): return Options.format_package_list(fn())
 
