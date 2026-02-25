@@ -151,7 +151,7 @@ class BaseWindow(QDialog):
                 raw_path = raw_path.replace(old, new)
 
         html = (
-            "󰔨   "
+            "󰔨  "
             f"<span style='font-size:16px;padding:4px;"
             f"color:#9891c2;text-decoration:underline dotted;'>{raw_path}</span>"
         )
@@ -423,22 +423,13 @@ class BaseWindow(QDialog):
         QCheckBox.enterEvent(checkbox, event)
 
     def update_select_all_state(self) -> None:
-        visible_cbs = []
-        for cb, *_ in self.checkbox_dirs:
-            try:
-                if cb.isVisible():
-                    visible_cbs.append(cb)
-            except RuntimeError:
-                pass
+        visible_cbs = [cb for cb, *_ in self.checkbox_dirs if cb.isVisible()]
         if not visible_cbs:
             return
-        try:
-            all_checked = all(cb.isChecked() for cb in visible_cbs)
-            self.selectall.blockSignals(True)
-            self.selectall.setChecked(all_checked)
-            self.selectall.blockSignals(False)
-        except RuntimeError:
-            pass
+        all_checked = all(cb.isChecked() for cb in visible_cbs)
+        self.selectall.blockSignals(True)
+        self.selectall.setChecked(all_checked)
+        self.selectall.blockSignals(False)
 
         if self.window_type in ("restore", "settings"):
             self._sync_sublayout_select_all()
@@ -463,15 +454,11 @@ class BaseWindow(QDialog):
         if layout and select_all_cb:
             state = select_all_cb.isChecked()
             for i in range(layout.count()):
-                try:
-                    item = layout.itemAt(i)
-                    if item is None:
-                        continue
+                item = layout.itemAt(i)
+                if item:
                     widget = item.widget()
                     if isinstance(widget, QCheckBox) and widget != select_all_cb:
                         _block_set(widget, state)
-                except RuntimeError:
-                    continue
             self.update_select_all_state()
 
     def toggle_columns(self) -> None:
@@ -687,18 +674,14 @@ class BaseWindow(QDialog):
     def closeEvent(self, event) -> None:
         self._shown_once = False
         self._tooltip_cache = None
-        saved_cbs = list(self.checkbox_dirs)
-        self._clear_content()
-        for cb, *_ in saved_cbs:
-            try:
-                cb.blockSignals(True)
-            except RuntimeError:
-                continue
+        for cb, *_ in self.checkbox_dirs:
+            cb.blockSignals(True)
             for attr in ("_tooltip_set", "enterEvent", "entry_data", "window_type"):
                 try:
                     delattr(cb, attr)
-                except (AttributeError, RuntimeError):
+                except AttributeError:
                     pass
+        self._clear_content()
         parent = self.parent()
         try:
             if parent:
@@ -725,15 +708,12 @@ class BaseWindow(QDialog):
     def _clear_content(self) -> None:
         self._tooltip_cache = None
         for cb, *_ in self.checkbox_dirs:
-            try:
-                for attr in ("_tooltip_set", "enterEvent"):
-                    try:
-                        delattr(cb, attr)
-                    except (AttributeError, RuntimeError):
-                        pass
-                cb.blockSignals(True)
-            except RuntimeError:
-                pass
+            for attr in ("_tooltip_set", "enterEvent"):
+                try:
+                    delattr(cb, attr)
+                except AttributeError:
+                    pass
+            cb.blockSignals(True)
 
         self._clear_layout(self.top_controls)
 
