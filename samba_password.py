@@ -1,5 +1,4 @@
 from __future__ import annotations
-from typing import Optional
 import getpass, json, os, subprocess, keyring
 from keyring.backends import SecretService
 from keyring import errors as keyring_errors
@@ -26,14 +25,14 @@ def _current_username() -> str:
 class SambaPasswordManager:
 
     def __init__(self) -> None:
-        self._kwallet_entry: Optional[str] = None
+        self._kwallet_entry: str | None = None
         try:
             keyring.set_keyring(SecretService.Keyring())
         except (keyring_errors.KeyringError, Exception) as exc:  # noqa: BLE001
             logger.debug("Could not set SecretService keyring backend: %s", exc)
 
     @staticmethod
-    def _run_kwallet(args: list[str], input_data: bytes | None = None) -> Optional[str]:
+    def _run_kwallet(args: list[str], input_data: bytes | None = None) -> str | None:
         try:
             if input_data is not None:
                 with subprocess.Popen(
@@ -52,7 +51,7 @@ class SambaPasswordManager:
             logger.exception("kwallet-query %s failed: %s", args[0] if args else "", exc)
             return None
 
-    def _find_kwallet_entry(self) -> Optional[str]:
+    def _find_kwallet_entry(self) -> str | None:
         if self._kwallet_entry:
             return self._kwallet_entry
         out = self._run_kwallet(["--list-entries", _KWALLET_WALLET])
@@ -64,7 +63,7 @@ class SambaPasswordManager:
                     return line
         return None
 
-    def _read_from_kwallet(self) -> tuple[Optional[str], Optional[str]]:
+    def _read_from_kwallet(self) -> tuple[str | None, str | None]:
         entry = self._find_kwallet_entry()
         if not entry:
             return None, None
@@ -95,10 +94,10 @@ class SambaPasswordManager:
         return True
 
     @property
-    def kwallet_entry(self) -> Optional[str]:
+    def kwallet_entry(self) -> str | None:
         return self._kwallet_entry
 
-    def get_credentials(self) -> tuple[Optional[str], Optional[str]]:
+    def get_credentials(self) -> tuple[str | None, str | None]:
         username, password = self._read_from_kwallet()
         if password:
             logger.info("Retrieved Samba credentials from KWallet.")
@@ -233,9 +232,9 @@ class SambaPasswordDialog(QDialog):
         except Exception as exc:
             self._error_dialog.showMessage(f"Failed to delete credentials:\n{exc}")
 
-    def _fetch_credentials(self) -> tuple[Optional[str], Optional[str]]:
+    def _fetch_credentials(self) -> tuple[str | None, str | None]:
         try:
             return self._manager.get_credentials()
-        except (OSError, RuntimeError, KeyError) as exc:
+        except (OSError, RuntimeError, KeyError, ValueError) as exc:
             logger.exception("Error fetching credentials: %s", exc)
             return _current_username(), None
