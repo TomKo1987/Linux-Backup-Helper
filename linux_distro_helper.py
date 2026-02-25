@@ -4,6 +4,7 @@ import subprocess, platform, os, re, concurrent.futures, shutil
 from logging_config import setup_logger
 logger = setup_logger(__name__)
 
+PACKAGE_NAME_REGEX = re.compile(r'^[a-zA-Z0-9._+:-]+$')
 MIN_PACKAGES_FOR_PARALLEL = 5
 
 _ARCH    = {"arch", "manjaro", "garuda", "endeavouros", "omarchy", "archman", "rebornos", "cachyos"}
@@ -257,7 +258,7 @@ class LinuxDistroHelper:
             logger.warning("Error checking package %s: %s", package, e)
             return False
 
-    def filter_not_installed(self, packages: list) -> list[str]:
+    def filter_not_installed(self, packages: list) -> list:
         if not packages or not isinstance(packages, (list, tuple)):
             return []
         valid = [p.strip() for p in packages if self._is_valid_package_name(p)]
@@ -270,24 +271,18 @@ class LinuxDistroHelper:
     def _check_packages_parallel(self, packages: list) -> list:
         max_workers = min(4, max(1, len(packages) // 4))
         try:
-            not_installed = []
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = {executor.submit(self.package_is_installed, p): p for p in packages}
-                for future in concurrent.futures.as_completed(futures, timeout=90):
+                not_installed = []
+                for future in concurrent.futures.as_completed(futures, timeout=60):
                     pkg = futures[future]
                     try:
-                        if not future.result():
+                        if not future.result(timeout=10):
                             not_installed.append(pkg)
-                    except concurrent.futures.TimeoutError:
-                        logger.warning("Timeout checking package %s — assuming not installed", pkg)
-                        not_installed.append(pkg)
                     except Exception as e:
                         logger.warning("Error checking package %s: %s", pkg, e)
                         not_installed.append(pkg)
-            return not_installed
-        except concurrent.futures.TimeoutError:
-            logger.error("Overall parallel package check timed out — falling back to serial")
-            return [p for p in packages if not self.package_is_installed(p)]
+                return not_installed
         except Exception as e:
             logger.error("Error in parallel checking: %s", e)
             return [p for p in packages if not self.package_is_installed(p)]
