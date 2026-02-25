@@ -1,5 +1,5 @@
+from __future__ import annotations
 from pathlib import Path
-from typing import Optional
 from linux_distro_helper import LinuxDistroHelper
 import functools, json, os, pwd, re, shutil, tempfile, zipfile
 from PyQt6.QtCore import QMutex, QMutexLocker, QObject, QUuid, pyqtSignal
@@ -103,13 +103,13 @@ class Options(QObject):
     text_replacements: list = [
         (_HOME.as_posix(), "~"),
         (f"/run/media/{_USER}/", ""),
-        ("[1m", ""),
-        ("[0m", ""),
-        ("", "")
+        ("\x1b[1m", ""),
+        ("\x1b[0m", ""),
+        ("\x1b", ""),
     ]
 
     class _ProfilePathDescriptor:
-        def __get__(self, obj, objtype=None) -> Optional[Path]:
+        def __get__(self, obj, objtype=None) -> Path | None:
             path = Options.active_profile_path()
             if path is None:
                 profiles = Options.list_profiles()
@@ -139,7 +139,7 @@ class Options(QObject):
                 self.details["unique_id"] = details["unique_id"]
 
     @classmethod
-    def active_profile_path(cls) -> Optional[Path]:
+    def active_profile_path(cls) -> Path | None:
         if not cls._active_profile:
             return None
         return cls.profiles_dir / f"{cls._active_profile}.json"
@@ -759,10 +759,13 @@ class Options(QObject):
 
     @staticmethod
     def format_package_list(pkgs: list) -> str:
-        pkgs = [str(p) for p in (pkgs or [])]
-        if len(pkgs) == 0: return ""
-        if len(pkgs) == 1: return pkgs[0]
-        if len(pkgs) == 2: return f"{pkgs[0]} and {pkgs[1]}"
+        if not pkgs:
+            return ""
+        pkgs = [str(p) for p in pkgs]
+        if len(pkgs) == 1:
+            return pkgs[0]
+        if len(pkgs) == 2:
+            return f"{pkgs[0]} and {pkgs[1]}"
         return ", ".join(pkgs[:-1]) + f" and {pkgs[-1]}"
 
     @staticmethod
