@@ -1,3 +1,4 @@
+from __future__ import annotations
 from pathlib import Path
 from options import Options
 from PyQt6.QtGui import QColor
@@ -368,6 +369,7 @@ class FileProcessDialog(QDialog):
                     self.thread.terminate()
                     if not self.thread.wait(100):
                         logger.warning("WARNING: Thread could not be terminated")
+                self.thread.cleanup_resources()
                 event.accept()
             else:
                 event.ignore()
@@ -510,16 +512,13 @@ class FileCopyThread(QThread):
         return Path(file_path).name in self.SKIP_PATTERNS
 
     def _skip_file(self, source_file, reason):
-        self.mutex.lock()
-        try:
+        with QMutexLocker(self.mutex):
             self.processed_files += 1
             file_size = self.file_sizes.get(source_file, 0)
             self.processed_bytes += file_size
             progress = int((self.processed_bytes / self.total_bytes) * 100) if self.total_bytes > 0 else 0
             self.file_skipped.emit(source_file, reason)
             self.progress_updated.emit(progress, f"Skipping {reason}:\n{Path(source_file).name}")
-        finally:
-            self.mutex.unlock()
 
     def copy_file(self, source_file, dest_file):
         if self.cancelled:
@@ -636,38 +635,38 @@ class FileCopyThread(QThread):
             return 0
 
     def _update_file_progress(self, should_copy, source_file, dest_file, file_name, file_size):
-        self.mutex.lock()
-        try:
-            self.processed_files += 1
-            self.processed_bytes += self.file_sizes.get(source_file, file_size)
-            progress = int((self.processed_bytes / self.total_bytes) * 100) if self.total_bytes > 0 else 0
-            if should_copy:
-                self.file_copied.emit(source_file, dest_file, file_size)
-                self.progress_updated.emit(progress, f"Copying:\n{file_name}")
-            else:
-                self.file_skipped.emit(source_file, "(Up to date)")
-                self.progress_updated.emit(progress, f"Skipping (Up to date):\n{file_name}")
-        except Exception as e:
-            self.mutex.unlock()
-            self.handle_file_error(source_file, str(e))
-            return
-        self.mutex.unlock()
+        with QMutexLocker(self.mutex):
+            try:
+                self.processed_files += 1
+                self.processed_bytes += self.file_sizes.get(source_file, file_size)
+                progress = int((self.processed_bytes / self.total_bytes) * 100) if self.total_bytes > 0 else 0
+                if should_copy:
+                    self.file_copied.emit(source_file, dest_file, file_size)
+                    self.progress_updated.emit(progress, f"Copying:\n{file_name}")
+                else:
+                    self.file_skipped.emit(source_file, "(Up to date)")
+                    self.progress_updated.emit(progress, f"Skipping (Up to date):\n{file_name}")
+            except Exception as e:
+                # Lock already held — emit error signals directly without re-acquiring mutex
+                error_msg = str(e)
+                self.processed_files += 1
+                if source_file in self.file_sizes:
+                    self.processed_bytes += self.file_sizes[source_file]
+                progress = int((self.processed_bytes / self.total_bytes) * 100) if self.total_bytes > 0 else 0
+                self.file_error.emit(source_file, error_msg)
+                self.progress_updated.emit(progress, f"Error copying:\n{file_name}")
 
     def handle_file_error(self, source_file, error_msg):
-        self.mutex.lock()
-        try:
+        with QMutexLocker(self.mutex):
             self.processed_files += 1
             if source_file in self.file_sizes:
                 self.processed_bytes += self.file_sizes[source_file]
             progress = int((self.processed_bytes / self.total_bytes) * 100) if self.total_bytes > 0 else 0
             self.file_error.emit(source_file, error_msg)
             self.progress_updated.emit(progress, f"Error copying:\n{Path(source_file).name}")
-        finally:
-            self.mutex.unlock()
 
     def _handle_smb_result(self, success, source_file, dest_file, file_name, size_or_error):
-        self.mutex.lock()
-        try:
+        with QMutexLocker(self.mutex):
             self.processed_files += 1
             try:
                 file_size = int(size_or_error) if isinstance(size_or_error, (int, str)) else 0
@@ -682,8 +681,6 @@ class FileCopyThread(QThread):
                 self.file_error.emit(source_file, str(size_or_error))
                 self.progress_updated.emit(progress, f"Error copying:\n{file_name}")
                 self.smb_error_cancel.emit()
-        finally:
-            self.mutex.unlock()
 
     @property
     def smb_handler(self):
