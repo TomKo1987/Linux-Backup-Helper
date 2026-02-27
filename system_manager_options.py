@@ -12,10 +12,9 @@ logger = setup_logger(__name__)
 
 
 # noinspection PyUnresolvedReferences
-class SystemManagerOptions(QDialog):    
+class SystemManagerOptions(QDialog):
     DIALOG_WIDTH = 1500
     DIALOG_HEIGHT = 750
-    
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -780,7 +779,7 @@ class SystemManagerOptions(QDialog):
 
         text_edit = QTextEdit()
         text_edit.setMinimumHeight(300)
-        text_edit.setPlaceholderText("package1\npackage2\npackage3\n...")
+        text_edit.setPlaceholderText("Package 1...")
         layout.addWidget(text_edit)
 
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel) # type: ignore
