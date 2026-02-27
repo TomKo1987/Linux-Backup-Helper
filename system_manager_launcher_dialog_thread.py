@@ -1,3 +1,4 @@
+from __future__ import annotations
 from pathlib import Path
 from options import Options, SESSIONS
 from sudo_password import SecureString
@@ -99,9 +100,9 @@ class SystemManagerLauncher:
     def _add_operation_row(index, text, has_tooltip, tooltip_text, layout):
         style_color = "#9891c2;" if has_tooltip else "#c8beff;"
         text_style = "text-decoration: underline dotted;" if has_tooltip else ""
-        tooltip_icon = "󰔨  " if has_tooltip else ""
+        tooltip_icon = "󰔨 " if has_tooltip else ""
         operation_text = (
-            f"{tooltip_icon}<span style='font-size: 16px; padding: 5px; color: {style_color}{text_style}'>{text}</span>"
+            f"{tooltip_icon}   <span style='font-size: 16px; padding: 5px; color: {style_color}{text_style}'>{text}</span>"
         )
         row_layout = QHBoxLayout()
         number_label = QLabel(f"{index + 1}:")
@@ -1282,9 +1283,23 @@ class SystemManagerThread(QThread):
                 shells = [line.strip() for line in f if line.strip()]
             if shell_bin not in shells:
                 self.outputReceived.emit(f"Adding '{shell_bin}' to /etc/shells...", "info")
-                append_cmd = ['sudo', 'sh', '-c', f'echo "{shell_bin}" >> /etc/shells']
-                append_result = self.run_sudo_command(append_cmd)
-                if not append_result or append_result.returncode != 0:
+                append_cmd = ['sudo', 'tee', '-a', '/etc/shells']
+                try:
+                    env = os.environ.copy()
+                    env['SUDO_ASKPASS'] = str(self.askpass_script_path)
+                    proc = subprocess.run(
+                        append_cmd,
+                        input=shell_bin + '\n',
+                        capture_output=True,
+                        text=True,
+                        env=env,
+                        timeout=10,
+                    )
+                    append_ok = proc.returncode == 0
+                except Exception as exc:
+                    self.outputReceived.emit(f"Error appending to /etc/shells: {exc}", "error")
+                    append_ok = False
+                if not append_ok:
                     self.outputReceived.emit(f"Error when adding the shell to /etc/shells.", "error")
                     self.taskStatusChanged.emit(task_id, "error")
                     return False
@@ -1327,13 +1342,13 @@ class SystemManagerThread(QThread):
     def setup_service_with_packages(self, service, packages):
         task_id = {
             'cups':      "enable_printer_support",
+            'sshd':      "enable_ssh_service",
+            'ssh':       "enable_ssh_service",
             'smb':       "enable_samba_network_filesharing",
             'bluetooth': "enable_bluetooth_service",
             'atd':       "enable_atd_service",
             'cronie':    "enable_cronie_service",
             'ufw':       "enable_firewall",
-            'sshd':      "enable_ssh_service",
-            'ssh':       "enable_ssh_service",
         }.get(service)
         success = all(self.install_package_generic(pkg, package_type="Service Package") for pkg in packages)
         service_success = self.enable_service(service)
@@ -1539,7 +1554,11 @@ class SystemManagerThread(QThread):
             self.taskStatusChanged.emit(task_id, "error")
             return False
         if orphaned_packages:
-            packages_list = orphaned_packages.split('\n')
+            packages_list = [p for p in orphaned_packages.split('\n') if p.strip()]
+            if not packages_list:
+                self.outputReceived.emit("No orphaned packages found...", "success")
+                self.taskStatusChanged.emit(task_id, "success")
+                return True
             result = self.run_sudo_command(self.distro.get_pkg_remove_cmd(' '.join(packages_list)).split())
             success = result and result.returncode == 0
             self.outputReceived.emit(
