@@ -99,7 +99,7 @@ class FileProcessDialog(QDialog):
                 self.sudo_password = password if ok and password else None
                 self.sudo_password_event.wakeAll()
             self.timer.restart()
-            self.update_timer.start(self.ELAPSED_UPDATE_INTERVAL)
+            self.update_timer.start(self.UPDATE_TIMER_INTERVAL)
         finally:
             self.sudo_dialog_open = False
 
@@ -617,8 +617,7 @@ class FileCopyThread(QThread):
             except MemoryError:
                 shutil.copy2(source, destination)
         except (OSError, IOError) as e:
-            error_msg = str(e).lower()
-            if any(term in error_msg for term in self.SKIP_PATTERNS):
+            if Path(source).name in self.SKIP_PATTERNS:
                 raise OSError("Skipping access-protected file")
             else:
                 raise OSError(f"Failed to copy {source} to {destination}:\n{str(e)}")
@@ -989,7 +988,9 @@ class SmbFileHandler:
                 shutil.copytree(source, dest_path, dirs_exist_ok=True)
                 total = sum(f.stat().st_size for f in Path(source).rglob('*') if f.is_file())
             else:
-                os.makedirs(os.path.dirname(local_destination), exist_ok=True)
+                dest_dir = os.path.dirname(local_destination)
+                if dest_dir:
+                    os.makedirs(dest_dir, exist_ok=True)
                 shutil.copy2(source, local_destination)
                 total = os.path.getsize(source)
             if progress_callback:
