@@ -29,7 +29,7 @@ class SambaPasswordManager:
         self._kwallet_entry: Optional[str] = None
         try:
             keyring.set_keyring(SecretService.Keyring())
-        except (keyring_errors.KeyringError, Exception) as exc:  # noqa: BLE001
+        except (keyring_errors.KeyringError, Exception) as exc:
             logger.debug("Could not set SecretService keyring backend: %s", exc)
 
     @staticmethod
