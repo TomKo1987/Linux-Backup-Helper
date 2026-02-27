@@ -1,3 +1,4 @@
+from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 from linux_distro_helper import LinuxDistroHelper
@@ -103,9 +104,8 @@ class Options(QObject):
     text_replacements: list = [
         (_HOME.as_posix(), "~"),
         (f"/run/media/{_USER}/", ""),
-        ("[1m", ""),
-        ("[0m", ""),
-        ("", "")
+        ("[1m", ""),
+        ("[0m", "")
     ]
 
     class _ProfilePathDescriptor:
