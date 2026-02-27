@@ -1,3 +1,4 @@
+from __future__ import annotations
 from pathlib import Path
 from options import Options
 import global_style, sys, json
@@ -26,7 +27,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Backup Helper")
-        self.setMinimumSize(375, 320)
+        self.setMinimumSize(400, 350)
 
         Options.set_main_window(self)
 
