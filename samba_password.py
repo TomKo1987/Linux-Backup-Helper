@@ -1,8 +1,8 @@
 from __future__ import annotations
 from typing import Optional
+from keyring import errors as keyring_errors
 import getpass, json, os, subprocess, keyring
 from keyring.backends import SecretService
-from keyring import errors as keyring_errors
 from PyQt6.QtWidgets import (QCheckBox, QDialog, QErrorMessage, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
                              QPushButton, QVBoxLayout)
 
@@ -38,14 +38,18 @@ class SambaPasswordManager:
             if input_data is not None:
                 with subprocess.Popen(
                     ["kwallet-query"] + args,
-                    stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                 ) as proc:
                     proc.communicate(input=input_data, timeout=_KWALLET_TIMEOUT)
                 return ""
             result = subprocess.run(
                 ["kwallet-query"] + args,
-                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                text=True, timeout=_KWALLET_TIMEOUT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=_KWALLET_TIMEOUT,
             )
             return result.stdout
         except Exception as exc:
@@ -128,13 +132,13 @@ class SambaPasswordManager:
     save_samba_credentials = save_credentials
 
     def delete_credentials(self, username: str) -> bool:
-        kwallet_ok  = self._delete_from_kwallet()
-        keyring_ok  = True
+        kwallet_ok = self._delete_from_kwallet()
+        keyring_ok = True
         try:
             keyring.delete_password(_KEYRING_SERVICE, username)
             logger.info("Deleted Samba credentials for '%s' from system keyring.", username)
         except keyring_errors.PasswordDeleteError:
-            logger.warning("No keyring entry found for '%s' — nothing to delete.", username)
+            logger.warning("No keyring entry for '%s' — nothing to delete.", username)
         except Exception as exc:
             logger.exception("Failed to delete keyring entry for '%s': %s", username, exc)
             keyring_ok = False
@@ -153,23 +157,31 @@ class SambaPasswordDialog(QDialog):
         self._manager      = SambaPasswordManager()
         self._error_dialog = QErrorMessage(self)
 
-        username, password   = self._fetch_credentials()
-        has_credentials      = bool(password)
-        from_kwallet         = bool(self._manager.kwallet_entry)
+        username, password = self._fetch_credentials()
+        has_credentials    = bool(password)
+        from_kwallet       = bool(self._manager.kwallet_entry)
         self._build_ui(username, password, has_credentials, from_kwallet)
 
-    def _build_ui(self, username, password, has_credentials, from_kwallet) -> None:
+    def _build_ui(
+        self,
+        username: Optional[str],
+        password: Optional[str],
+        has_credentials: bool,
+        from_kwallet: bool,
+    ) -> None:
         layout = QVBoxLayout(self)
 
         if has_credentials and from_kwallet:
-            lbl = QLabel("Credentials are already stored.\n"
-                         "You only need to update them if the password has changed.")
-            lbl.setStyleSheet("color: lightgreen;")
-            layout.addWidget(lbl)
+            banner = QLabel(
+                "Credentials are already stored.\n"
+                "You only need to update them if the password has changed."
+            )
+            banner.setStyleSheet("color:lightgreen;")
+            layout.addWidget(banner)
 
-        note = (
-            "(Password loaded from KWallet.)" if from_kwallet else
-            "(Password loaded from system keyring.)" if has_credentials else
+        note_text = (
+            "(Password loaded from KWallet.)"          if from_kwallet else
+            "(Password loaded from system keyring.)"   if has_credentials else
             "(No saved password found. Fill in the fields to create a new entry.)"
         )
 
@@ -184,16 +196,16 @@ class SambaPasswordDialog(QDialog):
             self._password_field.setText(password)
         layout.addWidget(self._password_field)
 
-        layout.addWidget(QLabel(note))
+        layout.addWidget(QLabel(note_text))
 
-        show_pw = QCheckBox("Show password")
-        show_pw.setStyleSheet("color: lightgreen;")
-        show_pw.toggled.connect(
-            lambda v: self._password_field.setEchoMode(
-                QLineEdit.EchoMode.Normal if v else QLineEdit.EchoMode.Password
+        show_pw_cb = QCheckBox("Show password")
+        show_pw_cb.setStyleSheet("color:lightgreen;")
+        show_pw_cb.toggled.connect(
+            lambda checked: self._password_field.setEchoMode(
+                QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password
             )
         )
-        layout.addWidget(show_pw)
+        layout.addWidget(show_pw_cb)
 
         btn_row = QHBoxLayout()
         close_btn = QPushButton("Close")
@@ -205,7 +217,8 @@ class SambaPasswordDialog(QDialog):
             del_btn.clicked.connect(self._delete_credentials)
             btn_row.addWidget(del_btn)
 
-        save_btn = QPushButton("Update Credentials" if has_credentials else "Save")
+        save_label = "Update Credentials" if has_credentials else "Save"
+        save_btn   = QPushButton(save_label)
         save_btn.clicked.connect(self._save_credentials)
         btn_row.addWidget(save_btn)
 
