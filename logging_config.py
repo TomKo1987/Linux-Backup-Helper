@@ -1,6 +1,6 @@
 from __future__ import annotations
-from pathlib import Path
 import logging, os, threading
+from pathlib import Path
 from logging.handlers import RotatingFileHandler
 
 __all__ = ["setup_logger", "get_log_file_path"]
@@ -8,11 +8,11 @@ __all__ = ["setup_logger", "get_log_file_path"]
 _LOG_DIR  = Path(os.environ.get("HOME") or Path.home()) / ".config" / "Backup Helper" / "logs"
 _LOG_FILE = _LOG_DIR / "backup_helper.log"
 
-_RAW_LEVEL     = os.environ.get("LOG_LEVEL", "").upper()
-_DEFAULT_LEVEL = getattr(logging, _RAW_LEVEL, None) if _RAW_LEVEL else logging.INFO
-if not isinstance(_DEFAULT_LEVEL, int):
-    print(f"WARNING: unknown LOG_LEVEL '{_RAW_LEVEL}', defaulting to INFO", flush=True)
-    _DEFAULT_LEVEL = logging.INFO
+_RAW_LEVEL = os.environ.get("LOG_LEVEL", "").upper()
+_LEVEL: int = getattr(logging, _RAW_LEVEL, None) or logging.INFO  # type: ignore[arg-type]
+if _RAW_LEVEL and not isinstance(_LEVEL, int):
+    print(f"[logging_config] WARNING: unknown LOG_LEVEL '{_RAW_LEVEL}', defaulting to INFO", flush=True)
+    _LEVEL = logging.INFO
 
 _FORMATTER = logging.Formatter(
     fmt="%(asctime)s  %(levelname)-8s  %(name)s  —  %(message)s",
@@ -32,27 +32,29 @@ def _get_file_handler() -> RotatingFileHandler | None:
             return _shared_file_handler
         try:
             _LOG_DIR.mkdir(parents=True, exist_ok=True)
-            _shared_file_handler = RotatingFileHandler(
+            h = RotatingFileHandler(
                 _LOG_FILE, maxBytes=2 * 1024 * 1024, backupCount=5, encoding="utf-8"
             )
-            _shared_file_handler.setFormatter(_FORMATTER)
-            _shared_file_handler.setLevel(_DEFAULT_LEVEL)
+            h.setFormatter(_FORMATTER)
+            h.setLevel(_LEVEL)
+            _shared_file_handler = h
         except OSError as exc:
-            print(f"WARNING: could not create log file handler: {exc}", flush=True)
+            print(f"[logging_config] WARNING: could not create log file handler: {exc}", flush=True)
     return _shared_file_handler
 
 
-def setup_logger(name: str, level: int = _DEFAULT_LEVEL) -> logging.Logger:
+def setup_logger(name: str, level: int = _LEVEL) -> logging.Logger:
     logger = logging.getLogger(name)
 
-    if not any(
+    has_stream = any(
         isinstance(h, logging.StreamHandler) and not isinstance(h, RotatingFileHandler)
         for h in logger.handlers
-    ):
-        ch = logging.StreamHandler()
-        ch.setFormatter(_FORMATTER)
-        ch.setLevel(level)
-        logger.addHandler(ch)
+    )
+    if not has_stream:
+        sh = logging.StreamHandler()
+        sh.setFormatter(_FORMATTER)
+        sh.setLevel(level)
+        logger.addHandler(sh)
 
     if not any(isinstance(h, RotatingFileHandler) for h in logger.handlers):
         fh = _get_file_handler()
