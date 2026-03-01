@@ -9,13 +9,20 @@ from logging_config import setup_logger
 logger = setup_logger(__name__)
 
 _MAX_WIDTH_RATIO = 0.90
-_WORKER_WAIT_MS  = 3000
+_WORKER_WAIT_MS  = 3_000
 _INXI_ARGS       = ["inxi", "-SMCGAz", "--no-host", "--color", "0"]
 _INXI_TIMEOUT    = 15
 
+_INXI_NOT_INSTALLED = (
+    "The tool 'inxi' is not installed on your system.\n\n"
+    "Install it with one of:\n"
+    "  Ubuntu/Debian:  sudo apt install inxi\n"
+    "  Arch/Manjaro:   sudo pacman -S inxi\n"
+    "  Fedora:         sudo dnf install inxi"
+)
+
 
 class _InxiWorker(QThread):
-
     finished = pyqtSignal(str)
 
     def run(self) -> None:
@@ -32,13 +39,7 @@ class _InxiWorker(QThread):
                 err = result.stderr.strip() or "Unknown error while running inxi."
                 self.finished.emit(f"Error: {err}")
         except FileNotFoundError:
-            self.finished.emit(
-                "The tool 'inxi' is not installed on your system.\n\n"
-                "Install it with one of:\n"
-                "  Ubuntu/Debian:  sudo apt install inxi\n"
-                "  Arch/Manjaro:   sudo pacman -S inxi\n"
-                "  Fedora:         sudo dnf install inxi"
-            )
+            self.finished.emit(_INXI_NOT_INSTALLED)
         except subprocess.TimeoutExpired:
             self.finished.emit("Error: inxi timed out while collecting system information.")
         except Exception as exc:
@@ -97,8 +98,8 @@ class SystemInfoWindow(QDialog):
             lines   = self._text_edit.toPlainText().split("\n")
             if not lines:
                 return
-            max_px  = max((metrics.horizontalAdvance(l) for l in lines), default=0)
-            screen  = self.screen()
+            max_px = max((metrics.horizontalAdvance(line) for line in lines), default=0)
+            screen = self.screen()
             if screen is None:
                 return
             capped = min(max_px + 100, int(screen.availableGeometry().width() * _MAX_WIDTH_RATIO))
@@ -120,6 +121,7 @@ class SystemInfoWindow(QDialog):
                 logger.warning("SystemInfoWindow: worker thread did not stop in time — terminating.")
                 self._worker.terminate()
                 self._worker.wait(500)
+
         parent = self.parent()
         try:
             if parent:
