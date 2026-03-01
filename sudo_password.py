@@ -3,12 +3,18 @@ from typing import Optional
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout)
 
-MAX_ATTEMPTS = 3
 __all__ = ["SudoPasswordDialog", "SecureString"]
+
+MAX_ATTEMPTS = 3
+
+_NOTE_NORMAL  = "Note: Only one authentication attempt will be made."
+_NOTE_WARNING = (
+    "⚠  Third attempt!\n"
+    "Your password may be temporarily blocked if entered incorrectly again."
+)
 
 
 class SudoPasswordDialog(QDialog):
-
     sudo_password_entered = pyqtSignal(str)
 
     def __init__(self, parent=None) -> None:
@@ -35,19 +41,20 @@ class SudoPasswordDialog(QDialog):
         pw_row.addWidget(self._pw_input)
         layout.addLayout(pw_row)
 
-        self._note_label = QLabel("Note: Only one authentication attempt will be made.")
-        self._note_label.setStyleSheet("color: #666; font-style: italic;")
-        layout.addWidget(self._note_label)
+        self._note = QLabel(_NOTE_NORMAL)
+        self._note.setStyleSheet("color:#666;font-style:italic;")
+        layout.addWidget(self._note)
         layout.addSpacing(10)
 
         btn_row = QHBoxLayout()
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.reject)
-        btn_row.addWidget(close_btn)
 
         auth_btn = QPushButton("Authenticate")
         auth_btn.setDefault(True)
         auth_btn.clicked.connect(self._on_authenticate)
+
+        btn_row.addWidget(close_btn)
         btn_row.addWidget(auth_btn)
         layout.addLayout(btn_row)
 
@@ -69,22 +76,18 @@ class SudoPasswordDialog(QDialog):
     def update_failed_attempts(self, count: int) -> None:
         self.failed_attempts = count
         if count >= MAX_ATTEMPTS:
-            msg = (
-                "⚠  Third attempt!\n"
-                "Your password may be temporarily blocked if entered incorrectly again."
-            )
-            self._note_label.setStyleSheet("color: red; font-style: italic; font-weight: bold;")
+            self._note.setText(_NOTE_WARNING)
+            self._note.setStyleSheet("color:red;font-style:italic;font-weight:bold;")
         else:
-            msg = "Note: Only one authentication attempt will be made."
+            text = _NOTE_NORMAL
             if count:
-                msg += f"\nFailed attempts: {count}"
-            self._note_label.setStyleSheet("color: #666; font-style: italic;")
-        self._note_label.setText(msg)
+                text += f"\nFailed attempts: {count}"
+            self._note.setText(text)
+            self._note.setStyleSheet("color:#666;font-style:italic;")
         self.adjustSize()
 
 
 class SecureString:
-
     __slots__ = ("_buf",)
 
     def __init__(self, value: Optional[str] = None) -> None:
