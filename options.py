@@ -20,7 +20,7 @@ SESSIONS: list[str] = [
     "qtile", "pekwm", "wmii", "dwm",
 ]
 
-USER_SHELL: list[str] = ["Bash", "Fish", "Zsh", "Elvish", "Nushell", "Powershell", "Xonsh", "Ngs"]
+USER_SHELL: list[str] = ["bash", "fish", "zsh", "elvish", "nushell", "powershell", "xonsh", "ngs"]
 
 DETAIL_KEYS: tuple[str, ...] = (
     "no_backup", "no_restore",
