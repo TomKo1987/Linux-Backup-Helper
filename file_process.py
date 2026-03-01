@@ -3,8 +3,8 @@ from pathlib import Path
 from options import Options
 from PyQt6.QtGui import QColor
 from samba_password import SambaPasswordManager
+import os, re, shutil, tempfile, subprocess, psutil
 from global_style import get_current_style as _style
-import os, re, shutil, tempfile, subprocess, time, psutil
 from PyQt6.QtCore import (Qt, QThread, QTimer, QElapsedTimer, QMutex, QMutexLocker, QWaitCondition, QDateTime,
                           QAbstractListModel, QModelIndex, QCoreApplication, pyqtSignal)
 from PyQt6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar, QTabWidget, QLineEdit,
@@ -429,6 +429,9 @@ class FileCopyThread(QThread):
         self.batch_index     = 0
         self.worker_threads: list[FileWorkerThread] = []
 
+        self._smb_src_stats:   dict[str, os.stat_result] = {}
+        self._smb_local_paths: dict[str, str]             = {}
+
         mem_avail = psutil.virtual_memory().available
         self.buffer_size = min(64 * 1024 * 1024, max(4 * 1024 * 1024, int(mem_avail * 0.1)))
         self.num_workers = min(os.cpu_count() or 4, 8)
@@ -493,25 +496,61 @@ class FileCopyThread(QThread):
         nbytes = 0
 
         if SmbFileHandler.is_smb_path(source):
-            if self.smb_handler.is_directory(source):
-                for rel in self.smb_handler.list_smb_directory_recursive(source):
-                    full = source.rstrip("/") + "/" + rel
-                    if self._should_skip(full):
-                        self.file_skipped.emit(rel, "(Protected/locked file)")
-                        continue
+            try:
+                server, share, rel_root = SmbFileHandler.parse_smb_url(source)
+                local_root = self.smb_handler.mount_share(server, share)
+                local_src  = os.path.join(local_root, rel_root) if rel_root else local_root
+            except Exception as exc:
+                logger.error("SMB mount/enumerate error for '%s': %s", source, exc)
+                self.file_error.emit(source, f"Mount error: {exc}")
+                return files, sizes, nbytes
+
+            if os.path.isfile(local_src):
+                if not self._should_skip(local_src):
                     try:
-                        dst = str(Path(destination) / Path(rel))
-                    except (TypeError, ValueError):
-                        dst = str(Path(destination) / Path(rel).name)
-                    sz  = self._get_file_size(full)
-                    files.append((full, dst))
-                    sizes[full] = sz
-                    nbytes += sz
+                        st = os.stat(local_src)
+                        files.append((source, destination))
+                        sizes[source] = st.st_size
+                        self._smb_src_stats[source]   = st
+                        self._smb_local_paths[source] = local_src
+                        nbytes += st.st_size
+                    except OSError as exc:
+                        logger.error("stat error for '%s': %s", local_src, exc)
+                else:
+                    self.file_skipped.emit(source, "(Protected/locked file)")
+
+            elif os.path.isdir(local_src):
+                for dirpath, dirnames, filenames in os.walk(local_src):
+                    dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+                    rel_dir = os.path.relpath(dirpath, local_src)
+                    for fname in filenames:
+                        if fname.startswith("."):
+                            continue
+                        local_file = os.path.join(dirpath, fname)
+                        if self._should_skip(local_file):
+                            smb_file = source.rstrip("/") + "/" + (
+                                os.path.join(rel_dir, fname) if rel_dir != "." else fname
+                            )
+                            self.file_skipped.emit(smb_file, "(Protected/locked file)")
+                            continue
+                        try:
+                            st = os.stat(local_file)
+                        except OSError as exc:
+                            logger.error("stat error for '%s': %s", local_file, exc)
+                            continue
+                        rel_file = fname if rel_dir == "." else os.path.join(rel_dir, fname)
+                        smb_file = source.rstrip("/") + "/" + rel_file.replace(os.sep, "/")
+                        try:
+                            dst_file = str(Path(destination) / Path(rel_file))
+                        except (TypeError, ValueError):
+                            dst_file = str(Path(destination) / fname)
+                        files.append((smb_file, dst_file))
+                        sizes[smb_file] = st.st_size
+                        self._smb_src_stats[smb_file]   = st
+                        self._smb_local_paths[smb_file] = local_file
+                        nbytes += st.st_size
             else:
-                sz = self._get_file_size(source)
-                files.append((source, destination))
-                sizes[source] = sz
-                nbytes += sz
+                logger.warning("SMB source not found after mount: %s", local_src)
         else:
             src = Path(source)
             if not src.exists():
@@ -556,13 +595,7 @@ class FileCopyThread(QThread):
 
         if SmbFileHandler.is_smb_path(source) or SmbFileHandler.is_smb_path(dest):
             if not self.cancelled:
-                self.smb_handler.copy_file(
-                    source, dest,
-                    lambda ok, name, size_or_err: (
-                        self._handle_smb_result(ok, source, dest, name, size_or_err)
-                        if not self.cancelled else None
-                    ),
-                )
+                self._copy_smb_file(source, dest)
             return
 
         try:
@@ -594,41 +627,81 @@ class FileCopyThread(QThread):
         except Exception as exc:
             self.handle_error(source, str(exc))
 
-    def _fast_copy(self, source: str, destination: str):
+    def _copy_smb_file(self, source: str, dest: str):
+
         if self.cancelled:
             return
 
-        file_size   = os.path.getsize(source)
-        dest_dir    = os.path.dirname(destination)
-        if dest_dir:
-            os.makedirs(dest_dir, exist_ok=True)
+        src_is_smb = SmbFileHandler.is_smb_path(source)
+        dst_is_smb = SmbFileHandler.is_smb_path(dest)
 
-        if hasattr(os, "sendfile") and os.name == "posix" and file_size > 1024 * 1024:
-            try:
-                with open(source, "rb") as fsrc, open(destination, "wb") as fdst:
-                    actual   = os.fstat(fsrc.fileno()).st_size
-                    sent     = 0
-                    chunk    = 1024 * 1024
-                    while sent < actual and not self.cancelled:
-                        n    = os.sendfile(fdst.fileno(), fsrc.fileno(), sent, min(chunk, actual - sent))
-                        if n == 0:
-                            break
-                        sent += n
-                if self.cancelled:
-                    _silent_unlink(destination)
-                    return
-                if sent != actual:
-                    raise OSError(f"sendfile incomplete: {sent}/{actual} bytes")
-                shutil.copystat(source, destination)
+        try:
+            if src_is_smb:
+                local_src = self._smb_local_paths.get(source) or (
+                    self.smb_handler.resolve_local_path(source)
+                )
+                src_stat  = self._smb_src_stats.get(source) or os.stat(local_src)
+            else:
+                local_src = source
+                src_stat  = os.stat(source)
+
+            file_size = src_stat.st_size
+            name      = Path(local_src).name
+
+            if dst_is_smb:
+                local_dst = self.smb_handler.resolve_local_path(dest)
+            else:
+                local_dst = dest
+
+            if os.path.exists(local_dst) and not os.path.isdir(local_dst):
+                try:
+                    dst_stat = os.stat(local_dst)
+                    if (src_stat.st_size == dst_stat.st_size
+                            and src_stat.st_mtime <= dst_stat.st_mtime):
+                        self._record_progress(
+                            copied=False, source=source, dest=dest,
+                            name=name, size=file_size,
+                        )
+                        return
+                except OSError:
+                    pass
+
+            if self.cancelled:
                 return
+            os.makedirs(os.path.dirname(local_dst) or ".", exist_ok=True)
+            self._fast_copy(local_src, local_dst)
+
+            try:
+                shutil.copystat(local_src, local_dst)
             except OSError:
                 pass
 
-        buf_size = (1024 * 1024 if file_size >= 64 * 1024 * 1024
-                    else 64 * 1024 if file_size >= 1024 * 1024
-                    else min(8 * 1024, self.buffer_size))
+            self._record_progress(
+                copied=True, source=source, dest=dest,
+                name=name, size=file_size,
+            )
+
+        except (OSError, FileNotFoundError) as exc:
+            msg = str(exc).lower()
+            if any(s.lower() in msg for s in self.SKIP_NAMES):
+                self._record_skip(source, "(Protected/locked file)")
+            else:
+                self.handle_error(source, f"SMB copy error: {exc}")
+        except Exception as exc:
+            self.handle_error(source, str(exc))
+
+    def _fast_copy(self, source: str, destination: str):
+
+        if self.cancelled:
+            return
+
+        dest_dir = os.path.dirname(destination)
+        if dest_dir:
+            os.makedirs(dest_dir, exist_ok=True)
+
+        buf = 256 * 1024
         try:
-            buf = bytearray(buf_size)
+            buf = bytearray(buf)
             mv  = memoryview(buf)
             with open(source, "rb") as fsrc, open(destination, "wb") as fdst:
                 while not self.cancelled:
@@ -641,7 +714,14 @@ class FileCopyThread(QThread):
                 return
             shutil.copystat(source, destination)
         except MemoryError:
-            shutil.copy2(source, destination)
+            old_flag = getattr(shutil, "_USE_CP_SENDFILE", None)
+            try:
+                if old_flag is not None:
+                    shutil._USE_CP_SENDFILE = False
+                shutil.copy2(source, destination)
+            finally:
+                if old_flag is not None:
+                    shutil._USE_CP_SENDFILE = old_flag
 
     def _record_progress(self, *, copied: bool, source: str, dest: str, name: str, size: int):
         with QMutexLocker(self.mutex):
@@ -815,6 +895,12 @@ class SmbFileHandler:
         if not m:
             raise ValueError(f"Invalid SMB URL: {path}")
         return m.group(1), m.group(2), m.group(3).lstrip("/")
+
+    def resolve_local_path(self, smb_path: str) -> str:
+        return self._smb_path_to_local(smb_path)
+
+    def mount_share(self, server: str, share: str) -> str:
+        return self._mount_smb_share(server, share)
 
     def _smb_path_to_local(self, smb_path: str) -> str:
         server, share, rel = self.parse_smb_url(smb_path)
@@ -1067,7 +1153,6 @@ class SmbFileHandler:
     def cleanup(self):
         for _, mp in list(self._mounted_shares.items()):
             try:
-                time.sleep(0.5)
                 self._unmount_smb_share(mp, self._sudo_password)
             except Exception as exc:
                 logger.warning("Cleanup warning: %s", exc)
@@ -1230,9 +1315,9 @@ class VirtualLogTabWidget(QWidget):
         with QMutexLocker(self._mutex):
             if not self.pending_entries:
                 return
-            batch              = self.pending_entries[:100]
-            self.pending_entries = self.pending_entries[100:]
-            has_more           = bool(self.pending_entries)
+            batch                = self.pending_entries[:100]
+            del self.pending_entries[:100]
+            has_more             = bool(self.pending_entries)
 
         if batch:
             start = len(self.entries)
