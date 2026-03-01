@@ -1,19 +1,21 @@
 from __future__ import annotations
-import subprocess, platform, os, re, concurrent.futures, shutil
+from typing import Callable
+import concurrent.futures, os, platform, re, shutil, subprocess
 
 from logging_config import setup_logger
 logger = setup_logger(__name__)
 
-PACKAGE_NAME_REGEX = re.compile(r'^[a-zA-Z0-9._+:-]+$')
+__all__ = ["LinuxDistroHelper"]
+
 MIN_PACKAGES_FOR_PARALLEL = 5
 
-_ARCH    = {"arch", "manjaro", "garuda", "endeavouros", "omarchy", "archman", "rebornos", "cachyos"}
-_DEBIAN  = {"debian", "ubuntu", "pop", "mint", "elementary"}
-_FEDORA  = {"fedora", "rhel", "centos", "rocky", "almalinux"}
-_SUSE    = {"opensuse", "opensuse-leap", "opensuse-tumbleweed", "suse"}
+_ARCH   = {"arch", "manjaro", "garuda", "endeavouros", "omarchy", "archman", "rebornos", "cachyos"}
+_DEBIAN = {"debian", "ubuntu", "pop", "mint", "elementary"}
+_FEDORA = {"fedora", "rhel", "centos", "rocky", "almalinux"}
+_SUSE   = {"opensuse", "opensuse-leap", "opensuse-tumbleweed", "suse"}
 
-_PKG_CONFIGS = {
-    "arch":  dict(
+_PKG_CONFIGS: dict[str, dict] = {
+    "arch": dict(
         check   = lambda p: ["pacman", "-Qi", p],
         install = "sudo pacman -S --noconfirm {package}",
         update  = "sudo pacman -Syu --noconfirm",
@@ -114,32 +116,11 @@ _PKG_CONFIGS = {
     ),
 }
 
-_SSH_PACKAGES = {
-    "debian": ["openssh-server"],
-    "fedora": ["openssh-server"],
-    "suse":   ["openssh"],
-    None:     ["openssh-server"],
-}
-_SSH_SERVICE = {
-    "debian": "ssh",
-    None:     "sshd",
-}
-_SAMBA_PACKAGES = {
-    "debian": ["samba", "samba-common-bin"],
-    "fedora": ["samba", "samba-common"],
-    None:     ["samba"],
-}
-_CRON_PACKAGES = {
-    "debian": ["cron"],
-    "fedora": ["cronie", "cronie-anacron"],
-    "suse":   ["cron"],
-    "arch":   ["cronie"],
-    None:     ["cronie"],
-}
-_BLUETOOTH_PACKAGES = {
-    "arch": ["bluez", "bluez-utils"],
-    None:   ["bluez", "bluez-tools"],
-}
+_SSH_PACKAGES    = {"debian": ["openssh-server"], "fedora": ["openssh-server"], "suse": ["openssh"], None: ["openssh-server"]}
+_SSH_SERVICE     = {"debian": "ssh", None: "sshd"}
+_SAMBA_PACKAGES  = {"debian": ["samba", "samba-common-bin"], "fedora": ["samba", "samba-common"], None: ["samba"]}
+_CRON_PACKAGES   = {"debian": ["cron"], "fedora": ["cronie", "cronie-anacron"], "suse": ["cron"], "arch": ["cronie"], None: ["cronie"]}
+_BT_PACKAGES     = {"arch": ["bluez", "bluez-utils"], None: ["bluez", "bluez-tools"]}
 
 
 def _kernel_version() -> str:
@@ -151,19 +132,19 @@ def _kernel_version() -> str:
 
 
 def _distro_family(distro_id: str) -> str:
-    if distro_id in _ARCH:
-        return "arch"
-    if distro_id in _DEBIAN:
-        return "debian"
-    if distro_id in _FEDORA:
-        return "fedora"
-    if distro_id in _SUSE:
-        return "suse"
+    if distro_id in _ARCH:   return "arch"
+    if distro_id in _DEBIAN: return "debian"
+    if distro_id in _FEDORA: return "fedora"
+    if distro_id in _SUSE:   return "suse"
     return distro_id
 
 
-def _pkg_lookup(mapping: dict, family: str):
+def _pkg_lookup(mapping: dict, family: str) -> list:
     return mapping.get(family) or mapping.get(None, [])
+
+
+_PKG_NAME_RE    = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9._+-]*$')
+_PKG_BANNED_CHR = set(';& |`$()<>\n\r\t ')
 
 
 class LinuxDistroHelper:
@@ -179,18 +160,18 @@ class LinuxDistroHelper:
 
     @staticmethod
     def _detect_distro_info() -> dict:
-        info = {"id": "unknown", "name": "", "pretty_name": ""}
+        info: dict[str, str] = {"id": "unknown", "name": "", "pretty_name": ""}
         try:
-            with open("/etc/os-release") as f:
-                for line in f:
+            with open("/etc/os-release") as fh:
+                for line in fh:
                     if line.startswith("ID="):
-                        info["id"] = line.strip().split("=", 1)[1].strip('"').lower()
+                        info["id"]          = line.split("=", 1)[1].strip().strip('"').lower()
                     elif line.startswith("NAME="):
-                        info["name"] = line.strip().split("=", 1)[1].strip('"')
+                        info["name"]        = line.split("=", 1)[1].strip().strip('"')
                     elif line.startswith("PRETTY_NAME="):
-                        info["pretty_name"] = line.strip().split("=", 1)[1].strip('"')
-        except Exception as e:
-            logger.error("Error reading /etc/os-release: %s", e)
+                        info["pretty_name"] = line.split("=", 1)[1].strip().strip('"')
+        except Exception as exc:
+            logger.error("Error reading /etc/os-release: %s", exc)
             info["id"] = platform.system().lower()
         return info
 
@@ -209,27 +190,25 @@ class LinuxDistroHelper:
 
     def _setup_commands(self) -> None:
         family = _distro_family(self.distro_id)
-        cfg = _PKG_CONFIGS.get(family) or _PKG_CONFIGS["unknown"]
+        cfg    = _PKG_CONFIGS.get(family) or _PKG_CONFIGS["unknown"]
         if family == "unknown" and self.distro_id not in _PKG_CONFIGS:
-            logger.warning("Unknown distribution: %s, using generic commands", self.distro_id)
+            logger.warning("Unknown distribution '%s', using generic commands.", self.distro_id)
 
-        self.pkg_check_installed = cfg["check"]
-        self.pkg_install         = cfg["install"]
-        self.pkg_update          = cfg["update"]
-        self.pkg_remove          = cfg["remove"]
-        self.pkg_clean_cache     = cfg["clean"]
-        self.find_orphans        = cfg["orphans"]
-        self.install_yay         = cfg["yay"]
-        self.has_aur             = cfg["has_aur"]
-        self.kernel_headers      = cfg["kernel"]
+        self.pkg_check_installed: Callable[[str], list[str]] = cfg["check"]
+        self.pkg_install:    str  = cfg["install"]
+        self.pkg_update:     str  = cfg["update"]
+        self.pkg_remove:     str  = cfg["remove"]
+        self.pkg_clean_cache: str = cfg["clean"]
+        self.find_orphans:   str  = cfg["orphans"]
+        self.install_yay:    str  = cfg["yay"]
+        self.has_aur:        bool = cfg["has_aur"]
+        self.kernel_headers: str  = cfg["kernel"]
 
         if family in ("debian", "fedora"):
             kv = _kernel_version()
             if kv:
-                self.kernel_headers = (
-                    f"linux-headers-{kv}" if family == "debian"
-                    else f"kernel-devel-{kv}"
-                )
+                self.kernel_headers = (f"linux-headers-{kv}" if family == "debian"
+                                       else f"kernel-devel-{kv}")
             else:
                 logger.error("Could not determine kernel version for %s.", family)
 
@@ -240,9 +219,9 @@ class LinuxDistroHelper:
         package = package.strip()
         if not package or len(package) > 255:
             return False
-        if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9._+-]*$', package):
+        if not _PKG_NAME_RE.match(package):
             return False
-        return not any(c in package for c in (';', '&', '|', '`', '$', '(', ')', '<', '>', '\n', '\r', '\t', ' '))
+        return not any(c in _PKG_BANNED_CHR for c in package)
 
     def package_is_installed(self, package: str) -> bool:
         if not self._is_valid_package_name(package):
@@ -254,8 +233,8 @@ class LinuxDistroHelper:
                 timeout=10, check=False,
             )
             return result.returncode == 0
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
-            logger.warning("Error checking package %s: %s", package, e)
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+            logger.warning("Error checking package '%s': %s", package, exc)
             return False
 
     def filter_not_installed(self, packages: list) -> list:
@@ -271,36 +250,36 @@ class LinuxDistroHelper:
     def _check_packages_parallel(self, packages: list) -> list:
         max_workers = min(4, max(1, len(packages) // 4))
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = {executor.submit(self.package_is_installed, p): p for p in packages}
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = {pool.submit(self.package_is_installed, p): p for p in packages}
                 not_installed = []
                 for future in concurrent.futures.as_completed(futures, timeout=60):
                     pkg = futures[future]
                     try:
                         if not future.result(timeout=10):
                             not_installed.append(pkg)
-                    except Exception as e:
-                        logger.warning("Error checking package %s: %s", pkg, e)
+                    except Exception as exc:
+                        logger.warning("Error checking package '%s': %s", pkg, exc)
                         not_installed.append(pkg)
                 return not_installed
-        except Exception as e:
-            logger.error("Error in parallel checking: %s", e)
+        except Exception as exc:
+            logger.error("Parallel package check failed: %s", exc)
             return [p for p in packages if not self.package_is_installed(p)]
 
     def get_kernel_headers_pkg(self) -> str:
         try:
-            kv = os.uname().release
+            kv     = os.uname().release
             family = _distro_family(self.distro_id)
             if family == "arch":
-                if "lts" in kv.lower():      return "linux-lts-headers"
-                if "zen" in kv.lower():      return "linux-zen-headers"
+                if "lts"      in kv.lower(): return "linux-lts-headers"
+                if "zen"      in kv.lower(): return "linux-zen-headers"
                 if "hardened" in kv.lower(): return "linux-hardened-headers"
                 return "linux-headers"
             if family == "debian": return f"linux-headers-{kv}"
             if family == "fedora": return f"kernel-devel-{kv}"
             if family == "suse":   return "kernel-default-devel"
-        except Exception as e:
-            logger.error("Error determining kernel header: %s", e)
+        except Exception as exc:
+            logger.error("Error determining kernel header package: %s", exc)
         return self.kernel_headers
 
     def get_shell_package_name(self, shell_name: str) -> str:
@@ -315,25 +294,22 @@ class LinuxDistroHelper:
         return _distro_family(self.distro_id)
 
     @staticmethod
-    def get_printer_packages() -> list:
-        return ["cups", "ghostscript", "system-config-printer", "gutenprint"]
-
-    def get_samba_packages(self) -> list:
-        return _pkg_lookup(_SAMBA_PACKAGES, self._family())
-
-    def get_bluetooth_packages(self) -> list:
-        return _pkg_lookup(_BLUETOOTH_PACKAGES, self._family())
-
-    def get_cron_packages(self) -> list:
-        return _pkg_lookup(_CRON_PACKAGES, self._family())
-
+    def get_printer_packages() -> list:   return ["cups", "ghostscript", "system-config-printer", "gutenprint"]
     @staticmethod
-    def get_firewall_packages() -> list:
-        return ["ufw"]
-
+    def get_firewall_packages() -> list:  return ["ufw"]
     @staticmethod
-    def get_at_packages() -> list:
-        return ["at"]
+    def get_at_packages() -> list:        return ["at"]
+    @staticmethod
+    def get_flatpak_packages() -> list:   return ["flatpak"]
+    @staticmethod
+    def get_snap_packages() -> list:      return ["snapd"]
+    @staticmethod
+    def flatpak_add_flathub() -> str:
+        return "flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo"
+
+    def get_samba_packages(self)    -> list: return _pkg_lookup(_SAMBA_PACKAGES, self._family())
+    def get_bluetooth_packages(self)-> list: return _pkg_lookup(_BT_PACKAGES,    self._family())
+    def get_cron_packages(self)     -> list: return _pkg_lookup(_CRON_PACKAGES,   self._family())
 
     def get_ssh_packages(self) -> list:
         fam = self._family()
@@ -342,36 +318,14 @@ class LinuxDistroHelper:
         return _pkg_lookup(_SSH_PACKAGES, fam)
 
     def get_ssh_service_name(self) -> str:
-        fam = self._family()
-        result = _SSH_SERVICE.get(fam) or _SSH_SERVICE.get(None, "sshd")
+        result = _SSH_SERVICE.get(self._family()) or _SSH_SERVICE.get(None, "sshd")
         return result if isinstance(result, str) else "sshd"
-
-    @staticmethod
-    def get_flatpak_packages() -> list:
-        return ["flatpak"]
-
-    @staticmethod
-    def flatpak_add_flathub() -> str:
-        return "flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo"
-
-    @staticmethod
-    def get_snap_packages() -> list:
-        return ["snapd"]
 
     def supports_aur(self) -> bool:
         return self.has_aur
 
-    def get_pkg_install_cmd(self, package: str) -> str:
-        return self.pkg_install.format(package=package)
-
-    def get_pkg_remove_cmd(self, package: str) -> str:
-        return self.pkg_remove.format(package=package)
-
-    def get_pkg_update_cmd(self) -> str:
-        return self.pkg_update
-
-    def get_clean_cache_cmd(self) -> str:
-        return self.pkg_clean_cache
-
-    def get_find_orphans_cmd(self) -> str:
-        return self.find_orphans
+    def get_pkg_install_cmd(self, package: str) -> str: return self.pkg_install.format(package=package)
+    def get_pkg_remove_cmd(self,  package: str) -> str: return self.pkg_remove.format(package=package)
+    def get_pkg_update_cmd(self)                -> str: return self.pkg_update
+    def get_clean_cache_cmd(self)               -> str: return self.pkg_clean_cache
+    def get_find_orphans_cmd(self)              -> str: return self.find_orphans
