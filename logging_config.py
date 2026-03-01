@@ -1,6 +1,6 @@
 from __future__ import annotations
-import logging, os, threading
 from pathlib import Path
+import logging, os, threading
 from logging.handlers import RotatingFileHandler
 
 __all__ = ["setup_logger", "get_log_file_path"]
@@ -9,7 +9,7 @@ _LOG_DIR  = Path(os.environ.get("HOME") or Path.home()) / ".config" / "Backup He
 _LOG_FILE = _LOG_DIR / "backup_helper.log"
 
 _RAW_LEVEL = os.environ.get("LOG_LEVEL", "").upper()
-_LEVEL: int = getattr(logging, _RAW_LEVEL, None) or logging.INFO  # type: ignore[arg-type]
+_LEVEL: int = getattr(logging, _RAW_LEVEL, None) or logging.INFO  
 if _RAW_LEVEL and not isinstance(_LEVEL, int):
     print(f"[logging_config] WARNING: unknown LOG_LEVEL '{_RAW_LEVEL}', defaulting to INFO", flush=True)
     _LEVEL = logging.INFO
