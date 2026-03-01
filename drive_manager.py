@@ -1,7 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
-import os, pwd, shlex, subprocess, threading, time
 from PyQt6.QtWidgets import QCheckBox, QMessageBox
+import os, pwd, shlex, subprocess, threading, time, urllib.parse
 
 from logging_config import setup_logger
 logger = setup_logger(__name__)
@@ -13,9 +13,10 @@ _USER = pwd.getpwuid(os.getuid()).pw_name
 MOUNT_TIMEOUT        = 45
 UNMOUNT_TIMEOUT      = 30
 MOUNT_CHECK_DELAY    = 0.5
+MOUNT_CHECK_RETRIES  = 12
 PROCESS_KILL_TIMEOUT = 10
 
-_ALLOWED_COMMANDS    = {"mount", "umount", "udisksctl"}
+_ALLOWED_COMMANDS    = {"mount", "umount", "udisksctl", "kdeconnect-cli"}
 _DANGEROUS_CHARS     = ("&&", "||", "$(", ";;", ";", "|", "`", ">", "<", "&", "\n", "\r", "\x00")
 _SUSPICIOUS_ARGS     = {"--exec", "--command", "-c", "--eval"}
 _SUSPICIOUS_PATH_PAT = {"..", ";", "|", "&", "$(", "`", "<", ">", "\x00", "\n", "\r"}
@@ -46,10 +47,55 @@ class DriveManager:
     @staticmethod
     def is_drive_mounted(opt: dict, mount_output: str | None = None) -> bool:
         try:
-            output = mount_output if mount_output is not None else DriveManager.get_mount_output()
-            name   = opt.get("drive_name", "").strip()
+            name     = opt.get("drive_name", "").strip()
+            smb_path = opt.get("smb_path", "").strip()
             if not name:
                 return False
+
+            is_kdeconnect = opt.get("mount_command", "").strip().startswith("kdeconnect")
+
+            if smb_path or is_kdeconnect:
+                gvfs_roots = [
+                    Path(f"/run/user/{os.getuid()}/gvfs"),
+                    Path(os.path.expanduser("~/.gvfs")),
+                ]
+                for gvfs in gvfs_roots:
+                    if not gvfs.is_dir():
+                        continue
+                    try:
+                        entries = list(gvfs.iterdir())
+                    except PermissionError:
+                        continue
+                    for entry in entries:
+                        if not entry.is_dir():
+                            continue
+                        en_decoded = urllib.parse.unquote(entry.name)
+                        if smb_path:
+                            decoded = urllib.parse.unquote(smb_path)
+                            parts   = decoded.rstrip("/").split("/")
+                            host    = parts[2] if len(parts) > 2 else ""
+                            share   = parts[3] if len(parts) > 3 else ""
+                            if host and host in en_decoded:
+                                if not share or share in en_decoded:
+                                    return True
+                        elif name in en_decoded:
+                            return True
+
+            if smb_path and is_kdeconnect:
+                try:
+                    result = subprocess.run(
+                        ["gio", "info", smb_path],
+                        capture_output=True, text=True, timeout=5,
+                    )
+                    if result.returncode == 0:
+                        return True
+                except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+                    pass
+
+            output = mount_output if mount_output is not None else DriveManager.get_mount_output()
+            if smb_path:
+                if smb_path in output or smb_path.rstrip("/") in output:
+                    return True
             return any(
                 f"{p} " in output or f"{p}\n" in output or output.endswith(p)
                 for p in _mount_paths(name)
@@ -86,6 +132,8 @@ class DriveManager:
             raw = str(path).strip()
             if not raw or any(p in raw for p in _SUSPICIOUS_PATH_PAT):
                 return None
+            if "://" in raw:
+                return raw
             resolved = Path(raw).expanduser()
             try:
                 return str(resolved.resolve())
@@ -104,13 +152,32 @@ class DriveManager:
             opts = getattr(Options, "mount_options", None) or []
         except (ImportError, AttributeError):
             return None
+
+        is_smb = path_str.startswith("smb://") or path_str.startswith("cifs://")
+
         for opt in opts:
             if not isinstance(opt, dict):
                 continue
             name = opt.get("drive_name", "").strip()
-            if name and any(mp in path_str for mp in _mount_paths(name)[:-1]):
-                if not self.is_drive_mounted(opt, mount_output):
-                    return opt
+            if not name:
+                continue
+
+            if is_smb:
+                smb_path = opt.get("smb_path", "").strip().rstrip("/")
+                candidate = path_str.rstrip("/")
+                if smb_path:
+                    if candidate == smb_path or candidate.startswith(smb_path + "/"):
+                        if not self.is_drive_mounted(opt, mount_output):
+                            return opt
+                else:
+                    decoded_path = urllib.parse.unquote(path_str)
+                    if name in decoded_path:
+                        if not self.is_drive_mounted(opt, mount_output):
+                            return opt
+            else:
+                if any(mp in path_str for mp in _mount_paths(name)[:-1]):
+                    if not self.is_drive_mounted(opt, mount_output):
+                        return opt
         return None
 
     def check_drives_to_mount(self, paths: list) -> list[dict]:
@@ -174,12 +241,14 @@ class DriveManager:
             self._alert("Mount Error", msg, QMessageBox.Icon.Warning, parent)
             return False
 
-        time.sleep(MOUNT_CHECK_DELAY)
-        if not self.is_drive_mounted(drive):
-            msg = f"'{name}' mount command succeeded but drive not detected as mounted."
-            logger.warning("mount_drive: %s", msg)
-            self._alert("Mount Error", msg, QMessageBox.Icon.Warning, parent)
-            return False
+        is_kdeconnect = drive.get("mount_command", "").strip().startswith("kdeconnect")
+        if not is_kdeconnect:
+            time.sleep(MOUNT_CHECK_DELAY)
+            if not self.is_drive_mounted(drive):
+                msg = f"'{name}' mount command succeeded but drive not detected as mounted."
+                logger.warning("mount_drive: %s", msg)
+                self._alert("Mount Error", msg, QMessageBox.Icon.Warning, parent)
+                return False
 
         if remember_unmount and drive.get("unmount_command"):
             with self._lock:
