@@ -1,9 +1,9 @@
 from __future__ import annotations
 from pathlib import Path
 from options import Options
-import global_style, sys, json
-from global_style import THEMES
+import json, sys, global_style
 from PyQt6.QtGui import QAction
+from global_style import THEMES
 from base_window import BaseWindow
 from drive_manager import DriveManager
 from settings_window import SettingsWindow
@@ -20,6 +20,7 @@ logger = setup_logger(__name__)
 sys.setrecursionlimit(5000)
 
 
+# noinspection PyUnresolvedReferences
 class MainWindow(QMainWindow):
 
     settings_changed = pyqtSignal()
@@ -31,14 +32,14 @@ class MainWindow(QMainWindow):
 
         Options.set_main_window(self)
 
-        self.drive_manager           = DriveManager()
-        self.config:          dict   = {}
-        self.backup_restore_window   = None
-        self.settings_window         = None
-        self.system_info_window      = None
-        self.system_manager_launcher = None
-        self.tray_icon               = None
-        self.btn_exit                = QPushButton()
+        self.drive_manager:           DriveManager   = DriveManager()
+        self.config:                  dict           = {}
+        self.backup_restore_window                   = None
+        self.settings_window                         = None
+        self.system_info_window                      = None
+        self.system_manager_launcher                 = None
+        self.tray_icon:               QSystemTrayIcon | None = None
+        self.btn_exit                                = QPushButton()
 
         self.settings_changed.connect(self.on_settings_changed)
         self.settings_changed.connect(self._refresh_exit_button)
@@ -52,7 +53,7 @@ class MainWindow(QMainWindow):
         try:
             path = Options.active_profile_path()
             if path and path.exists():
-                with open(path, "r", encoding="utf-8") as fh:
+                with open(path, encoding="utf-8") as fh:
                     self.config = json.load(fh)
             else:
                 self.config = {}
@@ -64,7 +65,7 @@ class MainWindow(QMainWindow):
         central = QWidget()
         layout  = QVBoxLayout(central)
 
-        nav_buttons = [
+        nav_items = [
             ("Create Backup",  lambda: self.open_backup_restore("backup")),
             ("Restore Backup", lambda: self.open_backup_restore("restore")),
             ("System Manager", self.launch_system_manager),
@@ -72,8 +73,7 @@ class MainWindow(QMainWindow):
             ("Settings",       self.open_settings),
             ("View Logs",      self.open_log_viewer),
         ]
-
-        for label, callback in nav_buttons:
+        for label, callback in nav_items:
             btn = QPushButton(label)
             btn.setFixedHeight(50)
             btn.setStyleSheet("font-size:17px")
@@ -83,13 +83,14 @@ class MainWindow(QMainWindow):
         self.btn_exit.setFixedHeight(50)
         self.btn_exit.clicked.connect(self.confirm_exit)
         layout.addWidget(self.btn_exit)
+
         self._refresh_exit_button()
         self.setCentralWidget(central)
 
     def _refresh_exit_button(self) -> None:
         has_auto_unmount = (
-            bool(getattr(Options, "run_mount_command_on_launch", False)) and
-            bool(getattr(Options, "mount_options", []))
+            bool(getattr(Options, "run_mount_command_on_launch", False))
+            and bool(getattr(Options, "mount_options", []))
         )
         self.btn_exit.setText("Unmount and Exit" if has_auto_unmount else "Exit")
         self.btn_exit.setStyleSheet("font-size:17px")
@@ -106,21 +107,17 @@ class MainWindow(QMainWindow):
         self.tray_icon.setToolTip("Backup Helper")
 
         menu = QMenu()
-        tray_items = [
+        for label, callback in (
             ("Show",           self._show_and_raise),
             ("Create Backup",  lambda: self.open_backup_restore("backup")),
             ("Restore Backup", lambda: self.open_backup_restore("restore")),
             ("Settings",       self.open_settings),
             ("View Logs",      self.open_log_viewer),
             ("Exit",           self.confirm_exit),
-        ]
-        for label, callback in tray_items:
-            if label is None:
-                menu.addSeparator()
-            else:
-                act = QAction(label, self)
-                act.triggered.connect(callback)
-                menu.addAction(act)
+        ):
+            act = QAction(label, self)
+            act.triggered.connect(callback)
+            menu.addAction(act)
 
         self.tray_icon.setContextMenu(menu)
         self.tray_icon.activated.connect(self._on_tray_activated)
@@ -152,14 +149,11 @@ class MainWindow(QMainWindow):
         win = getattr(self, attr, None)
         if not win:
             return
-        try:
-            win.close()
-        except RuntimeError as exc:
-            logger.debug("_close_window(%s) close: %s", attr, exc)
-        try:
-            win.deleteLater()
-        except RuntimeError as exc:
-            logger.debug("_close_window(%s) deleteLater: %s", attr, exc)
+        for method in ("close", "deleteLater"):
+            try:
+                getattr(win, method)()
+            except RuntimeError as exc:
+                logger.debug("_close_window(%s).%s: %s", attr, method, exc)
         setattr(self, attr, None)
 
     def open_backup_restore(self, window_type: str) -> None:
@@ -183,8 +177,7 @@ class MainWindow(QMainWindow):
         self.open_backup_restore(window_type)
 
     def open_log_viewer(self) -> None:
-        log_path = get_log_file_path()
-
+        log_path     = get_log_file_path()
         display_path = str(log_path)
         for old, new in getattr(Options, "text_replacements", []):
             if old:
@@ -219,7 +212,8 @@ class MainWindow(QMainWindow):
 
         def _clear() -> None:
             if QMessageBox.question(
-                dlg, "Clear Logs", "Delete all log entries? This cannot be undone.",
+                dlg, "Clear Logs",
+                "Delete all log entries? This cannot be undone.",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             ) == QMessageBox.StandardButton.Yes:
@@ -238,7 +232,11 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(dlg, "Error", f"Copy failed:\n{exc}")
 
         btn_row = QHBoxLayout()
-        for label, fn in (("🗑️ Clear logs", _clear), ("📋 Copy to clipboard", _copy), ("Close", dlg.accept)):
+        for label, fn in (
+            ("🗑️ Clear logs",        _clear),
+            ("📋 Copy to clipboard", _copy),
+            ("Close",               dlg.accept),
+        ):
             btn = QPushButton(label)
             btn.clicked.connect(fn)
             btn_row.addWidget(btn)
@@ -267,9 +265,9 @@ class MainWindow(QMainWindow):
 
         text = (
             f"Unmount drive{'s' if len(drives) > 1 else ''} {' & '.join(drives)} and exit?"
-            if auto_unmount else "Are you sure you want to exit?"
+            if auto_unmount
+            else "Are you sure you want to exit?"
         )
-
         if not _confirm_dialog(self, "Exit Confirmation", text):
             return
 
@@ -291,9 +289,9 @@ class MainWindow(QMainWindow):
 
         text = (
             f"Exit without unmounting drive{'s' if len(drives) > 1 else ''} {' & '.join(drives)}?"
-            if drives else "Are you sure you want to exit?"
+            if drives
+            else "Are you sure you want to exit?"
         )
-
         if _confirm_dialog(self, "Exit Confirmation", text):
             event.accept()
             QTimer.singleShot(0, lambda: QCoreApplication.exit(0))
@@ -344,9 +342,9 @@ class BackupRestoreWindow(BaseWindow):
             self.show()
             return
 
-        op              = "Backup" if self.window_type == "backup" else "Restore"
+        op               = "Backup" if self.window_type == "backup" else "Restore"
         processable_dirs = self._processable_checkbox_dirs()
-        dialog          = FileProcessDialog(self, processable_dirs, operation_type=op)
+        dialog           = FileProcessDialog(self, processable_dirs, operation_type=op)
         dialog.exec()
 
         self.show()
