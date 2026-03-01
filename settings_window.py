@@ -702,7 +702,7 @@ class SettingsWindow(BaseWindow):
         )
 
         dlg = QDialog(self)
-        dlg.setMinimumSize(825, 450)
+        dlg.setMinimumSize(1100, 550)
         dlg.setWindowTitle(title)
         layout = QVBoxLayout(dlg)
 
