@@ -222,7 +222,7 @@ class SettingsWindow(BaseWindow):
             detail_cbs[f"sublayout_games_{i}"].stateChanged.connect(_make_sublayout_handler(i))
 
         btn_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel # type: ignore[attr-defined]
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel # type: ignore
         )
         _set_button_text(btn_box, QDialogButtonBox.StandardButton.Ok, "Save")
         _set_button_text(btn_box, QDialogButtonBox.StandardButton.Cancel, "Close")
@@ -236,8 +236,8 @@ class SettingsWindow(BaseWindow):
             if edit_mode:
                 source, destination = sources, destinations
             else:
-                source      = self.source_edit.text().strip()       # type: ignore[attr-defined]
-                destination = self.destination_edit.text().strip()   # type: ignore[attr-defined]
+                source      = self.source_edit.text().strip()       # type: ignore
+                destination = self.destination_edit.text().strip()   # type: ignore
 
             src_ok  = bool(source)      if not isinstance(source, list)      else any(source)
             dst_ok  = bool(destination) if not isinstance(destination, list)  else any(destination)
@@ -423,7 +423,7 @@ class SettingsWindow(BaseWindow):
             layout.addLayout(hb)
 
         btns = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel # type: ignore[attr-defined]
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel # type: ignore
         )
         _set_button_text(btns, QDialogButtonBox.StandardButton.Ok, "Save")
         _set_button_text(btns, QDialogButtonBox.StandardButton.Cancel, "Close")
@@ -477,7 +477,7 @@ class SettingsWindow(BaseWindow):
         field.setMinimumWidth(450)
         layout.addWidget(field)
         btns = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel # type: ignore[attr-defined]
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel # type: ignore
         )
         _set_button_text(btns, QDialogButtonBox.StandardButton.Ok, "Save")
         _set_button_text(btns, QDialogButtonBox.StandardButton.Cancel, "Close")
@@ -709,6 +709,7 @@ class SettingsWindow(BaseWindow):
         fields: dict[str, QLineEdit] = {}
         for key, label in (
             ("drive_name",      "Drive Name:"),
+            ("smb_path",        "SMB Path (optional, e.g. smb://192.168.0.1/Share):"),
             ("mount_command",   "Mount Command:"),
             ("unmount_command", "Unmount Command:"),
         ):
@@ -756,7 +757,7 @@ class SettingsWindow(BaseWindow):
             self.manage_mount_options()
 
     def _save_mount_option(self, fields: dict, original: dict, dlg: QDialog) -> None:
-        new_opt  = {k: fields[k].text().strip() for k in ("drive_name", "mount_command", "unmount_command")}
+        new_opt  = {k: fields[k].text().strip() for k in ("drive_name", "smb_path", "mount_command", "unmount_command")}
         required = {"drive_name": "Drive Name", "mount_command": "Mount Command"}
 
         for key, label in required.items():
