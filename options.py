@@ -1,7 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
 from typing import Optional
-from linux_distro_helper import LinuxDistroHelper
 import functools, json, os, pwd, re, shutil, tempfile, zipfile
 from PyQt6.QtCore import QMutex, QMutexLocker, QObject, QUuid, pyqtSignal
 
@@ -14,16 +13,16 @@ _HOME = Path.home()
 MAX_MOUNT_OPTIONS          = 3
 MAX_REPLACEMENT_ITERATIONS = 10
 
-SESSIONS = [
+SESSIONS: list[str] = [
     "GNOME", "KDE", "XFCE", "LXQt", "LXDE", "Cinnamon", "Mate", "Deepin",
     "Budgie", "Enlightenment", "Hyprland", "sway", "i3", "bspwm", "openbox",
     "awesome", "herbstluftwm", "icewm", "fluxbox", "xmonad", "spectrwm",
     "qtile", "pekwm", "wmii", "dwm",
 ]
 
-USER_SHELL = ["Bash", "Fish", "Zsh", "Elvish", "Nushell", "Powershell", "Xonsh", "Ngs"]
+USER_SHELL: list[str] = ["Bash", "Fish", "Zsh", "Elvish", "Nushell", "Powershell", "Xonsh", "Ngs"]
 
-DETAIL_KEYS = (
+DETAIL_KEYS: tuple[str, ...] = (
     "no_backup", "no_restore",
     "sublayout_games_1", "sublayout_games_2",
     "sublayout_games_3", "sublayout_games_4",
@@ -52,7 +51,7 @@ def _load_path_list(raw) -> list[str]:
     return [_normalise_newlines(raw)] if raw else [""]
 
 
-def _atomic_json_write(path: Path, data: dict) -> None:
+def _atomic_write(path: Path, data: dict) -> None:
     with tempfile.NamedTemporaryFile(
         dir=path.parent, delete=False, mode="w", encoding="utf-8"
     ) as tmp:
@@ -64,6 +63,7 @@ def _atomic_json_write(path: Path, data: dict) -> None:
 
 
 class Options(QObject):
+
     settings_changed = pyqtSignal()
 
     _config_dir:  Path = _HOME / ".config" / "Backup Helper"
@@ -72,6 +72,7 @@ class Options(QObject):
     _active_profile: str = ""
 
     main_window = None
+
     run_mount_command_on_launch: bool = False
     user_shell: str = USER_SHELL[0]
 
@@ -79,18 +80,21 @@ class Options(QObject):
     all_entries:   list = []
     entries_sorted: list = []
 
-    mount_options:             list = []
-    headers:                   list = []
-    header_order:              list = []
-    header_inactive:           list = []
-    header_colors:             dict = {}
+    mount_options: list = []
+
+    headers:          list = []
+    header_order:     list = []
+    header_inactive:  list = []
+    header_colors:    dict = {}
+
     system_manager_operations: list = []
     system_files:              list = []
     basic_packages:            list = []
     aur_packages:              list = []
     specific_packages:         list = []
-    sublayout_names:           dict = {f"sublayout_games_{i}": "" for i in range(1, 5)}
     system_manager_tooltips:   dict = {}
+
+    sublayout_names: dict = {f"sublayout_games_{i}": "" for i in range(1, 5)}
 
     ui_settings: dict = {
         "backup_window_columns":   2,
@@ -104,9 +108,11 @@ class Options(QObject):
     text_replacements: list = [
         (_HOME.as_posix(), "~"),
         (f"/run/media/{_USER}/", ""),
-        ("[1m", ""),
-        ("[0m", "")
+        ("[1m", ""),
+        ("[0m", ""),
+        ("", "")
     ]
+
 
     class _ProfilePathDescriptor:
         def __get__(self, obj, objtype=None) -> Optional[Path]:
@@ -131,7 +137,7 @@ class Options(QObject):
         self.details: dict = dict.fromkeys(DETAIL_KEYS, False)
         self.details["unique_id"] = _new_uuid()
 
-        if details:
+        if isinstance(details, dict):
             for key in DETAIL_KEYS:
                 if key in details:
                     self.details[key] = bool(details[key])
@@ -165,12 +171,12 @@ class Options(QObject):
         for profile_path in Options.profiles_dir.glob("*.json"):
             is_active = profile_path == active_path
             try:
-                with open(profile_path, "r", encoding="utf-8") as fh:
+                with open(profile_path, encoding="utf-8") as fh:
                     data = json.load(fh)
                 if data.get("is_default") == is_active:
                     continue
                 data["is_default"] = is_active
-                _atomic_json_write(profile_path, data)
+                _atomic_write(profile_path, data)
             except Exception as exc:
                 logger.warning("Could not update is_default in '%s': %s", profile_path.name, exc)
 
@@ -181,7 +187,7 @@ class Options(QObject):
         for name in profiles:
             path = Options.profiles_dir / f"{name}.json"
             try:
-                with open(path, "r", encoding="utf-8") as fh:
+                with open(path, encoding="utf-8") as fh:
                     data = json.load(fh)
                 if data.get("is_default", False):
                     Options._active_profile = name
@@ -231,6 +237,7 @@ class Options(QObject):
                 if not Options.all_entries:
                     Options.entries_sorted = []
                     return []
+
                 rank = {h: i for i, h in enumerate(Options.header_order)}
                 result = []
                 for entry in Options.all_entries:
@@ -245,6 +252,7 @@ class Options(QObject):
                     }
                     row.update({k: entry.details.get(k, False) for k in DETAIL_KEYS})
                     result.append(row)
+
                 result.sort(key=lambda x: (rank.get(x["header"], 999), x["title"].lower()))
                 Options.entries_sorted = result
                 return result
@@ -268,6 +276,17 @@ class Options(QObject):
                 },
             })
         return result
+
+    @staticmethod
+    def _normalise_packages(raw: list) -> list[dict]:
+        result = []
+        for item in raw:
+            if isinstance(item, str):
+                result.append({"name": item, "disabled": False})
+            elif isinstance(item, dict):
+                item.setdefault("disabled", False)
+                result.append(item)
+        return sorted(result, key=lambda x: x.get("name", "").lower())
 
     @staticmethod
     def _build_config_data() -> dict:
@@ -297,35 +316,37 @@ class Options(QObject):
             key=lambda x: x.get("drive_name", ""),
         )
 
-        spec_pkgs = Options.specific_packages
-        if isinstance(spec_pkgs, list) and all(isinstance(i, dict) for i in spec_pkgs):
-            spec_pkgs = sorted(
-                spec_pkgs,
+        spec_pkgs = (
+            sorted(
+                Options.specific_packages,
                 key=lambda x: (x.get("package", "").lower(), x.get("session", "").lower()),
             )
-        else:
-            spec_pkgs = []
+            if isinstance(Options.specific_packages, list) and
+               all(isinstance(i, dict) for i in Options.specific_packages)
+            else []
+        )
 
-        sys_files = Options.system_files
-        if isinstance(sys_files, list) and all(isinstance(i, dict) for i in sys_files):
-            sys_files = sorted(sys_files, key=lambda x: x.get("source", "").lower())
-        else:
-            sys_files = []
+        sys_files = (
+            sorted(Options.system_files, key=lambda x: x.get("source", "").lower())
+            if isinstance(Options.system_files, list) and
+               all(isinstance(i, dict) for i in Options.system_files)
+            else []
+        )
 
         return {
-            "is_default":                False,
-            "mount_options":             mount_opts,
+            "is_default":                  False,
+            "mount_options":               mount_opts,
             "run_mount_command_on_launch": Options.run_mount_command_on_launch,
-            "header":                    header_data,
-            "sublayout_names":           Options.sublayout_names,
-            "system_manager_operations": Options.system_manager_operations,
-            "system_files":              sys_files,
-            "basic_packages":            _sort_by_name(Options.basic_packages),
-            "aur_packages":              _sort_by_name(Options.aur_packages),
-            "specific_packages":         spec_pkgs,
-            "ui_settings":               Options.ui_settings,
-            "user_shell":                Options.user_shell,
-            "entries":                   [],
+            "header":                      header_data,
+            "sublayout_names":             Options.sublayout_names,
+            "system_manager_operations":   Options.system_manager_operations,
+            "system_files":                sys_files,
+            "basic_packages":              _sort_by_name(Options.basic_packages),
+            "aur_packages":                _sort_by_name(Options.aur_packages),
+            "specific_packages":           spec_pkgs,
+            "ui_settings":                 Options.ui_settings,
+            "user_shell":                  Options.user_shell,
+            "entries":                     [],
         }
 
     @staticmethod
@@ -343,7 +364,7 @@ class Options(QObject):
             data = Options._build_config_data()
             with QMutexLocker(Options.entries_mutex):
                 data["entries"] = Options._serialise_entries()
-            _atomic_json_write(target, data)
+            _atomic_write(target, data)
             Options.sort_entries()
             Options._persist_active_profile()
             if Options.main_window:
@@ -370,7 +391,7 @@ class Options(QObject):
             return
 
         try:
-            with open(path, "r", encoding="utf-8") as fh:
+            with open(path, encoding="utf-8") as fh:
                 data = json.load(fh)
 
             if not isinstance(data, dict):
@@ -396,9 +417,9 @@ class Options(QObject):
 
             Options.ui_settings = {**Options.ui_settings, **data.get("ui_settings", {})}
 
-            raw_sys_files = data.get("system_files", [])
+            raw_sys = data.get("system_files", [])
             Options.system_files = sorted(
-                [f for f in raw_sys_files if isinstance(f, dict)],
+                [f for f in raw_sys if isinstance(f, dict)],
                 key=lambda x: x.get("source", "").lower(),
             )
             for f in Options.system_files:
@@ -433,6 +454,8 @@ class Options(QObject):
                     entry.details["unique_id"] = details.get("unique_id", _new_uuid())
                     Options.all_entries.append(entry)
 
+            Options.sort_entries()
+
             if _save_needed and Options._active_profile:
                 Options.save_config()
 
@@ -440,17 +463,6 @@ class Options(QObject):
             logger.error("load_config: error reading '%s': %s", path, exc)
         except Exception as exc:
             logger.error("load_config: unexpected error: %s", exc)
-
-    @staticmethod
-    def _normalise_packages(raw: list) -> list[dict]:
-        result = []
-        for item in raw:
-            if isinstance(item, str):
-                result.append({"name": item, "disabled": False})
-            elif isinstance(item, dict):
-                item.setdefault("disabled", False)
-                result.append(item)
-        return sorted(result, key=lambda x: x.get("name", "").lower())
 
     @staticmethod
     def list_profiles() -> list[str]:
@@ -468,7 +480,7 @@ class Options(QObject):
             return Options._active_profile
         for p in Options.profiles_dir.glob("*.json"):
             try:
-                with open(p, "r", encoding="utf-8") as fh:
+                with open(p, encoding="utf-8") as fh:
                     data = json.load(fh)
                 if data.get("is_default", False):
                     return p.stem
@@ -492,7 +504,7 @@ class Options(QObject):
             data["is_default"] = (name == Options._active_profile)
             with QMutexLocker(Options.entries_mutex):
                 data["entries"] = Options._serialise_entries()
-            _atomic_json_write(target, data)
+            _atomic_write(target, data)
             logger.info("Profile '%s' saved.", name)
             return True
         except Exception as exc:
@@ -542,12 +554,12 @@ class Options(QObject):
         for path in Options.profiles_dir.glob("*.json"):
             is_default = path == target
             try:
-                with open(path, "r", encoding="utf-8") as fh:
+                with open(path, encoding="utf-8") as fh:
                     data = json.load(fh)
                 if data.get("is_default") == is_default:
                     continue
                 data["is_default"] = is_default
-                _atomic_json_write(path, data)
+                _atomic_write(path, data)
             except Exception as exc:
                 logger.warning("set_default_profile: '%s': %s", path.name, exc)
         logger.info("Default profile set to '%s'.", name)
@@ -614,7 +626,7 @@ class Options(QObject):
             logger.error("import_single_profile: invalid name '%s'.", name)
             return False
         try:
-            with open(src_json, "r", encoding="utf-8") as fh:
+            with open(src_json, encoding="utf-8") as fh:
                 data = json.load(fh)
             if not isinstance(data, dict):
                 logger.error("import_single_profile: not a valid profile JSON.")
@@ -633,7 +645,9 @@ class Options(QObject):
 
     @staticmethod
     def generate_tooltip() -> tuple[dict, dict, dict]:
-        def apply_replacements(text: str) -> str:
+        from linux_distro_helper import LinuxDistroHelper
+
+        def _apply(text: str) -> str:
             for _ in range(MAX_REPLACEMENT_ITERATIONS):
                 original = text
                 text = functools.reduce(lambda t, r: t.replace(*r), Options.text_replacements, text)
@@ -641,7 +655,7 @@ class Options(QObject):
                     break
             return text
 
-        def entry_tooltip_html(_title: str, src_lines: list, dst_lines: list) -> str:
+        def _entry_html(_title: str, src_lines: list, dst_lines: list) -> str:
             src_html = "<br/>".join(map(str, src_lines))
             dst_html = "<br/>".join(map(str, dst_lines))
             return (
@@ -674,19 +688,19 @@ class Options(QObject):
             dst   = entry.get("destination", [])
             src   = src if isinstance(src, list) else [src]
             dst   = dst if isinstance(dst, list) else [dst]
-            backup_tips[key]  = apply_replacements(entry_tooltip_html(title, src, dst))
-            restore_tips[key] = apply_replacements(entry_tooltip_html(title, dst, src))
+            backup_tips[key]  = _apply(_entry_html(title, src, dst))
+            restore_tips[key] = _apply(_entry_html(title, dst, src))
 
         sm_tips: dict = {}
-        distro = LinuxDistroHelper()
-        op_texts = Options.get_system_manager_operation_text(distro)
+        distro    = LinuxDistroHelper()
+        op_texts  = Options.get_system_manager_operation_text(distro)
 
         op_data_keys = {
-            "copy_system_files":          "system_files",
-            "install_basic_packages":     "basic_packages",
-            "install_aur_packages":       "aur_packages",
-            "install_specific_packages":  "specific_packages",
-            "set_user_shell":             "user_shell",
+            "copy_system_files":         "system_files",
+            "install_basic_packages":    "basic_packages",
+            "install_aur_packages":      "aur_packages",
+            "install_specific_packages": "specific_packages",
+            "set_user_shell":            "user_shell",
         }
         label_maps = {
             "system_files": {"source": "Source:<br>", "destination": "<br>Destination:<br>"},
@@ -747,7 +761,7 @@ class Options(QObject):
                 )
                 rows.append(f"<tr style='background-color:{bg};'>{cells}</tr>")
 
-            sm_tips[op] = apply_replacements(
+            sm_tips[op] = _apply(
                 "<div style='white-space:nowrap;font-size:14px;color:#00fa9a;"
                 "font-family:FiraCode Nerd Font Mono;background-color:#121212;"
                 "padding:5px;border:1px solid #444;'>"
@@ -760,13 +774,16 @@ class Options(QObject):
     @staticmethod
     def format_package_list(pkgs: list) -> str:
         pkgs = [str(p) for p in (pkgs or [])]
-        if len(pkgs) == 0: return ""
-        if len(pkgs) == 1: return pkgs[0]
-        if len(pkgs) == 2: return f"{pkgs[0]} and {pkgs[1]}"
+        if not pkgs:
+            return ""
+        if len(pkgs) == 1:
+            return pkgs[0]
+        if len(pkgs) == 2:
+            return f"{pkgs[0]} and {pkgs[1]}"
         return ", ".join(pkgs[:-1]) + f" and {pkgs[-1]}"
 
     @staticmethod
-    def get_system_manager_operation_text(distro: LinuxDistroHelper) -> dict:
+    def get_system_manager_operation_text(distro) -> dict:
         install_cmd = distro.pkg_install.replace("{package}", "PACKAGE")
         update_cmd  = distro.pkg_update
         pkg_mgr = (
@@ -775,11 +792,11 @@ class Options(QObject):
             "dnf"    if "dnf"    in install_cmd else
             "zypper"
         )
+        has_yay = distro.package_is_installed("yay")
+        session = distro.detect_session()
 
-        has_yay  = distro.package_is_installed("yay")
-        session  = distro.detect_session()
-
-        def pkglist(fn): return Options.format_package_list(fn())
+        def pkglist(fn):
+            return Options.format_package_list(fn())
 
         cron_svc = (
             "cronie"
