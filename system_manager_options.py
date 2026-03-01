@@ -36,7 +36,7 @@ class SystemManagerOptions(QDialog):
 
         self.system_manager_operations_widgets: list[tuple[QCheckBox, str]] = []
         self.system_files_widgets:  list[QListWidget] = []
-        self.original_system_files: list             = []
+        self.original_system_files: list              = []
         self.basic_packages_widgets:    list[QListWidget] = []
         self.aur_packages_widgets:      list[QListWidget] = []
         self.specific_packages_widgets: list[QListWidget] = []
