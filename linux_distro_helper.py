@@ -269,11 +269,12 @@ class LinuxDistroHelper:
     def get_kernel_headers_pkg(self) -> str:
         try:
             kv     = os.uname().release
+            kv_low = kv.lower()
             family = _distro_family(self.distro_id)
             if family == "arch":
-                if "lts"      in kv.lower(): return "linux-lts-headers"
-                if "zen"      in kv.lower(): return "linux-zen-headers"
-                if "hardened" in kv.lower(): return "linux-hardened-headers"
+                if "lts"      in kv_low: return "linux-lts-headers"
+                if "zen"      in kv_low: return "linux-zen-headers"
+                if "hardened" in kv_low: return "linux-hardened-headers"
                 return "linux-headers"
             if family == "debian": return f"linux-headers-{kv}"
             if family == "fedora": return f"kernel-devel-{kv}"
