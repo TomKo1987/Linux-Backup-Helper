@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (QCheckBox, QColorDialog, QDialog, QDialogButtonBox,
                              QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox,
                              QPushButton, QSizePolicy, QTextEdit, QVBoxLayout, QWidget)
 
+
 from logging_config import setup_logger
 logger = setup_logger(__name__)
 
@@ -19,8 +20,8 @@ logger = setup_logger(__name__)
 class SettingsWindow(BaseWindow):
 
     def __init__(self, parent=None) -> None:
-        self._color_cache:       dict = {}
-        self.mount_options_dialog = None
+        self._color_cache: dict          = {}
+        self.mount_options_dialog        = None
         super().__init__(parent, "settings")
         self._ensure_defaults()
 
@@ -30,8 +31,8 @@ class SettingsWindow(BaseWindow):
             ("headers",        lambda: getattr(Options, "header_order", []).copy() or ["Default"]),
             ("header_order",   list),
             ("header_colors",  dict),
-            ("header_inactive",list),
-            ("sublayout_names",dict),
+            ("header_inactive", list),
+            ("sublayout_names", dict),
             ("all_entries",    list),
             ("mount_options",  list),
             ("run_mount_command_on_launch", lambda: False),
@@ -39,8 +40,12 @@ class SettingsWindow(BaseWindow):
             if not hasattr(Options, attr):
                 setattr(Options, attr, default() if callable(default) else default)
 
-    def show_message(self, title: str, message: str,
-                     icon: QMessageBox.Icon = QMessageBox.Icon.Information) -> None:
+    def show_message(
+        self,
+        title: str,
+        message: str,
+        icon: QMessageBox.Icon = QMessageBox.Icon.Information,
+    ) -> None:
         QMessageBox(icon, title, message, QMessageBox.StandardButton.Ok, self).exec()
 
     def _make_dialog(self, title: str, size: tuple = (800, 600)) -> tuple[QDialog, QVBoxLayout]:
@@ -79,9 +84,7 @@ class SettingsWindow(BaseWindow):
             return
 
         self.hide()
-        entries_to_process = checked if edit_mode else [None]
-
-        for entry_data in entries_to_process:
+        for entry_data in (checked if edit_mode else [None]):
             self._run_entry_dialog(entry_data, edit_mode)
 
         Options.save_config()
@@ -89,15 +92,15 @@ class SettingsWindow(BaseWindow):
             self.settings_changed.emit()
         except Exception as exc:
             logger.error("entry_dialog: error emitting settings_changed: %s", exc)
-
         self.show()
 
     def _run_entry_dialog(self, entry_data, edit_mode: bool) -> None:
         if edit_mode and entry_data is None:
             return
-        title_text  = entry_data[0].text() if edit_mode else ""
-        unique_id   = entry_data[3]        if edit_mode else None
-        entry_obj   = self._find_entry_by_id(unique_id) if edit_mode else None
+
+        title_text = entry_data[0].text() if edit_mode else ""
+        unique_id  = entry_data[3]        if edit_mode else None
+        entry_obj  = self._find_entry_by_id(unique_id) if edit_mode else None
 
         dialog = QDialog(self)
         dialog.setFixedSize(1300, 625)
@@ -105,16 +108,13 @@ class SettingsWindow(BaseWindow):
         root = QVBoxLayout(dialog)
         root.setContentsMargins(2, 2, 2, 2)
 
-        if edit_mode:
-            desc = (
-                f"\n'{title_text}'\n\nType '\\n' for a line-break in the title.\n\n"
-                "For Samba shares use:\n'smb://ip/rest-of-path'"
-            )
-        else:
-            desc = (
-                "\nCreate a new entry.\n\nType '\\n' for a line-break in the title.\n\n"
-                "For Samba shares use:\n'smb://ip/rest-of-path'"
-            )
+        desc = (
+            f"\n'{title_text}'\n\nType '\\n' for a line-break in the title.\n\n"
+            "For Samba shares use:\n'smb://ip/rest-of-path'"
+            if edit_mode else
+            "\nCreate a new entry.\n\nType '\\n' for a line-break in the title.\n\n"
+            "For Samba shares use:\n'smb://ip/rest-of-path'"
+        )
         desc_label = QLabel(desc)
         desc_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         root.addWidget(desc_label)
@@ -140,8 +140,9 @@ class SettingsWindow(BaseWindow):
                 btn = QPushButton(f"Edit {field_label} Entries")
                 btn.setMaximumHeight(fh)
                 btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-                btn.clicked.connect(partial(self.open_text_editor, data, title_text,
-                                            field_label.lower()))
+                btn.clicked.connect(
+                    partial(self.open_text_editor, data, title_text, field_label.lower())
+                )
                 form.addRow(QLabel(f"{field_label}:"), btn)
         else:
             for field_label in ("Source", "Destination"):
@@ -182,7 +183,7 @@ class SettingsWindow(BaseWindow):
 
         cb_grid = QGridLayout()
         positions = [
-            ("no_backup",  0, 0), ("no_restore", 1, 0),
+            ("no_backup",         0, 0), ("no_restore",        1, 0),
             ("sublayout_games_1", 0, 1), ("sublayout_games_2", 1, 1),
             ("sublayout_games_3", 0, 2), ("sublayout_games_4", 1, 2),
         ]
@@ -235,8 +236,8 @@ class SettingsWindow(BaseWindow):
             if edit_mode:
                 source, destination = sources, destinations
             else:
-                source      = self.source_edit.text().strip()      # type: ignore[attr-defined]
-                destination = self.destination_edit.text().strip()  # type: ignore[attr-defined]
+                source      = self.source_edit.text().strip()       # type: ignore[attr-defined]
+                destination = self.destination_edit.text().strip()   # type: ignore[attr-defined]
 
             src_ok  = bool(source)      if not isinstance(source, list)      else any(source)
             dst_ok  = bool(destination) if not isinstance(destination, list)  else any(destination)
@@ -246,12 +247,12 @@ class SettingsWindow(BaseWindow):
                 return
 
             existing = {
-                e.title.lower() for e in getattr(Options, "all_entries", [])
+                e.title.lower()
+                for e in getattr(Options, "all_entries", [])
                 if hasattr(e, "title") and (not edit_mode or e.title.lower() != title_text.lower())
             }
             if title.lower() in existing:
-                self.show_message("Duplicate Title",
-                                  "An entry with this title already exists.")
+                self.show_message("Duplicate Title", "An entry with this title already exists.")
                 return
 
             if edit_mode and entry_obj:
@@ -269,7 +270,8 @@ class SettingsWindow(BaseWindow):
 
             self.show_message(
                 "Success",
-                f"Entry '{new_entry.title}' successfully {'updated' if edit_mode else 'added'}!"
+                f"Entry '{new_entry.title}' successfully "
+                f"{'updated' if edit_mode else 'added'}!",
             )
             dialog.accept()
 
@@ -280,8 +282,10 @@ class SettingsWindow(BaseWindow):
     @staticmethod
     def _find_entry_by_id(unique_id):
         return next(
-            (e for e in getattr(Options, "all_entries", [])
-             if hasattr(e, "details") and e.details.get("unique_id") == unique_id),
+            (
+                e for e in getattr(Options, "all_entries", [])
+                if hasattr(e, "details") and e.details.get("unique_id") == unique_id
+            ),
             None,
         )
 
@@ -309,9 +313,11 @@ class SettingsWindow(BaseWindow):
         with QMutexLocker(Options.entries_mutex):
             Options.all_entries = [
                 e for e in Options.all_entries
-                if not (hasattr(e, "details") and
-                        isinstance(e.details, dict) and
-                        e.details.get("unique_id") in ids_to_delete)
+                if not (
+                    hasattr(e, "details")
+                    and isinstance(e.details, dict)
+                    and e.details.get("unique_id") in ids_to_delete
+                )
             ]
 
         Options.save_config()
@@ -327,6 +333,8 @@ class SettingsWindow(BaseWindow):
         path = QFileDialog.getExistingDirectory(self, "Select Directory")
         if path:
             line_edit.setText(path)
+
+    select_directory = _browse_dir
 
     def open_text_editor(self, entries_list, title: str, field: str) -> None:
         dlg = QDialog(self)
@@ -350,7 +358,6 @@ class SettingsWindow(BaseWindow):
             btn = QPushButton(label)
             btn.clicked.connect(fn)
             btn_row.addWidget(btn)
-
         layout.addLayout(btn_row)
         dlg.exec()
 
@@ -358,9 +365,7 @@ class SettingsWindow(BaseWindow):
         files, _ = QFileDialog.getOpenFileNames(self, "Select Files")
         if files:
             current = text_edit.toPlainText()
-            text_edit.setPlainText(
-                current + ("\n" if current else "") + "\n".join(files)
-            )
+            text_edit.setPlainText(current + ("\n" if current else "") + "\n".join(files))
 
     def _save_from_editor(self, text_edit: QTextEdit, entries_list, field: str) -> None:
         new_entries = text_edit.toPlainText().splitlines()
@@ -372,11 +377,9 @@ class SettingsWindow(BaseWindow):
         try:
             self.settings_changed.emit()
         except Exception as exc:
-            logger.error("_save_from_editor: error emitting settings_changed: %s", exc)
+            logger.error("_save_from_editor: %s", exc)
         self.show_message("Success", f"{field.capitalize()} entries saved!")
         text_edit.setPlainText("\n".join(entries_list))
-
-    select_directory = _browse_dir
 
     def header_settings(self) -> None:
         self._ensure_defaults()
@@ -510,7 +513,6 @@ class SettingsWindow(BaseWindow):
             self.settings_changed.emit()
         except Exception as exc:
             logger.error("_confirm_new_header: %s", exc)
-
         self.show_message("Success", "Header created!")
 
     def _rename_sublayout(self, parent: QDialog, idx: int) -> None:
@@ -519,9 +521,8 @@ class SettingsWindow(BaseWindow):
             key = f"sublayout_games_{idx}"
             Options.sublayout_names[key] = name
             for btn in parent.findChildren(QPushButton):
-                btn_obj = btn  # type: QPushButton
-                if btn_obj.text().startswith(f"Sublayout-Games {idx}:"):
-                    btn_obj.setText(f"Sublayout-Games {idx}:\n{name}")
+                if isinstance(btn, QPushButton) and btn.text().startswith(f"Sublayout-Games {idx}:"):
+                    btn.setText(f"Sublayout-Games {idx}:\n{name}")
                     break
             Options.save_config()
             try:
@@ -548,10 +549,9 @@ class SettingsWindow(BaseWindow):
 
     def _refresh_header_button_color(self, header: str) -> None:
         for btn in self.findChildren(QPushButton):
-            btn_obj = btn  # type: QPushButton
-            if btn_obj.text() == header:
+            if isinstance(btn, QPushButton) and btn.text() == header:
                 color = Options.header_colors.get(header, "#ffffff")
-                btn_obj.setStyleSheet(
+                btn.setStyleSheet(
                     f"color:black;font-weight:bold;font-size:20px;"
                     f"background-color:{self._darkened(color)};"
                 )
@@ -575,7 +575,7 @@ class SettingsWindow(BaseWindow):
             return
 
         Options.header_colors.pop(header, None)
-        if header in Options.header_order:   Options.header_order.remove(header)
+        if header in Options.header_order:    Options.header_order.remove(header)
         if header in Options.header_inactive: Options.header_inactive.remove(header)
 
         for i in range(list_widget.count()):
@@ -591,31 +591,24 @@ class SettingsWindow(BaseWindow):
             self.settings_changed.emit()
         except Exception as exc:
             logger.error("_delete_header: %s", exc)
-
         self.show_message("Success", f"Header '{header}' deleted!")
 
     def _save_header_options(self, list_widget: QListWidget) -> None:
-        new_order = []
-        new_inactive = []
+        new_order, new_inactive = [], []
         for i in range(list_widget.count()):
             item_widget = list_widget.itemWidget(list_widget.item(i))
             if not item_widget:
                 continue
-            name = ""
             btn = item_widget.findChild(QPushButton)
-
-            if btn and isinstance(btn, QPushButton):
-                name = btn.text().strip()
+            name = btn.text().strip() if btn and isinstance(btn, QPushButton) else ""
             if not name:
                 continue
-
             new_order.append(name)
-
             cb = item_widget.findChild(QCheckBox, "inactive_checkbox")
             if cb and isinstance(cb, QCheckBox) and cb.isChecked():
                 new_inactive.append(name)
 
-        Options.header_order   = new_order
+        Options.header_order    = new_order
         Options.header_inactive = new_inactive
 
         for entry in getattr(Options, "all_entries", []):
@@ -631,7 +624,6 @@ class SettingsWindow(BaseWindow):
             self.settings_changed.emit()
         except Exception as exc:
             logger.error("_save_header_options: %s", exc)
-
         self.show_message("Success", "Header settings saved!")
 
     def open_samba_password_dialog(self) -> None:
@@ -658,14 +650,13 @@ class SettingsWindow(BaseWindow):
         dlg.finished.connect(lambda: setattr(self, "mount_options_dialog", None))
         dlg.setMinimumSize(825, 450)
         dlg.setWindowTitle("Mount Options")
-
         layout = QVBoxLayout(dlg)
 
         for opt in Options.mount_options:
             row = QHBoxLayout()
             drive_btn = QPushButton(opt.get("drive_name", "Unknown"))
             drive_btn.clicked.connect(partial(self._edit_mount_option, opt, dlg))
-            del_btn = QPushButton("Delete")
+            del_btn   = QPushButton("Delete")
             del_btn.clicked.connect(partial(self._delete_mount_option, opt, dlg))
             row.addWidget(drive_btn, 3)
             row.addWidget(del_btn,   1)
@@ -703,13 +694,13 @@ class SettingsWindow(BaseWindow):
         self.show_message("Success", "Auto-mount setting saved!")
 
     def _edit_mount_option(self, option: dict, parent_dlg: QDialog | None) -> None:
-        option = option or {}
-        is_new = not option.get("drive_name")
-
-        title = (
+        option  = option or {}
+        is_new  = not option.get("drive_name")
+        title   = (
             "New Mount Option" if is_new
             else f"Edit Mount Option: {option.get('drive_name', '')}"
         )
+
         dlg = QDialog(self)
         dlg.setMinimumSize(825, 450)
         dlg.setWindowTitle(title)
@@ -717,9 +708,9 @@ class SettingsWindow(BaseWindow):
 
         fields: dict[str, QLineEdit] = {}
         for key, label in (
-            ("drive_name",       "Drive Name:"),
-            ("mount_command",    "Mount Command:"),
-            ("unmount_command",  "Unmount Command:"),
+            ("drive_name",      "Drive Name:"),
+            ("mount_command",   "Mount Command:"),
+            ("unmount_command", "Unmount Command:"),
         ):
             layout.addWidget(QLabel(label))
             edit = QLineEdit(option.get(key, ""))
@@ -729,7 +720,7 @@ class SettingsWindow(BaseWindow):
         btn_row = QHBoxLayout()
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(dlg.reject)
-        save_btn = QPushButton("Save")
+        save_btn  = QPushButton("Save")
         save_btn.clicked.connect(partial(self._save_mount_option, fields, option, dlg))
         btn_row.addWidget(close_btn)
         btn_row.addWidget(save_btn)
@@ -741,17 +732,18 @@ class SettingsWindow(BaseWindow):
             except (RuntimeError, AttributeError) as exc:
                 logger.debug("_edit_mount_option: closing parent: %s", exc)
 
-        result = dlg.exec()
-        if result == QDialog.DialogCode.Accepted:
+        if dlg.exec() == QDialog.DialogCode.Accepted:
             self.manage_mount_options()
 
     def _delete_mount_option(self, option: dict, parent_dlg: QDialog | None) -> None:
         name = option.get("drive_name", "Unknown")
-        confirm = QMessageBox.question(
-            self, "Confirm Deletion", f"Delete '{name}'?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if confirm == QMessageBox.StandardButton.Yes:
+        if (
+            QMessageBox.question(
+                self, "Confirm Deletion", f"Delete '{name}'?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            == QMessageBox.StandardButton.Yes
+        ):
             if option in Options.mount_options:
                 Options.mount_options.remove(option)
                 Options.save_config()
@@ -764,12 +756,14 @@ class SettingsWindow(BaseWindow):
             self.manage_mount_options()
 
     def _save_mount_option(self, fields: dict, original: dict, dlg: QDialog) -> None:
-        new_opt = {k: fields[k].text().strip() for k in ("drive_name", "mount_command", "unmount_command")}
+        new_opt  = {k: fields[k].text().strip() for k in ("drive_name", "mount_command", "unmount_command")}
         required = {"drive_name": "Drive Name", "mount_command": "Mount Command"}
+
         for key, label in required.items():
             if not new_opt[key]:
                 self.show_message("Incomplete Fields", f"{label} is required.")
                 return
+
         for key, label in required.items():
             if any(
                 existing[key].lower() == new_opt[key].lower() and existing is not original
@@ -860,13 +854,14 @@ class SettingsWindow(BaseWindow):
         _refresh()
 
         def _save():
-            name, ok = QInputDialog.getText(dlg, "          Save Profile          ", "          Profile name:          ")
+            name, ok = QInputDialog.getText(
+                dlg, "          Save Profile          ", "          Profile name:          "
+            )
             name = name.strip()
             if not (ok and name):
                 return
-            if name in Options.list_profiles():
-                if not _confirm_overwrite(dlg, name):
-                    return
+            if name in Options.list_profiles() and not _confirm_overwrite(dlg, name):
+                return
             if Options.save_profile(name):
                 self.show_message("Saved", f"Profile '{name}' saved.")
                 _refresh()
@@ -879,9 +874,11 @@ class SettingsWindow(BaseWindow):
             if not name:
                 self.show_message("No Selection", "Select a profile to load.")
                 return
-            c = QMessageBox(QMessageBox.Icon.Question, "Load Profile",
-                            f"Load '{name}'? This replaces the current configuration.",
-                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, dlg)
+            c = QMessageBox(
+                QMessageBox.Icon.Question, "Load Profile",
+                f"Load '{name}'? This replaces the current configuration.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, dlg,
+            )
             c.setDefaultButton(QMessageBox.StandardButton.No)
             if c.exec() != QMessageBox.StandardButton.Yes:
                 return
@@ -901,12 +898,16 @@ class SettingsWindow(BaseWindow):
                 self.show_message("No Selection", "Select a profile to delete.")
                 return
             if name == Options.get_active_profile():
-                self.show_message("Cannot Delete",
-                                  "The active profile cannot be deleted.\nLoad a different profile first.")
+                self.show_message(
+                    "Cannot Delete",
+                    "The active profile cannot be deleted.\nLoad a different profile first.",
+                )
                 return
-            c = QMessageBox(QMessageBox.Icon.Warning, "Delete Profile",
-                            f"Delete '{name}'? This cannot be undone.",
-                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, dlg)
+            c = QMessageBox(
+                QMessageBox.Icon.Warning, "Delete Profile",
+                f"Delete '{name}'? This cannot be undone.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, dlg,
+            )
             c.setDefaultButton(QMessageBox.StandardButton.No)
             if c.exec() != QMessageBox.StandardButton.Yes:
                 return
@@ -917,7 +918,9 @@ class SettingsWindow(BaseWindow):
                 _error(dlg, "Delete Failed", f"Could not delete '{name}'.")
 
         def _new_empty():
-            name, ok = QInputDialog.getText(dlg, "          New Empty Profile          ", "          Profile name:          ")
+            name, ok = QInputDialog.getText(
+                dlg, "          New Empty Profile          ", "          Profile name:          "
+            )
             name = name.strip()
             if not (ok and name):
                 return
@@ -964,10 +967,11 @@ class SettingsWindow(BaseWindow):
                 return
             if src.lower().endswith(".zip"):
                 overwrite = (
-                    QMessageBox(QMessageBox.Icon.Question, "Overwrite Existing?",
-                                "Overwrite profiles with the same name?",
-                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, dlg
-                                ).exec() == QMessageBox.StandardButton.Yes
+                    QMessageBox(
+                        QMessageBox.Icon.Question, "Overwrite Existing?",
+                        "Overwrite profiles with the same name?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, dlg,
+                    ).exec() == QMessageBox.StandardButton.Yes
                 )
                 imported, skipped = Options.import_profiles_from_zip(src, overwrite=overwrite)
                 msg = f"Imported: {', '.join(imported) or 'none'}"
@@ -1027,9 +1031,11 @@ def _styled_combo(items: list, max_height: int = 60):
 
 
 def _confirm_overwrite(parent, name: str) -> bool:
-    c = QMessageBox(QMessageBox.Icon.Question, "Overwrite?",
-                    f"'{name}' exists. Overwrite?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, parent)
+    c = QMessageBox(
+        QMessageBox.Icon.Question, "Overwrite?",
+        f"'{name}' exists. Overwrite?",
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, parent,
+    )
     c.setDefaultButton(QMessageBox.StandardButton.No)
     return c.exec() == QMessageBox.StandardButton.Yes
 
@@ -1049,7 +1055,7 @@ def _refresh_list(list_widget: QListWidget, active: str, default: str) -> None:
 
 
 def _create_empty_profile(name: str, parent) -> None:
-    default = {
+    default_data = {
         "is_default": False,
         "mount_options": [],
         "run_mount_command_on_launch": False,
@@ -1078,7 +1084,7 @@ def _create_empty_profile(name: str, parent) -> None:
             dir=Options.profiles_dir, delete=False, mode="w", encoding="utf-8"
         ) as tmp:
             tmp_path = tmp.name
-            json.dump(default, tmp, indent=4, ensure_ascii=False)
+            json.dump(default_data, tmp, indent=4, ensure_ascii=False)
             tmp.flush()
             os.fsync(tmp.fileno())
         os.replace(tmp_path, target)
@@ -1094,8 +1100,8 @@ def _block_set_cb(cb: QCheckBox, checked: bool) -> None:
 
 
 def _set_button_text(
-    btn_box: "QDialogButtonBox",
-    role: "QDialogButtonBox.StandardButton",
+    btn_box: QDialogButtonBox,
+    role: QDialogButtonBox.StandardButton,
     text: str,
 ) -> None:
     btn = btn_box.button(role)
