@@ -255,10 +255,11 @@ class BaseWindow(QDialog):
     def _collect_sublayout_entries() -> dict:
         result = {f"sublayout_games_{i}": [] for i in range(1, 5)}
         for entry in getattr(Options, "all_entries", []):
-            details = getattr(entry, "details", None)
+            # entries are plain dicts (or dict-like objects)
+            details = entry.get("details") if isinstance(entry, dict) else getattr(entry, "details", None)
             if not isinstance(details, dict):
                 continue
-            title = getattr(entry, "title", None)
+            title = entry.get("title") if isinstance(entry, dict) else getattr(entry, "title", None)
             if not title:
                 continue
             for i in range(1, 5):
@@ -541,7 +542,7 @@ class BaseWindow(QDialog):
         orig_size  = Options.ui_settings.get("font_size", 14)
 
         buttons    = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel # type: ignore[attr-defined]
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel # type: ignore
         )
         ok_btn     = buttons.button(QDialogButtonBox.StandardButton.Ok)
         cancel_btn = buttons.button(QDialogButtonBox.StandardButton.Cancel)
