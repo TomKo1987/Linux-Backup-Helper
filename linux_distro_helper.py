@@ -116,11 +116,14 @@ _PKG_CONFIGS: dict[str, dict] = {
     ),
 }
 
-_SSH_PACKAGES    = {"debian": ["openssh-server"], "fedora": ["openssh-server"], "suse": ["openssh"], None: ["openssh-server"]}
-_SSH_SERVICE     = {"debian": "ssh", None: "sshd"}
-_SAMBA_PACKAGES  = {"debian": ["samba", "samba-common-bin"], "fedora": ["samba", "samba-common"], None: ["samba"]}
-_CRON_PACKAGES   = {"debian": ["cron"], "fedora": ["cronie", "cronie-anacron"], "suse": ["cron"], "arch": ["cronie"], None: ["cronie"]}
-_BT_PACKAGES     = {"arch": ["bluez", "bluez-utils"], None: ["bluez", "bluez-tools"]}
+_SSH_PACKAGES   = {"debian": ["openssh-server"], "fedora": ["openssh-server"], "suse": ["openssh"], None: ["openssh-server"]}
+_SSH_SERVICE    = {"debian": "ssh", None: "sshd"}
+_SAMBA_PACKAGES = {"debian": ["samba", "samba-common-bin"], "fedora": ["samba", "samba-common"], None: ["samba"]}
+_CRON_PACKAGES  = {"debian": ["cron"], "fedora": ["cronie", "cronie-anacron"], "suse": ["cron"], "arch": ["cronie"], None: ["cronie"]}
+_BT_PACKAGES    = {"arch": ["bluez", "bluez-utils"], None: ["bluez", "bluez-tools"]}
+
+_PKG_NAME_RE    = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9._+-]*$')
+_PKG_BANNED_CHR = set(';& |`$()<>\n\r\t ')
 
 
 def _kernel_version() -> str:
@@ -141,10 +144,6 @@ def _distro_family(distro_id: str) -> str:
 
 def _pkg_lookup(mapping: dict, family: str) -> list:
     return mapping.get(family) or mapping.get(None, [])
-
-
-_PKG_NAME_RE    = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9._+-]*$')
-_PKG_BANNED_CHR = set(';& |`$()<>\n\r\t ')
 
 
 class LinuxDistroHelper:
@@ -191,7 +190,7 @@ class LinuxDistroHelper:
     def _setup_commands(self) -> None:
         family = _distro_family(self.distro_id)
         cfg    = _PKG_CONFIGS.get(family) or _PKG_CONFIGS["unknown"]
-        if family == "unknown" and self.distro_id not in _PKG_CONFIGS:
+        if family not in _PKG_CONFIGS and self.distro_id not in _PKG_CONFIGS:
             logger.warning("Unknown distribution '%s', using generic commands.", self.distro_id)
 
         self.pkg_check_installed: Callable[[str], list[str]] = cfg["check"]
@@ -207,8 +206,9 @@ class LinuxDistroHelper:
         if family in ("debian", "fedora"):
             kv = _kernel_version()
             if kv:
-                self.kernel_headers = (f"linux-headers-{kv}" if family == "debian"
-                                       else f"kernel-devel-{kv}")
+                self.kernel_headers = (
+                    f"linux-headers-{kv}" if family == "debian" else f"kernel-devel-{kv}"
+                )
             else:
                 logger.error("Could not determine kernel version for %s.", family)
 
@@ -251,7 +251,7 @@ class LinuxDistroHelper:
         max_workers = min(4, max(1, len(packages) // 4))
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
-                futures = {pool.submit(self.package_is_installed, p): p for p in packages}
+                futures       = {pool.submit(self.package_is_installed, p): p for p in packages}
                 not_installed = []
                 for future in concurrent.futures.as_completed(futures, timeout=60):
                     pkg = futures[future]
@@ -263,8 +263,8 @@ class LinuxDistroHelper:
                         not_installed.append(pkg)
                 return not_installed
         except Exception as exc:
-            logger.error("Parallel package check failed: %s", exc)
-            return [p for p in packages if not self.package_is_installed(p)]
+            logger.error("Parallel package check failed, skipping: %s", exc)
+            return []
 
     def get_kernel_headers_pkg(self) -> str:
         try:
@@ -284,10 +284,17 @@ class LinuxDistroHelper:
         return self.kernel_headers
 
     def get_shell_package_name(self, shell_name: str) -> str:
+        family   = _distro_family(self.distro_id)
+        pwsh_pkg = "powershell" if family == "debian" else "pwsh"
         shell_map = {
-            "bash": "bash", "zsh": "zsh", "fish": "fish", "elvish": "elvish",
-            "nushell": "nushell", "xonsh": "xonsh", "ngs": "ngs",
-            "pwsh": "powershell" if _distro_family(self.distro_id) == "debian" else "pwsh",
+            "bash":    "bash",
+            "zsh":     "zsh",
+            "fish":    "fish",
+            "elvish":  "elvish",
+            "nushell": "nushell",
+            "xonsh":   "xonsh",
+            "ngs":     "ngs",
+            "pwsh":    pwsh_pkg,
         }
         return shell_map.get(shell_name.lower(), shell_name.lower())
 
@@ -295,22 +302,22 @@ class LinuxDistroHelper:
         return _distro_family(self.distro_id)
 
     @staticmethod
-    def get_printer_packages() -> list:   return ["cups", "ghostscript", "system-config-printer", "gutenprint"]
+    def get_printer_packages() -> list:  return ["cups", "ghostscript", "system-config-printer", "gutenprint"]
     @staticmethod
-    def get_firewall_packages() -> list:  return ["ufw"]
+    def get_firewall_packages() -> list: return ["ufw"]
     @staticmethod
-    def get_at_packages() -> list:        return ["at"]
+    def get_at_packages() -> list:       return ["at"]
     @staticmethod
-    def get_flatpak_packages() -> list:   return ["flatpak"]
+    def get_flatpak_packages() -> list:  return ["flatpak"]
     @staticmethod
-    def get_snap_packages() -> list:      return ["snapd"]
+    def get_snap_packages() -> list:     return ["snapd"]
     @staticmethod
     def flatpak_add_flathub() -> str:
         return "flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo"
 
     def get_samba_packages(self)    -> list: return _pkg_lookup(_SAMBA_PACKAGES, self._family())
     def get_bluetooth_packages(self)-> list: return _pkg_lookup(_BT_PACKAGES,    self._family())
-    def get_cron_packages(self)     -> list: return _pkg_lookup(_CRON_PACKAGES,   self._family())
+    def get_cron_packages(self)     -> list: return _pkg_lookup(_CRON_PACKAGES,  self._family())
 
     def get_ssh_packages(self) -> list:
         fam = self._family()
