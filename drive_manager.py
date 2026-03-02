@@ -13,13 +13,12 @@ _USER = pwd.getpwuid(os.getuid()).pw_name
 MOUNT_TIMEOUT        = 45
 UNMOUNT_TIMEOUT      = 30
 MOUNT_CHECK_DELAY    = 0.5
-MOUNT_CHECK_RETRIES  = 12
 PROCESS_KILL_TIMEOUT = 10
 
-_ALLOWED_COMMANDS    = {"mount", "umount", "udisksctl", "kdeconnect-cli"}
-_DANGEROUS_CHARS     = ("&&", "||", "$(", ";;", ";", "|", "`", ">", "<", "&", "\n", "\r", "\x00")
-_SUSPICIOUS_ARGS     = {"--exec", "--command", "-c", "--eval"}
-_SUSPICIOUS_PATH_PAT = {"..", ";", "|", "&", "$(", "`", "<", ">", "\x00", "\n", "\r"}
+_ALLOWED_COMMANDS = {"mount", "umount", "udisksctl", "kdeconnect-cli"}
+_DANGEROUS_CHARS  = ("&&", "||", "$(", ";;", ";", "|", "`", ">", "<", "&", "\n", "\r", "\x00")
+_SUSPICIOUS_ARGS  = {"--exec", "--command", "-c", "--eval"}
+_SUSPICIOUS_PATH_CHARS = {"..", ";", "|", "&", "$(", "`", "<", ">", "\x00", "\n", "\r"}
 
 
 def _mount_paths(name: str) -> tuple[str, ...]:
@@ -47,8 +46,8 @@ class DriveManager:
     @staticmethod
     def is_drive_mounted(opt: dict, mount_output: str | None = None) -> bool:
         try:
-            name     = opt.get("drive_name", "").strip()
-            smb_path = opt.get("smb_path", "").strip()
+            name      = opt.get("drive_name", "").strip()
+            smb_path  = opt.get("smb_path", "").strip()
             if not name:
                 return False
 
@@ -81,7 +80,7 @@ class DriveManager:
                         elif name in en_decoded:
                             return True
 
-            if smb_path and is_kdeconnect:
+            if is_kdeconnect and smb_path:
                 try:
                     result = subprocess.run(
                         ["gio", "info", smb_path],
@@ -116,7 +115,6 @@ class DriveManager:
             return False, f"Invalid shell syntax: {exc}"
         if not tokens:
             return False, "No tokens after parsing."
-
         base = os.path.basename(tokens[0])
         if base == "sudo" and len(tokens) > 1:
             base = os.path.basename(tokens[1])
@@ -130,7 +128,7 @@ class DriveManager:
     def _sanitise_path(path: str | Path) -> str | None:
         try:
             raw = str(path).strip()
-            if not raw or any(p in raw for p in _SUSPICIOUS_PATH_PAT):
+            if not raw or any(p in raw for p in _SUSPICIOUS_PATH_CHARS):
                 return None
             if "://" in raw:
                 return raw
@@ -143,7 +141,9 @@ class DriveManager:
             logger.warning("Could not sanitise path '%s': %s", path, exc)
             return None
 
-    def check_path_requires_mounting(self, path: str | Path, mount_output: str | None = None) -> dict | None:
+    def check_path_requires_mounting(
+        self, path: str | Path, mount_output: str | None = None
+    ) -> dict | None:
         path_str = self._sanitise_path(path)
         if not path_str:
             return None
@@ -153,7 +153,7 @@ class DriveManager:
         except (ImportError, AttributeError):
             return None
 
-        is_smb = path_str.startswith("smb://") or path_str.startswith("cifs://")
+        is_smb = path_str.startswith(("smb://", "cifs://"))
 
         for opt in opts:
             if not isinstance(opt, dict):
@@ -161,19 +161,16 @@ class DriveManager:
             name = opt.get("drive_name", "").strip()
             if not name:
                 continue
-
             if is_smb:
-                smb_path = opt.get("smb_path", "").strip().rstrip("/")
+                smb_path  = opt.get("smb_path", "").strip().rstrip("/")
                 candidate = path_str.rstrip("/")
                 if smb_path:
                     if candidate == smb_path or candidate.startswith(smb_path + "/"):
                         if not self.is_drive_mounted(opt, mount_output):
                             return opt
-                else:
-                    decoded_path = urllib.parse.unquote(path_str)
-                    if name in decoded_path:
-                        if not self.is_drive_mounted(opt, mount_output):
-                            return opt
+                elif name in urllib.parse.unquote(path_str):
+                    if not self.is_drive_mounted(opt, mount_output):
+                        return opt
             else:
                 if any(mp in path_str for mp in _mount_paths(name)[:-1]):
                     if not self.is_drive_mounted(opt, mount_output):
@@ -202,12 +199,14 @@ class DriveManager:
         name = drive.get("drive_name", "").strip()
         cmd  = drive.get("mount_command", "").strip()
         if not name or not cmd:
-            self._alert("Mount Error", "Missing drive name or mount command.", QMessageBox.Icon.Warning, parent)
+            self._alert("Mount Error", "Missing drive name or mount command.",
+                        QMessageBox.Icon.Warning, parent)
             return False
 
         ok, err = self._validate_command(cmd)
         if not ok:
-            self._alert("Mount Error", f"Invalid mount command for '{name}': {err}", QMessageBox.Icon.Warning, parent)
+            self._alert("Mount Error", f"Invalid mount command for '{name}': {err}",
+                        QMessageBox.Icon.Warning, parent)
             return False
 
         if self.is_drive_mounted(drive, self.get_mount_output()):
@@ -234,7 +233,7 @@ class DriveManager:
 
         if result.returncode != 0:
             stderr = result.stderr[:300].strip()
-            msg = f"Mount failed for '{name}' (exit {result.returncode})"
+            msg    = f"Mount failed for '{name}' (exit {result.returncode})"
             if stderr:
                 msg += f"\n{stderr}"
             logger.error("mount_drive: %s", msg)
@@ -306,7 +305,8 @@ class DriveManager:
 
             if box.exec() != QMessageBox.StandardButton.Yes:
                 logger.info("mount_required_drives: user declined to mount '%s'.", name)
-                self._alert("Operation Cancelled", f"Cannot continue without mounting '{name}'.",
+                self._alert("Operation Cancelled",
+                            f"Cannot continue without mounting '{name}'.",
                             QMessageBox.Icon.Information, parent)
                 all_ok = False
                 continue
@@ -321,15 +321,15 @@ class DriveManager:
             queued = self.drives_to_unmount.copy()
 
         failed: list[dict] = []
-        for d in queued:
-            if self.unmount_drive(d, parent):
+        for drive in queued:
+            if self.unmount_drive(drive, parent):
                 with self._lock:
                     try:
-                        self.drives_to_unmount.remove(d)
+                        self.drives_to_unmount.remove(drive)
                     except ValueError:
                         pass
             else:
-                failed.append(d)
+                failed.append(drive)
 
         if failed:
             logger.warning("unmount_drives: failed: %s", [f.get("drive_name") for f in failed])
@@ -355,6 +355,7 @@ class DriveManager:
     @staticmethod
     def _kill_process(cmd: str) -> None:
         try:
-            subprocess.run(["pkill", "-f", cmd[:50]], timeout=PROCESS_KILL_TIMEOUT, check=False)
+            subprocess.run(["pkill", "-f", cmd[:50]],
+                           timeout=PROCESS_KILL_TIMEOUT, check=False)
         except (subprocess.SubprocessError, OSError) as exc:
             logger.warning("Could not kill hung mount process: %s", exc)
