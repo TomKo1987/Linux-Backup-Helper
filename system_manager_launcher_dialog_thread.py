@@ -640,16 +640,16 @@ class SystemManagerThread(QThread):
 
     def __init__(self, sudo_password: str):
         super().__init__()
-        self.sudo_password   = SecureString(sudo_password or "")
-        self.enabled_tasks:  dict[str, tuple] = {}
-        self.task_descriptions: list[tuple]   = []
-        self.auth_failed     = False
-        self.has_error       = False
-        self.terminated      = False
-        self.temp_dir:       str | None  = None
-        self.askpass_script_path: Path | None = None
-        self.current_task:   str | None  = None
-        self.task_status:    dict        = {}
+        self.sudo_password                      = SecureString(sudo_password or "")
+        self.enabled_tasks:  dict[str, tuple]   = {}
+        self.task_descriptions: list[tuple]     = []
+        self.auth_failed                        = False
+        self.has_error                          = False
+        self.terminated                         = False
+        self.temp_dir:              str | None  = None
+        self.askpass_script_path:   Path | None = None
+        self.current_task:          str | None  = None
+        self.task_status:           dict        = {}
 
         try:
             self.distro       = LinuxDistroHelper()
@@ -755,9 +755,8 @@ class SystemManagerThread(QThread):
 
     def _reset_sudo_timeout(self):
         try:
-            subprocess.run(["sudo", "-K"],
-                           stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
-            time.sleep(0.5)
+            subprocess.run(["sudo", "-K"], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+            time.sleep(1.0)
         except Exception as exc:
             self.outputReceived.emit(f"Warning: Could not reset sudo state: {exc}", "warning")
 
@@ -772,9 +771,7 @@ class SystemManagerThread(QThread):
             env["SUDO_ASKPASS"] = str(self.askpass_script_path)
             proc = subprocess.run(
                 ["sudo", "-A", "echo", "Sudo access successfully verified…"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, env=env, timeout=5,
-            )
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, timeout=0.5)
             if proc.stdout:
                 self.outputReceived.emit(proc.stdout.strip(), "success")
             if proc.stderr:
@@ -837,18 +834,35 @@ class SystemManagerThread(QThread):
             return None
         try:
             env = os.environ.copy()
-            env["SUDO_ASKPASS"] = str(self.askpass_script_path)
-            if command and command[0] == "sudo" and "-A" not in command:
-                command.insert(1, "-A")
-            elif command and command[0] == "yay" and not any(a.startswith("--sudoflags=") for a in command):
-                command.insert(1, "--sudoflags=-A")
+
+            if command[0] == "yay":
+                if "--sudoflags" not in "".join(command):
+                    command.insert(1, "--sudoflags=-S")
+            elif command[0] == "sudo":
+                if "-S" not in command:
+                    command.insert(1, "-S")
+
             proc = subprocess.Popen(
-                command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, env=env, bufsize=4096,
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                env=env
             )
+
+            try:
+                password = self.sudo_password.get_value() + "\n"
+                proc.stdin.write(password)
+                proc.stdin.flush()
+                proc.stdin.close()
+            except BrokenPipeError:
+                pass
+
             return self._stream_process(proc)
         except Exception as exc:
-            self.outputReceived.emit(f"<span>Error: {exc}</span>", "error")
+            self.outputReceived.emit(f"<span>Fehler: {exc}</span>", "error")
             return None
 
     def _stream_process(self, proc):
@@ -1243,8 +1257,7 @@ class SystemManagerThread(QThread):
             self.taskStatusChanged.emit(task_id, "error")
             return False
 
-        result  = self._run_sudo_command(["sudo", "pacman", "-U", "--noconfirm",
-                                          str(yay_dir / pkg_files[0])])
+        result  = self._run_sudo_command(["sudo", "pacman", "-U", "--noconfirm", str(yay_dir / pkg_files[0])])
         success = result and result.returncode == 0
         shutil.rmtree(yay_dir, ignore_errors=True)
         shutil.rmtree(_HOME_CONFIG / "go", ignore_errors=True)
