@@ -1,7 +1,6 @@
 from __future__ import annotations
-from typing import Optional
-from keyring import errors as keyring_errors
 import getpass, json, os, subprocess, keyring
+from keyring import errors as keyring_errors
 from keyring.backends import SecretService
 from PyQt6.QtWidgets import (QCheckBox, QDialog, QErrorMessage, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
                              QPushButton, QVBoxLayout)
@@ -26,14 +25,14 @@ def _current_username() -> str:
 class SambaPasswordManager:
 
     def __init__(self) -> None:
-        self._kwallet_entry: Optional[str] = None
+        self._kwallet_entry: str | None = None
         try:
             keyring.set_keyring(SecretService.Keyring())
-        except (keyring_errors.KeyringError, Exception) as exc:
+        except Exception as exc:
             logger.debug("Could not set SecretService keyring backend: %s", exc)
 
     @staticmethod
-    def _run_kwallet(args: list[str], input_data: bytes | None = None) -> Optional[str]:
+    def _run_kwallet(args: list[str], input_data: bytes | None = None) -> str | None:
         try:
             if input_data is not None:
                 with subprocess.Popen(
@@ -46,17 +45,15 @@ class SambaPasswordManager:
                 return ""
             result = subprocess.run(
                 ["kwallet-query"] + args,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=True,
-                timeout=_KWALLET_TIMEOUT,
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                text=True, timeout=_KWALLET_TIMEOUT,
             )
             return result.stdout
         except Exception as exc:
             logger.exception("kwallet-query %s failed: %s", args[0] if args else "", exc)
             return None
 
-    def _find_kwallet_entry(self) -> Optional[str]:
+    def _find_kwallet_entry(self) -> str | None:
         if self._kwallet_entry:
             return self._kwallet_entry
         out = self._run_kwallet(["--list-entries", _KWALLET_WALLET])
@@ -68,7 +65,7 @@ class SambaPasswordManager:
                     return line
         return None
 
-    def _read_from_kwallet(self) -> tuple[Optional[str], Optional[str]]:
+    def _read_from_kwallet(self) -> tuple[str | None, str | None]:
         entry = self._find_kwallet_entry()
         if not entry:
             return None, None
@@ -99,10 +96,10 @@ class SambaPasswordManager:
         return True
 
     @property
-    def kwallet_entry(self) -> Optional[str]:
+    def kwallet_entry(self) -> str | None:
         return self._kwallet_entry
 
-    def get_credentials(self) -> tuple[Optional[str], Optional[str]]:
+    def get_credentials(self) -> tuple[str | None, str | None]:
         username, password = self._read_from_kwallet()
         if password:
             logger.info("Retrieved Samba credentials from KWallet.")
@@ -117,7 +114,8 @@ class SambaPasswordManager:
             logger.exception("Failed to retrieve credentials from system keyring: %s", exc)
         return None, None
 
-    get_samba_credentials = get_credentials
+    def get_samba_credentials(self) -> tuple[str | None, str | None]:
+        return self.get_credentials()
 
     def save_credentials(self, username: str, password: str) -> None:
         if self._find_kwallet_entry():
@@ -128,8 +126,6 @@ class SambaPasswordManager:
                 logger.info("Saved Samba credentials to system keyring.")
             except Exception as exc:
                 logger.exception("Failed to save credentials to system keyring: %s", exc)
-
-    save_samba_credentials = save_credentials
 
     def delete_credentials(self, username: str) -> bool:
         kwallet_ok = self._delete_from_kwallet()
@@ -144,8 +140,6 @@ class SambaPasswordManager:
             keyring_ok = False
         return kwallet_ok and keyring_ok
 
-    delete_samba_credentials = delete_credentials
-
 
 class SambaPasswordDialog(QDialog):
 
@@ -153,10 +147,8 @@ class SambaPasswordDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Samba Credentials")
         self.setMinimumSize(950, 500)
-
         self._manager      = SambaPasswordManager()
         self._error_dialog = QErrorMessage(self)
-
         username, password = self._fetch_credentials()
         has_credentials    = bool(password)
         from_kwallet       = bool(self._manager.kwallet_entry)
@@ -164,8 +156,8 @@ class SambaPasswordDialog(QDialog):
 
     def _build_ui(
         self,
-        username: Optional[str],
-        password: Optional[str],
+        username: str | None,
+        password: str | None,
         has_credentials: bool,
         from_kwallet: bool,
     ) -> None:
@@ -179,11 +171,12 @@ class SambaPasswordDialog(QDialog):
             banner.setStyleSheet("color:lightgreen;")
             layout.addWidget(banner)
 
-        note_text = (
-            "(Password loaded from KWallet.)"          if from_kwallet else
-            "(Password loaded from system keyring.)"   if has_credentials else
-            "(No saved password found. Fill in the fields to create a new entry.)"
-        )
+        if from_kwallet:
+            note_text = "(Password loaded from KWallet.)"
+        elif has_credentials:
+            note_text = "(Password loaded from system keyring.)"
+        else:
+            note_text = "(No saved password found. Fill in the fields to create a new entry.)"
 
         layout.addWidget(QLabel("Username:"))
         self._username_field = QLineEdit(username or _current_username())
@@ -207,7 +200,7 @@ class SambaPasswordDialog(QDialog):
         )
         layout.addWidget(show_pw_cb)
 
-        btn_row = QHBoxLayout()
+        btn_row   = QHBoxLayout()
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.reject)
         btn_row.addWidget(close_btn)
@@ -217,11 +210,9 @@ class SambaPasswordDialog(QDialog):
             del_btn.clicked.connect(self._delete_credentials)
             btn_row.addWidget(del_btn)
 
-        save_label = "Update Credentials" if has_credentials else "Save"
-        save_btn   = QPushButton(save_label)
+        save_btn = QPushButton("Update Credentials" if has_credentials else "Save")
         save_btn.clicked.connect(self._save_credentials)
         btn_row.addWidget(save_btn)
-
         layout.addLayout(btn_row)
 
     def _save_credentials(self) -> None:
@@ -246,9 +237,9 @@ class SambaPasswordDialog(QDialog):
         except Exception as exc:
             self._error_dialog.showMessage(f"Failed to delete credentials:\n{exc}")
 
-    def _fetch_credentials(self) -> tuple[Optional[str], Optional[str]]:
+    def _fetch_credentials(self) -> tuple[str | None, str | None]:
         try:
             return self._manager.get_credentials()
-        except (OSError, RuntimeError, KeyError) as exc:
+        except Exception as exc:
             logger.exception("Error fetching credentials: %s", exc)
             return _current_username(), None
