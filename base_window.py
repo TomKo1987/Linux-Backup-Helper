@@ -59,7 +59,7 @@ class BaseWindow(QDialog):
         self.columns      = _COLS_NARROW
         self.checkbox_dirs: list[tuple] = []
 
-        self._last_entries_hash: int | None  = None
+        self._last_entries_hash: int | None   = None
         self._last_ui_state:     tuple | None = None
         self._tooltip_cache:     dict | None  = None
         self._shown_once:        bool         = False
@@ -83,7 +83,7 @@ class BaseWindow(QDialog):
 
     def setup_ui(self) -> None:
         entries_sorted = getattr(Options, "entries_sorted", [])
-        entries_hash = hash(tuple(
+        entries_hash   = hash(tuple(
             (e.get("unique_id", ""), e.get("title", "")) for e in entries_sorted
         ))
         ui_state = (
@@ -95,8 +95,8 @@ class BaseWindow(QDialog):
 
         if (
             self._last_entries_hash == entries_hash
-            and self._last_ui_state == ui_state
-            and self.content_widget is not None
+            and self._last_ui_state  == ui_state
+            and self.content_widget  is not None
         ):
             return
 
@@ -255,7 +255,6 @@ class BaseWindow(QDialog):
     def _collect_sublayout_entries() -> dict:
         result = {f"sublayout_games_{i}": [] for i in range(1, 5)}
         for entry in getattr(Options, "all_entries", []):
-            # entries are plain dicts (or dict-like objects)
             details = entry.get("details") if isinstance(entry, dict) else getattr(entry, "details", None)
             if not isinstance(details, dict):
                 continue
@@ -306,12 +305,11 @@ class BaseWindow(QDialog):
         sublayouts = [
             (
                 getattr(self, f"sublayout_widget_games_{i}", None),
-                getattr(self, f"sublayout_games_{i}", None),
+                getattr(self, f"sublayout_games_{i}",        None),
             )
             for i in range(1, 5)
         ]
         sublayouts = [(w, la) for w, la in sublayouts if la is not None]
-
         if not sublayouts:
             return row
 
@@ -367,10 +365,8 @@ class BaseWindow(QDialog):
             self.header_settings_button.clicked.connect(self.header_settings)
 
             row1 = QHBoxLayout()
-            for btn in (
-                self.add_entry_button, self.entry_editor_button,
-                self.delete_button,   self.header_settings_button,
-            ):
+            for btn in (self.add_entry_button, self.entry_editor_button,
+                        self.delete_button,    self.header_settings_button):
                 row1.addWidget(btn)
             grid.addLayout(row1, row, 0, 1, self.columns)
             row += 1
@@ -437,7 +433,7 @@ class BaseWindow(QDialog):
     def _sync_sublayout_select_all(self) -> None:
         for i in range(1, 5):
             widget    = getattr(self, f"sublayout_widget_games_{i}", None)
-            select_cb = getattr(self, f"select_all_games_{i}", None)
+            select_cb = getattr(self, f"select_all_games_{i}",        None)
             if widget and select_cb:
                 children = [c for c in widget.findChildren(QCheckBox) if c != select_cb]
                 _block_set(select_cb, all(c.isChecked() for c in children) if children else False)
@@ -446,11 +442,10 @@ class BaseWindow(QDialog):
         if layout and select_all_cb:
             state = select_all_cb.isChecked()
             for i in range(layout.count()):
-                item = layout.itemAt(i)
-                if item:
-                    widget = item.widget()
-                    if isinstance(widget, QCheckBox) and widget != select_all_cb:
-                        _block_set(widget, state)
+                item   = layout.itemAt(i)
+                widget = item.widget() if item else None
+                if isinstance(widget, QCheckBox) and widget != select_all_cb:
+                    _block_set(widget, state)
             self.update_select_all_state()
 
     def toggle_columns(self) -> None:
@@ -489,8 +484,6 @@ class BaseWindow(QDialog):
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
-    adjust_window_size = _fit_window
-
     def change_theme(self) -> None:
 
         class _ThemeDialog(QDialog):
@@ -507,7 +500,6 @@ class BaseWindow(QDialog):
         dialog.closeEvent = lambda e: e.ignore()
 
         layout = QVBoxLayout(dialog)
-
         layout.addWidget(QLabel("Select Theme:"))
         theme_combo = QComboBox()
         theme_combo.addItems(list(THEMES.keys()))
@@ -542,7 +534,7 @@ class BaseWindow(QDialog):
         orig_size  = Options.ui_settings.get("font_size", 14)
 
         buttons    = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel # type: ignore
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel  # type: ignore
         )
         ok_btn     = buttons.button(QDialogButtonBox.StandardButton.Ok)
         cancel_btn = buttons.button(QDialogButtonBox.StandardButton.Cancel)
@@ -570,7 +562,7 @@ class BaseWindow(QDialog):
         Options.ui_settings.update(theme=theme, font_family=font, font_size=size)
         global_style.current_theme = theme
         style = global_style.get_current_style()
-        app = QApplication.instance()
+        app   = QApplication.instance()
         if isinstance(app, QApplication):
             app.setStyleSheet(style)
         if save:
@@ -609,20 +601,15 @@ class BaseWindow(QDialog):
         self._fit_window()
         self.show()
 
-    preview_theme_and_font   = lambda self, t, f, s:    self._apply_theme(t, f, s, save=False)
-    restore_theme_and_font   = lambda self, t, f, s, d: self._restore_theme(t, f, s, d)
-    save_theme_and_font      = lambda self, t, f, s, d: self._save_theme(t, f, s, d)
-
-    def start_process(self) -> None: pass
-    def show_message(self, title: str, message: str) -> None:
-        QMessageBox.information(self, title, message)
-    def system_manager_options(self) -> None: pass
-    def entry_dialog(self, edit_mode: bool = False) -> None: pass
-    def delete_entry(self) -> None: pass
-    def header_settings(self) -> None: pass
-    def open_samba_password_dialog(self) -> None: pass
-    def manage_mount_options(self) -> None: pass
-    def open_profile_manager(self) -> None: pass
+    def start_process(self) -> None:                           pass
+    def show_message(self, title: str, message: str) -> None:  QMessageBox.information(self, title, message)
+    def system_manager_options(self) -> None:                  pass
+    def entry_dialog(self, edit_mode: bool = False) -> None:   pass
+    def delete_entry(self) -> None:                            pass
+    def header_settings(self) -> None:                         pass
+    def open_samba_password_dialog(self) -> None:              pass
+    def manage_mount_options(self) -> None:                    pass
+    def open_profile_manager(self) -> None:                    pass
 
     def keyPressEvent(self, event) -> None:
         key = event.key()
@@ -713,5 +700,3 @@ class BaseWindow(QDialog):
 
         self.content_widget = None
         self.checkbox_dirs.clear()
-
-    clear_layout_contents = _clear_content
