@@ -28,10 +28,7 @@ class _InxiWorker(QThread):
     def run(self) -> None:
         try:
             result = subprocess.run(
-                _INXI_ARGS,
-                capture_output=True,
-                text=True,
-                timeout=_INXI_TIMEOUT,
+                _INXI_ARGS, capture_output=True, text=True, timeout=_INXI_TIMEOUT,
             )
             if result.returncode == 0 and result.stdout.strip():
                 self.finished.emit(result.stdout.strip())
@@ -53,7 +50,7 @@ class SystemInfoWindow(QDialog):
         super().__init__(parent)
         self.setWindowTitle("System Information")
         self.setMinimumSize(1250, 950)
-        self._worker: _InxiWorker | None = None
+        self._worker:    _InxiWorker | None = None
         self._text_edit = QTextEdit()
         self._close_btn = QPushButton("Close")
         self._build_ui()
@@ -102,7 +99,8 @@ class SystemInfoWindow(QDialog):
             screen = self.screen()
             if screen is None:
                 return
-            capped = min(max_px + 100, int(screen.availableGeometry().width() * _MAX_WIDTH_RATIO))
+            capped = min(max_px + 100,
+                         int(screen.availableGeometry().width() * _MAX_WIDTH_RATIO))
             if capped > self.width():
                 self.resize(capped, self.height())
         except Exception as exc:
@@ -118,14 +116,12 @@ class SystemInfoWindow(QDialog):
         if self._worker and self._worker.isRunning():
             self._worker.requestInterruption()
             if not self._worker.wait(_WORKER_WAIT_MS):
-                logger.warning("SystemInfoWindow: worker thread did not stop in time — terminating.")
+                logger.warning("SystemInfoWindow: worker thread did not stop — terminating.")
                 self._worker.terminate()
                 self._worker.wait(500)
-
-        parent = self.parent()
-        try:
-            if parent:
+        if parent := self.parent():
+            try:
                 parent.show()
-        except RuntimeError:
-            pass
+            except RuntimeError:
+                pass
         super().closeEvent(event)
