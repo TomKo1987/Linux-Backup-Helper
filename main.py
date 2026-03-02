@@ -11,8 +11,8 @@ from system_info_window import SystemInfoWindow
 from file_process import FileProcessDialog, SmbFileHandler
 from PyQt6.QtCore import Qt, QCoreApplication, QTimer, pyqtSignal
 from system_manager_launcher_dialog_thread import SystemManagerLauncher
-from PyQt6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QMainWindow, QMenu, QMessageBox, QPushButton, QWidget,
-                             QSystemTrayIcon, QTextEdit, QVBoxLayout)
+from PyQt6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QMainWindow, QMenu, QMessageBox, QPushButton,
+                             QWidget, QSystemTrayIcon, QTextEdit, QVBoxLayout)
 
 from logging_config import get_log_file_path, setup_logger
 logger = setup_logger(__name__)
@@ -32,14 +32,14 @@ class MainWindow(QMainWindow):
 
         Options.set_main_window(self)
 
-        self.drive_manager:           DriveManager   = DriveManager()
-        self.config:                  dict           = {}
-        self.backup_restore_window                   = None
-        self.settings_window                         = None
-        self.system_info_window                      = None
-        self.system_manager_launcher                 = None
-        self.tray_icon:               QSystemTrayIcon | None = None
-        self.btn_exit                                = QPushButton()
+        self.drive_manager:        DriveManager         = DriveManager()
+        self.config:               dict                 = {}
+        self.backup_restore_window                      = None
+        self.settings_window                            = None
+        self.system_info_window                         = None
+        self.system_manager_launcher                    = None
+        self.tray_icon:    QSystemTrayIcon | None       = None
+        self.btn_exit                                   = QPushButton()
 
         self.settings_changed.connect(self.on_settings_changed)
         self.settings_changed.connect(self._refresh_exit_button)
@@ -173,9 +173,6 @@ class MainWindow(QMainWindow):
         self.system_manager_launcher = SystemManagerLauncher(self)
         self.system_manager_launcher.launch()
 
-    def start_backup_restoring(self, window_type: str) -> None:
-        self.open_backup_restore(window_type)
-
     def open_log_viewer(self) -> None:
         log_path     = get_log_file_path()
         display_path = str(log_path)
@@ -186,8 +183,7 @@ class MainWindow(QMainWindow):
         dlg = QDialog(self)
         dlg.setWindowTitle(display_path)
         dlg.setMinimumSize(1250, 800)
-        layout = QVBoxLayout(dlg)
-
+        layout    = QVBoxLayout(dlg)
         text_edit = QTextEdit()
         text_edit.setReadOnly(True)
         text_edit.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
