@@ -1,0 +1,408 @@
+import base64
+
+from PyQt6.QtWidgets import QApplication
+
+from state import S
+
+THEMES: dict[str, dict[str, str]] = {
+    "Ayu Dark": {
+        "bg": "#0b0e14", "bg2": "#13161d", "bg3": "#1c2028",
+        "accent": "#ff8f40", "accent2": "#e6b450",
+        "highlight": "#f07178", "text": "#908e89", "text_dim": "#8a8f99",
+        "green": "#aad94c", "red": "#f07178", "cyan": "#39bae6",
+        "header_sep": "#273040",
+        "success": "#aad94c", "warning": "#e6b450", "error": "#f07178",
+        "info": "#39bae6",
+        "muted": "#9aa0aa",
+        "pb_bg": "#1e2530",
+        "pb_text": "#ffffff",
+        "pb_chunk": "#995526",
+        "pb_chunk2": "#8a6c30",
+    },
+    "Catppuccin": {
+        "bg": "#161622", "bg2": "#1e1e2e", "bg3": "#313244",
+        "accent": "#89b4fa", "accent2": "#cba6f7",
+        "highlight": "#fab387", "text": "#cdd6f4", "text_dim": "#a6adc8",
+        "green": "#a6e3a1", "red": "#f38ba8", "cyan": "#89dceb",
+        "header_sep": "#45475a",
+        "success": "#a6e3a1", "warning": "#fab387", "error": "#f38ba8",
+        "info": "#89b4fa", "muted": "#9399b2",
+        "pb_bg": "#4e5068",
+        "pb_text": "#ffffff",
+        "pb_chunk": "#526c95",
+        "pb_chunk2": "#796394",
+    },
+    "Dracula": {
+        "bg": "#1e1f29", "bg2": "#282a36", "bg3": "#373a4d",
+        "accent": "#bd93f9", "accent2": "#ff79c6",
+        "highlight": "#f1fa8c", "text": "#f8f8f2", "text_dim": "#c8c8d0",
+        "green": "#50fa7b", "red": "#ff5555", "cyan": "#8be9fd",
+        "header_sep": "#44475a",
+        "success": "#50fa7b", "warning": "#ffb86c", "error": "#ff5555",
+        "info": "#8be9fd",
+        "muted": "#9d9dbd",
+        "pb_bg": "#44475a",
+        "pb_text": "#ffffff",
+        "pb_chunk": "#8466ae",
+        "pb_chunk2": "#b2548a",
+    },
+    "Everforest": {
+        "bg": "#1e2326", "bg2": "#272e33", "bg3": "#333d41",
+        "accent": "#83c092", "accent2": "#a7c080",
+        "highlight": "#60dbdb", "text": "#d3c6aa", "text_dim": "#a0a89a",
+        "green": "#a7c080", "red": "#e67e80", "cyan": "#7fbbb3",
+        "header_sep": "#3d484d",
+        "success": "#a7c080", "warning": "#dbbc7f", "error": "#e67e80",
+        "info": "#7fbbb3",
+        "muted": "#9aa090",
+        "pb_bg": "#374145",
+        "pb_text": "#ffffff",
+        "pb_chunk": "#4e7357",
+        "pb_chunk2": "#64734c",
+    },
+    "Gruvbox": {
+        "bg": "#1d2021", "bg2": "#282828", "bg3": "#3c3836",
+        "accent": "#fabd2f", "accent2": "#fe8019",
+        "highlight": "#bb13b8", "text": "#ebdbb2", "text_dim": "#bdae93",
+        "green": "#b8bb26", "red": "#fb4934", "cyan": "#83a598",
+        "header_sep": "#504945",
+        "success": "#b8bb26", "warning": "#fe8019", "error": "#fb4934",
+        "info": "#83a598", "muted": "#a89984",
+        "pb_bg": "#5a5248",
+        "pb_text": "#ffffff",
+        "pb_chunk": "#95711c",
+        "pb_chunk2": "#984c0f",
+    },
+    "High Contrast": {
+        "bg": "#000000", "bg2": "#0d0d0d", "bg3": "#1e1e1e",
+        "accent": "#00d7ff", "accent2": "#ffaf00",
+        "highlight": "#ffff00", "text": "#ffffff", "text_dim": "#d8d8d8",
+        "green": "#00ff5f", "red": "#ff3333", "cyan": "#00d7ff",
+        "header_sep": "#505050",
+        "success": "#00ff5f", "warning": "#ffaf00", "error": "#ff3333",
+        "info": "#00d7ff", "muted": "#bbbbbb",
+        "pb_bg": "#2a2a2a",
+        "pb_text": "#ffffff",
+        "pb_chunk": "#008199",
+        "pb_chunk2": "#996900",
+    },
+    "Monokai": {
+        "bg": "#1c1c1c", "bg2": "#272822", "bg3": "#3a3830",
+        "accent": "#a6e22e", "accent2": "#66d9e8",
+        "highlight": "#f92672", "text": "#f8f8f2", "text_dim": "#c0bfb8",
+        "green": "#a6e22e", "red": "#f92672", "cyan": "#66d9e8",
+        "header_sep": "#49483e",
+        "success": "#a6e22e", "warning": "#e6db74", "error": "#f92672",
+        "info": "#66d9e8", "muted": "#90908a",
+        "pb_bg": "#565650",
+        "pb_text": "#ffffff",
+        "pb_chunk": "#537117",
+        "pb_chunk2": "#336c74",
+    },
+    "Rosé Pine": {
+        "bg": "#191724", "bg2": "#1f1d2e", "bg3": "#2d2a40",
+        "accent": "#c4a7e7", "accent2": "#ebbcba",
+        "highlight": "#f6c177", "text": "#e0def4", "text_dim": "#b8b4d0",
+        "green": "#9ccfd8", "red": "#eb6f92", "cyan": "#9ccfd8",
+        "header_sep": "#403d52",
+        "success": "#9ccfd8", "warning": "#f6c177", "error": "#eb6f92",
+        "info": "#c4a7e7", "muted": "#8a8aaa",
+        "pb_bg": "#393552",
+        "pb_text": "#ffffff",
+        "pb_chunk": "#75648a",
+        "pb_chunk2": "#8c706f",
+    },
+    "Solarized Dark": {
+        "bg": "#001b22", "bg2": "#002b36", "bg3": "#073d4a",
+        "accent": "#268bd2", "accent2": "#2aa198",
+        "highlight": "#b58900", "text": "#eee8d5", "text_dim": "#b0bab5",
+        "green": "#859900", "red": "#dc322f", "cyan": "#2aa198",
+        "header_sep": "#0a4a5a",
+        "success": "#859900", "warning": "#b58900", "error": "#dc322f",
+        "info": "#268bd2",
+        "muted": "#8fa8ad",
+        "pb_bg": "#0a3d4d",
+        "pb_text": "#ffffff",
+        "pb_chunk": "#1e6fa8",
+        "pb_chunk2": "#218079",
+    },
+    "Tokyo Night": {
+        "bg": "#1a1b2e", "bg2": "#24283b", "bg3": "#2d2d44",
+        "accent": "#7dcfff", "accent2": "#bb9af7",
+        "highlight": "#f7c948", "text": "#c0caf5", "text_dim": "#8897d9",
+        "green": "#00ffbf", "red": "#ff5370", "cyan": "#55ffff",
+        "header_sep": "#414868",
+        "success": "#8fffab", "warning": "#e0af68", "error": "#ff5555",
+        "info": "#7dcfff", "muted": "#9a9a9a",
+        "pb_bg": "#4a4a6a",
+        "pb_text": "#ffffff",
+        "pb_chunk": "#4a7c99",
+        "pb_chunk2": "#705c94",
+    },
+    "Zenburn": {
+        "bg": "#1f1f1f", "bg2": "#2d2d2d", "bg3": "#3a3830",
+        "accent": "#7f9f7f", "accent2": "#dfaf8f",
+        "highlight": "#94f0b6", "text": "#dcdccc", "text_dim": "#9f9f8f",
+        "green": "#7f9f7f", "red": "#cc9393", "cyan": "#93e0e3",
+        "header_sep": "#4a4a4a",
+        "success": "#7f9f7f", "warning": "#dfaf8f", "error": "#cc9393",
+        "info": "#93e0e3",
+        "muted": "#9a9a8a",
+        "pb_bg": "#4a4a3a",
+        "pb_text": "#ffffff",
+        "pb_chunk": "#4c5f4c",
+        "pb_chunk2": "#856955",
+    },
+}
+
+DEFAULT_THEME = "Tokyo Night"
+_current_theme_name = DEFAULT_THEME
+
+
+def current_theme() -> dict[str, str]:
+    return THEMES.get(_current_theme_name, THEMES[DEFAULT_THEME])
+
+
+def _build_indeterminate_svg(colour: str) -> str:
+    svg = (
+        f"<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14'>"
+        f"<rect x='3' y='3' width='8' height='8' fill='{colour}' /></svg>"
+    )
+    return base64.b64encode(svg.encode()).decode()
+
+
+def tri_styles() -> tuple[str, str, str]:
+    t = current_theme()
+    b64 = _build_indeterminate_svg(t["highlight"])
+
+    ind = (
+        "QCheckBox::indicator{"
+        "width:8px;height:8px;border-radius:4px;"
+        "background:transparent;border:1px solid transparent;image:none;}"
+    )
+
+    checked = f"QCheckBox::indicator:checked{{background:{t['green']};border:1px solid {t['green']};}}"
+    unchecked = f"QCheckBox::indicator:unchecked{{background:{t['bg3']};border:1px solid {t['text_dim']};}}"
+    indet_std = f"QCheckBox::indicator:indeterminate{{background:{t['bg3']};border:1px solid {t['text_dim']};}}"
+    indet_svg = f"QCheckBox::indicator:indeterminate{{background:{t['bg3']};border:1px solid {t['highlight']};image:url('data:image/svg+xml;base64,{b64}');}}"
+
+    active = f"QCheckBox{{color:{t['text']};font-weight:bold;spacing:8px;}}{ind}{checked}{unchecked}{indet_std}"
+
+    disabled = (f"QCheckBox{{color:{t['muted']};text-decoration:line-through;spacing:8px;}}{ind}"
+                f"QCheckBox::indicator:checked{{background:{t['bg3']};border:1px solid {t['muted']};}}"
+                f"QCheckBox::indicator:unchecked{{background:{t['bg3']};border:1px solid {t['muted']};}}{indet_svg}")
+
+    delete = (f"QCheckBox{{color:{t['red']};text-decoration:line-through;font-style:italic;spacing:8px;}}{ind}"
+              f"QCheckBox::indicator:checked{{background:{t['bg3']};border:1px solid {t['red']};}}"
+              f"QCheckBox::indicator:unchecked{{background:{t['bg3']};border:1px solid {t['red']};}}"
+              f"QCheckBox::indicator:indeterminate{{background:{t['bg3']};border:1px solid {t['red']};}}")
+
+    return active, disabled, delete
+
+
+def style_label_info(font_size: int = 20) -> str:
+    return f"font-size:{font_size}px;color:{current_theme()['success']};font-family:monospace;"
+
+
+def style_label_info_bold(font_size: int = 16) -> str:
+    t = current_theme()
+    return f"font-size:{font_size}px;color:{t['success']};font-weight:bold;padding:4px;font-family:monospace;"
+
+
+def style_label_mono(font_size: int = 16) -> str:
+    return f"font-size:{font_size}px;padding:5px;qproperty-alignment:AlignLeft;font-family:monospace;"
+
+
+def style_checkbox_select_all() -> str:
+    return f"QCheckBox{{color:{current_theme()['cyan']};}}"
+
+
+def style_checkbox_muted() -> str:
+    return f"QCheckBox{{color:{current_theme()['muted']};}}"
+
+
+def style_sudo_checkbox(muted: bool = False) -> str:
+    t = current_theme()
+    if muted:
+        return f"color:{t['muted']};"
+    return f"font-size:16px;color:{t['cyan']};font-family:monospace;"
+
+
+def style_op_label(has_tip: bool) -> tuple[str, str]:
+    t = current_theme()
+    color = t["accent2"] if has_tip else t["accent"]
+    decoration = "text-decoration:underline dotted;" if has_tip else ""
+    return color, decoration
+
+
+def _build_stylesheet(t: dict[str, str], font_family: str, font_size: int) -> str:
+    b64 = _build_indeterminate_svg(t["highlight"])
+    pb_bg = t.get("pb_bg", t["bg3"])
+    pb_text = t.get("pb_text", "#ffffff")
+    pb_chunk = t.get("pb_chunk", t["accent"])
+    pb_chunk2 = t.get("pb_chunk2", t["accent2"])
+    font_rule = f'font-family: "{font_family}"; ' if font_family else ""
+
+    return f"""
+* {{ {font_rule}font-size: {font_size}px; }}
+
+QMainWindow, QDialog, QWidget {{
+    background-color: {t['bg']};
+    color: {t['text']};
+    border: none;
+}}
+
+QScrollArea {{ border: none; background: transparent; }}
+QScrollArea > QWidget > QWidget {{ background: transparent; }}
+
+QPushButton {{
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 {t['bg3']},stop:1 {t['bg2']});
+    color: {t['text']};
+    border: 1px solid {t['accent']};
+    border-radius: 6px;
+    padding: 4px 12px;
+    font-weight: bold;
+    min-height: 26px;
+}}
+QPushButton:hover {{
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 {t['bg3']},stop:1 {t['header_sep']});
+    border: 1px solid {t['highlight']};
+    color: {t['highlight']};
+}}
+QPushButton:focus {{ border: 1px solid {t['highlight']}; color: {t['highlight']}; outline: none; }}
+QPushButton:pressed {{ background: {t['bg']}; border: 1px solid {t['accent2']}; color: {t['accent2']}; }}
+QPushButton:disabled {{ color: {t['muted']}; border: 1px solid {t['bg3']}; background: {t['bg2']}; }}
+
+QCheckBox {{
+    color: {t['text']};
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 2px 4px;
+    font-weight: bold;
+    spacing: 6px;
+}}
+QCheckBox:hover {{ color: {t['highlight']}; border: 1px solid {t['highlight']}; }}
+QCheckBox:focus {{ border: 1px solid {t['highlight']}; outline: none; }}
+QCheckBox::indicator {{ width: 8px; height: 8px; border-radius: 4px; }}
+QCheckBox::indicator:checked {{ background-color: {t['green']}; border: 1px solid {t['green']}; image: none; }}
+QCheckBox::indicator:unchecked {{ background-color: {t['bg3']}; border: 1px solid {t['red']}; image: none; }}
+QCheckBox::indicator:indeterminate {{
+    background-color: {t['bg3']};
+    border: 1px solid {t['highlight']};
+    image: url("data:image/svg+xml;base64,{b64}");
+}}
+
+QLabel {{ color: {t['text']}; background: transparent; border: none; padding: 1px; }}
+
+QLineEdit {{
+    background: {t['bg3']}; color: {t['text']};
+    border: 1px solid {t['header_sep']}; border-radius: 5px;
+    padding: 4px 8px; selection-background-color: {t['accent']}; selection-color: {t['bg']};
+}}
+QLineEdit:focus {{ border: 1px solid {t['accent']}; color: {t['text']}; }}
+
+QTextEdit {{
+    background: {t['bg2']}; color: {t['text']};
+    border: 1px solid {t['header_sep']}; border-radius: 5px;
+    padding: 4px; selection-background-color: {t['accent']}; selection-color: {t['bg']};
+}}
+
+QListWidget {{
+    background: {t['bg2']}; color: {t['text']};
+    border: 1px solid {t['header_sep']}; border-radius: 5px; padding: 2px;
+}}
+QListWidget::item {{ padding: 4px 8px; border-radius: 3px; }}
+QListWidget::item:selected {{ background: {t['accent']}; color: {t['bg']}; font-weight: bold; }}
+QListWidget::item:hover {{ background: {t['bg3']}; color: {t['text']}; }}
+
+QScrollBar:vertical {{ background: {t['bg2']}; width: 10px; border-radius: 5px; margin: 0; }}
+QScrollBar::handle:vertical {{ background: {t['bg3']}; border-radius: 5px; min-height: 24px; }}
+QScrollBar::handle:vertical:hover {{ background: {t['accent']}; }}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; border: none; }}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}
+QScrollBar:horizontal {{ background: {t['bg2']}; height: 10px; border-radius: 5px; }}
+QScrollBar::handle:horizontal {{ background: {t['bg3']}; border-radius: 5px; min-width: 24px; }}
+QScrollBar::handle:horizontal:hover {{ background: {t['accent']}; }}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; border: none; }}
+
+QProgressBar {{
+    background: {pb_bg};
+    border: 1px solid {t['accent']};
+    border-radius: 6px;
+    text-align: center;
+    color: {pb_text};
+    font-size: 20px;
+    font-weight: bold;
+    min-height: 35px;
+}}
+QProgressBar::chunk {{
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {pb_chunk},stop:1 {pb_chunk2});
+    border-radius: 5px;
+}}
+
+QTabWidget::pane {{ border: 1px solid {t['header_sep']}; border-radius: 6px; background: {t['bg2']}; }}
+QTabBar::tab {{
+    background: {t['bg3']}; color: {t['text_dim']};
+    border: 1px solid {t['header_sep']}; border-bottom: none;
+    padding: 6px 14px; border-top-left-radius: 5px; border-top-right-radius: 5px;
+    margin-right: 2px; font-weight: bold;
+}}
+QTabBar::tab:selected {{ background: {t['bg2']}; color: {t['accent']}; border-bottom: 2px solid {t['accent']}; }}
+QTabBar::tab:hover:!selected {{ color: {t['text']}; background: {t['bg']}; }}
+
+QComboBox {{
+    background: {t['bg3']}; color: {t['text']};
+    border: 1px solid {t['header_sep']}; border-radius: 5px;
+    padding: 4px 8px; min-height: 24px;
+}}
+QComboBox:hover {{ border: 1px solid {t['highlight']}; color: {t['text']}; }}
+QComboBox:focus {{ border: 1px solid {t['accent']}; color: {t['text']}; }}
+QComboBox::drop-down {{ border: none; width: 20px; }}
+QComboBox::down-arrow {{
+    width: 8px; height: 8px; image: none;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 6px solid {t['accent']};
+}}
+QComboBox QAbstractItemView {{
+    background: {t['bg2']}; color: {t['text']};
+    border: 1px solid {t['header_sep']};
+    selection-background-color: {t['accent']}; selection-color: {t['bg']};
+    outline: none;
+}}
+
+QMenu {{
+    background: {t['bg2']}; color: {t['text']};
+    border: 1px solid {t['header_sep']}; border-radius: 5px; padding: 4px;
+}}
+QMenu::item {{ padding: 5px 20px; border-radius: 3px; }}
+QMenu::item:selected {{ background: {t['accent']}; color: {t['bg']}; }}
+
+QMessageBox {{ background: {t['bg2']}; }}
+
+QFrame[frameShape="4"], QFrame[frameShape="5"] {{
+    color: {t['header_sep']}; background: {t['header_sep']};
+}}
+"""
+
+
+def get_style() -> str:
+    ui_config = getattr(S, "ui", {})
+    font = ui_config.get("font_family", "") or ""
+    try:
+        size = int(ui_config.get("font_size", 14))
+    except (ValueError, TypeError):
+        size = 14
+
+    return _build_stylesheet(current_theme(), font, size)
+
+
+def apply_style() -> None:
+    global _current_theme_name
+    ui_config = getattr(S, "ui", {})
+    _current_theme_name = ui_config.get("theme", DEFAULT_THEME)
+
+    app = QApplication.instance()
+    if isinstance(app, QApplication):
+        app.setStyleSheet(get_style())
