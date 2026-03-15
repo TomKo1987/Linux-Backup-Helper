@@ -55,7 +55,19 @@ fi
 # ── Python dependencies ───────────────────────────────────────────────────────
 if [ -f requirements.txt ]; then
     echo "Installing Python dependencies..."
-    pip install -r requirements.txt
+    if command -v pip &> /dev/null; then
+        pip install -r requirements.txt
+    elif command -v pip3 &> /dev/null; then
+        pip3 install -r requirements.txt
+    elif command -v python3 &> /dev/null; then
+        python3 -m pip install -r requirements.txt
+    elif command -v python &> /dev/null; then
+        python -m pip install -r requirements.txt
+    else
+        echo "Error: No pip or Python installation found."
+        echo "Please install Python 3 and pip, then run: pip install -r requirements.txt"
+        exit 1
+    fi
 fi
 
 echo ""
