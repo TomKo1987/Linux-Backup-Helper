@@ -19,41 +19,6 @@ The idea behind this project is to automatically configure a newly installed Lin
 - Theming support with multiple built-in themes
 - Extensive error handling and user feedback
 
----
-
-## Screenshots
-
-**Main Window**  
-![Main Window](images/Main.png)
-
-**Backup Window**  
-![Backup Window](images/Backup%20Window.png)
-
-**Entry Manager**  
-![Entry Manager](images/Entry%20Manager.png)
-
-**Copy Worker**  
-![Copy Worker](images/Copy%20Worker.png)
-
-**Copied Files**  
-![Copied](images/Copied.png)
-
-**Skipped Files**  
-![Skipped](images/Skipped.png)
-
-**System Manager Launcher**  
-![System Manager Launcher](images/System%20Manager%20Launcher.png)
-
-**System Manager**  
-![System Manager](images/System%20Manager.png)
-
-**Basic Packages**  
-![Basic Packages](images/Basic%20Packages.png)
-
-**Themes**  
-![Themes](images/Themes.png)
-
----
 
 ## How Files are Copied and When They are Skipped
 
@@ -185,6 +150,41 @@ pyinstaller --onefile main.py
 - **Python:** 3.9+
 - **Python packages:** PyQt6, keyring, psutil, secretstorage
 - **System packages:** `inxi` (required), `smbclient` (optional — only needed for SMB/Samba share support)
+
+
+---
+
+## Screenshots
+
+**Main Window**  
+![Main Window](images/Main.png)
+
+**Backup Window**  
+![Backup Window](images/Backup%20Window.png)
+
+**Entry Manager**  
+![Entry Manager](images/Entry%20Manager.png)
+
+**Copy Worker**  
+![Copy Worker](images/Copy%20Worker.png)
+
+**Copied Files**  
+![Copied](images/Copied.png)
+
+**Skipped Files**  
+![Skipped](images/Skipped.png)
+
+**System Manager Launcher**  
+![System Manager Launcher](images/System%20Manager%20Launcher.png)
+
+**System Manager**  
+![System Manager](images/System%20Manager.png)
+
+**Basic Packages**  
+![Basic Packages](images/Basic%20Packages.png)
+
+**Themes**  
+![Themes](images/Themes.png)
 
 ---
 
