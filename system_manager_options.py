@@ -274,6 +274,7 @@ class SystemManagerOptions(QDialog):
         grid = QGridLayout(body)
 
         sa = QCheckBox("Check/Uncheck All")
+        sa.setTristate(True)
         sa.setStyleSheet(style_checkbox_select_all())
         grid.addWidget(sa, 0, 0)
 
@@ -311,10 +312,21 @@ class SystemManagerOptions(QDialog):
             _sync_sa()
 
         def _toggle_all(state=None):
-            checked = (int(state) == Qt.CheckState.Checked.value) if state is not None else False
+            checked = int(state) != Qt.CheckState.Unchecked.value if state is not None else False
+
             for _cb, _key in widgets:
-                if _cb.isEnabled():
-                    _cb.setChecked(checked)
+                _cb.blockSignals(True)
+
+            for _cb, _key in widgets:
+                if not checked:
+                    _cb.setChecked(False)
+                else:
+                    if _cb.isEnabled():
+                        _cb.setChecked(True)
+
+            for _cb, _key in widgets:
+                _cb.blockSignals(False)
+
             _handle_aur_dependency()
 
         sa.stateChanged.connect(_toggle_all)
