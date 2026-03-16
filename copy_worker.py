@@ -33,11 +33,11 @@ _SMB_UNREACHABLE = ("timeout", "NT_STATUS_HOST_UNREACHABLE", "NT_STATUS_IO_TIMEO
                     "Connection refused", "No route to host", "Network is unreachable", "Connection timed out", "Host is down")
 
 _SMB_LINE_RE = re.compile(
-    r"^(.+?)"                       
-    r"\s+([ADRHNSV]*)"                
-    r"\s*(?:\(.*?\)\s*)?"              
-    r"(\d+)"                         
-    r"\s+\w{3}\s+\w{3}\s+[\s\d]\d"    
+    r"^(.+?)"                      
+    r"\s+([ADRHNSV]*)"              
+    r"\s*(?:\(.*?\)\s*)?"          
+    r"(\d+)"                       
+    r"\s+\w{3}\s+\w{3}\s+[\s\d]\d"  
     r"\s+[\d:]+\s*\d*$"
 )
 
@@ -124,7 +124,10 @@ def _probe_smb(host, share, user, pw):
 
 def _smb_ls_index(host, share, base, user, pw, guest=False):
     base = base.replace("\\", "/").rstrip("/")
-    cmd  = f'recurse on\nprompt off\ncd "{_q(base)}"\nls\n'
+    if base:
+        cmd = f'recurse on\nprompt off\ncd "{_q(base)}"\nls\n'
+    else:
+        cmd = 'recurse on\nprompt off\nls\n'
     index = {}
     try:
         out = subprocess.check_output(_smb_argv(host, share, user, guest), input=cmd, text=True, stderr=subprocess.DEVNULL,
@@ -135,12 +138,16 @@ def _smb_ls_index(host, share, base, user, pw, guest=False):
             if not line:
                 continue
             if line.startswith("\\"):
-                cur_dir = line.replace("\\", "/").lstrip("/")
+                path = line.replace("\\", "/").strip("/")
+                if not base or path.startswith(base + "/") or path == base:
+                    cur_dir = path
+                else:
+                    cur_dir = f"{base}/{path}"
                 continue
             m = _SMB_LINE_RE.match(line)
             if not m:
                 continue
-            name, flags, size_s, _ = m.groups()
+            name, flags, size_s = m.groups()
             name = name.strip()
             if name in (".", "..") or "D" in flags or _SKIP_RE.search(name):
                 continue
@@ -353,7 +360,8 @@ def _resolve_smb_jobs_parallel(jobs, cancel, user, pw, guest=False, progress_cb=
         if progress_cb:
             progress_cb(counter[0])
 
-    _dispatch = {"smb_get": lambda t: do_get(*t[1:]), "smb_put_file": lambda t: do_put_file(*t[1:]), "smb_put_dir":  lambda t: do_put_dir(*t[1:])}
+    _dispatch = {"smb_get": lambda t: do_get(*t[1:]), "smb_put_file": lambda t: do_put_file(*t[1:]),
+                 "smb_put_dir":  lambda t: do_put_dir(*t[1:])}
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=_SMB_SCAN_WORKERS) as pool:
         futs = [pool.submit(_dispatch[task[0]], task)
@@ -456,16 +464,18 @@ def _copy_file(src, dst, cancel, lock, b_ok, b_sk, b_er):
                         sent = os.sendfile(f_dst.fileno(), f_src.fileno(), offset, min(remaining, _CHUNK))
                         if sent == 0:
                             break
-                        offset += sent
+                        offset    += sent
                         remaining -= sent
                         continue
                     except OSError:
                         use_sendfile = False
+                        f_src.seek(offset)
+                        f_dst.seek(offset)
                 chunk = f_src.read(min(remaining, _CHUNK))
                 if not chunk:
                     break
                 f_dst.write(chunk)
-                offset += len(chunk)
+                offset    += len(chunk)
                 remaining -= len(chunk)
             os.fchmod(f_dst.fileno(), st.st_mode)
         os.replace(tmp_dst, dst)
@@ -542,8 +552,9 @@ class CopyWorker(QThread):
             elif probe_result is not None:
                 smb_user, smb_pw, smb_guest = probe_result
                 if not c.is_set():
-                    smb_expanded, smb_exp_errors = _resolve_smb_jobs_parallel(smb_jobs, c, smb_user, smb_pw, smb_guest,
-                                                                              progress_cb=lambda n: self.scan_progress.emit("Scanning SMB", n))
+                    smb_expanded, smb_exp_errors = _resolve_smb_jobs_parallel(
+                        smb_jobs, c, smb_user, smb_pw, smb_guest,
+                        progress_cb=lambda n: self.scan_progress.emit("Scanning SMB", n))
                 for _s, _d, _t in smb_jobs:
                     smb_url = _s if is_smb(_s) else _d
                     h, sh, _ = _parse_smb(smb_url)
@@ -601,19 +612,18 @@ class CopyWorker(QThread):
                 scan_pre_by_title.setdefault(t, [0, 0, 0])[1] += 1
 
         scan_skipped = len(scan_skip)
-        scan_errors = len(scan_err)
+        scan_errors  = len(scan_err)
 
         if pairs and not c.is_set():
-            done_global, copied, skipped, errors = self._run_local(
-                pairs, done_global, total, copied,
-                skipped + scan_skipped, errors + scan_errors, c,
-                pre_counts=scan_pre_by_title)
+            done_global, copied, skipped, errors = self._run_local(pairs, done_global, total, copied,
+                                                                   skipped + scan_skipped, errors + scan_errors, c,
+                                                                   pre_counts=scan_pre_by_title)
         else:
             if scan_pre_by_title:
                 for t, ec in scan_pre_by_title.items():
                     self.entry_status.emit(t, ec[0], ec[1], ec[2])
             skipped += scan_skipped
-            errors += scan_errors
+            errors  += scan_errors
 
         if c.is_set():
             self.finished_work.emit(0, 0, 0, True)
@@ -675,12 +685,12 @@ class CopyWorker(QThread):
             if put_jobs:
                 ri = _get_or_build_ri(host, share, put_jobs, user, pw, guest, ri_cache, ri_lock)
                 for j in put_jobs:
-                    key = j.remote_path.replace("\\", "/").lstrip("/")
+                    key  = j.remote_path.replace("\\", "/").lstrip("/")
                     meta = ri.get(key)
                     skip = False
                     if meta:
                         try:
-                            st = os.stat(j.src_url)
+                            st   = os.stat(j.src_url)
                             skip = (st.st_size == meta[0])
                         except OSError:
                             pass
@@ -776,7 +786,8 @@ class CopyWorker(QThread):
         flush    = self._make_flush(b_ok, b_sk, b_er, lock, done_ref, total, ok_ref, sk_ref, er_ref)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=_COPY_WORKERS) as pool:
-            futures = {pool.submit(_copy_file, s, d, cancel, lock, b_ok, b_sk, b_er): (s, d, t) for s, d, t in pairs}
+            futures = {pool.submit(_copy_file, s, d, cancel, lock, b_ok, b_sk, b_er): (s, d, t)
+                       for s, d, t in pairs}
             try:
                 for fut in concurrent.futures.as_completed(futures):
                     if cancel.is_set():
@@ -1167,8 +1178,8 @@ class _SummaryWidget(QWidget):
     @staticmethod
     def _html_title(title: str) -> str:
         return (title.replace("&", "&amp;").replace("<br>", "\x00").replace("<BR>", "\x00")
-        .replace("<", "&lt;").replace(">", "&gt;").replace("\r\n", "<br>").replace("\r", "<br>")
-        .replace("\n", "<br>").replace("\x00", "<br>"))
+        .replace("<", "&lt;").replace(">", "&gt;").replace("\r\n", "<br>").replace("\x00", "<br>")
+        .replace("\r", "<br>").replace("\n", "<br>"))
 
     @staticmethod
     def _count_html_lines(html: str) -> int:
