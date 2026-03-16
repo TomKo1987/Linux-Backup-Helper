@@ -245,90 +245,59 @@ _session_detected: bool = False
 
 def generate_tooltip() -> tuple[dict, dict, dict]:
     global _cached_session, _session_detected
-
     from themes import current_theme
     from linux_distro_helper import LinuxDistroHelper
 
     with _session_lock:
         if not _session_detected:
-            try:
-                _cached_session = LinuxDistroHelper().detect_session() or ""
-            except Exception as e:
-                logger.warning("Error in LinuxDistroHelper detect_session: %s", e)
-                _cached_session = ""
+            try: _cached_session = LinuxDistroHelper().detect_session() or ""
+            except Exception as e: logger.warning("Session detect failed: %s", e)
             _session_detected = True
         session = _cached_session or None
 
     t = current_theme()
-
-    _bg_title = t["bg"]
-    _bg_row0  = t["bg2"]
-    _bg_row1  = t["bg3"]
-    _c_title  = t["accent2"]
-    _c_data   = t["success"]
-    _c_border = t["header_sep"]
+    _bg, _bg2, _bg3, _c_t, _c_d, _c_b = t["bg"], t["bg2"], t["bg3"], t["accent2"], t["success"], t["header_sep"]
 
     def _entry_html(_title: str, src_lines: list, dst_lines: list) -> str:
-        src_html = "<br/>".join(_safe_path_for_html(str(p)) for p in src_lines)
-        dst_html = "<br/>".join(_safe_path_for_html(str(p)) for p in dst_lines)
-        safe_title = _html_mod.escape(_title)
-        return ("<table style='border-collapse:collapse;width:100%;font-family:monospace;'>"
-                f"<tr style='background-color:{_bg_title};'>"
-                f"<td colspan='2' style='font-size:16px;color:{_c_title};"
-                f"text-align:center;padding:5px;white-space:nowrap;'>{safe_title}</td></tr>"
-                f"<tr style='background-color:{_bg_row0};'>"
-                f"<td colspan='2' style='font-size:14px;color:{_c_data};"
-                f"text-align:left;padding:6px;white-space:nowrap;'>"
-                f"Source:<br>{src_html}</td></tr>"
-                f"<tr style='background-color:{_bg_row1};'>"
-                f"<td colspan='2' style='font-size:14px;color:{_c_data};"
-                f"text-align:left;padding:6px;white-space:nowrap;'>"
-                f"Destination:<br>{dst_html}</td></tr>"
-                "</table>")
+        s_html, d_html = ["<br/>".join(_safe_path_for_html(str(p)) for p in lines) for lines in (src_lines, dst_lines)]
+        safe_title = _html_mod.escape(_title).replace("&lt;br&gt;", "<br/>")
+        return (f"<table style='border-collapse:collapse;width:100%;font-family:monospace;'>"
+                f"<tr style='background-color:{_bg};'><td style='font-size:16px;color:{_c_t};text-align:center;padding:5px;'>{safe_title}</td></tr>"
+                f"<tr style='background-color:{_bg2};'><td style='font-size:14px;color:{_c_d};padding:6px;'>Source:<br>{s_html}</td></tr>"
+                f"<tr style='background-color:{_bg3};'><td style='font-size:14px;color:{_c_d};padding:6px;'>Destination:<br>{d_html}</td></tr></table>")
 
-    def _sm_table(item_strings: list, col_width: int) -> str:
+    def _sm_table(items: list, cols: int) -> str:
         rows = []
-        for idx in range(0, len(item_strings), col_width):
-            bg    = _bg_row0 if (idx // col_width) % 2 == 0 else _bg_row1
-            cells = "".join(f"<td style='padding:5px;border:1px solid {_c_border};"
-                            f"color:{_c_data};font-family:monospace;'>"
-                            f"{_html_mod.escape(str(c))}</td>"
-                            for c in item_strings[idx:idx + col_width])
-            rows.append(f"<tr style='background-color:{bg};'>{cells}</tr>")
+        for i in range(0, len(items), cols):
+            bg_ = _bg2 if (i // cols) % 2 == 0 else _bg3
+            cells = "".join(f"<td style='padding:5px;border:1px solid {_c_b};color:{_c_d};white-space:nowrap;'>{c}</td>" for c in items[i:i+cols])
+            rows.append(f"<tr style='background-color:{bg_};'>{cells}</tr>")
+        return f"<table style='border-collapse:collapse;font-family:monospace;font-size:14px;'>{''.join(rows)}</table>"
 
-        return (f"<div style='white-space:nowrap;font-size:14px;color:{_c_data};"
-                f"font-family:monospace;background-color:{_bg_title};"
-                f"padding:5px;border:1px solid {_c_border};'>"
-                f"<table style='border-collapse:collapse;table-layout:auto;'>"
-                f"{''.join(rows)}</table></div>")
-
-    backup_tips:  dict = {}
-    restore_tips: dict = {}
-    for entry in S.entries:
-        title = entry["title"]
-        src   = entry.get("source", [])
-        dst   = entry.get("destination", [])
-        backup_tips[title]  = _entry_html(title, src, dst)
-        restore_tips[title] = _entry_html(title, dst, src)
-
+    backup_tips  = {e["title"]: _entry_html(e["title"], e.get("source", []), e.get("destination", [])) for e in S.entries}
+    restore_tips = {e["title"]: _entry_html(e["title"], e.get("destination", []), e.get("source", [])) for e in S.entries}
     sm_tips: dict = {}
-    files = [f for f in (S.system_files or []) if isinstance(f, dict) and not f.get("disabled")]
-    if files:
-        sm_tips["copy_system_files"] = _sm_table(
-            [f"Src: {apply_replacements(f.get('source', ''))}\nDst: {apply_replacements(f.get('destination', ''))}"
-             for f in files], col_width=2)
 
-    for op_key, pkg_list in (("install_basic_packages", S.basic_packages), ("install_aur_packages", S.aur_packages)):
-        active = [p["name"] for p in pkg_list if not p.get("disabled")]
-        if active:
-            sm_tips[op_key] = _sm_table(active, col_width=5)
+    sys_files = [f for f in (S.system_files or []) if isinstance(f, dict) and not f.get("disabled")]
+    if sys_files:
+        f_rows = [f"<tr style='background-color:{_bg2 if i%2==0 else _bg3};'><td style='padding:5px;color:{_c_d};border-bottom:1px solid {_c_b};'>"
+                  f"<b>{Path(f.get('source','')).name}</b><br><span style='font-size:12px;'>"
+                  f"{apply_replacements(f.get('source',''))}<br>⤵<br>{apply_replacements(f.get('destination',''))}</span></td></tr>"
+                  for i, f in enumerate(sys_files)]
+        sm_tips["copy_system_files"] = f"<table style='border-collapse:collapse;width:100%;font-family:monospace;'>{''.join(f_rows)}</table>"
 
-    sp_active = [f"{p.get('package', '')} ({p.get('session', '?')})" for p in S.specific_packages
-                 if isinstance(p, dict) and not p.get("disabled") and (not session or p.get("session") == session)]
-    if sp_active:
-        sm_tips["install_specific_packages"] = _sm_table(sp_active, col_width=5)
+    for key, pkgs in [("install_basic_packages", S.basic_packages), ("install_aur_packages", S.aur_packages)]:
+        active_list = [_html_mod.escape(p["name"]) for p in pkgs if not p.get("disabled")]
+        if active_list:
+            sm_tips[key] = _sm_table(active_list, 5)
+
+    sp_list = [f"{_html_mod.escape(p.get('package',''))}<br/>({_html_mod.escape(p.get('session','?'))})"
+               for p in S.specific_packages
+               if not p.get("disabled") and (not session or p.get("session") == session)]
+    if sp_list:
+        sm_tips["install_specific_packages"] = _sm_table(sp_list, 5)
 
     if S.user_shell:
-        sm_tips["set_user_shell"] = _sm_table([f"Shell: {S.user_shell}"], col_width=1)
+        sm_tips["set_user_shell"] = _sm_table([f"Shell: {_html_mod.escape(S.user_shell)}"], 1)
 
     return backup_tips, restore_tips, sm_tips

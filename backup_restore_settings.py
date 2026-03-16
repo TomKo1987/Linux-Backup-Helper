@@ -272,7 +272,7 @@ class _BaseCheckboxWindow(QDialog):
         k = event.key()
         if k in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
             focused = self.focusWidget()
-            if isinstance(focused, QCheckBox):
+            if isinstance(focused, (QCheckBox, QPushButton)):
                 focused.toggle()
                 if focused == self._selectall:
                     self._toggle_all()
@@ -295,7 +295,7 @@ class _CopyWindowProtocol(Protocol):
 class _CopyMixin:
     _op_label: str = ""
 
-    def _start_copy(self: "_BaseCheckboxWindow") -> None:  # type: ignore[misc]
+    def _start_copy(self: "_BaseCheckboxWindow") -> None:
         from copy_worker import CopyDialog
         from drive_utils import check_drives_to_mount, mount_required_drives, unmount_drive
 
