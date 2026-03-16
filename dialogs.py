@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
-import os, shutil, subprocess, threading, re, tarfile, json
+import os, shutil, subprocess, threading, tarfile, json
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QTextCursor
@@ -50,23 +50,6 @@ def _btn_row(buttons: list[tuple[str, object]]) -> QHBoxLayout:
     return row
 
 
-def _browse_path(parent: QWidget, target: QTextEdit, mode: str = "file") -> None:
-    if mode == "dir":
-        path = QFileDialog.getExistingDirectory(parent, "Select directory", str(_HOME))
-    else:
-        path, _ = QFileDialog.getOpenFileName(parent, "Select file", str(_HOME))
-    if not path:
-        return
-    lines = [l.strip() for l in target.toPlainText().splitlines() if l.strip()]
-    if path not in lines:
-        lines.append(path)
-    fill = getattr(target, "_fill_lines", None)
-    if fill is not None:
-        fill(lines)
-    else:
-        target.setPlainText("\n".join(lines))
-
-
 class _ListDialog(QDialog):
 
     def __init__(self, parent, title: str, size: tuple[int, int], hdr_text: str, btn_specs: list[tuple[str, str]], close_label: str = "✕  Close"):
@@ -104,24 +87,14 @@ class EntryDialog(QDialog):
 
     def __init__(self, parent, entry: Optional[dict], *, stacked: bool = False, _pairs: Optional[list[list[str]]] = None):
         super().__init__(parent)
-        self.result:          dict            = {}
-        self.pairs:          list[list[str]] = list(_pairs) if _pairs else []
-        self.stacked:        bool            = stacked
-        self._suppress_sync:  bool            = False
-        self._entry_snapshot: dict            = entry or {}
+        self.result:           dict            = {}
+        self.pairs:            list[list[str]] = list(_pairs) if _pairs else []
+        self.stacked:          bool            = stacked
+        self._suppress_sync:   bool            = False
+        self._entry_snapshot:  dict            = entry or {}
+        self._show_full_paths: bool            = False
         self.setWindowTitle("Edit Entry" if entry else "New Entry")
         self._build(self._entry_snapshot)
-
-    @staticmethod
-    def _parse_text_input(raw) -> list[str]:
-        if isinstance(raw, str):
-            result = []
-            for line in raw.splitlines():
-                line = re.sub(r"^\d+:\s*", "", line.strip())
-                if line:
-                    result.append(line)
-            return result
-        return _norm_paths(raw)
 
     def _compute_size(self) -> tuple[int, int]:
         from PyQt6.QtGui import QFontMetrics, QFont
@@ -129,23 +102,23 @@ class EntryDialog(QDialog):
 
         mono = QFont("monospace")
         mono.setPointSize(15)
-        fm   = QFontMetrics(mono)
+        fm = QFontMetrics(mono)
 
         all_paths = [p for pair in self.pairs for p in pair]
-        if not all_paths:
-            max_px = 400
-        else:
-            max_px = max(fm.horizontalAdvance(p) for p in all_paths)
+        max_px = max((fm.horizontalAdvance(p) for p in all_paths), default=400)
 
-        screen  = QApplication.primaryScreen().availableGeometry()
+        _scr = QApplication.primaryScreen()
+        screen = _scr.availableGeometry() if _scr else None
+        if screen is None:
+            return 1200, 800
         padding = 80
 
         if self.stacked:
-            w = max(1110,  min(max_px + 120,      screen.width()  - padding)) + 20
-            h = max(900,  min(screen.height() - padding, 1100)) + 10
+            w = max(1110, min(max_px + 120,     screen.width()  - padding)) + 20
+            h = max(900,  min(screen.height()   - padding, 1100)) + 10
         else:
-            w = max(1200, min(max_px * 2 + 150,  screen.width()  - padding))
-            h = max(800,  min(screen.height() - padding, 950)) + 10
+            w = max(1200, min(max_px * 2 + 150, screen.width()  - padding))
+            h = max(800,  min(screen.height()   - padding, 950))  + 10
 
         return w, h
 
@@ -217,11 +190,41 @@ class EntryDialog(QDialog):
             lw.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
             lw.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
 
+        _hint_html = (
+            f"<div style='color:{t['muted']};font-family:monospace;font-size:14px;line-height:180%;text-align:center;'>"
+            f"Click <b style='color:{t['accent']};'>'➕ Add Pair'</b> to add source and destination pairs."
+            f"<table cellspacing='0' cellpadding='4' align='center' style='text-align:left;'>"
+            f"<tr><td style='white-space:nowrap;padding-right:20px;vertical-align:top;'>Local file:</td>"
+            f"    <td>~/Documents/notes.txt<br><span style='color:{t['muted']};'> or /home/user/Documents/notes.txt</span></td></tr>"
+            f"<tr><td style='white-space:nowrap;padding-right:20px;vertical-align:top;'>Local folder:</td>"
+            f"    <td>~/.config/app/<br><span style='color:{t['muted']};'>or /home/user/.config/app/</span></td></tr>"
+            f"<tr><td colspan='2' style='font-size:12px;padding-top:4px;padding-bottom:8px;'>"
+            f"(Replace 'user' with your actual username if using full paths)<br></td></tr>"
+            f"<tr><td style='white-space:nowrap;padding-right:20px;vertical-align:top;'>Samba Shares:</td>"
+            f"    <td>smb://192.168.0.53/share/data/</td></tr>"
+            f"</table><br><br>"
+            f"</div>"
+        )
+
+        self._src_hint = QLabel(self._src_list)
+        self._src_hint.setText(_hint_html)
+        self._src_hint.setTextFormat(Qt.TextFormat.RichText)
+        self._src_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._src_hint.setStyleSheet("background: transparent;")
+        self._src_hint.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._src_hint.setWordWrap(True)
+
+        orig_resize = self._src_list.resizeEvent
+
+        def _src_resize(ev, _lw=self._src_list, _hl=self._src_hint):
+            orig_resize(ev)
+            _hl.setGeometry(_lw.rect())
+        self._src_list.resizeEvent = _src_resize
+
         self._populate_lists()
 
         self._src_list.currentRowChanged.connect(lambda r: self._on_selection(self._src_list, self._dst_list, r))
         self._dst_list.currentRowChanged.connect(lambda r: self._on_selection(self._dst_list, self._src_list, r))
-
         self._src_list.itemDoubleClicked.connect(lambda item: self._edit_pair(self._src_list.row(item)))
         self._dst_list.itemDoubleClicked.connect(lambda item: self._edit_pair(self._dst_list.row(item)))
 
@@ -259,19 +262,25 @@ class EntryDialog(QDialog):
             b.clicked.connect(fn)
             return b
 
-        tb.addWidget(_mk_btn("➕  Add Pair",  "Add a new source/destination pair",     self._add_pair))
-        tb.addWidget(_mk_btn("✏️  Edit",       "Edit selected pair (or double-click)", self._edit_selected))
-        tb.addWidget(_mk_btn("🗑  Remove",     "Remove selected pair",                  self._remove_selected))
-        tb.addWidget(_mk_btn("▲  Move Up",    "Move selected pair up",                  self._move_up))
-        tb.addWidget(_mk_btn("▼  Move Down",  "Move selected pair down",                self._move_down))
-        tb.addStretch()
+        tb.addWidget(_mk_btn("➕ Add Pair",  "Add a new source/destination pair",     self._add_pair))
+        tb.addWidget(_mk_btn("✏️ Edit",       "Edit selected pair (or double-click)", self._edit_selected))
+        tb.addWidget(_mk_btn("🗑 Remove",     "Remove selected pair",                  self._remove_selected))
+        tb.addWidget(_mk_btn("▲ Move Up",    "Move selected pair up",                  self._move_up))
+        tb.addWidget(_mk_btn("▼ Move Down",  "Move selected pair down",                self._move_down))
+        tb.addStretch(1)
+
+        self._expand_paths_cb = QCheckBox("Expand paths")
+        self._expand_paths_cb.setChecked(self._show_full_paths)
+        self._expand_paths_cb.toggled.connect(self._on_full_paths_toggled)
+        tb.addWidget(self._expand_paths_cb)
+
         root.addLayout(tb)
 
         root.addWidget(_sep())
         flags = QHBoxLayout()
         self.no_backup  = QCheckBox("Exclude from backup")
         self.no_restore = QCheckBox("Exclude from restore")
-        self.no_backup.setChecked(e.get("details", {}).get("no_backup", False))
+        self.no_backup.setChecked(e.get("details", {}).get("no_backup",  False))
         self.no_restore.setChecked(e.get("details", {}).get("no_restore", False))
         flags.addWidget(self.no_backup)
         flags.addSpacing(16)
@@ -286,8 +295,18 @@ class EntryDialog(QDialog):
         self._src_list.clear()
         self._dst_list.clear()
         for src, dst in self.pairs:
-            self._src_list.addItem(src)
-            self._dst_list.addItem(dst)
+            if self._show_full_paths:
+                self._src_list.addItem(os.path.expanduser(src))
+                self._dst_list.addItem(os.path.expanduser(dst))
+            else:
+                self._src_list.addItem(apply_replacements(os.path.expanduser(src)))
+                self._dst_list.addItem(apply_replacements(os.path.expanduser(dst)))
+        self._src_hint.setVisible(self._src_list.count() == 0)
+        self._src_hint.setGeometry(self._src_list.rect())
+
+    def _on_full_paths_toggled(self, checked: bool) -> None:
+        self._show_full_paths = checked
+        self._populate_lists()
 
     @staticmethod
     def _set_row_colours(lw: QListWidget, row: int, bg: QColor, fg: QColor) -> None:
@@ -320,14 +339,19 @@ class EntryDialog(QDialog):
         from PyQt6.QtGui import QFont, QFontMetrics
         from PyQt6.QtWidgets import QApplication, QPlainTextEdit, QSizePolicy
 
-        screen = QApplication.primaryScreen().availableGeometry()
-        dlg_w = max(700, min(screen.width() - 80, 1200))
-        dlg_max_h = screen.height() - 80
+        _scr = QApplication.primaryScreen()
+        screen = _scr.availableGeometry() if _scr else None
+        if screen is None:
+            dlg_w, dlg_max_h = 900, 800
+        else:
+            dlg_w     = max(700, min(screen.width() - 80, 1200))
+            dlg_max_h = screen.height() - 80
 
         dlg = QDialog(self)
         dlg.setWindowTitle(title)
         dlg.setMinimumWidth(dlg_w)
-        dlg.setMaximumSize(screen.width() - 40, dlg_max_h)
+        if screen:
+            dlg.setMaximumSize(screen.width() - 40, dlg_max_h)
 
         vl = QVBoxLayout(dlg)
         vl.setSpacing(10)
@@ -335,31 +359,27 @@ class EntryDialog(QDialog):
 
         mono = QFont("monospace")
         mono.setPointSize(13)
-        fm = QFontMetrics(mono)
+        fm     = QFontMetrics(mono)
         line_h = fm.height() + 6
 
-        def _make_editor(prefill: str) -> QPlainTextEdit:
+        def _make_editor(prefill: str, placeholder: str) -> QPlainTextEdit:
             editor = QPlainTextEdit(prefill)
             editor.setFont(mono)
             editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
             editor.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             editor.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
             editor.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-            editor.setPlaceholderText("Enter path or use Browse buttons →")
+            editor.setPlaceholderText(placeholder)
             t = current_theme()
-            editor.setStyleSheet(f"QPlainTextEdit {{"
-                                 f"background: {t['bg2']};"
-                                 f"color: {t['text']};"
-                                 f"border: 1px solid {t['header_sep']};"
-                                 f"border-radius: 4px;"
-                                 f"padding: 6px}}"
-                                 f"QPlainTextEdit:focus {{"
-                                 f"border: 1px solid {t['accent']};}}")
+            editor.setStyleSheet(f"QPlainTextEdit {{" f"background:{t['bg2']};color:{t['text']};" 
+                                 f"border:1px solid {t['header_sep']};border-radius:4px;padding:6px}}"
+                                 f"QPlainTextEdit:focus {{border:1px solid {t['accent']};}}")
+            placeholder_lines = placeholder.count("\n") + 1
 
             def _adjust_height():
                 doc_h = int(editor.document().size().height())
-                lines = max(1, doc_h)
-                new_h = min(lines * line_h + 12, dlg_max_h // 3)
+                effective = max(doc_h, placeholder_lines if not editor.toPlainText() else 1)
+                new_h = min(effective * line_h + 12, dlg_max_h // 3)
                 new_h = max(new_h, line_h + 12)
                 editor.setFixedHeight(new_h)
                 dlg.adjustSize()
@@ -368,9 +388,9 @@ class EntryDialog(QDialog):
             _adjust_height()
             return editor
 
-        def _path_row(label: str, prefill: str) -> QPlainTextEdit:
+        def _path_row(label: str, prefill: str, placeholder: str) -> QPlainTextEdit:
             vl.addWidget(QLabel(label))
-            editor = _make_editor(prefill)
+            editor = _make_editor(prefill, placeholder)
             vl.addWidget(editor)
             btn_row = QHBoxLayout()
             btn_row.setContentsMargins(0, 0, 0, 0)
@@ -394,8 +414,8 @@ class EntryDialog(QDialog):
                 cursor.movePosition(cursor.MoveOperation.End)
                 editor.setTextCursor(cursor)
 
-        src_ed = _path_row("Source path:", src)
-        dst_ed = _path_row("Destination path:", dst)
+        src_ed = _path_row("Source path:",      src, "Enter path or use '📄 File' or '📁 Directory'")
+        dst_ed = _path_row("Destination path:", dst, "Enter path or use '📄 File' or '📁 Directory'")
 
         vl.addWidget(_sep())
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
@@ -466,16 +486,13 @@ class EntryDialog(QDialog):
         self._src_list.setCurrentRow(row + 1)
 
     def _toggle_layout(self) -> None:
-        self._entry_snapshot = {
-            **self._entry_snapshot,
-            "header": self.hdr.currentText().strip(),
-            "title":  self.title_edit.text().strip(),
-            "details": {"no_backup":  self.no_backup.isChecked(), "no_restore": self.no_restore.isChecked()}}
+        self._entry_snapshot = {**self._entry_snapshot, "header": self.hdr.currentText().strip(), "title": self.title_edit.text().strip(),
+                                "details": {"no_backup": self.no_backup.isChecked(), "no_restore": self.no_restore.isChecked()}}
         self.stacked = not self.stacked
         self.done(2)
 
     def _accept(self) -> None:
-        hdr = self.hdr.currentText().strip()
+        hdr   = self.hdr.currentText().strip()
         title = self.title_edit.text().strip()
 
         if not hdr or not title:
@@ -585,6 +602,9 @@ class HeaderSettingsDialog(QDialog):
 
     def __init__(self, parent):
         super().__init__(parent)
+        import copy as _copy
+        self._headers_backup = _copy.deepcopy(S.headers)
+        self._entries_backup = _copy.deepcopy(S.entries)
         self.setWindowTitle("Header Settings")
         self.setMinimumSize(750, 500)
 
@@ -595,11 +615,16 @@ class HeaderSettingsDialog(QDialog):
         self.item_list = QListWidget()
         layout.addWidget(self.item_list, 1)
 
-        layout.addLayout(_btn_row([("🆕  New", self._new), ("🎨  Color", self._color), ("⏸  Toggle active", self._toggle),
-                                   ("✕  Delete", self._delete), ("↑  Up", self._move_up), ("↓  Down", self._move_down)]))
+        layout.addLayout(_btn_row([("🆕 New", self._new), ("🎨 Color", self._color), ("⏸ Toggle active", self._toggle),
+                                   ("✕ Delete", self._delete), ("↑ Up", self._move_up), ("↓ Down", self._move_down)]))
         layout.addWidget(_sep())
         layout.addWidget(_ok_cancel_buttons(self, self.accept, "Save && Close"))
         self._refresh()
+
+    def reject(self) -> None:
+        S.headers = self._headers_backup
+        S.entries = self._entries_backup
+        super().reject()
 
     def _refresh(self) -> None:
         t   = current_theme()
@@ -711,16 +736,13 @@ class MountsDialog(_ListDialog):
             idx = next((i for i, o in enumerate(S.mount_options) if o is opt), None)
             if idx is not None:
                 S.mount_options[idx] = dlg.result
-            else:
-                S.mount_options.append(dlg.result)
             save_profile()
             self._refresh()
 
     def _del(self) -> None:
         opt = self._selected_data()
         if opt:
-            name = opt.get("drive_name", "")
-            S.mount_options = [o for o in S.mount_options if o.get("drive_name") != name]
+            S.mount_options = [o for o in S.mount_options if o is not opt]
             save_profile()
             self._refresh()
 
@@ -750,21 +772,21 @@ class ProfilesDialog(QDialog):
         layout.addWidget(self.item_list, 1)
 
         row1 = QHBoxLayout()
-        for label, fn in [("▶  Load", self._load), ("🆕  New", self._new), ("⎘  Duplicate", self._copy), ("✕  Delete", self._del)]:
+        for label, fn in [("▶ Load", self._load), ("🆕 New", self._new), ("⎘ Duplicate", self._copy), ("✕ Delete", self._del)]:
             b = QPushButton(label)
             b.clicked.connect(fn)
             row1.addWidget(b)
         layout.addLayout(row1)
 
         row2 = QHBoxLayout()
-        for label, fn in [("⬆  Import", self._import), ("⬇  Export", self._export)]:
+        for label, fn in [("⬆ Import", self._import), ("⬇ Export", self._export)]:
             b = QPushButton(label)
             b.clicked.connect(fn)
             row2.addWidget(b)
         layout.addLayout(row2)
 
         layout.addWidget(_sep())
-        close_btn = QPushButton("✕  Close")
+        close_btn = QPushButton("✕ Close")
         close_btn.clicked.connect(self.accept)
         layout.addWidget(close_btn)
 
@@ -1077,11 +1099,7 @@ class LogViewer(QDialog):
         bl  = QHBoxLayout(bot)
         bl.setContentsMargins(12, 8, 12, 8)
         bl.setSpacing(8)
-        for label, fn in [
-            ("🔄  Refresh", self._load),
-            ("🗑  Clear",   self._clear),
-            ("✕  Close",   self.accept),
-        ]:
+        for label, fn in [("🔄 Refresh", self._load), ("🗑 Clear",   self._clear), ("✕ Close",   self.accept)]:
             b = QPushButton(label)
             b.setFixedHeight(36)
             b.clicked.connect(fn)
@@ -1152,12 +1170,12 @@ class SysInfoDialog(QDialog):
                                capture_output=True, text=True, timeout=15, env={**os.environ, "LANG": "C"}, check=False)
             self.done_sig.emit(r.stdout.strip() or r.stderr.strip() or "No output received from inxi.")
         except FileNotFoundError:
-            self.done_sig.emit(
-                "'inxi' is not installed.\n\n"
-                "Installation:\n"
-                "  Arch:   sudo pacman -S inxi\n"
-                "  Debian: sudo apt install inxi"
-            )
+            self.done_sig.emit("'inxi' is not installed.\n\n"
+                               "Installation:\n"
+                               "  Arch:     sudo pacman -S inxi\n"
+                               "  Debian:   sudo apt install inxi\n"
+                               "  Fedora:   sudo dnf install inxi\n"
+                               "  openSUSE: sudo zypper install inxi\n\n")
         except subprocess.TimeoutExpired:
             self.done_sig.emit("System information request timed out.")
         except Exception as exc:

@@ -4,7 +4,7 @@ import os, shlex, subprocess, re, time
 from state import logger, _USER
 
 _DRIVE_NAME_RE = re.compile(r"^[\w\- .()@:]+$")
-_DANGER_SEQS   = ("&&", "||", "$(", ";", "|", "`", ">", "<", "&", "\n", "\r", "\x00")
+_DANGER_SEQS   = ("&&", "||", "$(", ";", "|", "`", ">", "<", "\n", "\r", "\x00")
 _ALLOWED_CMDS  = frozenset({"mount", "umount", "udisksctl", "kdeconnect-cli", "sshfs", "fusermount3"})
 
 
@@ -28,8 +28,8 @@ def _validate_cmd(cmd: str) -> tuple[bool, str]:
 
     expanded = [os.path.expanduser(t) for t in tokens]
     for tok in expanded:
-        norm = os.path.normpath(tok)
-        if norm.startswith("/../") or norm == "/..":
+        tok_parts = tok.replace("\\", "/").split("/")
+        if ".." in tok_parts:
             return False, f"Path traversal detected in token: {tok!r}"
 
     return True, ""
@@ -74,8 +74,7 @@ def _execute_drive_op(drive: dict, key: str, timeout: int) -> tuple[bool, str]:
 def get_mount_output() -> str:
     try:
         return subprocess.check_output(["mount"], text=True, timeout=5)
-    except (subprocess.TimeoutExpired, subprocess.CalledProcessError,
-            FileNotFoundError, OSError) as e:
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError, OSError) as e:
         logger.warning("get_mount_output: %s", e)
         return ""
 

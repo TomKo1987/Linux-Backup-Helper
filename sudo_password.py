@@ -61,8 +61,7 @@ class SudoPasswordDialog(QDialog):
     def _on_authenticate(self) -> None:
         raw_password = self._pw_input.text()
         if not raw_password.strip():
-            QMessageBox.warning(self, "Empty Password",
-                                "Please enter your sudo password or click Close.")
+            QMessageBox.warning(self, "Empty Password", "Please enter your sudo password or click Close.")
             self._pw_input.setFocus()
             return
 

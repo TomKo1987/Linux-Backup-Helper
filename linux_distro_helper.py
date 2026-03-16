@@ -367,6 +367,18 @@ class LinuxDistroHelper:
     def get_clean_cache_cmd(self)               -> str: return self._clean
     def get_find_orphans_cmd(self)              -> str: return self._orphans
 
+    def get_batch_install_cmd(self, packages: list[str]) -> str:
+        if not packages:
+            return ""
+        fam = self.family()
+        if fam == "nixos":
+            attrs = " ".join(f"nixpkgs.{p}" for p in packages)
+            return f"nix-env -iA {attrs}"
+        if fam == "slackware":
+            names = " ".join(packages)
+            return f"sudo slackpkg install {names}"
+        return self._install.format(p=" ".join(packages))
+
     def parse_orphan_output(self, raw: str) -> list[str]:
         fam   = self.family()
         lines = raw.strip().splitlines()
@@ -417,7 +429,7 @@ class LinuxDistroHelper:
             kv  = os.uname().release
             fam = self.family()
             if fam == "arch":
-                for tag in ("lts", "zen", "hardened", "rt", "xanmod"):
+                for tag in ("lts", "zen", "hardened", "rt", "xanmod", "cachyos", "bore", "tkg"):
                     if tag in kv.lower():
                         return f"linux-{tag}-headers"
                 return "linux-headers"

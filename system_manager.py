@@ -69,7 +69,7 @@ def _wipe_tmpdir(tmp_path_str: str) -> None:
 
 _original_sigterm = signal.getsignal(signal.SIGTERM)
 
-def _sigterm_handler(signum, frame):  # noqa: ANN001
+def _sigterm_handler(signum, frame):
     logger.warning("SIGTERM received — running emergency cleanup")
     _emergency_cleanup()
     if callable(_original_sigterm):
@@ -336,8 +336,8 @@ class SystemManagerDialog(QDialog):
 
     def keyPressEvent(self, event) -> None:
         key = event.key()
-        if key == Qt.Key.Key_Escape and (self._done or self._auth_failed):
-            self.close()
+        if key == Qt.Key.Key_Escape and not self._done and not self._auth_failed:
+            event.ignore()
         elif key == Qt.Key.Key_Tab:
             self.focusNextChild()
         else:
@@ -452,7 +452,7 @@ class SystemManagerThread(QThread):
             self.outputReceived.emit(desc, "operation")
             try:
                 success = fn()
-                status  = _Status.SUCCESS if success is not False else _Status.ERROR
+                status  = _Status.SUCCESS if success is True else _Status.ERROR
             except Exception as exc:
                 self.outputReceived.emit(f"Task '{task_id}' failed: {exc}", "error")
                 status = _Status.ERROR
@@ -465,6 +465,7 @@ class SystemManagerThread(QThread):
 
         env = {**os.environ, "SUDO_ASKPASS": str(self.askpass)}
         try:
+            subprocess.run(["sudo", "-k"], capture_output=True, timeout=5)
             res = subprocess.run(["sudo", "-A", "-v"], capture_output=True, text=True, env=env, timeout=1)
             if res.returncode == 0:
                 self.outputReceived.emit("Sudo access verified.", "success")
@@ -526,6 +527,7 @@ class SystemManagerThread(QThread):
         if self.terminated:
             return None
         try:
+            cmd = list(cmd)
             env = {**os.environ, "SUDO_ASKPASS": str(self.askpass)}
             if cmd and cmd[0] == "sudo" and "-A" not in cmd:
                 cmd.insert(1, "-A")
@@ -584,6 +586,9 @@ class SystemManagerThread(QThread):
                 proc.kill()
                 rc = proc.wait()
 
+        t1.join(timeout=2)
+        t2.join(timeout=2)
+
         return types.SimpleNamespace(returncode=rc if rc is not None else 1)
 
     def _sudo_shell(self, cmd_str: str):
@@ -636,7 +641,7 @@ class SystemManagerThread(QThread):
                     continue
             cmd = ["sudo", "cp"] + (["-r"] if Path(src).is_dir() else []) + [src, dst]
             if self._ok(self._sudo(cmd)):
-                self.outputReceived.emit(f"Successfully copied:\n'{src}' ⇨ '{dst}'", "success")
+                self.outputReceived.emit(f"Successfully copied:\n'{src}' 󰧂 '{dst}'", "success")
             else:
                 self.outputReceived.emit(f"Error copying:\n{src}", "error")
                 ok = False
@@ -830,7 +835,7 @@ class SystemManagerThread(QThread):
             self.outputReceived.emit(f"Installing: {', '.join(batch)}", "info")
 
             cmd = (["yay", "-S", "--noconfirm", "--needed"] + batch if label == "AUR Package"
-                   else self.distro.get_pkg_install_cmd(" ".join(batch)).split())
+                   else shlex.split(self.distro.get_batch_install_cmd(batch)))
             if self._ok(self._sudo(cmd)):
                 for pkg in batch:
                     self._pkg_cache.mark_installed(pkg)
@@ -920,7 +925,7 @@ class SystemManagerThread(QThread):
                 and p.get("session") == session and "package" in p and not p.get("disabled", False)]
         to_install = self.distro.filter_not_installed(pkgs) if pkgs else []
         if not to_install:
-            self.outputReceived.emit(f"All specific packages for {session} already installed.", "success")
+            self.outputReceived.emit(f"All Specific Packages for {session} already installed.", "success")
             return True
 
         self._sudo(self.distro.get_pkg_install_cmd(" ".join(to_install)).split())
@@ -928,6 +933,7 @@ class SystemManagerThread(QThread):
         for pkg in to_install:
             if pkg not in failed and self._pkg_cache:
                 self._pkg_cache.mark_installed(pkg)
+                self.outputReceived.emit(f"Successfully installed all Specific Packages.", "success")
         if failed:
             self.outputReceived.emit(f"Failed to install: {', '.join(failed)}", "warning")
         return not failed
@@ -990,7 +996,7 @@ class SystemManagerThread(QThread):
             return True
         try:
             tokens = shlex.split(cmd)
-            needs_shell = "|" in tokens or "&&" in tokens
+            needs_shell = "|" in cmd or "&&" in cmd
             proc = subprocess.run(cmd if needs_shell else tokens, shell=needs_shell,
                                   capture_output=True, text=True, timeout=60)
             raw_pkgs = proc.stdout.strip()
@@ -1112,7 +1118,6 @@ class _PackageCache:
                 self._cache.clear()
                 self._ts = now
             elif len(self._cache) > self._MAX_SIZE:
-                # Drop the oldest half
                 self._cache = dict(list(self._cache.items())[len(self._cache) // 2:])
             if package in self._cache:
                 return self._cache[package]

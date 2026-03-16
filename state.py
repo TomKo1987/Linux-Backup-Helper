@@ -10,7 +10,7 @@ _CONFIG_DIR   = _HOME / ".config" / "Backup Helper"
 _PROFILES_DIR = _CONFIG_DIR / "profiles"
 _LOG_DIR      = _CONFIG_DIR / "logs"
 _LOG_FILE     = _LOG_DIR / "backup_helper.log"
-_PROFILE_RE   = re.compile(r"^[\w\-. ]+$")
+_PROFILE_RE   = re.compile(r"^[^\s._][\w\-. ]*$")
 
 _COLS_NARROW = 2
 _COLS_WIDE   = 4
@@ -154,9 +154,11 @@ def load_profile(path: Path) -> bool:
             src    = _norm_paths(e.get("source", []))
             dst    = _norm_paths(e.get("destination", []))
             if header and title and src and dst:
-                S.entries.append({"header": header, "title": title, "source": src, "destination": dst, "details": e.get("details", {})})
+                raw_details = e.get("details", {})
+                details = raw_details if isinstance(raw_details, dict) else {}
+                S.entries.append({"header": header, "title": title, "source": src, "destination": dst, "details": details})
 
-        S.mount_options      = data.get("mount_options", [])
+        S.mount_options      = [o for o in data.get("mount_options", []) if isinstance(o, dict)]
         S.system_manager_ops = data.get("system_manager_operations", [])
         S.system_files       = data.get("system_files", [])
         S.basic_packages     = _norm_pkgs(data.get("basic_packages", []))
@@ -182,7 +184,7 @@ def save_profile(path: Optional[Path] = None) -> bool:
     data = {
         "is_default": True,
         "mount_options": S.mount_options,
-        "header": {k: {"inactive": v["inactive"], "header_color": v["color"]} for k, v in S.headers.items()},
+        "header": {k: {"inactive": v.get("inactive", False), "header_color": v.get("color", "#ffffff")} for k, v in S.headers.items()},
         "system_manager_operations": S.system_manager_ops,
         "system_files":      S.system_files,
         "basic_packages":    S.basic_packages,
@@ -205,7 +207,7 @@ def save_profile(path: Optional[Path] = None) -> bool:
 def list_profiles() -> list[str]:
     if not _PROFILES_DIR.exists():
         return []
-    return sorted(p.stem for p in _PROFILES_DIR.glob("*.json"))
+    return sorted(p.stem for p in _PROFILES_DIR.glob("*.json") if _PROFILE_RE.match(p.stem))
 
 
 def startup_load() -> bool:
@@ -224,9 +226,12 @@ def startup_load() -> bool:
                     default_path = p
                 else:
                     data.pop("is_default")
-                    _atomic_write(p, data)
+                    try:
+                        _atomic_write(p, data)
+                    except OSError as exc:
+                        logger.error("startup_load: could not clear duplicate is_default in '%s': %s", p.stem, exc)
                     logger.warning("Cleared duplicate is_default flag in '%s'", p.stem)
-        except (FileNotFoundError, json.JSONDecodeError, PermissionError) as exc:
+        except Exception as exc:
             logger.error("startup_load: %s", exc)
 
     if default_path:
@@ -261,18 +266,18 @@ def generate_tooltip() -> tuple[dict, dict, dict]:
     def _entry_html(_title: str, src_lines: list, dst_lines: list) -> str:
         s_html, d_html = ["<br/>".join(_safe_path_for_html(str(p)) for p in lines) for lines in (src_lines, dst_lines)]
         safe_title = _html_mod.escape(_title).replace("&lt;br&gt;", "<br/>")
-        return (f"<table style='border-collapse:collapse;width:100%;font-family:monospace;'>"
+        return (f"<table style='border-collapse:collapse;width:100%;font-family:monospace;white-space:nowrap'>"
                 f"<tr style='background-color:{_bg};'><td style='font-size:16px;color:{_c_t};text-align:center;padding:5px;'>{safe_title}</td></tr>"
                 f"<tr style='background-color:{_bg2};'><td style='font-size:14px;color:{_c_d};padding:6px;'>Source:<br>{s_html}</td></tr>"
                 f"<tr style='background-color:{_bg3};'><td style='font-size:14px;color:{_c_d};padding:6px;'>Destination:<br>{d_html}</td></tr></table>")
 
-    def _sm_table(items: list, cols: int) -> str:
-        rows = []
-        for i in range(0, len(items), cols):
-            bg_ = _bg2 if (i // cols) % 2 == 0 else _bg3
-            cells = "".join(f"<td style='padding:5px;border:1px solid {_c_b};color:{_c_d};white-space:nowrap;'>{c}</td>" for c in items[i:i+cols])
-            rows.append(f"<tr style='background-color:{bg_};'>{cells}</tr>")
-        return f"<table style='border-collapse:collapse;font-family:monospace;font-size:14px;'>{''.join(rows)}</table>"
+    def _sm_table(items: list, _cols: int) -> str:
+        rows_ = []
+        for _i in range(0, len(items), _cols):
+            bg__ = _bg2 if (_i // _cols) % 2 == 0 else _bg3
+            _cells = "".join(f"<td style='padding:5px;border:1px solid {_c_b};color:{_c_d};white-space:nowrap;'>{c}</td>" for c in items[_i:_i + _cols])
+            rows_.append(f"<tr style='background-color:{bg__};'>{_cells}</tr>")
+        return f"<table style='border-collapse:collapse;font-family:monospace;font-size:14px;'>{''.join(rows_)}</table>"
 
     backup_tips  = {e["title"]: _entry_html(e["title"], e.get("source", []), e.get("destination", [])) for e in S.entries}
     restore_tips = {e["title"]: _entry_html(e["title"], e.get("destination", []), e.get("source", [])) for e in S.entries}
@@ -280,24 +285,79 @@ def generate_tooltip() -> tuple[dict, dict, dict]:
 
     sys_files = [f for f in (S.system_files or []) if isinstance(f, dict) and not f.get("disabled")]
     if sys_files:
-        f_rows = [f"<tr style='background-color:{_bg2 if i%2==0 else _bg3};'><td style='padding:5px;color:{_c_d};border-bottom:1px solid {_c_b};'>"
-                  f"<b>{Path(f.get('source','')).name}</b><br><span style='font-size:12px;'>"
-                  f"{apply_replacements(f.get('source',''))}<br>⤵<br>{apply_replacements(f.get('destination',''))}</span></td></tr>"
-                  for i, f in enumerate(sys_files)]
-        sm_tips["copy_system_files"] = f"<table style='border-collapse:collapse;width:100%;font-family:monospace;'>{''.join(f_rows)}</table>"
+        sf_cols = 2 if len(sys_files) > 8 else 1
+        header = (f"<tr><td colspan='{sf_cols}' style='padding:4px 5px 2px;font-size:14px;"
+                  f"font-weight:bold;color:{_c_t};border-bottom:1px solid {_c_b};'>"
+                  f"System Files ({len(sys_files)})</td></tr>")
+        cells = [(f"<td style='padding:4px 6px;border:1px solid {_c_b};white-space:nowrap;vertical-align:top;'>"
+                  f"<span style='color:{_c_t};font-weight:bold;'>{_html_mod.escape(Path(f.get('source', '')).name)}</span>"
+                  f"<br><span style='font-size:11px;color:{_c_d};'>{_html_mod.escape(apply_replacements(f.get('source', '')))}"
+                  f"<br>⤵<br>{_html_mod.escape(apply_replacements(f.get('destination', '')))}</span></td>")
+                 for f in sys_files]
+        rows = []
+        for i in range(0, len(cells), sf_cols):
+            bg_ = _bg2 if (i // sf_cols) % 2 == 0 else _bg3
+            row_cells = "".join(cells[i:i + sf_cols])
+            rows.append(f"<tr style='background-color:{bg_};'>{row_cells}</tr>")
+        sm_tips["copy_system_files"] = (f"<table style='border-collapse:collapse;font-family:monospace;font-size:12px;'>"
+                                        f"{header}{''.join(rows)}</table>")
 
-    for key, pkgs in [("install_basic_packages", S.basic_packages), ("install_aur_packages", S.aur_packages)]:
-        active_list = [_html_mod.escape(p["name"]) for p in pkgs if not p.get("disabled")]
+    for key, pkgs, label in [("install_basic_packages", S.basic_packages, "Basic Packages"),
+                             ("install_aur_packages", S.aur_packages, "AUR Packages")]:
+        active_list = [_html_mod.escape(p["name"]) for p in pkgs if not p.get("disabled") and "name" in p]
         if active_list:
-            sm_tips[key] = _sm_table(active_list, 5)
+            cols = 8 if len(active_list) > 25 else 5
+            header_row = (f"<tr><td colspan='{cols}' style='padding:4px 5px 2px;font-size:14px;"
+                          f"font-weight:bold;color:{_c_t};border-bottom:1px solid {_c_b};'>"
+                          f"{label} ({len(active_list)})</td></tr>")
+            sm_tips[key] = header_row + _sm_table(active_list, cols)
+            sm_tips[key] = (f"<table style='border-collapse:collapse;font-family:monospace;font-size:12px;'>"
+                            f"{header_row}" + "".join(f"<tr style='background-color:{_bg2 if (i // cols) % 2 == 0 else _bg3};'>"
+            + "".join(f"<td style='padding:5px;border:1px solid {_c_b};color:{_c_d};white-space:nowrap;'>{active_list[j]}</td>"
+                      for j in range(i, min(i + cols, len(active_list)))) + "</tr>" for i in range(0, len(active_list), cols)) + "</table>")
 
-    sp_list = [f"{_html_mod.escape(p.get('package',''))}<br/>({_html_mod.escape(p.get('session','?'))})"
-               for p in S.specific_packages
-               if not p.get("disabled") and (not session or p.get("session") == session)]
-    if sp_list:
-        sm_tips["install_specific_packages"] = _sm_table(sp_list, 5)
+    sp_active = [p for p in S.specific_packages if not p.get("disabled") and (not session or p.get("session") == session)]
+    if sp_active:
+        from collections import defaultdict
+        sp_groups: dict = defaultdict(list)
+        for p in sp_active:
+            sp_groups[p.get("session", "?")].append(_html_mod.escape(p.get("package", "")))
+        cols = 5
+        rows = []
+        show_sess_header = len(sp_groups) > 1
+        for i, sess in enumerate(sorted(sp_groups)):
+            hdr_bg = _bg2 if i % 2 == 0 else _bg3
+            if show_sess_header:
+                rows.append(f"<tr style='background-color:{hdr_bg};'>"
+                            f"<td colspan='{cols}' style='padding:3px 5px;font-size:12px;"
+                            f"font-weight:bold;color:{_c_t};border-bottom:1px solid {_c_b};'>"
+                            f"{_html_mod.escape(sess)}</td></tr>")
+            pkgs_in_sess = sorted(sp_groups[sess])
+            for j in range(0, len(pkgs_in_sess), cols):
+                bg_ = _bg2 if (j // cols) % 2 == 0 else _bg3
+                cells = "".join(f"<td style='padding:5px;border:1px solid {_c_b};color:{_c_d};white-space:nowrap;'>{pkgs_in_sess[k]}</td>"
+                                for k in range(j, min(j + cols, len(pkgs_in_sess))))
+                rows.append(f"<tr style='background-color:{bg_};'>{cells}</tr>")
+        detected = _html_mod.escape(session or "current session")
+
+        outer_header = (f"<tr><td colspan='{cols}' style='padding:4px 5px 2px;font-size:14px;"
+                        f"font-weight:bold;color:{_c_t};border-bottom:1px solid {_c_b};'>"
+                        f"Specific Packages for {detected} ({len(sp_active)})</td></tr>")
+
+        sm_tips["install_specific_packages"] = (f"<table style='border-collapse:collapse;font-family:monospace;font-size:14px;'>"
+                                                f"{outer_header}{''.join(rows)}</table>")
 
     if S.user_shell:
-        sm_tips["set_user_shell"] = _sm_table([f"Shell: {_html_mod.escape(S.user_shell)}"], 1)
+        header = (f"<tr><td style='padding:4px 5px 2px;font-size:14px;"
+                  f"font-weight:bold;color:{_c_t};border-bottom:1px solid {_c_b};'>"
+                  f"Selected Shell</td></tr>")
+
+        shell_display = _html_mod.escape(S.user_shell)
+
+        cell_content = (f"<td style='padding:8px 6px;border:1px solid {_c_b};white-space:nowrap;'>"
+                        f"<span style='font-size:13px;color:{_c_d};'>{shell_display}</span></td>")
+
+        sm_tips["set_user_shell"] = (f"<table style='border-collapse:collapse;font-family:monospace;'>"
+                                     f"{header}<tr style='background-color:{_bg2};'>{cell_content}</tr></table>")
 
     return backup_tips, restore_tips, sm_tips

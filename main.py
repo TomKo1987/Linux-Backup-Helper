@@ -118,10 +118,10 @@ class MainWindow(QMainWindow):
         info_only = [o for o in mounted_drives if not o.get("unmount_command")]
 
         if unmountable:
-            lines = [f"  • {o['drive_name']}" for o in unmountable]
+            lines = [f"  • {o.get('drive_name', '?')}" for o in unmountable]
             if info_only:
                 lines += ["", "These drives have no unmount command and will be left mounted:"]
-                lines += [f"  • {o['drive_name']}" for o in info_only]
+                lines += [f"  • {o.get('drive_name', '?')}" for o in info_only]
             ans = QMessageBox.question(self, "Quit — Drives Still Mounted",
                                        "The following drives are still mounted:\n" + "\n".join(lines) +
                                        "\n\nUnmount them before quitting?", QMessageBox.StandardButton.Yes
@@ -135,7 +135,7 @@ class MainWindow(QMainWindow):
 
         else:
             msg = ("The following drives are still mounted but have no unmount command:\n" +
-                   "\n".join(f"  • {o['drive_name']}" for o in info_only) + "\n\nQuit anyway?" if info_only else "Really quit Backup Helper?")
+                   "\n".join(f"  • {o.get('drive_name', '?')}" for o in info_only) + "\n\nQuit anyway?" if info_only else "Really quit Backup Helper?")
             if QMessageBox.question(self, "Quit", msg, QMessageBox.StandardButton.Yes
                                                        | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
                 return
@@ -201,6 +201,8 @@ def _first_run_wizard(parent) -> bool:
 
 
 def main() -> None:
+    import system_manager as _sm  # noqa: F401
+
     app = QApplication(sys.argv)
     app.setApplicationName("Backup Helper")
 
@@ -212,7 +214,8 @@ def main() -> None:
         logger.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_tb))
 
         try:
-            QMessageBox.critical(None, "Critical Error", f"An unexpected error occurred:\n\n{exc_value}\n\nCheck the logs for details.")
+            QMessageBox.critical(None, "Critical Error",
+                                 f"An unexpected error occurred:\n\n{exc_value}\n\nCheck the logs for details.")
         except Exception as dialog_exc:
             logger.error("Failed to show error dialog: %s", dialog_exc)
             print(f"FATAL ERROR: {exc_value}", file=sys.stderr)

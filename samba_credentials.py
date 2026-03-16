@@ -74,7 +74,7 @@ class SambaPasswordDialog(QDialog):
 
         layout.addStretch()
 
-        for label_text, attr, placeholder, echo, prefill in (("Username:", "_username_field", "", QLineEdit.EchoMode.Normal, username),
+        for label_text, attr, _, echo, prefill in (("Username:", "_username_field", "", QLineEdit.EchoMode.Normal, username),
             ("Password:", "_password_field", "", QLineEdit.EchoMode.Password, password or "")):
             lbl = QLabel(label_text)
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)

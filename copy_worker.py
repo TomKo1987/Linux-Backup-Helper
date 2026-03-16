@@ -47,7 +47,7 @@ def _mono_style(size, color, bold=False, extra=""):
     return f"font-size:{size}px;{w}color:{color};font-family:monospace;{extra}"
 
 def _compare_stats(src_size, src_mtime, dst_size, dst_mtime):
-    return src_size == dst_size and int(dst_mtime) >= int(src_mtime)
+    return src_size == dst_size and dst_mtime >= src_mtime
 
 def _is_unreachable(err):
     up = err.upper()
@@ -60,6 +60,7 @@ def _parse_smb(url):
     return host, (parts[0] if parts else ""), "/".join(parts[1:])
 
 def _q(s):
+    s = s.replace("\n", "").replace("\r", "")
     return s.replace("\\", "/").replace('"', '\\"')
 
 def _count_by(iterable, key):
@@ -96,14 +97,17 @@ def _smb_argv(host, share, user, guest=False):
     return base + (["-N"] if guest else ["-U", user])
 
 def _smb_run(host, share, user, pw, cmds, timeout, guest=False):
+    env = _smb_env(pw)
     try:
         r = subprocess.run(_smb_argv(host, share, user, guest), input=cmds, text=True, capture_output=True,
-                           timeout=timeout, env=_smb_env(pw))
+                           timeout=timeout, env=env)
         return r.returncode == 0, (r.stderr.strip() or f"exit {r.returncode}")
     except subprocess.TimeoutExpired:
         return False, "timeout"
     except Exception as exc:
         return False, str(exc)
+    finally:
+        env.pop("PASSWD", None)
 
 def _probe_smb(host, share, user, pw):
     if user and pw is not None:
@@ -129,9 +133,10 @@ def _smb_ls_index(host, share, base, user, pw, guest=False):
     else:
         cmd = 'recurse on\nprompt off\nls\n'
     index = {}
+    env = _smb_env(pw)
     try:
         out = subprocess.check_output(_smb_argv(host, share, user, guest), input=cmd, text=True, stderr=subprocess.DEVNULL,
-                                      timeout=_SMB_LS_TIMEOUT, env=_smb_env(pw))
+                                      timeout=_SMB_LS_TIMEOUT, env=env)
         cur_dir = base
         for raw in out.splitlines():
             line = raw.strip()
@@ -154,6 +159,8 @@ def _smb_ls_index(host, share, base, user, pw, guest=False):
             index[f"{cur_dir}/{name}".lstrip("/")] = (int(size_s),)
     except Exception as exc:
         logger.debug("SMB ls index failed: %s", exc)
+    finally:
+        env.pop("PASSWD", None)
     return index
 
 
@@ -177,7 +184,6 @@ class _SmbJob:
             return self.remote_size == os.stat(self.dst_path).st_size
         except OSError:
             return False
-
 
 def _get_or_build_ri(host, share, put_jobs, user, pw, guest, ri_cache, ri_lock):
     needed = set()
@@ -235,7 +241,6 @@ def _build_smb_put_cmds(jobs):
         transfer_lines.append(f'put "{_q(os.path.basename(src_abs))}" "{_q(os.path.basename(j.remote_path))}"')
     return "\n".join(mkdir_lines + transfer_lines + ["exit\n"])
 
-
 def _do_smb_chunk_iterative(host, share, jobs, user, pw, guest, cancel, ok_list, er_list, build_fn):
     stack = [list(jobs)]
     while stack:
@@ -268,7 +273,6 @@ def _do_smb_get_chunk(host, share, jobs, user, pw, guest, cancel, ok_list, er_li
 
 def _do_smb_put_chunk(host, share, jobs, user, pw, guest, cancel, ok_list, er_list):
     _do_smb_chunk_iterative(host, share, jobs, user, pw, guest, cancel, ok_list, er_list, _build_smb_put_cmds)
-
 
 def _resolve_smb_jobs_parallel(jobs, cancel, user, pw, guest=False, progress_cb=None):
     cache       = {}
@@ -396,6 +400,10 @@ def _scan_local(scan_jobs, cancel, progress_cb=None):
             else:
                 lp.append((src_root, dst_root, title))
         else:
+            if not os.path.exists(src_root):
+                with lock:
+                    errors.append((src_root, "Source path does not exist", title))
+                return
             for dp, _, filenames in os.walk(src_root):
                 if cancel.is_set():
                     break
@@ -434,7 +442,7 @@ def _scan_local(scan_jobs, cancel, progress_cb=None):
     return pairs, skipped, errors
 
 def _copy_file(src, dst, cancel, lock, b_ok, b_sk, b_er):
-    tmp_dst = dst + ".part"
+    tmp_dst = dst + f".part.{os.getpid()}.{threading.get_ident()}"
     try:
         if cancel.is_set():
             return "skip"
@@ -519,8 +527,14 @@ class CopyWorker(QThread):
 
         local_jobs, smb_jobs = [], []
         for srcs, dsts, title in tasks_snapshot:
-            for s, d in zip(srcs, dsts):
-                e = (str(s), str(d), title)
+            from itertools import zip_longest as _zip_longest
+            for s, d in _zip_longest(srcs, dsts):
+                if s is None or d is None:
+                    logger.warning(
+                        "Entry '%s': mismatched source/destination count — "
+                        "skipping unpaired path (src=%r, dst=%r)", title, s, d)
+                    continue
+                e = (os.path.expanduser(str(s)), os.path.expanduser(str(d)), title)
                 (smb_jobs if is_smb(str(s)) or is_smb(str(d)) else local_jobs).append(e)
 
         smb_probe_failed = ""
@@ -1177,7 +1191,7 @@ class _SummaryWidget(QWidget):
         self._recalculate_grid()
 
     def _recalculate_grid(self):
-        new_cols = max(1, (self._entry_card.width() - 48) // 280)
+        new_cols = max(1, (self._entry_card.width() - 40) // 280)
         if new_cols != self._entry_grid_cols:
             self._entry_grid_cols = new_cols
             old_count = self._entry_grid.columnCount()
@@ -1195,8 +1209,8 @@ class _SummaryWidget(QWidget):
     @staticmethod
     def _html_title(title: str) -> str:
         return (title.replace("&", "&amp;").replace("<br>", "\x00").replace("<BR>", "\x00")
-        .replace("<", "&lt;").replace(">", "&gt;").replace("\r\n", "<br>").replace("\x00", "<br>")
-        .replace("\r", "<br>").replace("\n", "<br>"))
+        .replace("<", "&lt;").replace(">", "&gt;").replace("\r\n", "<br>")
+        .replace("\x00", "<br>").replace("\r", "<br>").replace("\n", "<br>"))
 
     @staticmethod
     def _count_html_lines(html: str) -> int:
