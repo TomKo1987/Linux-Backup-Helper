@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
 from themes import current_theme
 from state import (
     list_profiles, load_profile, save_profile, logger, _atomic_write,
-    S, _HOME, _LOG_FILE, _PROFILES_DIR, _PROFILE_RE, apply_replacements
+    S, _HOME, _LOG_FILE, _PROFILES_DIR, _PROFILE_RE, apply_replacements, _norm_paths
 )
 
 def _sep() -> QWidget:
@@ -113,9 +113,7 @@ class EntryDialog(QDialog):
         self._build(self._entry_snapshot)
 
     @staticmethod
-    def _norm_paths(raw) -> list[str]:
-        if isinstance(raw, list):
-            return [str(p).strip() for p in raw if str(p).strip()]
+    def _parse_text_input(raw) -> list[str]:
         if isinstance(raw, str):
             result = []
             for line in raw.splitlines():
@@ -123,7 +121,7 @@ class EntryDialog(QDialog):
                 if line:
                     result.append(line)
             return result
-        return []
+        return _norm_paths(raw)
 
     def _compute_size(self) -> tuple[int, int]:
         from PyQt6.QtGui import QFontMetrics, QFont
@@ -163,8 +161,8 @@ class EntryDialog(QDialog):
 
         t = current_theme()
 
-        src_paths = self._norm_paths(e.get("source", []))
-        dst_paths = self._norm_paths(e.get("destination", []))
+        src_paths = _norm_paths(e.get("source", []))
+        dst_paths = _norm_paths(e.get("destination", []))
 
         if not self.pairs:
             n = max(len(src_paths), len(dst_paths))

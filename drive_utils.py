@@ -35,9 +35,7 @@ def _valid_drive_name(name: str) -> bool:
 def _mount_paths(name: str) -> tuple[str, ...]:
     if not _valid_drive_name(name):
         return ()
-    return (f"/run/media/{_USER}/{name}",
-            f"/media/{_USER}/{name}",
-            f"/mnt/{name}")
+    return f"/run/media/{_USER}/{name}", f"/media/{_USER}/{name}", f"/mnt/{name}"
 
 
 def _expand_home_in_cmd(cmd: str) -> list[str]:

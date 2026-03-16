@@ -32,7 +32,14 @@ _SMB_UNREACHABLE = ("timeout", "NT_STATUS_HOST_UNREACHABLE", "NT_STATUS_IO_TIMEO
                     "NT_STATUS_NETWORK_UNREACHABLE", "NT_STATUS_CONNECTION_RESET", "NT_STATUS_CONNECTION_DISCONNECTED",
                     "Connection refused", "No route to host", "Network is unreachable", "Connection timed out", "Host is down")
 
-_SMB_LINE_RE = re.compile(r"^(.*?)\s+([ADRHNSV]*)\s+(?:\(.*\))?\s*(\d+)\s+(.*)$")
+_SMB_LINE_RE = re.compile(
+    r"^(.+?)"                       
+    r"\s+([ADRHNSV]*)"                
+    r"\s*(?:\(.*?\)\s*)?"              
+    r"(\d+)"                         
+    r"\s+\w{3}\s+\w{3}\s+[\s\d]\d"    
+    r"\s+[\d:]+\s*\d*$"
+)
 
 
 def _mono_style(size, color, bold=False, extra=""):
@@ -440,24 +447,26 @@ def _copy_file(src, dst, cancel, lock, b_ok, b_sk, b_er):
             os.makedirs(dst_dir, exist_ok=True)
         with open(src, "rb") as f_src, open(tmp_dst, "wb") as f_dst:
             offset, remaining = 0, st.st_size
+            use_sendfile = True
             while remaining > 0:
                 if cancel.is_set():
                     raise InterruptedError()
-                try:
-                    sent = os.sendfile(f_dst.fileno(), f_src.fileno(), offset, min(remaining, _CHUNK))
-                except OSError:
-                    chunk = f_src.read(min(remaining, _CHUNK))
-                    if not chunk:
-                        break
-                    f_dst.write(chunk)
-                    sent = len(chunk)
-                    offset += sent
-                    remaining -= sent
-                    continue
-                if sent == 0:
+                if use_sendfile:
+                    try:
+                        sent = os.sendfile(f_dst.fileno(), f_src.fileno(), offset, min(remaining, _CHUNK))
+                        if sent == 0:
+                            break
+                        offset += sent
+                        remaining -= sent
+                        continue
+                    except OSError:
+                        use_sendfile = False
+                chunk = f_src.read(min(remaining, _CHUNK))
+                if not chunk:
                     break
-                offset    += sent
-                remaining -= sent
+                f_dst.write(chunk)
+                offset += len(chunk)
+                remaining -= len(chunk)
             os.fchmod(f_dst.fileno(), st.st_mode)
         os.replace(tmp_dst, dst)
         os.utime(dst, (st.st_atime, st.st_mtime))
@@ -505,9 +514,9 @@ class CopyWorker(QThread):
                 e = (str(s), str(d), title)
                 (smb_jobs if is_smb(str(s)) or is_smb(str(d)) else local_jobs).append(e)
 
-        smb_probe_failed      = ""
-        smb_expanded          = []
-        smb_exp_errors        = []
+        smb_probe_failed = ""
+        smb_expanded = []
+        smb_exp_errors = []
         smb_user, smb_pw, smb_guest = "", None, False
 
         if smb_jobs and not c.is_set():
@@ -545,14 +554,16 @@ class CopyWorker(QThread):
 
         pairs, scan_skip, scan_err = [], [], []
         if local_jobs and not c.is_set():
-            pairs, scan_skip, scan_err = _scan_local(local_jobs, c, progress_cb=lambda n: self.scan_progress.emit("Scanning local files", n))
+            pairs, scan_skip, scan_err = _scan_local(
+                local_jobs, c,
+                progress_cb=lambda n: self.scan_progress.emit("Scanning local files", n))
 
         if c.is_set():
             self.finished_work.emit(0, 0, 0, True)
             return
 
         smb_count = len(smb_jobs) if smb_probe_failed else len(smb_expanded) + len(smb_exp_errors)
-        total     = smb_count + len(pairs) + len(scan_skip) + len(scan_err)
+        total = smb_count + len(pairs) + len(scan_skip) + len(scan_err)
 
         done_global = 0
         copied = skipped = errors = 0
@@ -563,7 +574,7 @@ class CopyWorker(QThread):
                           else "SMB access denied (credentials failed)")
                 er_list = [(s, reason) for s, _d, _t in smb_jobs]
                 done_global += len(er_list)
-                errors      += len(er_list)
+                errors += len(er_list)
                 self.batch_update.emit([], [], er_list, done_global, total)
                 for t, cnt in _count_by(smb_jobs, key=lambda x: x[2]).items():
                     self.entry_status.emit(t, 0, cnt, 0)
@@ -576,8 +587,6 @@ class CopyWorker(QThread):
             return
 
         if scan_skip or scan_err:
-            skipped     += len(scan_skip)
-            errors      += len(scan_err)
             done_global += len(scan_skip) + len(scan_err)
             self.batch_update.emit([], [(s, r) for s, r, *_ in scan_skip], [(s, r) for s, r, *_ in scan_err], done_global, total)
 
@@ -591,12 +600,20 @@ class CopyWorker(QThread):
             if t:
                 scan_pre_by_title.setdefault(t, [0, 0, 0])[1] += 1
 
+        scan_skipped = len(scan_skip)
+        scan_errors = len(scan_err)
+
         if pairs and not c.is_set():
-            done_global, copied, skipped, errors = self._run_local(pairs, done_global, total, copied, skipped, errors, c,
-                                                                   pre_counts=scan_pre_by_title)
-        elif scan_pre_by_title:
-            for t, ec in scan_pre_by_title.items():
-                self.entry_status.emit(t, ec[0], ec[1], ec[2])
+            done_global, copied, skipped, errors = self._run_local(
+                pairs, done_global, total, copied,
+                skipped + scan_skipped, errors + scan_errors, c,
+                pre_counts=scan_pre_by_title)
+        else:
+            if scan_pre_by_title:
+                for t, ec in scan_pre_by_title.items():
+                    self.entry_status.emit(t, ec[0], ec[1], ec[2])
+            skipped += scan_skipped
+            errors += scan_errors
 
         if c.is_set():
             self.finished_work.emit(0, 0, 0, True)
@@ -912,9 +929,9 @@ class CopyDialog(QDialog):
         self.status_lbl.setText(self._status_html(icon, label, label_color=color, bg=t["bg2"], border=color))
 
     def _update_tab_labels(self):
-        self.tabs.setTabText(1, f"⤵ Copied ({self.copied})")
-        self.tabs.setTabText(2, f"↷ Skipped ({self.skipped})")
-        self.tabs.setTabText(3, f"✗ Errors ({self.errors})")
+        self.tabs.setTabText(1, f"⤵ Copied ({self.copied:,})")
+        self.tabs.setTabText(2, f"↷ Skipped ({self.skipped:,})")
+        self.tabs.setTabText(3, f"✗ Errors ({self.errors:,})")
 
     def _update_clock(self):
         self._summary.update_elapsed(self._elapsed_s(), self._done, self._total)
@@ -1166,9 +1183,9 @@ class _SummaryWidget(QWidget):
         for title, ec in self._entry_results.items():
             ok, err, skip = ec
             parts = []
-            if ok:   parts.append(f"<span style='color:{_COLOR_COPIED}'>⤵ {ok}</span>")
-            if skip: parts.append(f"<span style='color:{_COLOR_SKIPPED}'>↷ {skip}</span>")
-            if err:  parts.append(f"<span style='color:{_COLOR_ERROR}'>✗ {err}</span>")
+            if ok:   parts.append(f"<span style='color:{_COLOR_COPIED}'>⤵ {ok:,}</span>")
+            if skip: parts.append(f"<span style='color:{_COLOR_SKIPPED}'>↷ {skip:,}</span>")
+            if err:  parts.append(f"<span style='color:{_COLOR_ERROR}'>✗ {err:,}</span>")
             suffix = "&nbsp; ".join(parts) if parts else f"<span style='color:{t['text_dim']}'>–</span>"
             safe_title = self._html_title(title)
             html = f"<span style='color:{t['text']}'>{safe_title}</span><br>{suffix}"
@@ -1226,9 +1243,9 @@ class _SummaryWidget(QWidget):
                                 f"color:{t['bg']};background:{sc};border-radius:5px;"
                                 f"padding:3px 10px;'>&nbsp;{si}&thinsp;{st}&nbsp;</span>")
         self.total_lbl.setText(f"{total:,} files total" if total > 0 else "")
-        self.card_copied["val"].setText(str(copied))
-        self.card_skipped["val"].setText(str(skipped))
-        self.card_errors["val"].setText(str(errors))
+        self.card_copied["val"].setText(f"{copied:,}")
+        self.card_skipped["val"].setText(f"{skipped:,}")
+        self.card_errors["val"].setText(f"{errors:,}")
         self._last_total = total
         self._update_progress_card(done, total, finished, cancelled)
         self._update_segments(copied, skipped, errors)
@@ -1259,7 +1276,7 @@ class _SummaryWidget(QWidget):
         speed_str, eta_str = "---", "--:--"
         if elapsed_s > 0 and done > 0:
             rate = done / elapsed_s
-            speed_str = f"{rate:.1f} files/s" if rate >= 1 else f"1 file/{1 / rate:.1f}s"
+            speed_str = f"{rate:,.1f} files/s" if rate >= 1 else f"1 file/{1 / rate:.1f}s"
             if not finished and total > done:
                 eta_s   = int((total - done) / rate)
                 eta_str = f"{eta_s // 60:02d}:{eta_s % 60:02d}"
@@ -1277,6 +1294,8 @@ class _LogWidget(QWidget):
         super().__init__()
         self._items: list = []
         self._filtered: list = []
+        self._sorted_cache: list = []
+        self._cache_dirty = True
         self._dirty = False
         self._page = 0
 
@@ -1318,18 +1337,15 @@ class _LogWidget(QWidget):
 
     def add(self, entry):
         self._items.append(entry)
+        self._cache_dirty = True
         self._dirty = True
         if not self._flush_timer.isActive():
             self._flush_timer.start()
 
     def flush_final(self):
         self._flush_timer.stop()
-        if self._dirty:
-            self._apply_filter()
-            self._render_page()
-        else:
-            self._apply_filter()
-            self._render_page()
+        self._apply_filter()
+        self._render_page()
 
     def _flush(self):
         if self._dirty:
@@ -1345,9 +1361,11 @@ class _LogWidget(QWidget):
         self._render_page()
 
     def _apply_filter(self):
-        sorted_items = sorted(self._items)
+        if self._cache_dirty:
+            self._sorted_cache = sorted(self._items)
+            self._cache_dirty = False
         needle = self._search.text().lower()
-        self._filtered = [i for i in sorted_items if needle in i.lower()] if needle else sorted_items
+        self._filtered = ([i for i in self._sorted_cache if needle in i.lower()] if needle else list(self._sorted_cache))
 
     def _render_page(self):
         total = len(self._filtered)

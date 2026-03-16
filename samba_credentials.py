@@ -35,7 +35,7 @@ def _init_keyring() -> None:
 
 
 def _current_username() -> str:
-    for fn in (os.getlogin, getpass.getuser):
+    for fn in (getpass.getuser, os.getlogin):
         try:
             return fn()
         except OSError:

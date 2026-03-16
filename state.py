@@ -206,22 +206,24 @@ def startup_load() -> bool:
     if not profiles:
         return False
 
-    valid_paths   = [_PROFILES_DIR / f"{name}.json" for name in profiles]
-    default_found = False
+    valid_paths = [_PROFILES_DIR / f"{name}.json" for name in profiles]
+    default_path = None
 
     for p in valid_paths:
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
             if data.get("is_default"):
-                if default_found:
+                if default_path is None:
+                    default_path = p
+                else:
                     data.pop("is_default")
                     _atomic_write(p, data)
                     logger.warning("Cleared duplicate is_default flag in '%s'", p.stem)
-                    continue
-                default_found = True
-                return load_profile(p)
         except (FileNotFoundError, json.JSONDecodeError, PermissionError) as exc:
             logger.error("startup_load: %s", exc)
+
+    if default_path:
+        return load_profile(default_path)
 
     for p in valid_paths:
         if load_profile(p):

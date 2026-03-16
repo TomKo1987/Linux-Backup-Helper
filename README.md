@@ -55,8 +55,8 @@ The tooltip colour-codes the results: green = copied, yellow = skipped, red = er
 
 | Type | Description |
 |---|---|
-| **Essential Packages** | Installed with the default package manager of your distribution |
-| **Additional Packages** | Installed from the Arch User Repository via **yay** (yay is installed automatically if missing) |
+| **Basic Packages** | Installed with the default package manager of your distribution |
+| **AUR Packages** | Installed from the Arch User Repository via **yay** (yay is installed automatically if missing) |
 | **Specific Packages** | Installed with the default package manager, but only when the corresponding session is detected (supports full desktop environments and window managers such as Hyprland) |
 
 ---
@@ -148,7 +148,7 @@ pyinstaller --onefile main.py
 
 - **OS:** Linux (tested on Arch Linux; should work on most distributions)
 - **Python:** 3.9+
-- **Python packages:** PyQt6, keyring, psutil, secretstorage
+- **Python packages:** PyQt6, keyring, secretstorage
 - **System packages:** `inxi` (required), `smbclient` (optional — only needed for SMB/Samba share support)
 
 

@@ -28,7 +28,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Backup Helper")
-        self.setMinimumSize(400, 425)
+        self.setFixedSize(425, 425)
         self._quitting = False
 
         self.menu_actions = [
@@ -114,40 +114,30 @@ class MainWindow(QMainWindow):
 
         mount_out = get_mount_output()
         mounted_drives = [o for o in S.mount_options if is_mounted(o, mount_out)]
-
         unmountable = [o for o in mounted_drives if o.get("unmount_command")]
-        info_only   = [o for o in mounted_drives if not o.get("unmount_command")]
-
-        if info_only:
-            names = "\n".join(f"  • {o['drive_name']}" for o in info_only)
-            QMessageBox.information(self, "Drives Still Mounted",
-                                    f"The following drives are still mounted but have no unmount command configured:\n{names}\n\n"
-                                    "They will not be unmounted automatically.")
+        info_only = [o for o in mounted_drives if not o.get("unmount_command")]
 
         if unmountable:
-            names = "\n".join(f"  • {o['drive_name']}" for o in unmountable)
-            ans = QMessageBox.question(self, "Quit",
-                                       f"The following drives are still mounted:\n{names}\n\nUnmount before quitting?",
-                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel)
-
+            lines = [f"  • {o['drive_name']}" for o in unmountable]
+            if info_only:
+                lines += ["", "These drives have no unmount command and will be left mounted:"]
+                lines += [f"  • {o['drive_name']}" for o in info_only]
+            ans = QMessageBox.question(self, "Quit — Drives Still Mounted",
+                                       "The following drives are still mounted:\n" + "\n".join(lines) +
+                                       "\n\nUnmount them before quitting?", QMessageBox.StandardButton.Yes
+                                       | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel)
             if ans == QMessageBox.StandardButton.Cancel:
                 return
-
             if ans == QMessageBox.StandardButton.Yes:
-                failed = []
-                for o in unmountable:
-                    ok, err_msg = unmount_drive(o)
-                    if not ok:
-                        failed.append(f"• {o.get('drive_name', '?')}: {err_msg}")
+                failed = [f"• {o.get('drive_name', '?')}: {err}" for o in unmountable for ok, err in [unmount_drive(o)] if not ok]
                 if failed:
-                    QMessageBox.warning(self, "Unmount Failed", "The following drives could not be unmounted:\n\n" + "\n".join(failed))
-        elif not info_only:
-            if QMessageBox.question(self, "Quit", "Really quit Backup Helper?",
-                                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
-                return
+                    QMessageBox.warning(self, "Unmount Failed", "Could not unmount:\n\n" + "\n".join(failed))
+
         else:
-            if QMessageBox.question(self, "Quit", "Really quit Backup Helper?",
-                                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            msg = ("The following drives are still mounted but have no unmount command:\n" +
+                   "\n".join(f"  • {o['drive_name']}" for o in info_only) + "\n\nQuit anyway?" if info_only else "Really quit Backup Helper?")
+            if QMessageBox.question(self, "Quit", msg, QMessageBox.StandardButton.Yes
+                                                       | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
                 return
 
         self._quitting = True

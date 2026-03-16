@@ -41,9 +41,6 @@ else
 fi
 
 # ── smbclient (optional – only required for SMB/Samba share support) ──────────
-# On Arch-based systems, smbclient is a hard dependency of the samba package
-# and is already present when samba is installed. On other distros it must be
-# installed separately.
 if ! command -v smbclient &> /dev/null; then
     echo ""
     echo "smbclient was not found on your system."
@@ -69,9 +66,6 @@ else
 fi
 
 # ── Python dependencies ───────────────────────────────────────────────────────
-# On Arch-based systems, pip is intentionally disabled (externally managed).
-# Packages must be installed via pacman or yay.
-# On Debian/Ubuntu and Fedora, pip or the system package manager can be used.
 
 echo "Installing Python dependencies..."
 
@@ -80,7 +74,6 @@ case "$DISTRO" in
         echo "Arch detected — installing via pacman..."
         sudo pacman -Sy --noconfirm --needed \
             python-pyqt6 \
-            python-psutil \
             python-keyring \
             python-secretstorage
         ;;
@@ -89,7 +82,6 @@ case "$DISTRO" in
         sudo apt-get update
         sudo apt-get install -y \
             python3-pyqt6 \
-            python3-psutil \
             python3-keyring \
             python3-secretstorage
         ;;
@@ -97,7 +89,6 @@ case "$DISTRO" in
         echo "Fedora detected — installing via dnf..."
         sudo dnf install -y \
             python3-pyqt6 \
-            python3-psutil \
             python3-keyring \
             python3-secretstorage
         ;;
@@ -105,7 +96,6 @@ case "$DISTRO" in
         echo "openSUSE detected — installing via zypper..."
         sudo zypper install -y \
             python3-PyQt6 \
-            python3-psutil \
             python3-keyring \
             python3-SecretStorage
         ;;
@@ -118,7 +108,7 @@ case "$DISTRO" in
         else
             echo "Error: No pip or Python 3 found."
             echo "Please install the following packages manually:"
-            echo "  PyQt6, psutil, keyring, secretstorage"
+            echo "  PyQt6, keyring, secretstorage"
             exit 1
         fi
         ;;

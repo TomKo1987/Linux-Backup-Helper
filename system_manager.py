@@ -1035,7 +1035,6 @@ def _fmt_html(text: str, kind: str) -> str:
             f"<div style='padding:10px;border-radius:8px;margin:5px 0;'>"
             f"<p style='{style}'>{esc}</p></div><br>"
         )
-    # apply_replacements is called once per line – not twice
     lines = [f"<p style='{style}'>{apply_replacements(line)}</p>"
              for line in text.splitlines() if line.strip()]
     return "\n".join(lines) + "<br>"
