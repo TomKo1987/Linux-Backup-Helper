@@ -3,8 +3,8 @@ import os, re, subprocess, threading, concurrent.futures
 
 from PyQt6.QtCore import Qt, QElapsedTimer, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
-    QProgressBar, QPushButton, QScrollArea, QTabWidget, QVBoxLayout, QApplication,
-    QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QWidget, QTextEdit
+    QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QWidget, QSpinBox,
+    QProgressBar, QPushButton, QScrollArea, QTabWidget, QVBoxLayout, QApplication, QTextEdit
 )
 
 from drive_utils import is_smb
@@ -505,6 +505,7 @@ class CopyWorker(QThread):
     finished_work = pyqtSignal(int, int, int, bool)
     scan_progress = pyqtSignal(str, int)
     entry_status  = pyqtSignal(str, int, int, int)
+    scan_finished = pyqtSignal(int)
 
     def __init__(self, tasks):
         super().__init__()
@@ -575,6 +576,7 @@ class CopyWorker(QThread):
 
         smb_count = len(smb_jobs) if smb_probe_failed else len(smb_expanded) + len(smb_exp_errors)
         total = smb_count + len(pairs) + len(scan_skip) + len(scan_err)
+        self.scan_finished.emit(total)
 
         done_global = 0
         copied = skipped = errors = 0
@@ -906,6 +908,7 @@ class CopyDialog(QDialog):
         self._clock_tick.timeout.connect(self._update_clock)
         self._clock_tick.start(500)
 
+        self.worker.scan_finished.connect(self._on_scan_finished)
         self.worker.batch_update.connect(self._on_batch)
         self.worker.finished_work.connect(self._on_done)
         self.worker.scan_progress.connect(self._on_scan_progress)
@@ -934,6 +937,12 @@ class CopyDialog(QDialog):
         t = current_theme()
         self.status_lbl.setText(self._status_html("🔍", f"{phase}… ({scanned:,} found)",
                                                   label_color=t["accent2"], bg=t["bg2"], border=t["accent2"]))
+
+    def _on_scan_finished(self, total):
+        t = current_theme()
+        suffix = "file" if total == 1 else "files"
+        msg = f"Scan complete — {total:,} {suffix} found"
+        self.status_lbl.setText(self._status_html("📂", msg, label_color=t["accent"], bg=t["bg2"], border=t["accent"]))
 
     def _set_status_finished(self, icon, label, color):
         t = current_theme()
@@ -1320,20 +1329,57 @@ class _LogWidget(QWidget):
         self._view.setReadOnly(True)
         self._view.setStyleSheet(f"font-family:monospace;font-size:14px;color:{color};")
 
-        self._prev_btn = QPushButton("◄ Prev")
-        self._next_btn = QPushButton("Next ►")
-        self._page_lbl = QLabel("")
-        self._page_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._prev_btn.setFixedHeight(28)
-        self._next_btn.setFixedHeight(28)
+        self._first_btn = QPushButton("««")
+        self._prev_btn = QPushButton("‹ Prev")
+        self._next_btn = QPushButton("Next ›")
+        self._last_btn = QPushButton("»»")
+
+        self._first_btn.clicked.connect(self._first_page)
         self._prev_btn.clicked.connect(self._prev_page)
         self._next_btn.clicked.connect(self._next_page)
+        self._last_btn.clicked.connect(self._last_page)
+
+        for btn in [self._first_btn, self._prev_btn, self._next_btn, self._last_btn]:
+            btn.setFixedWidth(60) if len(btn.text()) < 3 else btn.setFixedWidth(80)
+            btn.setFixedHeight(28)
+
+        self._page_spin = QSpinBox()
+        self._page_spin.setMinimum(1)
+        self._page_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        self._page_spin.setStyleSheet("""QSpinBox {border: 1px solid #555; border-radius: 4px; padding: 2px 5px;
+        background: #2b2b2b; color: #fff; font-weight: bold} QSpinBox:focus {border: 1px solid #888; background: #333}""")
+        self._page_spin.setFixedWidth(55)
+        self._page_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._page_spin.editingFinished.connect(self._go_to_page)
+
+        self._page_lbl = QLabel("")
+        self._total_lbl = QLabel("")
+        self._total_lbl.setStyleSheet("color: #888; font-size: 14px; margin-left: 10px;")
 
         nav = QHBoxLayout()
-        nav.setContentsMargins(0, 0, 0, 0)
+        nav.setContentsMargins(5, 10, 5, 5)
+        nav.setSpacing(8)
+
+        nav.addWidget(self._first_btn)
         nav.addWidget(self._prev_btn)
-        nav.addWidget(self._page_lbl, 1)
+
+        nav.addStretch(1)
+
+        page_group = QHBoxLayout()
+        page_group.setSpacing(5)
+        lbl_page = QLabel("Page")
+        lbl_of = QLabel("of")
+        page_group.addWidget(lbl_page)
+        page_group.addWidget(self._page_spin)
+        page_group.addWidget(lbl_of)
+        page_group.addWidget(self._page_lbl)
+        nav.addLayout(page_group)
+
+        nav.addStretch(1)
+
+        nav.addWidget(self._total_lbl)
         nav.addWidget(self._next_btn)
+        nav.addWidget(self._last_btn)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(3, 3, 3, 3)
@@ -1345,6 +1391,62 @@ class _LogWidget(QWidget):
         self._flush_timer = QTimer(self)
         self._flush_timer.setInterval(750)
         self._flush_timer.timeout.connect(self._flush)
+
+    def _render_page(self):
+        total = len(self._filtered)
+        pages = max(1, (total + self._PAGE_SIZE - 1) // self._PAGE_SIZE)
+        self._page = max(0, min(self._page, pages - 1))
+
+        start = self._page * self._PAGE_SIZE
+        chunk = self._filtered[start: start + self._PAGE_SIZE]
+        lines = []
+        for rel_idx, item in enumerate(chunk):
+            idx = start + rel_idx + 1
+            parts = item.split("\n")
+            lines.append(f"{idx}: {parts[0]}")
+            lines.extend(parts[1:])
+            lines.append("")
+        self._view.setPlainText("\n".join(lines))
+
+        self._page_lbl.setText(f"<b>{pages}</b>")
+        self._total_lbl.setText(f"({total:,} {'entry' if total == 1 else 'entries'})")
+
+        self._page_spin.setMaximum(pages)
+        self._page_spin.blockSignals(True)
+        self._page_spin.setValue(self._page + 1)
+        self._page_spin.blockSignals(False)
+
+        can_back = self._page > 0
+        can_forward = self._page < pages - 1
+        self._first_btn.setEnabled(can_back)
+        self._prev_btn.setEnabled(can_back)
+        self._next_btn.setEnabled(can_forward)
+        self._last_btn.setEnabled(can_forward)
+
+    def _first_page(self):
+        self._page = 0
+        self._render_page()
+
+    def _last_page(self):
+        self._page = max(0, (len(self._filtered) + self._PAGE_SIZE - 1) // self._PAGE_SIZE - 1)
+        self._render_page()
+
+    def _prev_page(self):
+        if self._page > 0:
+            self._page -= 1
+            self._render_page()
+
+    def _next_page(self):
+        pages = max(1, (len(self._filtered) + self._PAGE_SIZE - 1) // self._PAGE_SIZE)
+        if self._page < pages - 1:
+            self._page += 1
+            self._render_page()
+
+    def _go_to_page(self):
+        target = self._page_spin.value() - 1
+        if target != self._page:
+            self._page = target
+            self._render_page()
 
     def add(self, entry):
         self._items.append(entry)
@@ -1377,32 +1479,3 @@ class _LogWidget(QWidget):
             self._cache_dirty = False
         needle = self._search.text().lower()
         self._filtered = ([i for i in self._sorted_cache if needle in i.lower()] if needle else list(self._sorted_cache))
-
-    def _render_page(self):
-        total = len(self._filtered)
-        pages = max(1, (total + self._PAGE_SIZE - 1) // self._PAGE_SIZE)
-        self._page = max(0, min(self._page, pages - 1))
-        start = self._page * self._PAGE_SIZE
-        chunk = self._filtered[start : start + self._PAGE_SIZE]
-        lines = []
-        for rel_idx, item in enumerate(chunk):
-            idx   = start + rel_idx + 1
-            parts = item.split("\n")
-            lines.append(f"{idx}: {parts[0]}")
-            lines.extend(parts[1:])
-            lines.append("")
-        self._view.setPlainText("\n".join(lines))
-        self._page_lbl.setText(f"Page {self._page + 1} / {pages}  ({total:,} entries)" if total else "No entries")
-        self._prev_btn.setEnabled(self._page > 0)
-        self._next_btn.setEnabled(self._page < pages - 1)
-
-    def _prev_page(self):
-        if self._page > 0:
-            self._page -= 1
-            self._render_page()
-
-    def _next_page(self):
-        pages = max(1, (len(self._filtered) + self._PAGE_SIZE - 1) // self._PAGE_SIZE)
-        if self._page < pages - 1:
-            self._page += 1
-            self._render_page()
