@@ -25,6 +25,19 @@ else
 fi
 
 echo "Detected distribution family: $DISTRO"
+# ── Python version check ──────────────────────────────────────────────────────
+PY_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "0.0")
+PY_MAJOR=$(echo "$PY_VER" | cut -d. -f1)
+PY_MINOR=$(echo "$PY_VER" | cut -d. -f2)
+
+if [ "$PY_MAJOR" -lt 3 ] || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 10 ]; }; then
+    echo "Error: Python 3.10 or newer is required (found $PY_VER)."
+    echo "Please upgrade Python and re-run this script."
+    exit 1
+fi
+echo "Python $PY_VER detected — OK"
+
+
 
 # ── inxi ──────────────────────────────────────────────────────────────────────
 if ! command -v inxi &> /dev/null; then
@@ -116,4 +129,4 @@ esac
 
 echo ""
 echo "=== Installation complete ==="
-echo "Run the application with:  python main.py"
+echo "Run the application with:  python3 main.py"

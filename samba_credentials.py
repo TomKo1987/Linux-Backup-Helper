@@ -88,8 +88,8 @@ class SambaPasswordDialog(QDialog):
 
         show_pw_cb = QCheckBox("Show password")
         show_pw_cb.setStyleSheet(f"color:{t['accent']};")
-        show_pw_cb.toggled.connect(
-            lambda checked: self._password_field.setEchoMode(QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password))
+        show_pw_cb.toggled.connect(lambda checked: self._password_field.setEchoMode(QLineEdit.EchoMode.Normal
+                                                                                    if checked else QLineEdit.EchoMode.Password))
         layout.addWidget(show_pw_cb)
 
         btn_row = QHBoxLayout()
@@ -142,15 +142,8 @@ class SambaPasswordManager:
     @staticmethod
     def _run_kwallet(args: list[str], input_data: Optional[str] = None) -> Optional[str]:
         try:
-            result = subprocess.run(
-                ["kwallet-query"] + args,
-                input=input_data,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=_KWALLET_TIMEOUT,
-                check=False,
-            )
+            result = subprocess.run(["kwallet-query"] + args, input=input_data, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    text=True, timeout=_KWALLET_TIMEOUT, check=False)
             return result.stdout if result.returncode == 0 else None
         except FileNotFoundError:
             logger.debug("kwallet-query not found. KWallet integration disabled.")

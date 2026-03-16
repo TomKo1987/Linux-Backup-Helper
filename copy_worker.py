@@ -33,11 +33,11 @@ _SMB_UNREACHABLE = ("timeout", "NT_STATUS_HOST_UNREACHABLE", "NT_STATUS_IO_TIMEO
                     "Connection refused", "No route to host", "Network is unreachable", "Connection timed out", "Host is down")
 
 _SMB_LINE_RE = re.compile(
-    r"^(.+?)"                      
-    r"\s+([ADRHNSV]*)"              
-    r"\s*(?:\(.*?\)\s*)?"          
-    r"(\d+)"                       
-    r"\s+\w{3}\s+\w{3}\s+[\s\d]\d"  
+    r"^(.+?)"
+    r"\s+([ADRHNSV]*)"
+    r"\s*(?:\(.*?\)\s*)?"
+    r"(\d+)"
+    r"\s+\w{3}\s+\w{3}\s+[\s\d]\d"
     r"\s+[\d:]+\s*\d*$"
 )
 
@@ -209,24 +209,6 @@ def _build_smb_get_cmds(jobs):
     lines.append("exit\n")
     return "\n".join(lines)
 
-def _do_smb_get_chunk(host, share, jobs, user, pw, guest, cancel, ok_list, er_list):
-    if not jobs or cancel.is_set():
-        return
-    ok, err = _smb_run(host, share, user, pw, _build_smb_get_cmds(jobs), _session_timeout(len(jobs)), guest)
-    if ok:
-        for j in jobs:
-            ok_list.append((f"smb://{host}/{share}/{j.remote_path}", j.dst_path))
-    elif len(jobs) == 1:
-        logger.warning("SMB get failed %s/%s/%s: %s", host, share, jobs[0].remote_path, err)
-        er_list.append((f"smb://{host}/{share}/{jobs[0].remote_path}", err))
-    else:
-        if cancel.is_set():
-            return
-        mid = len(jobs) // 2
-        _do_smb_get_chunk(host, share, jobs[:mid], user, pw, guest, cancel, ok_list, er_list)
-        if not cancel.is_set():
-            _do_smb_get_chunk(host, share, jobs[mid:], user, pw, guest, cancel, ok_list, er_list)
-
 def _build_smb_put_cmds(jobs):
     rdirs = sorted({os.path.dirname(j.remote_path).replace("\\", "/").strip("/") for j in jobs})
     mkdir_lines = []
@@ -254,23 +236,38 @@ def _build_smb_put_cmds(jobs):
     return "\n".join(mkdir_lines + transfer_lines + ["exit\n"])
 
 
-def _do_smb_put_chunk(host, share, jobs, user, pw, guest, cancel, ok_list, er_list):
-    if not jobs or cancel.is_set():
-        return
-    ok, err = _smb_run(host, share, user, pw, _build_smb_put_cmds(jobs), _session_timeout(len(jobs)), guest)
-    if ok:
-        for j in jobs:
-            ok_list.append((j.src_url, f"smb://{host}/{share}/{j.remote_path}"))
-    elif len(jobs) == 1:
-        logger.warning("SMB put failed %s/%s/%s: %s", host, share, jobs[0].remote_path, err)
-        er_list.append((jobs[0].src_url, err))
-    else:
-        if cancel.is_set():
+def _do_smb_chunk_iterative(host, share, jobs, user, pw, guest, cancel, ok_list, er_list, build_fn):
+    stack = [list(jobs)]
+    while stack:
+        batch = stack.pop()
+        if not batch or cancel.is_set():
             return
-        mid = len(jobs) // 2
-        _do_smb_put_chunk(host, share, jobs[:mid], user, pw, guest, cancel, ok_list, er_list)
-        if not cancel.is_set():
-            _do_smb_put_chunk(host, share, jobs[mid:], user, pw, guest, cancel, ok_list, er_list)
+        ok, err = _smb_run(host, share, user, pw, build_fn(batch), _session_timeout(len(batch)), guest)
+        if ok:
+            if build_fn is _build_smb_get_cmds:
+                for j in batch:
+                    ok_list.append((f"smb://{host}/{share}/{j.remote_path}", j.dst_path))
+            else:
+                for j in batch:
+                    ok_list.append((j.src_url, f"smb://{host}/{share}/{j.remote_path}"))
+        elif len(batch) == 1:
+            j = batch[0]
+            src = f"smb://{host}/{share}/{j.remote_path}" if build_fn is _build_smb_get_cmds else j.src_url
+            logger.warning("SMB op failed %s/%s/%s: %s", host, share, j.remote_path, err)
+            er_list.append((src, err))
+        else:
+            if cancel.is_set():
+                return
+            mid = len(batch) // 2
+            stack.append(batch[mid:])
+            stack.append(batch[:mid])
+
+
+def _do_smb_get_chunk(host, share, jobs, user, pw, guest, cancel, ok_list, er_list):
+    _do_smb_chunk_iterative(host, share, jobs, user, pw, guest, cancel, ok_list, er_list, _build_smb_get_cmds)
+
+def _do_smb_put_chunk(host, share, jobs, user, pw, guest, cancel, ok_list, er_list):
+    _do_smb_chunk_iterative(host, share, jobs, user, pw, guest, cancel, ok_list, er_list, _build_smb_put_cmds)
 
 
 def _resolve_smb_jobs_parallel(jobs, cancel, user, pw, guest=False, progress_cb=None):
@@ -478,8 +475,8 @@ def _copy_file(src, dst, cancel, lock, b_ok, b_sk, b_er):
                 offset    += len(chunk)
                 remaining -= len(chunk)
             os.fchmod(f_dst.fileno(), st.st_mode)
+        os.utime(tmp_dst, (st.st_atime, st.st_mtime))
         os.replace(tmp_dst, dst)
-        os.utime(dst, (st.st_atime, st.st_mtime))
         with lock:
             b_ok.append((src, dst))
         return "ok"
@@ -518,9 +515,10 @@ class CopyWorker(QThread):
 
     def run(self):
         c = self._cancel
+        tasks_snapshot = list(self.tasks)
 
         local_jobs, smb_jobs = [], []
-        for srcs, dsts, title in self.tasks:
+        for srcs, dsts, title in tasks_snapshot:
             for s, d in zip(srcs, dsts):
                 e = (str(s), str(d), title)
                 (smb_jobs if is_smb(str(s)) or is_smb(str(d)) else local_jobs).append(e)
@@ -956,15 +954,24 @@ class CopyDialog(QDialog):
     def _update_clock(self):
         self._summary.update_elapsed(self._elapsed_s(), self._done, self._total)
 
-    _LOG_FMTS = (lambda s, d: f"{apply_replacements(s)}\n Copied to ⤵\n{apply_replacements(d)}",
-                 lambda p, r: f"{apply_replacements(p)} ↷ {r}",
-                 lambda p, m: f"{apply_replacements(p)} ❌ {m}")
+    @staticmethod
+    def _fmt_ok(s, d):
+        return f"{apply_replacements(s)}\n Copied to ⤵\n{apply_replacements(d)}"
+
+    @staticmethod
+    def _fmt_sk(p, r):
+        return f"{apply_replacements(p)} ↷ {r}"
+
+    @staticmethod
+    def _fmt_er(p, m):
+        return f"{apply_replacements(p)} ❌ {m}"
 
     def _update_ui_tick(self):
         max_per = 1000 if len(self._pending_ok) > 5000 else 500
         changed = False
+        fmt_fns = (self._fmt_ok, self._fmt_sk, self._fmt_er)
         for pending, widget, fmt in zip((self._pending_ok, self._pending_sk, self._pending_er),
-                                        (self._w_copied, self._w_skipped, self._w_errors), self._LOG_FMTS):
+                                        (self._w_copied, self._w_skipped, self._w_errors), fmt_fns):
             if not pending:
                 continue
             batch = pending[:max_per]
@@ -995,8 +1002,9 @@ class CopyDialog(QDialog):
     def _on_done(self, c, s, e, cancelled):
         self._tick.stop(); self._clock_tick.stop()
         self._final_elapsed = self.timer.elapsed() // 1000
+        fmt_fns = (self._fmt_ok, self._fmt_sk, self._fmt_er)
         for pending, widget, fmt in zip((self._pending_ok, self._pending_sk, self._pending_er),
-                                        (self._w_copied, self._w_skipped, self._w_errors), self._LOG_FMTS):
+                                        (self._w_copied, self._w_skipped, self._w_errors), fmt_fns):
             for args in pending:
                 widget.add(fmt(*args))
             pending.clear()
@@ -1330,53 +1338,50 @@ class _LogWidget(QWidget):
         self._view.setStyleSheet(f"font-family:monospace;font-size:14px;color:{color};")
 
         self._first_btn = QPushButton("««")
-        self._prev_btn = QPushButton("‹ Prev")
-        self._next_btn = QPushButton("Next ›")
-        self._last_btn = QPushButton("»»")
+        self._prev_btn  = QPushButton("‹ Prev")
+        self._next_btn  = QPushButton("Next ›")
+        self._last_btn  = QPushButton("»»")
 
         self._first_btn.clicked.connect(self._first_page)
         self._prev_btn.clicked.connect(self._prev_page)
         self._next_btn.clicked.connect(self._next_page)
         self._last_btn.clicked.connect(self._last_page)
 
-        for btn in [self._first_btn, self._prev_btn, self._next_btn, self._last_btn]:
-            btn.setFixedWidth(60) if len(btn.text()) < 3 else btn.setFixedWidth(80)
+        for btn in (self._first_btn, self._prev_btn, self._next_btn, self._last_btn):
+            btn.setFixedWidth(60 if len(btn.text()) < 3 else 80)
             btn.setFixedHeight(28)
 
         self._page_spin = QSpinBox()
         self._page_spin.setMinimum(1)
         self._page_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
-        self._page_spin.setStyleSheet("""QSpinBox {border: 1px solid #555; border-radius: 4px; padding: 2px 5px;
-        background: #2b2b2b; color: #fff; font-weight: bold} QSpinBox:focus {border: 1px solid #888; background: #333}""")
+        self._page_spin.setStyleSheet(
+            "QSpinBox {border: 1px solid #555; border-radius: 4px; padding: 2px 5px;"
+            "background: #2b2b2b; color: #fff; font-weight: bold} "
+            "QSpinBox:focus {border: 1px solid #888; background: #333}")
         self._page_spin.setFixedWidth(55)
         self._page_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._page_spin.editingFinished.connect(self._go_to_page)
 
-        self._page_lbl = QLabel("")
+        self._page_lbl  = QLabel("")
         self._total_lbl = QLabel("")
         self._total_lbl.setStyleSheet("color: #888; font-size: 14px; margin-left: 10px;")
 
         nav = QHBoxLayout()
-        nav.setContentsMargins(5, 10, 5, 5)
+        nav.setContentsMargins(5, 5, 5, 5)
         nav.setSpacing(8)
-
         nav.addWidget(self._first_btn)
         nav.addWidget(self._prev_btn)
-
         nav.addStretch(1)
 
         page_group = QHBoxLayout()
         page_group.setSpacing(5)
-        lbl_page = QLabel("Page")
-        lbl_of = QLabel("of")
-        page_group.addWidget(lbl_page)
+        page_group.addWidget(QLabel("Page"))
         page_group.addWidget(self._page_spin)
-        page_group.addWidget(lbl_of)
+        page_group.addWidget(QLabel("of"))
         page_group.addWidget(self._page_lbl)
         nav.addLayout(page_group)
 
         nav.addStretch(1)
-
         nav.addWidget(self._total_lbl)
         nav.addWidget(self._next_btn)
         nav.addWidget(self._last_btn)
@@ -1416,16 +1421,14 @@ class _LogWidget(QWidget):
         self._page_spin.setValue(self._page + 1)
         self._page_spin.blockSignals(False)
 
-        can_back = self._page > 0
+        can_back    = self._page > 0
         can_forward = self._page < pages - 1
         self._first_btn.setEnabled(can_back)
         self._prev_btn.setEnabled(can_back)
         self._next_btn.setEnabled(can_forward)
         self._last_btn.setEnabled(can_forward)
 
-    def _first_page(self):
-        self._page = 0
-        self._render_page()
+    def _first_page(self): self._page = 0; self._render_page()
 
     def _last_page(self):
         self._page = max(0, (len(self._filtered) + self._PAGE_SIZE - 1) // self._PAGE_SIZE - 1)
@@ -1433,20 +1436,17 @@ class _LogWidget(QWidget):
 
     def _prev_page(self):
         if self._page > 0:
-            self._page -= 1
-            self._render_page()
+            self._page -= 1; self._render_page()
 
     def _next_page(self):
         pages = max(1, (len(self._filtered) + self._PAGE_SIZE - 1) // self._PAGE_SIZE)
         if self._page < pages - 1:
-            self._page += 1
-            self._render_page()
+            self._page += 1; self._render_page()
 
     def _go_to_page(self):
         target = self._page_spin.value() - 1
         if target != self._page:
-            self._page = target
-            self._render_page()
+            self._page = target; self._render_page()
 
     def add(self, entry):
         self._items.append(entry)

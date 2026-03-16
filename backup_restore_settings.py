@@ -1,3 +1,6 @@
+import atexit
+from typing import Protocol, Type, runtime_checkable
+
 from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -8,7 +11,17 @@ from PyQt6.QtWidgets import (
 from samba_credentials import SambaPasswordDialog
 from themes import THEMES, current_theme, apply_style
 from dialogs import EntryDialog, HeaderSettingsDialog, MountsDialog, ProfilesDialog
-from state import S, _PROFILES_DIR, _COLS_NARROW, _COLS_WIDE, apply_replacements, block_set, save_profile, generate_tooltip
+from state import (
+    S, _PROFILES_DIR, _COLS_NARROW, _COLS_WIDE,
+    apply_replacements, block_set, save_profile, generate_tooltip,
+)
+
+
+def _atexit_cleanup() -> None:
+    from system_manager import _emergency_cleanup
+    _emergency_cleanup()
+
+atexit.register(_atexit_cleanup)
 
 
 _COPY_LOGIC_TOOLTIP = (
@@ -53,28 +66,26 @@ _COPY_LOGIC_TOOLTIP = (
 )
 
 
-_MODE_CFG: dict[str, tuple[str, str]] = {
-    "Backup":   ("Create Backup",  "backup_window_columns"),
-    "Restore":  ("Restore Backup", "restore_window_columns"),
-    "Settings": ("Settings",       "settings_window_columns"),
-}
+class _ThemeDialog(QDialog):
+    def keyPressEvent(self, event) -> None:
+        if event.key() != Qt.Key.Key_Escape:
+            super().keyPressEvent(event)
 
 
 # noinspection PyUnresolvedReferences
-class BaseWindow(QDialog):
-
+class _BaseCheckboxWindow(QDialog):
     changed = pyqtSignal()
+    _window_title: str = ""
+    _cols_key:     str = "backup_window_columns"
 
-    def __init__(self, parent, mode: str = "Settings"):
+    def __init__(self, parent) -> None:
         super().__init__(parent)
-        self.mode = mode
-        title, self._cols_key = _MODE_CFG[mode]
-        self.setWindowTitle(title)
+        self.setWindowTitle(self._window_title)
 
         self.checkbox_dirs: list[tuple[QCheckBox, list, list, str]] = []
-        self.cols           = S.ui.get(self._cols_key, _COLS_NARROW)
-        self._selectall:    QCheckBox   | None = None
-        self._col_btn:      QPushButton | None = None
+        self.cols = S.ui.get(self._cols_key, _COLS_NARROW)
+        self._selectall:     QCheckBox   | None = None
+        self._col_btn:       QPushButton | None = None
         self._entry_stacked: bool = False
 
         self.main_layout = QVBoxLayout(self)
@@ -95,6 +106,25 @@ class BaseWindow(QDialog):
         self.main_layout.addWidget(self.scroll_area, 1)
 
         self._setup_ui()
+
+    def _entry_filter(self, entry: dict) -> bool:
+        return True
+
+    def _show_inactive_headers(self) -> bool:
+        return False
+
+    def _tips(self) -> dict:
+        backup_tips, _, _ = generate_tooltip()
+        return backup_tips
+
+    def _src_dst(self, entry: dict) -> tuple[list, list]:
+        return entry.get("source", []), entry.get("destination", [])
+
+    def _add_action_buttons(self, grid: QGridLayout, row: int) -> None:
+        pass
+
+    def _extra_top_widgets(self) -> list:
+        return []
 
     def _setup_ui(self) -> None:
         self.checkbox_dirs.clear()
@@ -119,8 +149,8 @@ class BaseWindow(QDialog):
     def _rebuild_top_controls(self) -> None:
         while self._top_hbox.count():
             item = self._top_hbox.takeAt(0)
-            if widget := item.widget():
-                widget.deleteLater()
+            if w := item.widget():
+                w.deleteLater()
 
         next_cols_val = _COLS_NARROW if self.cols == _COLS_WIDE else _COLS_WIDE
 
@@ -131,54 +161,26 @@ class BaseWindow(QDialog):
         self._col_btn.clicked.connect(self._toggle_cols)
 
         self._top_hbox.addWidget(self._selectall)
-        if self.mode == "Settings":
+
+        for w in self._extra_top_widgets():
             self._top_hbox.addStretch(1)
-            self._top_hbox.addWidget(self._make_config_path_label())
+            self._top_hbox.addWidget(w)
 
         self._top_hbox.addStretch(1)
         self._top_hbox.addWidget(self._col_btn)
 
-    @staticmethod
-    def _make_config_path_label() -> QLabel:
-        t    = current_theme()
-        path = (str(_PROFILES_DIR / f"{S.profile_name}.json") if S.profile_name else str(_PROFILES_DIR))
-        lbl = QLabel(" 󰔨  "
-                     f"<span style='font-size:16px;color:{t['accent2']};"
-                     f"text-decoration:underline dotted;'>{apply_replacements(path)}</span>")
-        lbl.setTextFormat(Qt.TextFormat.RichText)
-        lbl.setToolTip(_COPY_LOGIC_TOOLTIP)
-        lbl.setToolTipDuration(600_000)
-        lbl.setCursor(Qt.CursorShape.WhatsThisCursor)
-        return lbl
-
-    def _toggle_all(self) -> None:
-        state = self._selectall.isChecked()
-        for cb, *_ in self.checkbox_dirs:
-            cb.setChecked(state)
-
-    def _sync_select_all(self) -> None:
-        if self._selectall and (cbs := [cb for cb, *_ in self.checkbox_dirs]):
-            block_set(self._selectall, all(cb.isChecked() for cb in cbs))
-
-    def _toggle_cols(self) -> None:
-        self.cols = _COLS_WIDE if self.cols == _COLS_NARROW else _COLS_NARROW
-        S.ui[self._cols_key] = self.cols
-        save_profile()
-        self.changed.emit()
-        self.done(2)
-
     def _populate_checkboxes(self, grid: QGridLayout) -> int:
         self.checkbox_dirs.clear()
-
-        backup_tips, restore_tips, _ = generate_tooltip()
-        tips = restore_tips if self.mode == "Restore" else backup_tips
+        tips          = self._tips()
+        show_inactive = self._show_inactive_headers()
 
         grouped: dict[str, list] = {}
         for e in S.entries:
+            if not self._entry_filter(e):
+                continue
             h = e.get("header", "Unknown")
-            if self.mode == "Backup"  and e.get("details", {}).get("no_backup"):  continue
-            if self.mode == "Restore" and e.get("details", {}).get("no_restore"): continue
-            if self.mode != "Settings" and S.headers.get(h, {}).get("inactive"):  continue
+            if not show_inactive and S.headers.get(h, {}).get("inactive"):
+                continue
             grouped.setdefault(h, []).append(e)
 
         t   = current_theme()
@@ -190,7 +192,7 @@ class BaseWindow(QDialog):
                 continue
 
             hdr_data = S.headers[h]
-            inactive = (self.mode == "Settings") and hdr_data.get("inactive", False)
+            inactive = show_inactive and hdr_data.get("inactive", False)
             color    = t["text_dim"] if inactive else hdr_data.get("color", "#ffffff")
             label    = f"{h} (Inactive)" if inactive else h
 
@@ -211,9 +213,7 @@ class BaseWindow(QDialog):
                 cb.stateChanged.connect(self._sync_select_all)
                 cb.entry_data = e
 
-                src = e.get("destination", []) if self.mode == "Restore" else e.get("source", [])
-                dst = e.get("source", [])      if self.mode == "Restore" else e.get("destination", [])
-
+                src, dst = self._src_dst(e)
                 self.checkbox_dirs.append((cb, src, dst, title))
                 grid.addWidget(cb, row, col)
                 col += 1
@@ -231,255 +231,21 @@ class BaseWindow(QDialog):
 
         return row
 
-    def _add_action_buttons(self, grid: QGridLayout, row: int) -> None:
-        if self.mode in ("Backup", "Restore"):
-            self._add_copy_buttons(grid, row)
-        else:
-            self._add_settings_buttons(grid, row)
+    def _toggle_all(self) -> None:
+        state = self._selectall.isChecked()
+        for cb, *_ in self.checkbox_dirs:
+            cb.setChecked(state)
 
-    def _add_copy_buttons(self, grid: QGridLayout, row: int) -> None:
-        label = "Create Backup" if self.mode == "Backup" else "Restore Backup"
+    def _sync_select_all(self) -> None:
+        if self._selectall and (cbs := [cb for cb, *_ in self.checkbox_dirs]):
+            block_set(self._selectall, all(cb.isChecked() for cb in cbs))
 
-        action_btn = QPushButton(label)
-        action_btn.setFixedHeight(30)
-        action_btn.setStyleSheet("font-size:15px;font-weight:bold;")
-        action_btn.clicked.connect(self._start_copy)
-
-        close_btn = QPushButton("Close")
-        close_btn.setFixedHeight(30)
-        close_btn.setStyleSheet("font-size:15px;")
-        close_btn.clicked.connect(self.close)
-
-        grid.addWidget(action_btn, row,     0, 1, self.cols)
-        grid.addWidget(close_btn,  row + 1, 0, 1, self.cols)
-
-    def _add_settings_buttons(self, grid: QGridLayout, row: int) -> None:
-        def _btn(lbl: str, fn) -> QPushButton:
-            b = QPushButton(lbl)
-            b.clicked.connect(fn)
-            return b
-
-        def _hrow(*btns) -> QHBoxLayout:
-            hb = QHBoxLayout()
-            for b in btns:
-                hb.addWidget(b)
-            return hb
-
-        grid.addLayout(
-            _hrow(_btn("System Manager Options", self._open_sm_options)),
-            row, 0, 1, self.cols,
-        )
-        row += 1
-        grid.addLayout(
-            _hrow(
-                _btn("New Entry",       self._new_entry),
-                _btn("Edit Entry",      self._edit_entry),
-                _btn("Delete Entry",    self._del_entry),
-                _btn("Header Settings", self._header_settings),
-            ),
-            row, 0, 1, self.cols,
-        )
-        row += 1
-        grid.addLayout(
-            _hrow(
-                _btn("Mount Options",     self._manage_mounts),
-                _btn("Samba Credentials", self._samba_credentials),
-                _btn("Profile Manager",   self._manage_profiles),
-            ),
-            row, 0, 1, self.cols,
-        )
-        row += 1
-        grid.addWidget(_btn("Change Theme", self._change_theme), row, 0, 1, self.cols)
-        row += 1
-        grid.addWidget(_btn("Close",        self.close),         row, 0, 1, self.cols)
-
-    def _start_copy(self) -> None:
-        from copy_worker import CopyDialog
-        from drive_utils import check_drives_to_mount, mount_required_drives, unmount_drive
-
-        selected = [(src, dst, title) for cb, src, dst, title in self.checkbox_dirs if cb.isChecked()]
-        if not selected:
-            QMessageBox.information(self, "Note", "Nothing selected.")
-            return
-
-        paths = [p for src, dst, _title in selected for p in src + dst]
-
-        drives_to_mount = check_drives_to_mount(paths)
-        proceed, drives_to_unmount = mount_required_drives(drives_to_mount, self)
-        if not proceed:
-            return
-
-        CopyDialog(self, selected, self.mode).exec()
-
-        failed = []
-        for opt in drives_to_unmount:
-            ok, err = unmount_drive(opt)
-            if not ok:
-                failed.append(f"• {opt.get('drive_name', '?')}: {err}")
-        if failed:
-            QMessageBox.warning(self, "Unmount Failed", "Could not unmount the following drives:\n\n" + "\n".join(failed))
-
-    def _new_entry(self) -> None:
-        if not S.headers:
-            QMessageBox.information(self, "No Headers Found", "Before creating an entry you need at least one header.\n\n"
-                                    "Headers group your entries and can each have their own colour.\n"
-                                    "The Header Settings dialog will open now — click '🆕 New' to add one.")
-            dlg = HeaderSettingsDialog(self)
-            if dlg.exec() != QDialog.DialogCode.Accepted or not S.headers:
-                return
-            save_profile()
-            self.changed.emit()
-
-        pairs: list[list[str]] = []
-        while True:
-            dlg = EntryDialog(self, None, stacked=self._entry_stacked, _pairs=pairs or None)
-            code = dlg.exec()
-            if code == QDialog.DialogCode.Accepted:
-                S.entries.append(dlg.result)
-                save_profile()
-                self.changed.emit()
-                self.done(2)
-                break
-            elif code == 2:
-                self._entry_stacked = dlg.stacked
-                pairs = dlg.pairs
-                continue
-            else:
-                break
-
-    def _edit_entry(self) -> None:
-        checked = [cb for cb, *_ in self.checkbox_dirs if cb.isChecked()]
-        if not checked:
-            QMessageBox.information(self, "Edit Entry", "Please check one or more entries to edit.")
-            return
-
-        changed_any = False
-        total = len(checked)
-
-        for i, cb in enumerate(checked):
-            entry = getattr(cb, "entry_data", None)
-            if not entry:
-                continue
-            pairs: list[list[str]] = []
-            while True:
-                dlg = EntryDialog(self, entry, stacked=self._entry_stacked, _pairs=pairs or None)
-                if total > 1:
-                    dlg.setWindowTitle(f"Edit Entry ({i + 1}/{total}) — {entry['title']}")
-                code = dlg.exec()
-                if code == QDialog.DialogCode.Accepted:
-                    idx = next((j for j, e in enumerate(S.entries) if e is entry), None)
-                    if idx is not None:
-                        S.entries[idx] = dlg.result
-                        changed_any = True
-                    break
-                elif code == 2:
-                    self._entry_stacked = dlg.stacked
-                    pairs = dlg.pairs
-                    continue
-                else:
-                    break
-
-        if changed_any:
-            save_profile()
-            self.changed.emit()
-            self.done(2)
-
-    def _del_entry(self) -> None:
-        to_delete = [cb.entry_data for cb, *_ in self.checkbox_dirs if cb.isChecked()]
-        if not to_delete:
-            QMessageBox.information(self, "Delete Entry", "Please check one or more entries to delete.")
-            return
-        names = ", ".join(e["title"].replace("<br>", " ") for e in to_delete)
-        if QMessageBox.question(self, "Delete", f"Really delete: {names}?",
-                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
-            S.entries = [e for e in S.entries if e not in to_delete]
-            save_profile()
-            self.changed.emit()
-            self.done(2)
-
-    def _header_settings(self) -> None:
-        dlg = HeaderSettingsDialog(self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            save_profile()
-            self.changed.emit()
-            self.done(2)
-
-    def _manage_mounts(self) -> None:
-        MountsDialog(self).exec()
-
-    def _samba_credentials(self) -> None:
-        SambaPasswordDialog(self).exec()
-
-    def _manage_profiles(self) -> None:
-        dlg = ProfilesDialog(self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            self.changed.emit()
-            self.done(2)
-
-    def _open_sm_options(self) -> None:
-        from system_manager_options import SystemManagerOptions
-        SystemManagerOptions(self).exec()
-
-    def _change_theme(self) -> None:
-        class _ThemeDialog(QDialog):
-            def keyPressEvent(self, event):
-                if event.key() != Qt.Key.Key_Escape:
-                    super().keyPressEvent(event)
-
-        dlg = _ThemeDialog(self)
-        dlg.setWindowTitle("Theme and Font Settings")
-        dlg.setMinimumSize(480, 380)
-        dlg.setWindowModality(Qt.WindowModality.NonModal)
-
-        layout = QVBoxLayout(dlg)
-
-        def _combo(label: str, items: list[str], current: str) -> QComboBox:
-            layout.addWidget(QLabel(label))
-            cb = QComboBox()
-            cb.addItems(items)
-            cb.setCurrentText(current)
-            layout.addWidget(cb)
-            return cb
-
-        theme_cb = _combo("Select Theme:", list(THEMES.keys()),
-                          S.ui.get("theme", "Tokyo Night"))
-        font_cb = _combo("Select Font:", ["(System Default)"] + sorted(QFontDatabase.families()),
-                         S.ui.get("font_family", "") or "(System Default)")
-        size_cb = _combo("Select Font Size:", ["10", "11", "12", "13", "14", "15", "16", "17", "18", "20", "22", "24"],
-                         str(S.ui.get("font_size", 14)))
-
-        orig = (S.ui.get("theme", "Tokyo Night"), S.ui.get("font_family", ""), S.ui.get("font_size", 14))
-
-        def _apply(save: bool = False) -> None:
-            chosen_font = font_cb.currentText()
-            if chosen_font == "(System Default)":
-                chosen_font = ""
-            S.ui.update(theme=theme_cb.currentText(), font_family=chosen_font, font_size=int(size_cb.currentText()))
-            apply_style()
-            if save:
-                save_profile()
-                self.done(2)
-
-        prev_btn = QPushButton("Preview")
-        prev_btn.clicked.connect(lambda: _apply(False))
-        layout.addWidget(prev_btn)
-
-        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
-        ok_btn = bb.button(QDialogButtonBox.StandardButton.Ok)
-        cancel_btn = bb.button(QDialogButtonBox.StandardButton.Cancel)
-        if ok_btn:
-            def _on_ok():
-                _apply(True)
-                dlg.accept()
-                QMessageBox.information(self, "Theme Saved", f"Theme: {theme_cb.currentText()}, "
-                                                             f"Font: {font_cb.currentText()} {size_cb.currentText()}px")
-            ok_btn.clicked.connect(_on_ok)
-        if cancel_btn:
-            cancel_btn.clicked.connect(lambda: (S.ui.update(theme=orig[0], font_family=orig[1], font_size=orig[2]), apply_style(), dlg.reject()))
-        layout.addWidget(bb)
-        dlg.show()
-        dlg.raise_()
-        dlg.activateWindow()
+    def _toggle_cols(self) -> None:
+        self.cols = _COLS_WIDE if self.cols == _COLS_NARROW else _COLS_NARROW
+        S.ui[self._cols_key] = self.cols
+        save_profile()
+        self.changed.emit()
+        self.done(2)
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -514,3 +280,323 @@ class BaseWindow(QDialog):
             self.close()
         else:
             super().keyPressEvent(event)
+
+
+@runtime_checkable
+class _CopyWindowProtocol(Protocol):
+    checkbox_dirs: list
+    cols: int
+    _op_label: str
+
+    def close(self) -> None: ...
+    def information(self, *a, **k) -> None: ...
+
+
+class _CopyMixin:
+    _op_label: str = ""
+
+    def _start_copy(self: "_BaseCheckboxWindow") -> None:  # type: ignore[misc]
+        from copy_worker import CopyDialog
+        from drive_utils import check_drives_to_mount, mount_required_drives, unmount_drive
+
+        selected = [(src, dst, title) for cb, src, dst, title in self.checkbox_dirs if cb.isChecked()]
+        if not selected:
+            QMessageBox.information(self, "Note", "Nothing selected.")
+            return
+
+        paths = [p for src, dst, _title in selected for p in src + dst]
+        drives_to_mount = check_drives_to_mount(paths)
+        proceed, drives_to_unmount = mount_required_drives(drives_to_mount, self)
+        if not proceed:
+            return
+
+        CopyDialog(self, selected, self._op_label).exec()  # type: ignore[arg-type]
+
+        failed = []
+        for opt in drives_to_unmount:
+            ok, err = unmount_drive(opt)
+            if not ok:
+                failed.append(f"• {opt.get('drive_name', '?')}: {err}")
+        if failed:
+            QMessageBox.warning(self, "Unmount Failed", "Could not unmount the following drives:\n\n" + "\n".join(failed))
+
+    def _add_action_buttons(self: "_BaseCheckboxWindow", grid: QGridLayout, row: int) -> None:
+        action_btn = QPushButton(self._op_label)  # type: ignore[attr-defined]
+        action_btn.setFixedHeight(30)
+        action_btn.setStyleSheet("font-size:15px;font-weight:bold;")
+        action_btn.clicked.connect(self._start_copy)  # type: ignore[attr-defined]
+
+        close_btn = QPushButton("Close")
+        close_btn.setFixedHeight(30)
+        close_btn.setStyleSheet("font-size:15px;")
+        close_btn.clicked.connect(self.close)
+
+        grid.addWidget(action_btn, row,     0, 1, self.cols)
+        grid.addWidget(close_btn,  row + 1, 0, 1, self.cols)
+
+
+class BackupWindow(_CopyMixin, _BaseCheckboxWindow):
+    _window_title = "Create Backup"
+    _cols_key     = "backup_window_columns"
+    _op_label     = "Create Backup"
+
+    def _entry_filter(self, entry: dict) -> bool:
+        return not entry.get("details", {}).get("no_backup", False)
+
+    def _tips(self) -> dict:
+        backup_tips, _, _ = generate_tooltip()
+        return backup_tips
+
+    def _src_dst(self, entry: dict) -> tuple[list, list]:
+        return entry.get("source", []), entry.get("destination", [])
+
+
+class RestoreWindow(_CopyMixin, _BaseCheckboxWindow):
+    _window_title = "Restore Backup"
+    _cols_key     = "restore_window_columns"
+    _op_label     = "Restore Backup"
+
+    def _entry_filter(self, entry: dict) -> bool:
+        return not entry.get("details", {}).get("no_restore", False)
+
+    def _tips(self) -> dict:
+        _, restore_tips, _ = generate_tooltip()
+        return restore_tips
+
+    def _src_dst(self, entry: dict) -> tuple[list, list]:
+        return entry.get("destination", []), entry.get("source", [])
+
+
+class SettingsWindow(_BaseCheckboxWindow):
+    _window_title = "Settings"
+    _cols_key     = "settings_window_columns"
+
+    def _show_inactive_headers(self) -> bool:
+        return True
+
+    def _entry_filter(self, entry: dict) -> bool:
+        return True
+
+    def _tips(self) -> dict:
+        backup_tips, _, _ = generate_tooltip()
+        return backup_tips
+
+    def _src_dst(self, entry: dict) -> tuple[list, list]:
+        return entry.get("source", []), entry.get("destination", [])
+
+    def _extra_top_widgets(self) -> list:
+        return [self._make_config_path_label()]
+
+    @staticmethod
+    def _make_config_path_label() -> QLabel:
+        t    = current_theme()
+        path = (str(_PROFILES_DIR / f"{S.profile_name}.json") if S.profile_name else str(_PROFILES_DIR))
+        lbl = QLabel(" 󰔨  "
+                     f"<span style='font-size:16px;color:{t['accent2']};"
+                     f"text-decoration:underline dotted;'>{apply_replacements(path)}</span>")
+        lbl.setTextFormat(Qt.TextFormat.RichText)
+        lbl.setToolTip(_COPY_LOGIC_TOOLTIP)
+        lbl.setToolTipDuration(600_000)
+        lbl.setCursor(Qt.CursorShape.WhatsThisCursor)
+        return lbl
+
+    def _add_action_buttons(self, grid: QGridLayout, row: int) -> None:
+        def _btn(lbl: str, fn) -> QPushButton:
+            b = QPushButton(lbl)
+            b.clicked.connect(fn)
+            return b
+
+        def _hrow(*btns) -> QHBoxLayout:
+            hb = QHBoxLayout()
+            for b in btns:
+                hb.addWidget(b)
+            return hb
+
+        grid.addLayout(_hrow(_btn("System Manager Options", self._open_sm_options)), row, 0, 1, self.cols)
+        row += 1
+        grid.addLayout(_hrow(_btn("New Entry", self._new_entry), _btn("Edit Entry", self._edit_entry),
+                             _btn("Delete Entry", self._del_entry), _btn("Header Settings", self._header_settings)),
+                       row, 0, 1, self.cols)
+        row += 1
+        grid.addLayout(_hrow(_btn("Mount Options", self._manage_mounts), _btn("Samba Credentials", self._samba_credentials),
+                             _btn("Profile Manager", self._manage_profiles)), row, 0, 1, self.cols)
+        row += 1
+        grid.addWidget(_btn("Change Theme", self._change_theme), row, 0, 1, self.cols)
+        row += 1
+        grid.addWidget(_btn("Close", self.close), row, 0, 1, self.cols)
+
+
+    def _new_entry(self) -> None:
+        if not S.headers:
+            QMessageBox.information(self, "No Headers Found",
+                                    "Before creating an entry you need at least one header.\n\n"
+                                    "Headers group your entries and can each have their own colour.\n"
+                                    "The Header Settings dialog will open now — click '🆕 New' to add one.")
+            dlg = HeaderSettingsDialog(self)
+            if dlg.exec() != QDialog.DialogCode.Accepted or not S.headers:
+                return
+            save_profile()
+            self.changed.emit()
+
+        pairs: list[list[str]] = []
+        while True:
+            dlg  = EntryDialog(self, None, stacked=self._entry_stacked, _pairs=pairs or None)
+            code = dlg.exec()
+            if code == QDialog.DialogCode.Accepted:
+                S.entries.append(dlg.result)
+                save_profile()
+                self.changed.emit()
+                self.done(2)
+                break
+            elif code == 2:
+                self._entry_stacked = dlg.stacked
+                pairs = dlg.pairs
+            else:
+                break
+
+    def _edit_entry(self) -> None:
+        checked = [cb for cb, *_ in self.checkbox_dirs if cb.isChecked()]
+        if not checked:
+            QMessageBox.information(self, "Edit Entry", "Please check one or more entries to edit.")
+            return
+
+        changed_any = False
+        total = len(checked)
+
+        for i, cb in enumerate(checked):
+            entry = getattr(cb, "entry_data", None)
+            if not entry:
+                continue
+            pairs: list[list[str]] = []
+            while True:
+                dlg  = EntryDialog(self, entry, stacked=self._entry_stacked, _pairs=pairs or None)
+                if total > 1:
+                    dlg.setWindowTitle(f"Edit Entry ({i + 1}/{total}) — {entry['title']}")
+                code = dlg.exec()
+                if code == QDialog.DialogCode.Accepted:
+                    idx = next((j for j, e in enumerate(S.entries) if e is entry), None)
+                    if idx is not None:
+                        S.entries[idx] = dlg.result
+                        changed_any = True
+                    break
+                elif code == 2:
+                    self._entry_stacked = dlg.stacked
+                    pairs = dlg.pairs
+                else:
+                    break
+
+        if changed_any:
+            save_profile()
+            self.changed.emit()
+            self.done(2)
+
+    def _del_entry(self) -> None:
+        to_delete_ids = {id(cb.entry_data) for cb, *_ in self.checkbox_dirs
+                         if cb.isChecked() and getattr(cb, "entry_data", None) is not None}
+        if not to_delete_ids:
+            QMessageBox.information(self, "Delete Entry", "Please check one or more entries to delete.")
+            return
+
+        to_delete = [e for e in S.entries if id(e) in to_delete_ids]
+        names = ", ".join(e["title"].replace("<br>", " ") for e in to_delete)
+        if QMessageBox.question(self, "Delete", f"Really delete: {names}?",
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+            S.entries = [e for e in S.entries if id(e) not in to_delete_ids]
+            save_profile()
+            self.changed.emit()
+            self.done(2)
+
+    def _header_settings(self) -> None:
+        dlg = HeaderSettingsDialog(self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            save_profile()
+            self.changed.emit()
+            self.done(2)
+
+    def _manage_mounts(self) -> None:
+        MountsDialog(self).exec()
+
+    def _samba_credentials(self) -> None:
+        SambaPasswordDialog(self).exec()
+
+    def _manage_profiles(self) -> None:
+        dlg = ProfilesDialog(self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.changed.emit()
+            self.done(2)
+
+    def _open_sm_options(self) -> None:
+        from system_manager_options import SystemManagerOptions
+        SystemManagerOptions(self).exec()
+
+    def _change_theme(self) -> None:
+        dlg = _ThemeDialog(self)
+        dlg.setWindowTitle("Theme and Font Settings")
+        dlg.setMinimumSize(480, 380)
+        dlg.setWindowModality(Qt.WindowModality.NonModal)
+
+        layout = QVBoxLayout(dlg)
+
+        def _combo(label: str, items: list[str], current: str) -> QComboBox:
+            layout.addWidget(QLabel(label))
+            cb = QComboBox()
+            cb.addItems(items)
+            cb.setCurrentText(current)
+            layout.addWidget(cb)
+            return cb
+
+        theme_cb = _combo("Select Theme:", list(THEMES.keys()), S.ui.get("theme", "Tokyo Night"))
+
+        font_cb = _combo("Select Font:", ["(System Default)"] + sorted(QFontDatabase.families()),
+                         S.ui.get("font_family", "") or "(System Default)")
+
+        size_cb = _combo("Select Font Size:", ["10", "11", "12", "13", "14", "15", "16", "17", "18", "20", "22", "24"],
+                         str(S.ui.get("font_size", 14)))
+
+        orig = (S.ui.get("theme", "Tokyo Night"), S.ui.get("font_family", ""), S.ui.get("font_size", 14))
+
+        def _apply(save: bool = False) -> None:
+            chosen_font = font_cb.currentText()
+            if chosen_font == "(System Default)":
+                chosen_font = ""
+            S.ui.update(theme=theme_cb.currentText(), font_family=chosen_font, font_size=int(size_cb.currentText()))
+            apply_style()
+            if save:
+                save_profile()
+                self.done(2)
+
+        prev_btn = QPushButton("Preview")
+        prev_btn.clicked.connect(lambda: _apply(False))
+        layout.addWidget(prev_btn)
+
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel) # type: ignore
+        ok_btn     = bb.button(QDialogButtonBox.StandardButton.Ok)
+        cancel_btn = bb.button(QDialogButtonBox.StandardButton.Cancel)
+
+        if ok_btn:
+            def _on_ok() -> None:
+                _apply(True)
+                dlg.accept()
+                QMessageBox.information(self, "Theme Saved", f"Theme: {theme_cb.currentText()}, "
+                                                             f"Font: {font_cb.currentText()} {size_cb.currentText()}px")
+            ok_btn.clicked.connect(_on_ok)
+
+        if cancel_btn:
+            cancel_btn.clicked.connect(lambda: (S.ui.update(theme=orig[0], font_family=orig[1], font_size=orig[2]),
+                                                apply_style(), dlg.reject()))
+
+        layout.addWidget(bb)
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+
+
+_WINDOW_MAP: "dict[str, Type[_BaseCheckboxWindow]]" = {}
+
+
+def base_window(parent, mode: str = "Settings") -> "_BaseCheckboxWindow":
+    cls = _WINDOW_MAP.get(mode, SettingsWindow)
+    return cls(parent)
+
+
+_WINDOW_MAP.update({"Backup": BackupWindow, "Restore":  RestoreWindow, "Settings": SettingsWindow})

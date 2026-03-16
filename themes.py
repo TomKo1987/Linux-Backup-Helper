@@ -164,10 +164,8 @@ def current_theme() -> dict[str, str]:
 
 
 def _build_indeterminate_svg(colour: str) -> str:
-    svg = (
-        f"<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14'>"
-        f"<rect x='3' y='3' width='8' height='8' fill='{colour}' /></svg>"
-    )
+    svg = ("<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14'>"
+           f"<rect x='3' y='3' width='8' height='8' fill='{colour}' /></svg>")
     return base64.b64encode(svg.encode()).decode()
 
 
@@ -175,11 +173,9 @@ def tri_styles() -> tuple[str, str, str]:
     t = current_theme()
     b64 = _build_indeterminate_svg(t["highlight"])
 
-    ind = (
-        "QCheckBox::indicator{"
-        "width:8px;height:8px;border-radius:4px;"
-        "background:transparent;border:1px solid transparent;image:none;}"
-    )
+    ind = ("QCheckBox::indicator{" 
+           "width:8px;height:8px;border-radius:4px;"
+           "background:transparent;border:1px solid transparent;image:none;}")
 
     checked = f"QCheckBox::indicator:checked{{background:{t['green']};border:1px solid {t['green']};}}"
     unchecked = f"QCheckBox::indicator:unchecked{{background:{t['bg3']};border:1px solid {t['text_dim']};}}"

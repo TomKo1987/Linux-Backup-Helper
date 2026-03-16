@@ -25,6 +25,13 @@ def _validate_cmd(cmd: str) -> tuple[bool, str]:
         base = os.path.basename(tokens[1])
     if base not in _ALLOWED_CMDS:
         return False, f"'{base}' is not an allowed command"
+
+    expanded = [os.path.expanduser(t) for t in tokens]
+    for tok in expanded:
+        norm = os.path.normpath(tok)
+        if norm.startswith("/../") or norm == "/..":
+            return False, f"Path traversal detected in token: {tok!r}"
+
     return True, ""
 
 
@@ -104,7 +111,7 @@ def is_mounted(opt: dict, mount_out: Optional[str] = None) -> bool:
 
 
 def mount_drive(drive: dict) -> tuple[bool, str]:
-    name    = drive.get("drive_name", "?")
+    name = drive.get("drive_name", "?")
     success, error_msg = _execute_drive_op(drive, "mount_command", 15)
 
     if success:
@@ -118,7 +125,7 @@ def mount_drive(drive: dict) -> tuple[bool, str]:
 
 
 def unmount_drive(drive: dict) -> tuple[bool, str]:
-    name    = drive.get("drive_name", "?")
+    name = drive.get("drive_name", "?")
     success, error_msg = _execute_drive_op(drive, "unmount_command", 30)
 
     if success:

@@ -147,7 +147,7 @@ pyinstaller --onefile main.py
 ## Requirements
 
 - **OS:** Linux (tested on Arch Linux; should work on most distributions)
-- **Python:** 3.9+
+- **Python:** 3.10+
 - **Python packages:** PyQt6, keyring, secretstorage
 - **System packages:** `inxi` (required), `smbclient` (optional — only needed for SMB/Samba share support)
 

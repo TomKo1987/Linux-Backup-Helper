@@ -99,8 +99,9 @@ class SecureString:
 
     def clear(self) -> None:
         if self._buf:
-            for i in range(len(self._buf)):
-                self._buf[i] = 0
+            mv = memoryview(self._buf)
+            for i in range(len(mv)):
+                mv[i] = 0
             self._buf = bytearray()
             gc.collect()
 
@@ -111,4 +112,4 @@ class SecureString:
         return len(self._buf)
 
     def __repr__(self) -> str:
-        return f"SecureString(len={len(self._buf)})"
+        return "SecureString(<secured>)"

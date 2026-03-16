@@ -1,7 +1,8 @@
 from pathlib import Path
+import html as _html_mod
 from typing import Any, Optional
-import json, logging, os, pwd, re, tempfile
 from logging.handlers import RotatingFileHandler
+import json, logging, os, pwd, re, tempfile, threading
 
 _USER         = pwd.getpwuid(os.getuid()).pw_name
 _HOME         = Path.home()
@@ -50,6 +51,10 @@ def apply_replacements(text: str) -> str:
     return text
 
 
+def _safe_path_for_html(path: str) -> str:
+    return _html_mod.escape(apply_replacements(path))
+
+
 def block_set(cb, checked: bool) -> None:
     cb.blockSignals(True)
     cb.setChecked(checked)
@@ -83,8 +88,10 @@ def _atomic_write(path: Path, data: dict) -> None:
             json.dump(data, f, indent=2, ensure_ascii=False)
         os.replace(tmp_name, path)
     except Exception:
-        if os.path.exists(tmp_name):
+        try:
             os.unlink(tmp_name)
+        except OSError:
+            pass
         raise
 
 
@@ -231,22 +238,26 @@ def startup_load() -> bool:
     return False
 
 
-_cached_session: str = ""
+_session_lock     = threading.Lock()
+_cached_session:  str  = ""
 _session_detected: bool = False
 
 
 def generate_tooltip() -> tuple[dict, dict, dict]:
     global _cached_session, _session_detected
+
     from themes import current_theme
     from linux_distro_helper import LinuxDistroHelper
-    if not _session_detected:
-        try:
-            _cached_session = LinuxDistroHelper().detect_session() or ""
-        except Exception as e:
-            logger.warning(f"Error in LinuxDistroHelper detect_session: {e}")
-            _cached_session = ""
-        _session_detected = True
-    session = _cached_session or None
+
+    with _session_lock:
+        if not _session_detected:
+            try:
+                _cached_session = LinuxDistroHelper().detect_session() or ""
+            except Exception as e:
+                logger.warning("Error in LinuxDistroHelper detect_session: %s", e)
+                _cached_session = ""
+            _session_detected = True
+        session = _cached_session or None
 
     t = current_theme()
 
@@ -258,12 +269,13 @@ def generate_tooltip() -> tuple[dict, dict, dict]:
     _c_border = t["header_sep"]
 
     def _entry_html(_title: str, src_lines: list, dst_lines: list) -> str:
-        src_html = "<br/>".join(map(str, src_lines))
-        dst_html = "<br/>".join(map(str, dst_lines))
+        src_html = "<br/>".join(_safe_path_for_html(str(p)) for p in src_lines)
+        dst_html = "<br/>".join(_safe_path_for_html(str(p)) for p in dst_lines)
+        safe_title = _html_mod.escape(_title)
         return ("<table style='border-collapse:collapse;width:100%;font-family:monospace;'>"
                 f"<tr style='background-color:{_bg_title};'>"
                 f"<td colspan='2' style='font-size:16px;color:{_c_title};"
-                f"text-align:center;padding:5px;white-space:nowrap;'>{_title}</td></tr>"
+                f"text-align:center;padding:5px;white-space:nowrap;'>{safe_title}</td></tr>"
                 f"<tr style='background-color:{_bg_row0};'>"
                 f"<td colspan='2' style='font-size:14px;color:{_c_data};"
                 f"text-align:left;padding:6px;white-space:nowrap;'>"
@@ -279,15 +291,16 @@ def generate_tooltip() -> tuple[dict, dict, dict]:
         for idx in range(0, len(item_strings), col_width):
             bg    = _bg_row0 if (idx // col_width) % 2 == 0 else _bg_row1
             cells = "".join(f"<td style='padding:5px;border:1px solid {_c_border};"
-                            f"color:{_c_data};font-family:monospace;'>{c}</td>"
+                            f"color:{_c_data};font-family:monospace;'>"
+                            f"{_html_mod.escape(str(c))}</td>"
                             for c in item_strings[idx:idx + col_width])
             rows.append(f"<tr style='background-color:{bg};'>{cells}</tr>")
 
-        return apply_replacements(f"<div style='white-space:nowrap;font-size:14px;color:{_c_data};"
-                                  f"font-family:monospace;background-color:{_bg_title};"
-                                  f"padding:5px;border:1px solid {_c_border};'>"
-                                  f"<table style='border-collapse:collapse;table-layout:auto;'>"
-                                  f"{''.join(rows)}</table></div>")
+        return (f"<div style='white-space:nowrap;font-size:14px;color:{_c_data};"
+                f"font-family:monospace;background-color:{_bg_title};"
+                f"padding:5px;border:1px solid {_c_border};'>"
+                f"<table style='border-collapse:collapse;table-layout:auto;'>"
+                f"{''.join(rows)}</table></div>")
 
     backup_tips:  dict = {}
     restore_tips: dict = {}
@@ -295,16 +308,17 @@ def generate_tooltip() -> tuple[dict, dict, dict]:
         title = entry["title"]
         src   = entry.get("source", [])
         dst   = entry.get("destination", [])
-        backup_tips[title]  = apply_replacements(_entry_html(title, src, dst))
-        restore_tips[title] = apply_replacements(_entry_html(title, dst, src))
+        backup_tips[title]  = _entry_html(title, src, dst)
+        restore_tips[title] = _entry_html(title, dst, src)
 
     sm_tips: dict = {}
     files = [f for f in (S.system_files or []) if isinstance(f, dict) and not f.get("disabled")]
     if files:
-        sm_tips["copy_system_files"] = _sm_table([f"Src: {f.get('source', '')}<br>Dst: {f.get('destination', '')}"
-                                                  for f in files], col_width=2)
+        sm_tips["copy_system_files"] = _sm_table(
+            [f"Src: {apply_replacements(f.get('source', ''))}\nDst: {apply_replacements(f.get('destination', ''))}"
+             for f in files], col_width=2)
 
-    for op_key, pkg_list in (("install_basic_packages", S.basic_packages), ("install_aur_packages",   S.aur_packages)):
+    for op_key, pkg_list in (("install_basic_packages", S.basic_packages), ("install_aur_packages", S.aur_packages)):
         active = [p["name"] for p in pkg_list if not p.get("disabled")]
         if active:
             sm_tips[op_key] = _sm_table(active, col_width=5)

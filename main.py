@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
 
 from themes import apply_style
 from dialogs import LogViewer, SysInfoDialog
-from backup_restore_settings import BaseWindow
+from backup_restore_settings import base_window
 from drive_utils import get_mount_output, is_mounted, unmount_drive
 from state import S, _HOME, _PROFILES_DIR, _PROFILE_RE, save_profile, startup_load, logger
 
@@ -32,8 +32,8 @@ class MainWindow(QMainWindow):
         self._quitting = False
 
         self.menu_actions = [
-            ("💾 Create Backup", lambda: self._open(BaseWindow, "Backup")),
-            ("📤 Restore Backup", lambda: self._open(BaseWindow, "Restore")),
+            ("💾 Create Backup", lambda: self._open(base_window, "Backup")),
+            ("📤 Restore Backup", lambda: self._open(base_window, "Restore")),
             ("🖥 System Manager", self._open_system_manager),
             ("💻 System Information", lambda: self._open(SysInfoDialog)),
             ("📋 View Log", lambda: self._open(LogViewer)),
@@ -72,7 +72,7 @@ class MainWindow(QMainWindow):
     def _open_settings(self) -> None:
         self.hide()
         while True:
-            dlg = BaseWindow(self, "Settings")
+            dlg = base_window(self, "Settings")
             dlg.changed.connect(apply_style)
             if dlg.exec() != RESTART_DIALOG:
                 break

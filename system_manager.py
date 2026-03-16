@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import Optional
-import ast, os, queue, shlex, shutil, subprocess, socket, tempfile, threading, time, types, urllib.error, urllib.request, pwd
+import ast, os, queue, shlex, shutil, signal, subprocess, socket, tempfile, threading, time, types, urllib.error, urllib.request, pwd
 
 from PyQt6.QtGui     import QColor, QIcon, QTextCursor
 from PyQt6.QtCore    import Qt, QElapsedTimer, QThread, QTimer, pyqtSignal
@@ -12,6 +12,72 @@ from PyQt6.QtWidgets import (
 from themes import current_theme
 from linux_distro_helper import distro_family
 from state  import S, _HOME, _USER, logger, apply_replacements
+
+
+def _ram_tmpdir() -> Optional[str]:
+    shm = "/dev/shm"
+    if os.path.isdir(shm) and os.access(shm, os.W_OK):
+        return shm
+    return None
+
+
+_cleanup_lock    = threading.Lock()
+_cleanup_paths:  list[str] = []
+
+
+def _register_tmpdir(path: str) -> None:
+    with _cleanup_lock:
+        _cleanup_paths.append(path)
+
+
+def _unregister_tmpdir(path: str) -> None:
+    with _cleanup_lock:
+        try:
+            _cleanup_paths.remove(path)
+        except ValueError:
+            pass
+
+
+def _emergency_cleanup() -> None:
+    with _cleanup_lock:
+        paths = list(_cleanup_paths)
+    for p in paths:
+        _wipe_tmpdir(p)
+
+
+def _wipe_tmpdir(tmp_path_str: str) -> None:
+    if not tmp_path_str:
+        return
+    tmp_path = Path(tmp_path_str)
+    pw_file  = tmp_path / "sudo_pass"
+    if pw_file.exists():
+        try:
+            size = pw_file.stat().st_size
+            if size > 0:
+                with open(pw_file, "r+b") as f:
+                    f.write(os.urandom(size))
+                    f.flush()
+                    os.fsync(f.fileno())
+            pw_file.unlink()
+        except Exception as exc:
+            logger.warning("_wipe_tmpdir: sudo_pass cleanup error: %s", exc)
+    try:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+    except Exception as exc:
+        logger.warning("_wipe_tmpdir: rmtree error: %s", exc)
+
+
+_original_sigterm = signal.getsignal(signal.SIGTERM)
+
+def _sigterm_handler(signum, frame):  # noqa: ANN001
+    logger.warning("SIGTERM received — running emergency cleanup")
+    _emergency_cleanup()
+    if callable(_original_sigterm):
+        _original_sigterm(signum, frame)
+    else:
+        raise SystemExit(0)
+
+signal.signal(signal.SIGTERM, _sigterm_handler)
 
 
 class SystemManagerDialog(QDialog):
@@ -113,7 +179,7 @@ class SystemManagerDialog(QDialog):
         bs = _Style.border_style()
         self._elapsed_lbl.setGraphicsEffect(shadow)
         self._elapsed_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._elapsed_lbl.setStyleSheet(f"color:{t['info']};font-size:17px;{bs}" 
+        self._elapsed_lbl.setStyleSheet(f"color:{t['info']};font-size:17px;{bs}"
                                         f"background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
                                         f"stop:0 {t['bg2']},stop:1 {t['header_sep']});"
                                         f"text-align:center;font-weight:bold;padding:3px;")
@@ -415,15 +481,18 @@ class SystemManagerThread(QThread):
 
     def _make_askpass(self) -> bool:
         try:
-            self.temp_dir = tempfile.mkdtemp(prefix="sm_")
+            tmp_base = _ram_tmpdir()
+            self.temp_dir = tempfile.mkdtemp(prefix="sm_", dir=tmp_base)
             os.chmod(self.temp_dir, 0o700)
+            _register_tmpdir(self.temp_dir)
 
-            pw_path   = Path(self.temp_dir, "sudo_pass")
-            askpass   = Path(self.temp_dir, "askpass.sh")
+            pw_path = Path(self.temp_dir, "sudo_pass")
+            askpass = Path(self.temp_dir, "askpass.sh")
 
             pw_str   = self._pw.get()
             pw_bytes = bytearray(pw_str.encode("utf-8"))
             del pw_str
+
             try:
                 fd = os.open(str(pw_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
                 try:
@@ -431,9 +500,10 @@ class SystemManagerThread(QThread):
                 finally:
                     os.close(fd)
             finally:
-                for i in range(len(pw_bytes)):
-                    pw_bytes[i] = 0
-                del pw_bytes
+                mv = memoryview(pw_bytes)
+                for i in range(len(mv)):
+                    mv[i] = 0
+                del pw_bytes, mv
 
             askpass.write_text(f'#!/bin/sh\ncat "{pw_path}"\n', encoding="utf-8")
             os.chmod(askpass, 0o700)
@@ -444,29 +514,11 @@ class SystemManagerThread(QThread):
             return False
 
     def _cleanup(self) -> None:
-        if not self.temp_dir or not os.path.exists(self.temp_dir):
+        tmp = self.temp_dir
+        if not tmp:
             return
-
-        tmp_path = Path(self.temp_dir)
-
-        pw_file = tmp_path / "sudo_pass"
-        if pw_file.exists():
-            try:
-                size = pw_file.stat().st_size
-                if size > 0:
-                    with open(pw_file, "r+b") as f:
-                        f.write(os.urandom(size))
-                        f.flush()
-                        os.fsync(f.fileno())
-                pw_file.unlink()
-            except Exception as exc:
-                logger.warning("Cleanup error for sudo_pass: %s", exc)
-
-        try:
-            shutil.rmtree(tmp_path, ignore_errors=True)
-        except Exception as exc:
-            logger.warning("Could not delete temp directory: %s", exc)
-
+        _unregister_tmpdir(tmp)
+        _wipe_tmpdir(tmp)
         self.temp_dir = None
         self.askpass  = None
 
@@ -538,9 +590,9 @@ class SystemManagerThread(QThread):
         if self.terminated:
             return None
         try:
-            env = {**os.environ, "SUDO_ASKPASS": str(self.askpass)}
-            proc = subprocess.Popen(["sudo", "-A", "sh", "-c", cmd_str], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                    text=True, env=env, bufsize=4096)
+            env  = {**os.environ, "SUDO_ASKPASS": str(self.askpass)}
+            proc = subprocess.Popen(["sudo", "-A", "sh", "-c", cmd_str],
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, bufsize=4096)
             return self._stream(proc)
         except Exception as exc:
             self.outputReceived.emit(f"Shell command error: {exc}", "error")
@@ -605,7 +657,8 @@ class SystemManagerThread(QThread):
         self.outputReceived.emit(f"Detected country: {country}" if country
                                  else "Country detection failed – using worldwide mirrors.", "info" if country else "warning")
 
-        cmd = ["sudo", "-A", "reflector", "--verbose", "--latest", "10", "--protocol", "https", "--sort", "rate", "--save", "/etc/pacman.d/mirrorlist"]
+        cmd = ["sudo", "-A", "reflector", "--verbose", "--latest", "10", "--protocol", "https",
+               "--sort", "rate", "--save", "/etc/pacman.d/mirrorlist"]
         if country:
             cmd += ["--country", country]
 
@@ -814,7 +867,8 @@ class SystemManagerThread(QThread):
         def _stream_build(cmd: list[str], cwd) -> bool:
             try:
                 _env = {**os.environ, "SUDO_ASKPASS": str(self.askpass)} if self.askpass else None
-                with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=cwd, env=_env) as p:
+                with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                      text=True, cwd=cwd, env=_env) as p:
                     for line in (p.stdout or []):
                         self.outputReceived.emit(line.rstrip(), "subprocess")
                     return p.wait() == 0
@@ -937,7 +991,8 @@ class SystemManagerThread(QThread):
         try:
             tokens = shlex.split(cmd)
             needs_shell = "|" in tokens or "&&" in tokens
-            proc = subprocess.run(cmd if needs_shell else tokens, shell=needs_shell, capture_output=True, text=True, timeout=60)
+            proc = subprocess.run(cmd if needs_shell else tokens, shell=needs_shell,
+                                  capture_output=True, text=True, timeout=60)
             raw_pkgs = proc.stdout.strip()
         except Exception as exc:
             self.outputReceived.emit(f"Orphan search failed: {exc}", "error")
@@ -1057,6 +1112,7 @@ class _PackageCache:
                 self._cache.clear()
                 self._ts = now
             elif len(self._cache) > self._MAX_SIZE:
+                # Drop the oldest half
                 self._cache = dict(list(self._cache.items())[len(self._cache) // 2:])
             if package in self._cache:
                 return self._cache[package]
