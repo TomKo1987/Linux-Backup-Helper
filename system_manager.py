@@ -58,6 +58,7 @@ def _wipe_tmpdir(path: str) -> None:
 def _emergency_cleanup() -> None:
     with _cleanup_lock:
         paths = list(_cleanup_paths)
+        _cleanup_paths.clear()
     for p in paths:
         _wipe_tmpdir(p)
 
@@ -248,7 +249,7 @@ class SystemManagerDialog(QDialog):
                 self._checklist.scrollToItem(item)
                 break
 
-    def mark_done(self, failed_count: int = 1) -> None:
+    def mark_done(self, failed_count: int = 0) -> None:
         if self._done:
             return
         self._done = True
@@ -535,7 +536,7 @@ class SystemManagerThread(QThread):
                 proc.kill()
                 rc = proc.wait()
 
-        t1.join(1); t2.join(1)
+        t1.join(5); t2.join(5)
         return _ns(returncode=rc if rc is not None else 1)
 
     def _run_cmd(self, cmd: list[str] | str, shell: bool = False, input_text: Optional[str] = None, timeout: int = 15):

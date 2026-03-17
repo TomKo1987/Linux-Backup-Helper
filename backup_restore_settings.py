@@ -1,4 +1,3 @@
-import atexit
 from typing import Protocol, Type, runtime_checkable
 
 from PyQt6.QtGui import QFontDatabase
@@ -12,14 +11,6 @@ from samba_credentials import SambaPasswordDialog
 from themes import THEMES, current_theme, apply_style
 from dialogs import EntryDialog, HeaderSettingsDialog, MountsDialog, ProfilesDialog
 from state import S, _PROFILES_DIR, _COLS_NARROW, _COLS_WIDE, apply_replacements, block_set, save_profile, generate_tooltip
-
-
-def _atexit_cleanup() -> None:
-    from system_manager import _emergency_cleanup
-    _emergency_cleanup()
-
-atexit.register(_atexit_cleanup)
-
 
 _COPY_LOGIC_TOOLTIP = (
     "<b>How files are copied and when they are skipped</b><br><br>"
@@ -334,13 +325,6 @@ class BackupWindow(_CopyMixin, _BaseCheckboxWindow):
     def _entry_filter(self, entry: dict) -> bool:
         return not entry.get("details", {}).get("no_backup", False)
 
-    def _tips(self) -> dict:
-        backup_tips, _, _ = generate_tooltip()
-        return backup_tips
-
-    def _src_dst(self, entry: dict) -> tuple[list, list]:
-        return entry.get("source", []), entry.get("destination", [])
-
 
 class RestoreWindow(_CopyMixin, _BaseCheckboxWindow):
     _window_title = "Restore Backup"
@@ -364,16 +348,6 @@ class SettingsWindow(_BaseCheckboxWindow):
 
     def _show_inactive_headers(self) -> bool:
         return True
-
-    def _entry_filter(self, entry: dict) -> bool:
-        return True
-
-    def _tips(self) -> dict:
-        backup_tips, _, _ = generate_tooltip()
-        return backup_tips
-
-    def _src_dst(self, entry: dict) -> tuple[list, list]:
-        return entry.get("source", []), entry.get("destination", [])
 
     def _extra_top_widgets(self) -> list:
         return [self._make_config_path_label()]

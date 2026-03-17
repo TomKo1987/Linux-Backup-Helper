@@ -1,6 +1,6 @@
 from typing import Optional, Tuple
 from keyring.backends import SecretService
-import getpass, json, os, shutil, subprocess, keyring, keyring.errors, pwd, threading
+import getpass, hmac, json, os, shutil, subprocess, keyring, keyring.errors, pwd, threading
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QCheckBox, QDialog, QErrorMessage, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout
@@ -94,7 +94,8 @@ class _VerifyPasswordDialog(QDialog):
         self._pw_input.setFocus()
 
     def _verify(self) -> None:
-        if self._pw_input.text() == self._stored_pw:
+        entered = self._pw_input.text()
+        if hmac.compare_digest(entered, self._stored_pw):
             self.accept()
             return
 

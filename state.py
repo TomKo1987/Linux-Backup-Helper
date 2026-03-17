@@ -189,8 +189,7 @@ def save_profile(path: Optional[Path] = None) -> bool:
         "system_files":      S.system_files,
         "basic_packages":    S.basic_packages,
         "aur_packages":      S.aur_packages,
-        "specific_packages": sorted(S.specific_packages, key=lambda x: (x.get("package", "")
-                                                                        if isinstance(x, dict) else str(x)).lower()),
+        "specific_packages": sorted(S.specific_packages, key=lambda x: (x.get("package", "") if isinstance(x, dict) else str(x)).lower()),
         "ui_settings": S.ui,
         "user_shell":  S.user_shell,
         "entries":     sorted_entries,
@@ -271,14 +270,6 @@ def generate_tooltip() -> tuple[dict, dict, dict]:
                 f"<tr style='background-color:{_bg2};'><td style='font-size:14px;color:{_c_d};padding:6px;'>Source:<br>{s_html}</td></tr>"
                 f"<tr style='background-color:{_bg3};'><td style='font-size:14px;color:{_c_d};padding:6px;'>Destination:<br>{d_html}</td></tr></table>")
 
-    def _sm_table(items: list, _cols: int) -> str:
-        rows_ = []
-        for _i in range(0, len(items), _cols):
-            bg__ = _bg2 if (_i // _cols) % 2 == 0 else _bg3
-            _cells = "".join(f"<td style='padding:5px;border:1px solid {_c_b};color:{_c_d};white-space:nowrap;'>{c}</td>" for c in items[_i:_i + _cols])
-            rows_.append(f"<tr style='background-color:{bg__};'>{_cells}</tr>")
-        return f"<table style='border-collapse:collapse;font-family:monospace;font-size:14px;'>{''.join(rows_)}</table>"
-
     backup_tips  = {e["title"]: _entry_html(e["title"], e.get("source", []), e.get("destination", [])) for e in S.entries}
     restore_tips = {e["title"]: _entry_html(e["title"], e.get("destination", []), e.get("source", [])) for e in S.entries}
     sm_tips: dict = {}
@@ -310,7 +301,6 @@ def generate_tooltip() -> tuple[dict, dict, dict]:
             header_row = (f"<tr><td colspan='{cols}' style='padding:4px 5px 2px;font-size:14px;"
                           f"font-weight:bold;color:{_c_t};border-bottom:1px solid {_c_b};'>"
                           f"{label} ({len(active_list)})</td></tr>")
-            sm_tips[key] = header_row + _sm_table(active_list, cols)
             sm_tips[key] = (f"<table style='border-collapse:collapse;font-family:monospace;font-size:12px;'>"
                             f"{header_row}" + "".join(f"<tr style='background-color:{_bg2 if (i // cols) % 2 == 0 else _bg3};'>"
             + "".join(f"<td style='padding:5px;border:1px solid {_c_b};color:{_c_d};white-space:nowrap;'>{active_list[j]}</td>"
