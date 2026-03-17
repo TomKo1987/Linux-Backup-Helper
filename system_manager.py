@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import Optional
-import atexit, html as _html, os, queue, re, shlex, shutil, signal, socket
+import atexit, html as _html, os, queue, re, shlex, shutil, signal, socket, gc
 import subprocess, tempfile, threading, time, urllib.error, urllib.request, pwd
 
 from PyQt6.QtGui import QColor, QIcon, QTextCursor
@@ -15,10 +15,6 @@ from linux_distro_helper import distro_family
 from state import S, _HOME, _USER, logger, apply_replacements
 
 from types import SimpleNamespace
-
-def _ns(**kw) -> SimpleNamespace:
-    return SimpleNamespace(**kw)
-
 
 _cleanup_lock  = threading.Lock()
 _cleanup_paths: list[str] = []
@@ -96,6 +92,7 @@ def _make_askpass(pw_secure) -> Optional[tuple[str, Path]]:
         pw_raw = pw_secure.get()
         pw_buf = bytearray(pw_raw.encode("utf-8"))
         del pw_raw
+        gc.collect()
         try:
             fd = os.open(str(pw_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
             try:
@@ -199,7 +196,6 @@ class SystemManagerDialog(QDialog):
         self._checklist_lbl.setStyleSheet(f"color:{t['info']};font-size:18px;font-weight:bold;padding:10px;"
                                           f"background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {t['bg2']},stop:1 {t['header_sep']});{bs}")
         self._checklist_lbl.setFixedWidth(self.CHECKLIST_WIDTH)
-        self._checklist_lbl.setFixedSize(self._checklist_lbl.sizeHint())
         self._checklist.setStyleSheet(f"QListWidget{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
                                       f"stop:0 {t['bg2']},stop:1 {t['header_sep']});font-size:15px;padding:4px;{bs}}}"
                                       "QListWidget::item{padding:4px;border-radius:4px;border:1px solid transparent;}")
@@ -493,14 +489,14 @@ class SystemManagerThread(QThread):
 
     def _stream_cmd(self, cmd: list[str], cwd: Optional[str] = None, timeout: Optional[int] = None):
         if self.terminated:
-            return _ns(returncode=1)
+            return SimpleNamespace(returncode=1)
 
         cmd = self._inject(list(cmd))
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=self._env(), cwd=cwd, bufsize=1)
         except Exception as exc:
             self.outputReceived.emit(f"Command launch error: {exc}", "error")
-            return _ns(returncode=1)
+            return SimpleNamespace(returncode=1)
 
         out_q: queue.Queue = queue.Queue()
 
@@ -547,20 +543,20 @@ class SystemManagerThread(QThread):
                 rc = proc.wait()
 
         t1.join(5); t2.join(5)
-        return _ns(returncode=rc if rc is not None else 1)
+        return SimpleNamespace(returncode=rc if rc is not None else 1)
 
     def _run_cmd(self, cmd: list[str] | str, shell: bool = False, input_text: Optional[str] = None, timeout: int = 15):
         if isinstance(cmd, list):
             cmd = self._inject(list(cmd))
         try:
             r = subprocess.run(cmd, shell=shell, input=input_text, capture_output=True, text=True, env=self._env(), timeout=timeout)
-            return _ns(returncode=r.returncode, stdout=r.stdout, stderr=r.stderr)
+            return SimpleNamespace(returncode=r.returncode, stdout=r.stdout, stderr=r.stderr)
         except subprocess.TimeoutExpired:
             logger.warning("_run_cmd timeout: %s", cmd)
-            return _ns(returncode=124, stdout="", stderr="Timeout")
+            return SimpleNamespace(returncode=124, stdout="", stderr="Timeout")
         except (OSError, ValueError) as exc:
             logger.error("_run_cmd: %s", exc)
-            return _ns(returncode=1, stdout="", stderr=str(exc))
+            return SimpleNamespace(returncode=1, stdout="", stderr=str(exc))
 
     @staticmethod
     def _ok(r) -> bool:

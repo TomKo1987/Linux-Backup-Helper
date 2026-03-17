@@ -1,4 +1,4 @@
-from typing import Optional, Tuple
+from typing import Optional
 from keyring.backends import SecretService
 import getpass, hmac, json, os, shutil, subprocess, keyring, keyring.errors, pwd, threading
 
@@ -127,7 +127,7 @@ class SambaPasswordDialog(QDialog):
         if stored_pw:
             if _VerifyPasswordDialog(parent, username, stored_pw).exec() != QDialog.DialogCode.Accepted:
                 return
-            cls(parent, manager, username, stored_pw, from_kw).exec()
+            cls(parent, manager, username or "", stored_pw, from_kw).exec()
         else:
             has_kw = _kwallet_available()
             if has_kw:
@@ -283,7 +283,7 @@ class SambaPasswordManager:
                     return line
         return None
 
-    def _read_from_kwallet(self) -> Tuple[Optional[str], Optional[str]]:
+    def _read_from_kwallet(self) -> tuple[Optional[str], Optional[str]]:
         entry = self._find_kwallet_entry()
         if not entry:
             return None, None
@@ -304,7 +304,7 @@ class SambaPasswordManager:
             raise RuntimeError("Failed to write credentials to KWallet")
         logger.info("Updated Samba credentials in KWallet entry: %s", entry)
 
-    def get_credentials(self) -> Tuple[Optional[str], Optional[str], bool]:
+    def get_credentials(self) -> tuple[Optional[str], Optional[str], bool]:
         username, password = self._read_from_kwallet()
         if password:
             logger.info("Retrieved Samba credentials from KWallet")

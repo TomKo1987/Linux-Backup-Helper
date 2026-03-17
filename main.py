@@ -12,7 +12,7 @@ from themes import apply_style
 from dialogs import LogViewer, SysInfoDialog
 from backup_restore_settings import base_window
 from drive_utils import get_mount_output, is_mounted, unmount_drive
-from state import S, _HOME, _PROFILES_DIR, _PROFILE_RE, save_profile, startup_load, logger
+from state import S, _HOME, _PROFILES_DIR, _PROFILE_RE, save_profile, startup_load, logger, load_profile
 
 RESTART_DIALOG = 2
 
@@ -163,8 +163,6 @@ class MainWindow(QMainWindow):
 
 
 def _first_run_wizard(parent) -> bool:
-    from state import load_profile
-
     msg = QMessageBox(parent)
     msg.setWindowTitle("Welcome to Backup Helper")
     msg.setText("<b>No profile found.</b><br><br>Would you like to import an existing profile (.json)?")

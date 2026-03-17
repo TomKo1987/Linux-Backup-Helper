@@ -1,7 +1,9 @@
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+if TYPE_CHECKING:
+    from sudo_password import SecureString
 
-from PyQt6.QtCore    import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QFormLayout, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QFrame,
     QMessageBox, QPushButton, QScrollArea, QSizePolicy, QTextEdit, QVBoxLayout, QWidget,
@@ -1150,7 +1152,7 @@ class SystemManagerLauncher:
         else:
             self._start_thread("")
 
-    def _start_thread(self, pw) -> None:
+    def _start_thread(self, pw: "SecureString | str") -> None:
         from system_manager import SystemManagerDialog, SystemManagerThread
         self._sm_thread = SystemManagerThread(pw)
         self._sm_dialog = SystemManagerDialog(self.parent)
@@ -1162,6 +1164,7 @@ class SystemManagerLauncher:
         t.passwordFailed.connect(lambda: self._on_fail(t, d))
         t.passwordSuccess.connect(self._on_ok)
         t.start()
+        t.finished.connect(d.mark_done)
 
     def _show_sudo_dialog(self) -> None:
         from sudo_password import SudoPasswordDialog

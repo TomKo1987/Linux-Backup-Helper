@@ -254,10 +254,12 @@ class _BaseCheckboxWindow(QDialog):
         k = event.key()
         if k in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
             focused = self.focusWidget()
-            if isinstance(focused, (QCheckBox, QPushButton)):
+            if isinstance(focused, QCheckBox):
                 focused.toggle()
                 if focused == self._selectall:
                     self._toggle_all()
+            elif isinstance(focused, QPushButton):
+                focused.click()
         elif k == Qt.Key.Key_Escape:
             self.close()
         else:

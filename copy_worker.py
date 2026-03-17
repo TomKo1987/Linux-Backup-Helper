@@ -926,7 +926,7 @@ def _make_card(color, title, val, size_title=18, size_val=32, bold_val=True, con
 class CopyDialog(QDialog):
     def __init__(self, parent, tasks, operation):
         super().__init__(parent)
-        self.setWindowTitle("Backup" if operation == "Backup" else "Restore")
+        self.setWindowTitle(operation)
         screen = QApplication.primaryScreen()
         geo    = screen.availableGeometry() if screen else None
         if geo:
@@ -1467,17 +1467,18 @@ class _LogWidget(QWidget):
         self._page_spin = QSpinBox()
         self._page_spin.setMinimum(1)
         self._page_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        t = current_theme()
         self._page_spin.setStyleSheet(
-            "QSpinBox {border: 1px solid #555; border-radius: 4px; padding: 2px 5px;"
-            "background: #2b2b2b; color: #fff; font-weight: bold} "
-            "QSpinBox:focus {border: 1px solid #888; background: #333}")
+            f"QSpinBox {{border:1px solid {t['header_sep']};border-radius:4px;padding:2px 5px;"
+            f"background:{t['bg3']};color:{t['text']};font-weight:bold}}"
+            f"QSpinBox:focus {{border:1px solid {t['accent']};background:{t['bg2']}}}")
         self._page_spin.setFixedWidth(55)
         self._page_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._page_spin.editingFinished.connect(self._go_to_page)
 
         self._page_lbl  = QLabel("")
         self._total_lbl = QLabel("")
-        self._total_lbl.setStyleSheet("color: #888; font-size: 14px; margin-left: 10px;")
+        self._total_lbl.setStyleSheet(f"color:{t['muted']};font-size:14px;margin-left:10px;")
 
         nav = QHBoxLayout()
         nav.setContentsMargins(5, 5, 5, 5)
@@ -1592,9 +1593,7 @@ class _LogWidget(QWidget):
     def _apply_filter(self):
         if self._cache_dirty:
             self._sorted_cache = sorted(self._items)
-            self._cache_dirty  = False
+            self._cache_dirty = False
         needle = self._search.text().lower()
-        self._filtered = (
-            [i for i in self._sorted_cache if needle in i.lower()]
-            if needle else list(self._sorted_cache)
-        )
+        src = self._sorted_cache
+        self._filtered = [i for i in src if needle in i.lower()] if needle else list(src)

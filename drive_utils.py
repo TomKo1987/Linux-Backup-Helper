@@ -8,32 +8,34 @@ _DANGER_SEQS   = ("&&", "||", "$(", ";", "|", "`", ">", "<", "\n", "\r", "\x00")
 _ALLOWED_CMDS  = frozenset({"mount", "umount", "udisksctl", "kdeconnect-cli", "sshfs", "fusermount3"})
 
 
-def _validate_cmd(cmd: str) -> tuple[bool, str]:
+def _validate_cmd(cmd: str) -> tuple[bool, str, list[str]]:
     if not cmd.strip():
-        return False, "Empty command"
+        return False, "Empty command", []
+
     if any(s in cmd for s in _DANGER_SEQS):
-        return False, "Dangerous characters in command"
+        return False, "Dangerous characters in command", []
     try:
         tokens = shlex.split(cmd)
     except ValueError as e:
-        return False, str(e)
+        return False, str(e), []
+
     if not tokens:
-        return False, "No command tokens found"
+        return False, "No command tokens found", []
 
     base = os.path.basename(tokens[0])
     if base == "sudo" and len(tokens) > 1:
         base = os.path.basename(tokens[1])
+
     if base not in _ALLOWED_CMDS:
-        return False, f"'{base}' is not an allowed command"
+        return False, f"'{base}' is not an allowed command", []
 
     expanded = [os.path.expanduser(t) for t in tokens]
     for tok in expanded:
         tok_parts = tok.replace("\\", "/").split("/")
         if ".." in tok_parts:
-            return False, f"Path traversal detected in token: {tok!r}"
+            return False, f"Path traversal detected in token: {tok!r}", []
 
-    return True, ""
-
+    return True, "", expanded
 
 def _valid_drive_name(name: str) -> bool:
     return bool(name and isinstance(name, str) and _DRIVE_NAME_RE.match(name) and len(name) <= 128)
@@ -45,10 +47,6 @@ def _mount_paths(name: str) -> tuple[str, ...]:
     return f"/run/media/{_USER}/{name}", f"/media/{_USER}/{name}", f"/mnt/{name}"
 
 
-def _expand_home_in_cmd(cmd: str) -> list[str]:
-    return [os.path.expanduser(t) for t in shlex.split(cmd)]
-
-
 def _execute_drive_op(drive: dict, key: str, timeout: int) -> tuple[bool, str]:
     name = drive.get("drive_name", "?")
     cmd  = drive.get(key, "").strip()
@@ -56,12 +54,12 @@ def _execute_drive_op(drive: dict, key: str, timeout: int) -> tuple[bool, str]:
     if not cmd:
         return False, f"No {key.replace('_', ' ')} configured for '{name}'."
 
-    ok, reason = _validate_cmd(cmd)
+    ok, reason, tokens = _validate_cmd(cmd)
     if not ok:
         return False, f"Drive '{name}': {reason}"
 
     try:
-        result = subprocess.run(_expand_home_in_cmd(cmd), capture_output=True, text=True, timeout=timeout)
+        result = subprocess.run(tokens, capture_output=True, text=True, timeout=timeout)
         if result.returncode == 0:
             return True, ""
         return False, result.stderr.strip() or f"exit code {result.returncode}"
