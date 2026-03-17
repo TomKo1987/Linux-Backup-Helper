@@ -333,11 +333,14 @@ class SystemManagerOptions(QDialog):
 
     def _edit_sysfiles(self):
         files = [f for f in (S.system_files or []) if isinstance(f, dict) and f.get("source") and f.get("destination")]
-        checkboxes: list[tuple[QCheckBox, dict]] = []
+        checkboxes: list[tuple[TriCheckBox, dict]] = []
 
         body = QWidget()
         vlay = QVBoxLayout(body)
         vlay.setSpacing(4)
+
+        def _bind_sys_right_click(_cb, _f, _dlg):
+            _cb.contextMenuEvent = lambda e: self._edit_sysfile_entry(_f, _dlg)
 
         for f in files:
             text = f"{apply_replacements(f['source'])} 󰧂 {apply_replacements(f['destination'])}"
@@ -388,15 +391,19 @@ class SystemManagerOptions(QDialog):
 
         dlg, lay = _scroll_dlg(self, "System Files", body, _save)
 
+        for cb, f in checkboxes:
+            _bind_sys_right_click(cb, f, dlg)
+
+        hint = QLabel("💡 Right-click an entry to edit. Left-click to change status.")
+        hint.setStyleSheet("color: gray; font-style: italic; margin-bottom: 5px;")
+        lay.insertWidget(1, hint)
+
         btn_row = QHBoxLayout()
-        add_btn  = QPushButton("➕ Add System File")
-        edit_btn = QPushButton("✏️ Edit Selected")
+        add_btn = QPushButton("➕ Add System File")
         add_btn.clicked.connect(lambda: self._schedule_add_sysfile(dlg))
-        edit_btn.clicked.connect(lambda: self._edit_sysfile_entry(
-            next((f for _cb, f in checkboxes if _cb.isChecked() and _cb.checkState() != _STATE_DELETE), None), dlg))
+
         btn_row.addWidget(add_btn)
-        btn_row.addWidget(edit_btn)
-        lay.insertLayout(1, btn_row)
+        lay.insertLayout(2, btn_row)
 
         io_row = QHBoxLayout()
         imp_btn = QPushButton("📥 Import (.txt/.csv)")
@@ -405,7 +412,7 @@ class SystemManagerOptions(QDialog):
         exp_btn.clicked.connect(lambda: self._export_sysfiles())
         io_row.addWidget(imp_btn)
         io_row.addWidget(exp_btn)
-        lay.insertLayout(2, io_row)
+        lay.insertLayout(3, io_row)
 
         dlg.exec()
 
@@ -615,13 +622,16 @@ class SystemManagerOptions(QDialog):
 
     def _edit_pkgs(self, pkg_type: str):
         is_specific = pkg_type == "specific_packages"
-        packages    = getattr(S, pkg_type, []) or []
-        checkboxes  = _pkg_checkboxes(packages, is_specific)
+        packages = getattr(S, pkg_type, []) or []
+        checkboxes = _pkg_checkboxes(packages, is_specific)
 
         body = QWidget()
         grid = QGridLayout(body)
         grid.setSpacing(6)
         cols = 5
+
+        def _bind_pkg_right_click(_cb, _p, _dlg):
+            _cb.contextMenuEvent = lambda e: self._edit_pkg_entry((_cb, _p), pkg_type, _dlg)
 
         if is_specific:
             from collections import defaultdict
@@ -630,7 +640,7 @@ class SystemManagerOptions(QDialog):
             for p in packages:
                 cb = next(cb_iter)
                 sess = p.get("session", "") if isinstance(p, dict) else ""
-                groups[sess].append(cb)
+                groups[sess].append((cb, p))
             row = 0
             t = current_theme()
             for idx, sess in enumerate(sorted(groups)):
@@ -640,7 +650,7 @@ class SystemManagerOptions(QDialog):
                                   f"font-family:monospace;padding:6px 2px 2px 2px;{border_top}")
                 grid.addWidget(hdr, row, 0, 1, cols)
                 row += 1
-                for j, cb in enumerate(groups[sess]):
+                for j, (cb, p) in enumerate(groups[sess]):
                     grid.addWidget(cb, row + j // cols, j % cols)
                 row += (len(groups[sess]) - 1) // cols + 1
         else:
@@ -675,7 +685,7 @@ class SystemManagerOptions(QDialog):
             if to_delete:
                 if is_specific:
                     names = "\n".join(f"  • {p_.get('package', '?')} [{p_.get('session', '?')}]"
-                    if isinstance(p_, dict) else f"  • {p_}" for p_ in to_delete)
+                                      if isinstance(p_, dict) else f"  • {p_}" for p_ in to_delete)
                 else:
                     names = "\n".join(f"  • {_p.get('name', '?')}" if isinstance(_p, dict) else f"  • {_p}"
                                       for _p in to_delete)
@@ -699,21 +709,21 @@ class SystemManagerOptions(QDialog):
             _dlg.accept()
             QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
 
-        title    = f"Edit {pkg_type.replace('_', ' ').title()}"
+        title = f"Edit {pkg_type.replace('_', ' ').title()}"
         dlg, lay = _scroll_dlg(self, title, body, _save)
 
+        for cb, p in zip(checkboxes, packages):
+            _bind_pkg_right_click(cb, p, dlg)
+
         search = QLineEdit()
-        search.setPlaceholderText("Filter packages…")
+        search.setPlaceholderText("Filter packages... (Right-click an entry to edit. Left-click to change status.)")
         search.textChanged.connect(lambda txt: [_cb.setVisible(txt.lower() in _cb.text().lower()) for _cb in checkboxes])
         lay.insertWidget(1, search)
 
         add_lbl = pkg_type.replace("_", " ").title().rstrip("s")
-        add_btn  = QPushButton(f"➕ Add {add_lbl}")
-        edit_btn = QPushButton(f"✏️ Edit Selected")
+        add_btn = QPushButton(f"➕ Add {add_lbl}")
         add_btn.clicked.connect(lambda: (dlg.close(), QTimer.singleShot(0, lambda: self._add_pkg(pkg_type))))
-        edit_btn.clicked.connect(lambda: self._edit_pkg_entry(
-            next(((_cb, _p) for _cb, _p in zip(checkboxes, packages) if _cb.isChecked() and _cb.checkState() != _STATE_DELETE), (None, None)),
-            pkg_type, dlg))
+
         btn_row_add = QHBoxLayout()
         btn_row_add.addWidget(add_btn)
         lay.insertLayout(2, btn_row_add)
@@ -722,7 +732,6 @@ class SystemManagerOptions(QDialog):
         batch.clicked.connect(lambda: (dlg.close(), QTimer.singleShot(0, lambda: self._batch_add(pkg_type))))
         btn_row_add.addWidget(batch)
 
-        btn_row_add.addWidget(edit_btn)
         imp_exp_row = QHBoxLayout()
 
         imp = QPushButton("📥 Import (.txt/.csv)")
