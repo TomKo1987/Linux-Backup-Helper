@@ -981,7 +981,7 @@ class CopyDialog(QDialog):
         return f"{apply_replacements(p)} ❌ {m}"
 
     def _update_ui_tick(self):
-        max_per = 1000 if len(self._pending_ok) > 5000 else 500
+        max_per = 250 if len(self._pending_ok) > 5000 else 500
         changed = False
         fmt_fns = (self._fmt_ok, self._fmt_sk, self._fmt_er)
         for pending, widget, fmt in zip((self._pending_ok, self._pending_sk, self._pending_er),

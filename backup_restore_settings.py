@@ -11,10 +11,7 @@ from PyQt6.QtWidgets import (
 from samba_credentials import SambaPasswordDialog
 from themes import THEMES, current_theme, apply_style
 from dialogs import EntryDialog, HeaderSettingsDialog, MountsDialog, ProfilesDialog
-from state import (
-    S, _PROFILES_DIR, _COLS_NARROW, _COLS_WIDE,
-    apply_replacements, block_set, save_profile, generate_tooltip,
-)
+from state import S, _PROFILES_DIR, _COLS_NARROW, _COLS_WIDE, apply_replacements, block_set, save_profile, generate_tooltip
 
 
 def _atexit_cleanup() -> None:
@@ -64,12 +61,6 @@ _COPY_LOGIC_TOOLTIP = (
     "<span style='color:#f7c948;'>Yellow</span> = Skipped, "
     "<span style='color:#ff5370;'>Red</span> = Error."
 )
-
-
-class _ThemeDialog(QDialog):
-    def keyPressEvent(self, event) -> None:
-        if event.key() != Qt.Key.Key_Escape:
-            super().keyPressEvent(event)
 
 
 # noinspection PyUnresolvedReferences
@@ -517,7 +508,7 @@ class SettingsWindow(_BaseCheckboxWindow):
         MountsDialog(self).exec()
 
     def _samba_credentials(self) -> None:
-        SambaPasswordDialog(self).exec()
+        SambaPasswordDialog.open(self)
 
     def _manage_profiles(self) -> None:
         dlg = ProfilesDialog(self)
@@ -589,6 +580,12 @@ class SettingsWindow(_BaseCheckboxWindow):
         dlg.show()
         dlg.raise_()
         dlg.activateWindow()
+
+
+class _ThemeDialog(QDialog):
+    def keyPressEvent(self, event) -> None:
+        if event.key() != Qt.Key.Key_Escape:
+            super().keyPressEvent(event)
 
 
 _WINDOW_MAP: "dict[str, Type[_BaseCheckboxWindow]]" = {}

@@ -191,8 +191,7 @@ class SystemManagerOptions(QDialog):
         yay = (f"   |   AUR Helper: 'yay' " 
                f"{'detected' if self._distro.package_is_installed('yay') else 'not detected'}" if self._distro.has_aur else "")
 
-        info = QLabel(f"Recognized Linux distribution: {self._distro.distro_pretty_name}   |   " 
-                      f"Session: {self._distro.detect_session()}{yay}")
+        info = QLabel(f"Recognized Linux distribution: {self._distro.distro_pretty_name}   |   Session: {self._distro.detect_session()}{yay}")
 
         info.setStyleSheet(style_label_info_bold())
         info.setAlignment(Qt.AlignmentFlag.AlignCenter)
