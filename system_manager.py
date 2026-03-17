@@ -1,11 +1,14 @@
 from pathlib import Path
 from typing import Optional
-import ast, atexit, os, queue, re, shlex, shutil, signal, socket
+import atexit, html as _html, os, queue, re, shlex, shutil, signal, socket
 import subprocess, tempfile, threading, time, urllib.error, urllib.request, pwd
 
 from PyQt6.QtGui import QColor, QIcon, QTextCursor
 from PyQt6.QtCore import Qt, QElapsedTimer, QThread, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QDialog, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QTextEdit, QVBoxLayout
+from PyQt6.QtWidgets import (
+    QDialog, QGraphicsDropShadowEffect, QHBoxLayout,
+    QLabel, QListWidget, QListWidgetItem, QPushButton, QTextEdit, QVBoxLayout
+)
 
 from themes import current_theme
 from linux_distro_helper import distro_family
@@ -105,7 +108,7 @@ def _make_askpass(pw_secure) -> Optional[tuple[str, Path]]:
                 pw_buf[i] = 0
             del pw_buf
 
-        ask_path.write_text(f'#!/bin/sh\ncat "{pw_path}"\n', encoding="ascii")
+        ask_path.write_text(f'#!/bin/sh\ncat {shlex.quote(str(pw_path))}\n', encoding="ascii")
         os.chmod(ask_path, 0o700)
         return tmp_dir, ask_path
 
@@ -115,7 +118,7 @@ def _make_askpass(pw_secure) -> Optional[tuple[str, Path]]:
 
 
 class SystemManagerDialog(QDialog):
-    DIALOG_SIZE     = (1800, 1150)
+    DIALOG_SIZE     = (1850, 1150)
     BUTTON_SIZE     = (145, 40)
     CHECKLIST_WIDTH = 370
 
@@ -217,15 +220,15 @@ class SystemManagerDialog(QDialog):
         if kind == "finish":
             self._show_completion()
             return
-        if kind == "task_list":
-            try:
-                self._init_checklist(ast.literal_eval(text))
-            except (ValueError, SyntaxError):
-                pass
-            return
         if kind not in _Style.KIND_CFG:
             return
         self._append_html(text if ("<span " in text or "<p " in text) else _fmt_html(text, kind))
+
+    def on_task_list(self, task_descs: list) -> None:
+        try:
+            self._init_checklist(task_descs)
+        except Exception as exc:
+            logger.error("on_task_list: %s", exc)
 
     def on_task_status(self, task_id: str, status: str) -> None:
         if status in (_Status.ERROR, _Status.WARNING):
@@ -254,14 +257,12 @@ class SystemManagerDialog(QDialog):
             return
         self._done = True
         self._ticker.stop()
-        self.update_failed_attempts(failed_count)
-
-    def update_failed_attempts(self, count: int) -> None:
-        if count == 0:
+        if failed_count == 0:
             self._fail_lbl.setVisible(False)
-            self._close_btn.setEnabled(False)
+            self._close_btn.setEnabled(True)
+            self._close_btn.setFocus()
         else:
-            self._fail_lbl.setText(f" ⚠️ Failed authentication attempts: {count}")
+            self._fail_lbl.setText(f" ⚠️ Failed authentication attempts: {failed_count}")
             self._fail_lbl.setVisible(True)
             self._auth_failed = True
             self._close_btn.setEnabled(True)
@@ -307,10 +308,7 @@ class SystemManagerDialog(QDialog):
                           f"<span style='font-size:16px;'>/var/lib/pacman/db.lck detected!</span><br>"
                           f"<span style='color:{t['text']};font-size:14px;'>"
                           f"Remove with: <code>sudo rm /var/lib/pacman/db.lck</code></span></p></div>")
-        self._done = True
-        self._ticker.stop()
-        self._close_btn.setEnabled(True)
-        self._close_btn.setFocus()
+        self.mark_done()
 
     def _show_completion(self) -> None:
         if self._done or self._auth_failed:
@@ -369,6 +367,7 @@ class SystemManagerThread(QThread):
     thread_started    = pyqtSignal()
     outputReceived    = pyqtSignal(str, str)
     taskStatusChanged = pyqtSignal(str, str)
+    taskListReady     = pyqtSignal(list)
     passwordFailed    = pyqtSignal()
     passwordSuccess   = pyqtSignal()
 
@@ -376,7 +375,7 @@ class SystemManagerThread(QThread):
         super().__init__()
         from sudo_password import SecureString
         self._pw        = sudo_password if isinstance(sudo_password, SecureString) else SecureString(sudo_password or "")
-        self.terminated = False
+        self._stop      = threading.Event()
         self._tmp_dir:  Optional[str]  = None
         self._askpass:  Optional[Path] = None
         self._enabled_tasks: dict[str, tuple] = {}
@@ -389,6 +388,17 @@ class SystemManagerThread(QThread):
             logger.warning("distro init: %s", exc)
             self.distro     = None
             self._pkg_cache = None
+
+    @property
+    def terminated(self) -> bool:
+        return self._stop.is_set()
+
+    @terminated.setter
+    def terminated(self, value: bool) -> None:
+        if value:
+            self._stop.set()
+        else:
+            self._stop.clear()
 
     def run(self) -> None:
         self.thread_started.emit()
@@ -424,10 +434,10 @@ class SystemManagerThread(QThread):
         self._pw.clear()
 
     def _prepare_tasks(self) -> None:
-        all_tasks = {**self._base_tasks(), **self._service_tasks(), "clean_cache": ("Cleaning cache…", self._clean_cache),
-                     "remove_orphaned_packages": ("Removing orphaned packages…", self._remove_orphans)}
+        all_tasks = {**self._base_tasks(), **self._service_tasks(), "remove_orphaned_packages": ("Removing orphaned packages…", self._remove_orphans),
+                     "clean_cache": ("Cleaning cache…", self._clean_cache)}
         self._enabled_tasks = {k: v for k, v in all_tasks.items() if k in S.system_manager_ops}
-        self.outputReceived.emit(str([(k, desc) for k, (desc, _) in self._enabled_tasks.items()]), "task_list")
+        self.taskListReady.emit([(k, desc) for k, (desc, _) in self._enabled_tasks.items()])
 
     def _base_tasks(self) -> dict:
         return {"copy_system_files": ("Copying System Files…", self._copy_sysfiles),
@@ -439,7 +449,7 @@ class SystemManagerThread(QThread):
                 "install_yay": ("Installing yay…", self._install_yay),
                 "install_aur_packages": ("Installing AUR Packages with yay…", lambda: self._batch_install(S.aur_packages, "AUR Package")),
                 "install_specific_packages": ("Installing Specific Packages…", self._install_specific),
-                "install_flatpak": ("Installing Flatpak…", self._install_flatpak)}
+                "enable_flatpak_integration": ("Enabling Flatpak integration…", self._install_flatpak)}
 
     def _service_tasks(self) -> dict:
         if not self.distro:
@@ -559,7 +569,7 @@ class SystemManagerThread(QThread):
     def _verify_sudo(self) -> bool:
         self.outputReceived.emit("Verifying sudo access…", "operation")
         self._run_cmd(["sudo", "-k"], timeout=5)
-        ok = self._ok(self._run_cmd(["sudo", "-v"], timeout=1))
+        ok = self._ok(self._run_cmd(["sudo", "-v"], timeout=1)) # MUST be 1 second. If longer command will be executed more than once
         self.outputReceived.emit("Sudo access successfully verified." if ok else "Authentication failed: Invalid Password.", "success" if ok else "error")
         return ok
 
@@ -602,26 +612,6 @@ class SystemManagerThread(QThread):
                 overall = False
         return overall
 
-    def _update_mirrors(self) -> bool:
-        if not self.distro:
-            return False
-        if distro_family(self.distro.distro_id) != "arch":
-            self.outputReceived.emit("Mirror update is only supported on Arch Linux.", "info")
-            return True
-        if not shutil.which("reflector"):
-            self.outputReceived.emit("Installing reflector…", "info")
-            self._stream_cmd(shlex.split(self.distro.get_pkg_install_cmd("reflector")))
-
-        country = self._detect_country()
-        self.outputReceived.emit(f"Detected country: {country}" if country else "Country detection failed — using worldwide mirrors.",
-                                 "info" if country else "warning")
-        cmd = ["sudo", "reflector", "--verbose", "--latest", "10", "--protocol", "https", "--sort", "rate", "--save", "/etc/pacman.d/mirrorlist"]
-        if country:
-            cmd += ["--country", country]
-        ok = self._ok(self._stream_cmd(cmd, timeout=180))
-        self.outputReceived.emit("Mirrors successfully updated." if ok else "Mirror update failed.", "success" if ok else "error")
-        return ok
-
     @staticmethod
     def _detect_country() -> str:
         for url in ("https://ipinfo.io/country", "https://ifconfig.co/country-iso"):
@@ -634,6 +624,29 @@ class SystemManagerThread(QThread):
             except (urllib.error.URLError, socket.timeout, OSError):
                 continue
         return ""
+
+    def _update_mirrors(self) -> bool:
+        if not self.distro:
+            return False
+        if distro_family(self.distro.distro_id) != "arch":
+            self.outputReceived.emit("Mirror update is only supported on Arch Linux.", "info")
+            return True
+        if not shutil.which("reflector"):
+            self.outputReceived.emit("Installing reflector", "info")
+            self._stream_cmd(shlex.split(self.distro.get_pkg_install_cmd("reflector")))
+        else:
+            self.outputReceived.emit("Package reflector is already installed", "info")
+
+        country = self._detect_country()
+        self.outputReceived.emit(f"Detected country: {country}" if country else "Country detection failed — using worldwide mirrors.",
+                                 "info" if country else "warning")
+        cmd = ["sudo", "-A", "reflector", "--verbose", "--latest", "10", "--protocol", "https", "--sort", "rate", "--save", "/etc/pacman.d/mirrorlist"]
+        if country:
+            cmd += ["--country", country]
+        self.outputReceived.emit(f"Running: {' '.join(cmd)}", "info")
+        ok = self._ok(self._stream_cmd(cmd, timeout=180))
+        self.outputReceived.emit("Mirrors successfully updated." if ok else "Mirror update failed.", "success" if ok else "error")
+        return ok
 
     def _set_shell(self) -> bool:
         if not self.distro:
@@ -654,7 +667,7 @@ class SystemManagerThread(QThread):
             return True
 
         if not self.distro.package_is_installed(pkg):
-            self.outputReceived.emit(f"Installing shell package: {pkg}…", "info")
+            self.outputReceived.emit(f"Installing shell package: {pkg}", "info")
             if not self._install_pkg(pkg, "Shell Package"):
                 return False
             shell = shutil.which(pkg) or shell
@@ -696,7 +709,7 @@ class SystemManagerThread(QThread):
     def _install_pkg(self, name: str, label: str = "Package") -> bool:
         if not self.distro or not self._pkg_cache:
             return False
-        self.outputReceived.emit(f"Installing {label}: {name}…", "info")
+        self.outputReceived.emit(f"Installing {label}: {name}", "info")
         if self._pkg_cache.is_installed(name):
             self.outputReceived.emit(f"{name} already installed.", "success")
             return True
@@ -705,7 +718,7 @@ class SystemManagerThread(QThread):
             self._pkg_cache.mark_installed(name)
             self.outputReceived.emit(f"{name} successfully installed.", "success")
         else:
-            self.outputReceived.emit(f"{name} failed to install.", "error")
+            self.outputReceived.emit(f"failed to install {name}.", "error")
         return ok
 
     def _batch_install(self, pkg_list, label: str) -> bool:
@@ -762,7 +775,9 @@ class SystemManagerThread(QThread):
             self.outputReceived.emit("yay already installed.", "success")
             return True
 
-        deps = [p for p in ("base-devel", "git", "go") if not self.distro.package_is_installed(p)]
+        build_deps  = ("base-devel", "git", "go")
+        deps        = [p for p in build_deps if not self.distro.package_is_installed(p)]
+        freshly_got = set(deps)
         if deps and not self._ok(self._stream_cmd(shlex.split(self.distro.get_pkg_install_cmd(" ".join(deps))))):
             return False
 
@@ -777,14 +792,15 @@ class SystemManagerThread(QThread):
         if not self._ok(self._stream_cmd(["makepkg", "-c", "--noconfirm"], cwd=str(yay_dir))):
             return False
 
-        to_rm = ([p for p in deps if p == "go" and self.distro.package_is_installed("go")]
-                 + (["yay-debug"] if self.distro.package_is_installed("yay-debug") else []))
+        to_rm = (["go"] if "go" in freshly_got and self.distro.package_is_installed("go") else []) + \
+                (["yay-debug"] if self.distro.package_is_installed("yay-debug") else [])
         if to_rm:
             self._stream_cmd(["sudo", "pacman", "-R", "--noconfirm"] + to_rm)
 
-        pkgs = (sorted((f for f in yay_dir.iterdir() if f.name.endswith(".pkg.tar.zst") and "-debug-" not in f.name),
-                      key=lambda f: f.stat().st_mtime, reverse=True)
-                or sorted((f for f in yay_dir.iterdir() if f.name.endswith(".pkg.tar.zst")), key=lambda f: f.stat().st_mtime, reverse=True))
+        pkgs = sorted(
+            (f for f in yay_dir.iterdir() if f.name.endswith(".pkg.tar.zst")),
+            key=lambda f: (0 if "-debug-" not in f.name else 1, -f.stat().st_mtime),
+        )
         if not pkgs:
             self.outputReceived.emit("No yay package file found after build.", "error")
             return False
@@ -830,9 +846,9 @@ class SystemManagerThread(QThread):
             return False
         self.outputReceived.emit("Adding Flathub remote…", "info")
         try:
-            parts = self.distro.flatpak_add_flathub().split()
-            cmd   = parts if parts and parts[0] == "sudo" else ["sudo"] + parts
-            ok    = self._ok(self._stream_cmd(cmd))
+            cmd  = shlex.split(self.distro.flatpak_add_flathub())
+            self.outputReceived.emit(f"Running: {' '.join(cmd)}", "info")
+            ok   = self._ok(self._stream_cmd(cmd))
             self.outputReceived.emit("Flathub remote successfully added." if ok else "Failed to add Flathub remote.", "success" if ok else "warning")
             return ok
         except Exception as exc:
@@ -840,11 +856,10 @@ class SystemManagerThread(QThread):
             return False
 
     def _setup_service(self, service: str, packages: list) -> bool:
-        return (all(self._install_pkg(p) for p in packages) if packages else True) \
-               and self._enable_service(service)
+        return (all(self._install_pkg(p, label="Service Package") for p in packages) if packages else True) and self._enable_service(service)
 
     def _enable_service(self, service: str) -> bool:
-        self.outputReceived.emit(f"Enabling {service}.service…", "info")
+        self.outputReceived.emit(f"Enabling {service}.service", "info")
         if self._ok(self._run_cmd(["systemctl", "is-active", "--quiet", f"{service}.service"])):
             self.outputReceived.emit(f"{service}.service already active.", "success")
             return True
@@ -885,13 +900,16 @@ class SystemManagerThread(QThread):
     def _clean_cache(self) -> bool:
         if not self.distro:
             return False
+        pm_name = self.distro.pkg_manager_name()
+        self.outputReceived.emit(f"Cleaning {pm_name} cache", "info")
         cmd = self.distro.get_clean_cache_cmd()
         ok  = self._ok(self._stream_cmd(["sudo", "sh", "-c", cmd]) if ("&" in cmd or "|" in cmd) else self._stream_cmd(shlex.split(cmd)))
-        self.outputReceived.emit("Cache successfully cleaned." if ok else "Cache clean failed.", "success" if ok else "error")
+        self.outputReceived.emit(f"{pm_name} cache successfully cleaned." if ok else f"{pm_name} cache cleaning failed.", "success" if ok else "error")
         if ok and self._pkg_cache and self._pkg_cache.is_installed("yay"):
-            self.outputReceived.emit("Cleaning yay cache…", "info")
+            self.outputReceived.emit("", "info")
+            self.outputReceived.emit("Cleaning yay cache", "info")
             yay_ok = self._ok(self._stream_cmd(["yay", "-Scc", "--noconfirm"]))
-            self.outputReceived.emit("yay cache successfully cleaned." if yay_ok else "'yay' cache clean failed.", "success" if yay_ok else "error")
+            self.outputReceived.emit("yay cache successfully cleaned." if yay_ok else "yay cache cleaning failed.", "success" if yay_ok else "error")
             ok = ok and yay_ok
         return ok
 
@@ -934,11 +952,12 @@ class _Style:
 def _fmt_html(text: str, kind: str) -> str:
     style = _Style.style_str(kind)
     if kind == "operation":
-        esc = apply_replacements(text)
+        esc = _html.escape(apply_replacements(text))
         return ("<hr style='border:none;margin:15px 30px;border-top:1px dashed rgba(111,255,245,0.3);'>"
                 f"<div style='padding:10px;border-radius:8px;margin:5px 0;'>"
                 f"<p style='{style}'>{esc}</p></div><br>")
-    lines = [f"<p style='{style}'>{apply_replacements(ln)}</p>" for ln in text.splitlines() if ln.strip()]
+    lines = [f"<p style='{style}'>{_html.escape(apply_replacements(ln))}</p>"
+             for ln in text.splitlines() if ln.strip()]
     return "\n".join(lines) + "<br>"
 
 

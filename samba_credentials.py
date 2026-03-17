@@ -3,7 +3,10 @@ from keyring.backends import SecretService
 import getpass, hmac, json, os, shutil, subprocess, keyring, keyring.errors, pwd, threading
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QCheckBox, QDialog, QErrorMessage, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout
+from PyQt6.QtWidgets import (
+    QCheckBox, QDialog, QErrorMessage, QHBoxLayout,
+    QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout
+)
 
 from state import logger
 from themes import current_theme
@@ -95,15 +98,17 @@ class _VerifyPasswordDialog(QDialog):
 
     def _verify(self) -> None:
         entered = self._pw_input.text()
+        self._pw_input.clear()
         if hmac.compare_digest(entered, self._stored_pw):
+            self._stored_pw = ""
             self.accept()
             return
 
         self._attempts += 1
-        self._pw_input.clear()
 
         if self._attempts >= self._MAX_ATTEMPTS:
             QMessageBox.critical(self, "Access Denied", "Too many failed attempts.")
+            self._stored_pw = ""
             self.reject()
             return
 
@@ -230,6 +235,7 @@ class SambaPasswordDialog(QDialog):
                 self._manager.save_credentials_to(username, password, target)
             else:
                 self._manager.save_credentials(username, password)
+            self._password_field.clear()
             QMessageBox.information(self, "Success", "Samba credentials successfully saved!")
             self.accept()
         except Exception as exc:

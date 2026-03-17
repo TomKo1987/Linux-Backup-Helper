@@ -74,7 +74,7 @@ def _execute_drive_op(drive: dict, key: str, timeout: int) -> tuple[bool, str]:
 def get_mount_output() -> str:
     try:
         return subprocess.check_output(["mount"], text=True, timeout=5)
-    except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError, OSError) as e:
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError, PermissionError, OSError) as e:
         logger.warning("get_mount_output: %s", e)
         return ""
 

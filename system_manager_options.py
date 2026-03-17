@@ -71,7 +71,7 @@ def _build_op_text(distro: LinuxDistroHelper) -> dict[str, str]:
             "Install 'AUR Packages' ('yay' required)",
         "install_specific_packages":
             f"Install 'Specific Packages' for {session}  (Using '{install_cmd}')",
-        "install_flatpak":
+        "enable_flatpak_integration":
             f"Enable Flatpak integration (Install '{pkglist(distro.get_flatpak_packages)}' and add Flathub remote)",
         "enable_printer_support":
             f"Initialise printer support<br>"
@@ -301,19 +301,16 @@ class SystemManagerOptions(QDialog):
 
         def _toggle_all(state=None):
             checked = int(state) != Qt.CheckState.Unchecked.value if state is not None else False
-
             for _cb, _key in widgets:
                 _cb.blockSignals(True)
-            try:
-                for _cb, _key in widgets:
-                    if not checked:
-                        _cb.setChecked(False)
-                    elif _cb.isEnabled():
+            for _cb, _key in widgets:
+                if checked:
+                    if _cb.isEnabled():
                         _cb.setChecked(True)
-            finally:
-                for _cb, _key in widgets:
-                    _cb.blockSignals(False)
-
+                else:
+                    _cb.setChecked(False)
+            for _cb, _key in widgets:
+                _cb.blockSignals(False)
             _handle_aur_dependency()
 
         sa.stateChanged.connect(_toggle_all)
@@ -1023,7 +1020,7 @@ class SystemManagerLauncher:
             yay_info = (
                 "   |   AUR Helper: 'yay' detected"
                 if self._distro.package_is_installed("yay")
-                else " | AUR Helper: 'yay' not detected"
+                else "   |   AUR Helper: 'yay' not detected"
             )
         distro_lbl = QLabel(
             f"Recognized Linux distribution: {self._distro_name}   |   "
@@ -1160,6 +1157,7 @@ class SystemManagerLauncher:
         t, d = self._sm_thread, self._sm_dialog
         t.thread_started.connect(lambda: d.exec())
         t.outputReceived.connect(d.on_output)
+        t.taskListReady.connect(d.on_task_list)
         t.taskStatusChanged.connect(d.on_task_status)
         t.passwordFailed.connect(lambda: self._on_fail(t, d))
         t.passwordSuccess.connect(self._on_ok)

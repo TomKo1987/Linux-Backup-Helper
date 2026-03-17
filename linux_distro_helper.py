@@ -1,5 +1,5 @@
 from typing import Callable
-import concurrent.futures, os, platform, re, subprocess
+import concurrent.futures, os, platform, re, shlex, subprocess
 
 from state import logger
 
@@ -37,7 +37,7 @@ _PKG_MGR_NAME: dict[str, str] = {"arch": "pacman", "debian": "apt", "fedora": "d
 
 
 def _nixos_check(p: str) -> list[str]:
-    return ["sh", "-c", "nix-env -q --installed 2>/dev/null | grep -qF -- " + repr(p)]
+    return ["sh", "-c", "nix-env -q --installed 2>/dev/null | grep -qF -- " + shlex.quote(p)]
 
 
 def _slackware_check(p: str) -> list[str]:
