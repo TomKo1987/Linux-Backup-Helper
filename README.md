@@ -1,6 +1,6 @@
-# Backup Helper
+# Linux-Backup-Helper
 
-**Backup Helper** is a graphical Python tool for backups and system management under Linux.  
+**Linux-Backup-Helper** is a graphical Python tool for backups and system management under Linux.  
 The idea behind this project is to automatically configure a newly installed Linux system — packages, services, system files, and all the configuration you need, with a single click.
 
 > As this is my first project and I am new to programming, I would be very grateful for feedback and suggestions. I'm still learning, so please don't expect everything to be perfect. But at least on my system it runs very fast and smoothly.
@@ -19,6 +19,7 @@ The idea behind this project is to automatically configure a newly installed Lin
 - Theming support with multiple built-in themes
 - Extensive error handling and user feedback
 
+---
 
 ## How Files are Copied and When They are Skipped
 
@@ -63,7 +64,7 @@ The tooltip colour-codes the results: green = copied, yellow = skipped, red = er
 
 ## Samba / SMB Support
 
-Backup Helper can copy files to and from Samba network shares. Source and/or destination paths must follow this pattern:
+Linux-Backup-Helper can copy files to and from Samba network shares. Source and/or destination paths must follow this pattern:
 
 ```
 smb://ip/rest-of-path
@@ -82,6 +83,7 @@ smb://192.168.0.53/share/mydata
 - On Arch-based systems, installing the `samba` package automatically includes `smbclient`.
 - On Debian/Ubuntu: `sudo apt install smbclient`
 - On Fedora: `sudo dnf install samba-client`
+- On openSUSE: `sudo zypper install samba-client`
 
 **On the remote machine** (the system hosting the share):
 
@@ -94,7 +96,7 @@ smb://192.168.0.53/share/mydata
 - Credentials are **never stored in plain text**.
 - They are stored securely via **KWallet** (KDE) or your **system keyring**.
 - If KWallet is available and already contains an entry starting with `smb-`, that entry is used automatically.
-- Otherwise, credentials can be managed directly in Backup Helper under **Samba Credentials**.
+- Otherwise, credentials can be managed directly in the application under **Samba Credentials**.
 - The SMB password is passed to `smbclient` via the `PASSWD` environment variable — never as a command-line argument, so it does not appear in `ps aux` or `/proc/<pid>/cmdline`.
 
 ### Connection order
@@ -133,12 +135,13 @@ source venv/bin/activate
 pip install -r requirements.txt
 
 # 4. Run
-python main.py
+python3 main.py
 ```
 
 ### Optional: standalone binary with PyInstaller
 
 ```bash
+pip install pyinstaller
 pyinstaller --onefile main.py
 ```
 
@@ -150,7 +153,6 @@ pyinstaller --onefile main.py
 - **Python:** 3.10+
 - **Python packages:** PyQt6, keyring, secretstorage
 - **System packages:** `inxi` (required), `smbclient` (optional — only needed for SMB/Samba share support)
-
 
 ---
 
