@@ -5,7 +5,7 @@ from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QMenu, QMessageBox, QPushButton, QSystemTrayIcon, QWidget,
-    QApplication, QFileDialog, QInputDialog, QMainWindow, QVBoxLayout
+    QApplication, QInputDialog, QMainWindow, QVBoxLayout, QFileDialog
 )
 
 from themes import apply_style
@@ -31,29 +31,49 @@ class MainWindow(QMainWindow):
         self.setFixedSize(425, 425)
         self._quitting = False
 
-        self.menu_actions = [
-            ("💾 Create Backup", lambda: self._open(base_window, "Backup")),
-            ("📤 Restore Backup", lambda: self._open(base_window, "Restore")),
-            ("🖥 System Manager", self._open_system_manager),
-            ("💻 System Information", lambda: self._open(SysInfoDialog)),
-            ("📋 View Log", lambda: self._open(LogViewer)),
-            ("⚙️ Settings", self._open_settings),
-            ("❌ Quit", self._exit),
-        ]
+        self.menu_actions = [("💾 Create Backup", lambda: self._open(base_window, "Backup")),
+                             ("📤 Restore Backup", lambda: self._open(base_window, "Restore")),
+                             ("🖥 System Manager", self._open_system_manager),
+                             ("💻 System Info", lambda: self._open(SysInfoDialog)), ("📋 View Logs", lambda: self._open(LogViewer)),
+                             ("⚙️ Settings", self._open_settings),
+                             ("❌ Quit", self._exit)]
 
         self._build_ui()
         self._setup_tray()
 
     def _build_ui(self) -> None:
+        from PyQt6.QtWidgets import QHBoxLayout
         central = QWidget()
         layout = QVBoxLayout(central)
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(10)
 
-        for label, fn in self.menu_actions:
-            btn = _main_btn(label)
-            btn.clicked.connect(fn)
-            layout.addWidget(btn)
+        i = 0
+        while i < len(self.menu_actions):
+            label, fn = self.menu_actions[i]
+
+            if "System Info" in label:
+                h_layout = QHBoxLayout()
+                h_layout.setSpacing(10)
+
+                btn1 = _main_btn(label)
+                btn1.clicked.connect(fn)
+                h_layout.addWidget(btn1)
+
+                if i + 1 < len(self.menu_actions):
+                    i += 1
+                    label2, fn2 = self.menu_actions[i]
+                    btn2 = _main_btn(label2)
+                    btn2.clicked.connect(fn2)
+                    h_layout.addWidget(btn2)
+
+                layout.addLayout(h_layout)
+            else:
+                btn = _main_btn(label)
+                btn.clicked.connect(fn)
+                layout.addWidget(btn)
+
+            i += 1
 
         self.setCentralWidget(central)
 
@@ -136,8 +156,7 @@ class MainWindow(QMainWindow):
         else:
             msg = ("The following drives are still mounted but have no unmount command:\n" +
                    "\n".join(f"  • {o.get('drive_name', '?')}" for o in info_only) + "\n\nQuit anyway?" if info_only else "Really quit Backup Helper?")
-            if QMessageBox.question(self, "Quit", msg, QMessageBox.StandardButton.Yes
-                                                       | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            if QMessageBox.question(self, "Quit", msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
                 return
 
         self._quitting = True
@@ -212,8 +231,7 @@ def main() -> None:
         logger.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_tb))
 
         try:
-            QMessageBox.critical(None, "Critical Error",
-                                 f"An unexpected error occurred:\n\n{exc_value}\n\nCheck the logs for details.")
+            QMessageBox.critical(None, "Critical Error", f"An unexpected error occurred:\n\n{exc_value}\n\nCheck the logs for details.")
         except Exception as dialog_exc:
             logger.error("Failed to show error dialog: %s", dialog_exc)
             print(f"FATAL ERROR: {exc_value}", file=sys.stderr)

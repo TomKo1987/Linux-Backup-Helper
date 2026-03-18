@@ -115,15 +115,15 @@ def _make_askpass(pw_secure) -> Optional[tuple[str, Path]]:
 
 
 class SystemManagerDialog(QDialog):
-    DIALOG_SIZE     = (1850, 1150)
-    BUTTON_SIZE     = (145, 40)
-    CHECKLIST_WIDTH = 370
+    DIALOG_SIZE       = (1850, 1000)
+    BUTTON_SIZE       = (160, 50)
+    RIGHT_ITEMS_WIDTH = 370
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("System Manager")
         self._task_status: dict[str, str] = {}
-        self._done = self._auth_failed = self._has_error = False
+        self._done   = self._auth_failed = self._has_error = False
         self._timer  = QElapsedTimer()
         self._ticker = QTimer(self)
         self._build_ui()
@@ -161,7 +161,7 @@ class SystemManagerDialog(QDialog):
         self._checklist     = QListWidget()
         self._style_checklist()
 
-        self._elapsed_lbl = QLabel("\nElapsed time:\n00s\n")
+        self._elapsed_lbl = QLabel("Elapsed time:\n00s")
         self._style_elapsed(shadow)
 
         self._close_btn = QPushButton("Close")
@@ -184,7 +184,7 @@ class SystemManagerDialog(QDialog):
         main = QHBoxLayout(self)
         main.setContentsMargins(8, 8, 8, 8)
         main.setSpacing(10)
-        main.addLayout(left, 3)
+        main.addLayout(left, 4)
         main.addLayout(right, 1)
 
         self._ticker.timeout.connect(self._update_elapsed)
@@ -195,16 +195,17 @@ class SystemManagerDialog(QDialog):
         t, bs = current_theme(), _Style.border_style()
         self._checklist_lbl.setStyleSheet(f"color:{t['info']};font-size:18px;font-weight:bold;padding:10px;"
                                           f"background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {t['bg2']},stop:1 {t['header_sep']});{bs}")
-        self._checklist_lbl.setFixedWidth(self.CHECKLIST_WIDTH)
+        self._checklist_lbl.setFixedWidth(self.RIGHT_ITEMS_WIDTH)
         self._checklist.setStyleSheet(f"QListWidget{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
                                       f"stop:0 {t['bg2']},stop:1 {t['header_sep']});font-size:15px;padding:4px;{bs}}}"
                                       "QListWidget::item{padding:4px;border-radius:4px;border:1px solid transparent;}")
-        self._checklist.setFixedWidth(self.CHECKLIST_WIDTH)
+        self._checklist.setFixedWidth(self.RIGHT_ITEMS_WIDTH)
 
     def _style_elapsed(self, shadow: QGraphicsDropShadowEffect) -> None:
         t, bs = current_theme(), _Style.border_style()
         self._elapsed_lbl.setGraphicsEffect(shadow)
         self._elapsed_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._elapsed_lbl.setFixedSize(self.RIGHT_ITEMS_WIDTH, 75)
         self._elapsed_lbl.setStyleSheet(f"color:{t['info']};font-size:17px;{bs}"
                                         f"background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {t['bg2']},stop:1 {t['header_sep']});"
                                         "text-align:center;font-weight:bold;padding:3px;")
@@ -334,9 +335,9 @@ class SystemManagerDialog(QDialog):
             s       = max(0, int(self._timer.elapsed() / 1000))
             h, rem  = divmod(s, 3600)
             m, s    = divmod(rem, 60)
-            txt     = (f"\nElapsed time:\n{h:02}h {m:02}m {s:02}s\n" if h else
-                       f"\nElapsed time:\n{m:02}m {s:02}s\n"         if m else
-                       f"\nElapsed time:\n{s:02}s\n")
+            txt     = (f"Elapsed time:\n{h:02}h {m:02}m {s:02}s" if h else
+                       f"Elapsed time:\n{m:02}m {s:02}s"         if m else
+                       f"Elapsed time:\n{s:02}s")
             self._elapsed_lbl.setText(txt)
         except (RuntimeError, AttributeError):
             self._ticker.stop()
@@ -627,15 +628,16 @@ class SystemManagerThread(QThread):
         if distro_family(self.distro.distro_id) != "arch":
             self.outputReceived.emit("Mirror update is only supported on Arch Linux.", "info")
             return True
+        country = self._detect_country()
+        self.outputReceived.emit(f"Detected country: {country}" if country else "Country detection failed — using worldwide mirrors.",
+                                 "info" if country else "warning")
+
         if not shutil.which("reflector"):
             self.outputReceived.emit("Installing reflector", "info")
             self._stream_cmd(shlex.split(self.distro.get_pkg_install_cmd("reflector")))
         else:
             self.outputReceived.emit("Package reflector is already installed", "info")
 
-        country = self._detect_country()
-        self.outputReceived.emit(f"Detected country: {country}" if country else "Country detection failed — using worldwide mirrors.",
-                                 "info" if country else "warning")
         cmd = ["sudo", "-A", "reflector", "--verbose", "--latest", "10", "--protocol", "https", "--sort", "rate", "--save", "/etc/pacman.d/mirrorlist"]
         if country:
             cmd += ["--country", country]
@@ -995,4 +997,4 @@ class _PackageCache:
 
 
 _INFO_RE = re.compile(r"INFO:|rating|mirror|download|synchroniz|\$srcdir/|Erfolg|Übertragung|avg speed|=====|OK|"
-                      r"Statuserläuterung|Klon|PGP|Fertig|\.\.\.",re.IGNORECASE)
+                      r"Statuserläuterung|Klon|PGP|MiB|Fertig|\.\.\.",re.IGNORECASE)

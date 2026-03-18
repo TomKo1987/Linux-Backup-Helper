@@ -3,10 +3,7 @@ from keyring.backends import SecretService
 import getpass, hmac, json, os, shutil, subprocess, keyring, keyring.errors, pwd, threading
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import (
-    QCheckBox, QDialog, QErrorMessage, QHBoxLayout,
-    QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout
-)
+from PyQt6.QtWidgets import QCheckBox, QDialog, QErrorMessage, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout
 
 from state import logger
 from themes import current_theme
