@@ -528,8 +528,7 @@ class EntryDialog(QDialog):
                        "title": title,
                        "source": [p[0] for p in valid],
                        "destination": [p[1] for p in valid],
-                       "details": {"no_backup":  self.no_backup.isChecked(),
-                                   "no_restore": self.no_restore.isChecked()}}
+                       "details": {"no_backup":  self.no_backup.isChecked(), "no_restore": self.no_restore.isChecked()}}
         self.accept()
 
 
@@ -581,7 +580,7 @@ class MountDialog(QDialog):
                                 " using the name from above.<br><br>"
                                 "<i>Fill in</i> when the drive is mounted elsewhere (sshfs, KDE Connect, etc.).<br>"
                                 "The path must match the beginning of the paths in your backup entries.<br><br>"
-                                "<small>Allowed commands: mount, umount, udisksctl, kdeconnect-cli, sshfs, fusermount3</small>"))
+                                "<small>Allowed commands: mount, umount, udisksctl, kdeconnect-cli, sshfs, fusermount3, fusermount</small>"))
         form.addRow(self.mount_path)
 
         self.mount = _field("mount_command", "udisksctl mount --block-device /dev/sdX1")

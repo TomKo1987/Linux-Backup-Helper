@@ -498,11 +498,26 @@ class SettingsWindow(_BaseCheckboxWindow):
 
     def _change_theme(self) -> None:
         dlg = _ThemeDialog(self)
-        dlg.setWindowTitle("Theme and Font Settings")
-        dlg.setMinimumSize(480, 380)
-        dlg.setWindowModality(Qt.WindowModality.NonModal)
+        dlg.changed.connect(self.done)
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
 
-        layout = QVBoxLayout(dlg)
+
+class _ThemeDialog(QDialog):
+
+    changed = pyqtSignal(int)
+
+    def __init__(self, parent) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Theme and Font Settings")
+        self.setMinimumSize(480, 380)
+        self.setWindowModality(Qt.WindowModality.NonModal)
+        self._orig = (S.ui.get("theme", "Tokyo Night"), S.ui.get("font_family", ""), S.ui.get("font_size", 14))
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
 
         def _combo(label: str, items: list[str], current: str) -> QComboBox:
             layout.addWidget(QLabel(label))
@@ -512,53 +527,64 @@ class SettingsWindow(_BaseCheckboxWindow):
             layout.addWidget(cb)
             return cb
 
-        theme_cb = _combo("Select Theme:", list(THEMES.keys()), S.ui.get("theme", "Tokyo Night"))
-
-        font_cb = _combo("Select Font:", ["(System Default)"] + sorted(QFontDatabase.families()),
-                         S.ui.get("font_family", "") or "(System Default)")
-
-        size_cb = _combo("Select Font Size:", ["10", "11", "12", "13", "14", "15", "16", "17", "18", "20", "22", "24"],
-                         str(S.ui.get("font_size", 14)))
-
-        orig = (S.ui.get("theme", "Tokyo Night"), S.ui.get("font_family", ""), S.ui.get("font_size", 14))
-
-        def _apply(save: bool = False) -> None:
-            chosen_font = font_cb.currentText()
-            if chosen_font == "(System Default)":
-                chosen_font = ""
-            S.ui.update(theme=theme_cb.currentText(), font_family=chosen_font, font_size=int(size_cb.currentText()))
-            apply_style()
-            if save:
-                save_profile()
-                self.done(2)
+        self._theme_cb = _combo(
+            "Select Theme:", list(THEMES.keys()), S.ui.get("theme", "Tokyo Night")
+        )
+        self._font_cb  = _combo(
+            "Select Font:",
+            ["(System Default)"] + sorted(QFontDatabase.families()),
+            S.ui.get("font_family", "") or "(System Default)",
+        )
+        self._size_cb  = _combo(
+            "Select Font Size:",
+            ["10", "11", "12", "13", "14", "15", "16", "17", "18", "20", "22", "24"],
+            str(S.ui.get("font_size", 14)),
+        )
 
         prev_btn = QPushButton("Preview")
-        prev_btn.clicked.connect(lambda: _apply(False))
+        prev_btn.clicked.connect(lambda: self._apply(save=False))
         layout.addWidget(prev_btn)
 
-        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel) # type: ignore
+        bb         = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
         ok_btn     = bb.button(QDialogButtonBox.StandardButton.Ok)
         cancel_btn = bb.button(QDialogButtonBox.StandardButton.Cancel)
 
         if ok_btn:
-            def _on_ok() -> None:
-                _apply(True)
-                dlg.accept()
-                QMessageBox.information(self, "Theme Saved", f"Theme: {theme_cb.currentText()}, "
-                                                             f"Font: {font_cb.currentText()} {size_cb.currentText()}px")
-            ok_btn.clicked.connect(_on_ok)
-
+            ok_btn.clicked.connect(self._on_ok)
         if cancel_btn:
-            cancel_btn.clicked.connect(lambda: (S.ui.update(theme=orig[0], font_family=orig[1], font_size=orig[2]),
-                                                apply_style(), dlg.reject()))
+            cancel_btn.clicked.connect(self._on_cancel)
 
         layout.addWidget(bb)
-        dlg.show()
-        dlg.raise_()
-        dlg.activateWindow()
 
+    def _apply(self, save: bool = False) -> None:
+        chosen_font = self._font_cb.currentText()
+        if chosen_font == "(System Default)":
+            chosen_font = ""
+        S.ui.update(
+            theme=self._theme_cb.currentText(),
+            font_family=chosen_font,
+            font_size=int(self._size_cb.currentText()),
+        )
+        apply_style()
+        if save:
+            save_profile()
 
-class _ThemeDialog(QDialog):
+    def _on_ok(self) -> None:
+        self._apply(save=True)
+        self.accept()
+        QMessageBox.information(
+            self.parent(), "Theme Saved",
+            f"Theme: {self._theme_cb.currentText()}, "
+            f"Font: {self._font_cb.currentText()} {self._size_cb.currentText()}px",
+        )
+        self.changed.emit(2)
+
+    def _on_cancel(self) -> None:
+        orig_theme, orig_font, orig_size = self._orig
+        S.ui.update(theme=orig_theme, font_family=orig_font, font_size=orig_size)
+        apply_style()
+        self.reject()
+
     def keyPressEvent(self, event) -> None:
         if event.key() != Qt.Key.Key_Escape:
             super().keyPressEvent(event)

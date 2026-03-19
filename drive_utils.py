@@ -1,11 +1,16 @@
 from typing import Optional
 import os, shlex, subprocess, re, time
 
+from PyQt6.QtWidgets import (
+    QCheckBox, QDialog, QDialogButtonBox, QFrame, QLabel,
+    QMessageBox, QPushButton, QVBoxLayout,
+)
+
 from state import logger, _USER
 
 _DRIVE_NAME_RE = re.compile(r"^[\w\- .()@:]+$")
 _DANGER_SEQS   = ("&&", "||", "$(", ";", "|", "`", ">", "<", "\n", "\r", "\x00")
-_ALLOWED_CMDS  = frozenset({"mount", "umount", "udisksctl", "kdeconnect-cli", "sshfs", "fusermount3"})
+_ALLOWED_CMDS  = frozenset({"mount", "umount", "udisksctl", "kdeconnect-cli", "sshfs", "fusermount3", "fusermount"})
 
 
 def _validate_cmd(cmd: str) -> tuple[bool, str, list[str]]:
@@ -182,8 +187,6 @@ def has_managed_mount_path(opt: dict) -> bool:
 
 
 def mount_required_drives(drives: list[dict], parent=None) -> tuple[bool, list[dict]]:
-    from PyQt6.QtWidgets import QCheckBox, QDialog, QDialogButtonBox, QFrame, QLabel, QPushButton, QVBoxLayout
-
     if not drives:
         return True, []
 
@@ -240,14 +243,12 @@ def mount_required_drives(drives: list[dict], parent=None) -> tuple[bool, list[d
                 logger.info("Skipping mount for managed drive '%s'", drive_name)
                 continue
             else:
-                from PyQt6.QtWidgets import QMessageBox
                 QMessageBox.warning(parent, "Operation Cancelled", f"The required drive '{drive_name}' was not mounted.\n\n"
                                                                    "The operation has been cancelled.")
                 return False, []
 
         success, error_msg = mount_drive(opt)
         if not success:
-            from PyQt6.QtWidgets import QMessageBox
             QMessageBox.critical(parent, "Mount Failed", f"Could not mount '{drive_name}':\n\n{error_msg}\n\n"
                                                          "The operation has been cancelled.")
             return False, []

@@ -716,7 +716,8 @@ class SystemManagerOptions(QDialog):
             return
 
         current = getattr(S, pkg_type, []) or []
-        names   = [l.strip() for l in te.toPlainText().splitlines() if l.strip()]
+        names   = [l.strip() for l in te.toPlainText().splitlines() if l.strip()
+                   and all(c.isalnum() or c in "-_.+" for c in l.strip())]
         added, dupes = [], []
 
         if is_specific and sess_cb:
@@ -845,6 +846,9 @@ def _pkg_form_dialog(parent, title: str, *, prefill_name: str = "", prefill_sess
     name = name_ed.text().strip()
     if not name:
         QMessageBox.warning(parent, "Error", "Package name required.")
+        return None
+    if not all(c.isalnum() or c in "-_.+" for c in name):
+        QMessageBox.warning(parent, "Error", "Invalid package name.\nOnly letters, digits, hyphens, dots, underscores and '+' are allowed.")
         return None
     return (name, sess_cb.currentText()) if with_session else (name,)
 

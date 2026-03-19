@@ -43,6 +43,13 @@ logger = _make_logger("backup_helper")
 
 text_replacements: list = [(_HOME.as_posix(), "~"), (f"/run/media/{_USER}/", ""), ("\x1b[1m", ""), ("\x1b[0m", "")]
 
+_tooltip_cache: "tuple[dict, dict, dict] | None" = None
+
+
+def invalidate_tooltip_cache() -> None:
+    global _tooltip_cache
+    _tooltip_cache = None
+
 
 def apply_replacements(text: str) -> str:
     for old, new in text_replacements:
@@ -112,8 +119,8 @@ def _norm_paths(raw: Any) -> list[str]:
         return []
 
     def _smart_split(s: str) -> list[str]:
-        if " /" in s or " smb://" in s:
-            return [p.strip() for p in re.split(r" (?=/|smb://)", s.strip()) if p.strip()]
+        if " /" in s or " smb://" in s or " cifs://" in s:
+            return [p.strip() for p in re.split(r" (?=/|smb://|cifs://)", s.strip()) if p.strip()]
         return [s.strip()]
 
     if isinstance(raw, str):
@@ -167,6 +174,7 @@ def load_profile(path: Path) -> bool:
         S.user_shell         = data.get("user_shell", "bash")
         S.ui.update(data.get("ui_settings", {}))
 
+        invalidate_tooltip_cache()
         logger.info("Loaded profile '%s'", S.profile_name)
         return True
     except Exception as exc:
@@ -196,6 +204,7 @@ def save_profile(path: Optional[Path] = None) -> bool:
     }
     try:
         _atomic_write(path, data)
+        invalidate_tooltip_cache()
         logger.info("Saved profile '%s'", path.stem)
         return True
     except Exception as exc:
@@ -248,11 +257,16 @@ _session_detected: bool = False
 
 
 def generate_tooltip() -> tuple[dict, dict, dict]:
-    global _cached_session, _session_detected
+    global _cached_session, _session_detected, _tooltip_cache
+    if _tooltip_cache is not None:
+        return _tooltip_cache
     from themes import current_theme
     from linux_distro_helper import LinuxDistroHelper
 
     with _session_lock:
+        if _tooltip_cache is not None:
+            return _tooltip_cache
+
         if not _session_detected:
             try: _cached_session = LinuxDistroHelper().detect_session() or ""
             except Exception as e: logger.warning("Session detect failed: %s", e)
@@ -350,4 +364,7 @@ def generate_tooltip() -> tuple[dict, dict, dict]:
         sm_tips["set_user_shell"] = (f"<table style='border-collapse:collapse;font-family:monospace;'>"
                                      f"{header}<tr style='background-color:{_bg2};'>{cell_content}</tr></table>")
 
-    return backup_tips, restore_tips, sm_tips
+    with _session_lock:
+        if _tooltip_cache is None:
+            _tooltip_cache = (backup_tips, restore_tips, sm_tips)
+    return _tooltip_cache

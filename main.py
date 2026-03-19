@@ -4,13 +4,14 @@ from pathlib import Path
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
-    QMenu, QMessageBox, QPushButton, QSystemTrayIcon, QWidget,
+    QHBoxLayout, QMenu, QMessageBox, QPushButton, QSystemTrayIcon, QWidget,
     QApplication, QInputDialog, QMainWindow, QVBoxLayout, QFileDialog
 )
 
 from themes import apply_style
 from dialogs import LogViewer, SysInfoDialog
 from backup_restore_settings import base_window
+
 from drive_utils import get_mount_output, is_mounted, unmount_drive
 from state import S, _HOME, _PROFILES_DIR, _PROFILE_RE, save_profile, startup_load, logger, load_profile
 
@@ -28,21 +29,23 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Backup Helper")
-        self.setFixedSize(425, 425)
+        self.setFixedSize(400, 400)
         self._quitting = False
 
-        self.menu_actions = [("💾 Create Backup", lambda: self._open(base_window, "Backup")),
-                             ("📤 Restore Backup", lambda: self._open(base_window, "Restore")),
-                             ("🖥 System Manager", self._open_system_manager),
-                             ("💻 System Info", lambda: self._open(SysInfoDialog)), ("📋 View Logs", lambda: self._open(LogViewer)),
-                             ("⚙️ Settings", self._open_settings),
-                             ("❌ Quit", self._exit)]
+        self.menu_actions: list[tuple[str, object, bool]] = [
+            ("💾 Create Backup", lambda: self._open(base_window, "Backup"), False),
+            ("📤 Restore Backup", lambda: self._open(base_window, "Restore"), False),
+            ("🖥 System Manager", self._open_system_manager, False),
+            ("💻 System Info", lambda: self._open(SysInfoDialog), True),
+            ("📋 View Logs", lambda: self._open(LogViewer), False),
+            ("⚙️ Settings", self._open_settings, False),
+            ("❌ Quit", self._exit, False),
+        ]
 
         self._build_ui()
         self._setup_tray()
 
     def _build_ui(self) -> None:
-        from PyQt6.QtWidgets import QHBoxLayout
         central = QWidget()
         layout = QVBoxLayout(central)
         layout.setContentsMargins(15, 15, 15, 15)
@@ -50,23 +53,19 @@ class MainWindow(QMainWindow):
 
         i = 0
         while i < len(self.menu_actions):
-            label, fn = self.menu_actions[i]
+            label, fn, pair_with_next = self.menu_actions[i]
 
-            if "System Info" in label:
+            if pair_with_next and i + 1 < len(self.menu_actions):
                 h_layout = QHBoxLayout()
                 h_layout.setSpacing(10)
-
                 btn1 = _main_btn(label)
                 btn1.clicked.connect(fn)
                 h_layout.addWidget(btn1)
-
-                if i + 1 < len(self.menu_actions):
-                    i += 1
-                    label2, fn2 = self.menu_actions[i]
-                    btn2 = _main_btn(label2)
-                    btn2.clicked.connect(fn2)
-                    h_layout.addWidget(btn2)
-
+                i += 1
+                label2, fn2, _ = self.menu_actions[i]
+                btn2 = _main_btn(label2)
+                btn2.clicked.connect(fn2)
+                h_layout.addWidget(btn2)
                 layout.addLayout(h_layout)
             else:
                 btn = _main_btn(label)
@@ -114,13 +113,14 @@ class MainWindow(QMainWindow):
         menu.addAction(show_act)
         menu.addSeparator()
 
-        for label, fn in self.menu_actions:
+        for label, fn, _pair in self.menu_actions:
             a = QAction(label, self)
             a.triggered.connect(fn)
             menu.addAction(a)
 
         self.tray.setContextMenu(menu)
-        self.tray.activated.connect(lambda r: (self._show_and_raise() if r == QSystemTrayIcon.ActivationReason.DoubleClick else None))
+        self.tray.activated.connect(
+            lambda r: (self._show_and_raise() if r == QSystemTrayIcon.ActivationReason.DoubleClick else None))
         self.tray.show()
 
     def _show_and_raise(self) -> None:
@@ -155,8 +155,10 @@ class MainWindow(QMainWindow):
 
         else:
             msg = ("The following drives are still mounted but have no unmount command:\n" +
-                   "\n".join(f"  • {o.get('drive_name', '?')}" for o in info_only) + "\n\nQuit anyway?" if info_only else "Really quit Backup Helper?")
-            if QMessageBox.question(self, "Quit", msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+                   "\n".join(f"  • {o.get('drive_name', '?')}" for o in info_only) + "\n\nQuit anyway?"
+                   if info_only else "Really quit Backup Helper?")
+            if QMessageBox.question(self, "Quit", msg, QMessageBox.StandardButton.Yes |
+                                                       QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
                 return
 
         self._quitting = True
@@ -198,12 +200,14 @@ def _first_run_wizard(parent) -> bool:
                     break
                 clean_name = name.strip()
                 if not clean_name or not _PROFILE_RE.match(clean_name):
-                    QMessageBox.warning(parent, "Invalid Name", "Profile name may only contain letters, digits, spaces, hyphens and dots.")
+                    QMessageBox.warning(parent, "Invalid Name",
+                                        "Profile name may only contain letters, digits, spaces, hyphens and dots.")
                     continue
                 _PROFILES_DIR.mkdir(parents=True, exist_ok=True)
                 dest = _PROFILES_DIR / f"{clean_name}.json"
                 if dest.exists():
-                    confirm = QMessageBox.warning(parent, "Overwrite", f"Profile '{clean_name}' already exists. Overwrite?",
+                    confirm = QMessageBox.warning(parent, "Overwrite",
+                                                  f"Profile '{clean_name}' already exists. Overwrite?",
                                                   QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
                     if confirm == QMessageBox.StandardButton.No:
                         continue
@@ -218,8 +222,6 @@ def _first_run_wizard(parent) -> bool:
 
 
 def main() -> None:
-    import system_manager as _sm  # noqa: F401
-
     app = QApplication(sys.argv)
     app.setApplicationName("Backup Helper")
 
@@ -231,7 +233,8 @@ def main() -> None:
         logger.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_tb))
 
         try:
-            QMessageBox.critical(None, "Critical Error", f"An unexpected error occurred:\n\n{exc_value}\n\nCheck the logs for details.")
+            QMessageBox.critical(None, "Critical Error",
+                                 f"An unexpected error occurred:\n\n{exc_value}\n\nCheck the logs for details.")
         except Exception as dialog_exc:
             logger.error("Failed to show error dialog: %s", dialog_exc)
             print(f"FATAL ERROR: {exc_value}", file=sys.stderr)
@@ -250,5 +253,4 @@ def main() -> None:
     sys.exit(app.exec())
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__": main()

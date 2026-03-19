@@ -28,6 +28,12 @@ _SOLUS     = {"solus"}
 
 USER_SHELLS = ["bash", "fish", "zsh", "elvish", "nushell", "powershell", "xonsh", "ngs"]
 
+_SHELL_BINARIES: dict[str, str] = {
+    "nushell":      "nu",
+    "powershell":   "pwsh",
+    "powershell-bin": "pwsh",
+}
+
 SESSIONS = ["KDE", "GNOME", "XFCE", "Cinnamon", "MATE", "LXDE", "LXQt", "Budgie", "Deepin", "Openbox", "i3", "Sway",
             "Hyprland", "bspwm", "dwm", "awesome", "qtile", "xmonad", "Wayfire", "River", "niri", "COSMIC"]
 
@@ -476,6 +482,10 @@ class LinuxDistroHelper:
         if shell_name.lower() in ("pwsh", "powershell"):
             return "powershell-bin" if fam == "arch" else "powershell"
         return shell_map.get(shell_name.lower(), shell_name.lower())
+
+    def get_shell_binary_name(self, shell_name: str) -> str:
+        pkg = self.get_shell_package_name(shell_name)
+        return _SHELL_BINARIES.get(pkg, pkg)
 
     def get_ssh_packages(self)       -> list: return _lookup(_SSH_PKGS,   self.family())
     def get_samba_packages(self)     -> list: return _lookup(_SAMBA_PKGS, self.family())
