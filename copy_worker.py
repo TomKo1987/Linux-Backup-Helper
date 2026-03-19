@@ -1178,7 +1178,7 @@ class _SummaryWidget(QWidget):
 
         stats_lay = QGridLayout()
         stats_lay.setSpacing(12)
-        self.card_copied  = _make_card(_COLOR_COPIED,  " Copied",  "0")
+        self.card_copied  = _make_card(_COLOR_COPIED,  " Copied",  "0")
         self.card_skipped = _make_card(_COLOR_SKIPPED, "↷ Skipped", "0")
         self.card_errors  = _make_card(_COLOR_ERROR,   "✗ Errors",  "0")
         for col, card in enumerate((self.card_copied, self.card_skipped, self.card_errors)):
@@ -1456,7 +1456,7 @@ class _SummaryWidget(QWidget):
         for title, ec in self._entry_results.items():
             ok, err, skip = ec
             parts = []
-            if ok:   parts.append(f"<span style='color:{_COLOR_COPIED}'> {ok:,}</span>")
+            if ok:   parts.append(f"<span style='color:{_COLOR_COPIED}'> {ok:,}</span>")
             if skip: parts.append(f"<span style='color:{_COLOR_SKIPPED}'>↷ {skip:,}</span>")
             if err:  parts.append(f"<span style='color:{_COLOR_ERROR}'>✗ {err:,}</span>")
             suffix      = "&nbsp; ".join(parts) if parts else f"<span style='color:{t['text_dim']}'>–</span>"
@@ -1604,7 +1604,7 @@ class _SummaryWidget(QWidget):
         bytes_skipped = max(0, bytes_processed - bytes_copied)
         parts = []
         if bytes_copied >= 0:
-            parts.append(f"<span style='color:{_COLOR_COPIED}'> {_fmt_size(bytes_copied)} (Copied)</span>")
+            parts.append(f"<span style='color:{_COLOR_COPIED}'> {_fmt_size(bytes_copied)} (Copied)</span>")
         if bytes_skipped >= 0:
             parts.append(f"<span style='color:{_COLOR_SKIPPED}'>↷ {_fmt_size(bytes_skipped)} (Skipped)</span>")
         detail_str = "  ·  ".join(parts)

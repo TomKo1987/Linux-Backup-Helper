@@ -20,7 +20,7 @@ RESTART_DIALOG = 2
 
 def _main_btn(text: str) -> QPushButton:
     btn = QPushButton(text)
-    btn.setFixedHeight(50)
+    btn.setFixedHeight(60)
     btn.setStyleSheet("font-size:18px;font-weight:bold;")
     return btn
 
