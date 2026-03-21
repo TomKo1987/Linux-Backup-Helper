@@ -2,8 +2,8 @@ from typing import Optional
 import os, shlex, subprocess, re, time
 
 from PyQt6.QtWidgets import (
-    QCheckBox, QDialog, QDialogButtonBox, QFrame, QLabel,
     QMessageBox, QPushButton, QVBoxLayout,
+    QDialog, QDialogButtonBox, QFrame, QLabel
 )
 
 from state import logger, _USER
@@ -11,6 +11,24 @@ from state import logger, _USER
 _DRIVE_NAME_RE = re.compile(r"^[\w\- .()@:]+$")
 _DANGER_SEQS   = ("&&", "||", "$(", ";", "|", "`", ">", "<", "\n", "\r", "\x00")
 _ALLOWED_CMDS  = frozenset({"mount", "umount", "udisksctl", "kdeconnect-cli", "sshfs", "fusermount3", "fusermount"})
+
+_session_managed_mounts: list[dict] = []
+
+
+def get_session_managed_mounts() -> list[dict]:
+    return list(_session_managed_mounts)
+
+
+def _track_session_mount(drive: dict) -> None:
+    if drive not in _session_managed_mounts:
+        _session_managed_mounts.append(drive)
+
+
+def _untrack_session_mount(drive: dict) -> None:
+    try:
+        _session_managed_mounts.remove(drive)
+    except ValueError:
+        pass
 
 
 def _validate_cmd(cmd: str) -> tuple[bool, str, list[str]]:
@@ -41,6 +59,7 @@ def _validate_cmd(cmd: str) -> tuple[bool, str, list[str]]:
             return False, f"Path traversal detected in token: {tok!r}", []
 
     return True, "", expanded
+
 
 def _valid_drive_name(name: str) -> bool:
     return bool(name and isinstance(name, str) and _DRIVE_NAME_RE.match(name) and len(name) <= 128)
@@ -117,8 +136,18 @@ def mount_drive(drive: dict) -> tuple[bool, str]:
     success, error_msg = _execute_drive_op(drive, "mount_command", 15)
 
     if success:
-        logger.info("Mounted '%s' — waiting 1 s for filesystem to settle", name)
-        time.sleep(1)
+        _deadline = time.monotonic() + 1.5
+        while time.monotonic() < _deadline:
+            if is_mounted(drive, get_mount_output()):
+                break
+            time.sleep(0.5)
+        else:
+            logger.warning("mount_drive: '%s' still not visible after 1.5 s", name)
+
+        if has_managed_mount_path(drive):
+            _track_session_mount(drive)
+
+        logger.info("Mounted '%s'", name)
         return True, ""
 
     msg = f"Mount failed for '{name}': {error_msg}"
@@ -131,6 +160,7 @@ def unmount_drive(drive: dict) -> tuple[bool, str]:
     success, error_msg = _execute_drive_op(drive, "unmount_command", 30)
 
     if success:
+        _untrack_session_mount(drive)
         logger.info("Unmounted '%s'", name)
         return True, ""
 
@@ -186,16 +216,13 @@ def has_managed_mount_path(opt: dict) -> bool:
     return mount_path not in _mount_paths(name)
 
 
-def mount_required_drives(drives: list[dict], parent=None) -> tuple[bool, list[dict]]:
+def mount_required_drives(drives: list[dict], parent=None) -> bool:
     if not drives:
-        return True, []
-
-    drives_to_unmount = []
+        return True
 
     for opt in drives:
-        drive_name  = opt.get("drive_name", "?")
-        has_unmount = bool(opt.get("unmount_command"))
-        is_managed  = has_managed_mount_path(opt)
+        drive_name = opt.get("drive_name", "?")
+        is_managed = has_managed_mount_path(opt)
 
         dlg = QDialog(parent)
         dlg.setWindowTitle("Drive Required")
@@ -205,8 +232,7 @@ def mount_required_drives(drives: list[dict], parent=None) -> tuple[bool, list[d
         layout.setSpacing(12)
         layout.setContentsMargins(20, 20, 20, 20)
 
-        title_lbl = QLabel(f"<b>'{drive_name}'</b> is required but not mounted.")
-        title_lbl.setWordWrap(True)
+        title_lbl = QLabel(f"'{drive_name}' is required but not mounted.")
         layout.addWidget(title_lbl)
 
         sep = QFrame()
@@ -214,16 +240,11 @@ def mount_required_drives(drives: list[dict], parent=None) -> tuple[bool, list[d
         layout.addWidget(sep)
 
         if is_managed:
-            info_lbl = QLabel("This drive uses an external mount path and cannot be detected automatically. Run mount command now?")
+            info_lbl = QLabel("This drive uses an external mount path and cannot be detected automatically.\n\n"
+                              "Run mount command now?")
         else:
-            info_lbl = QLabel("Run mount command now?")
-        info_lbl.setWordWrap(True)
+            info_lbl = QLabel("Run mount command now?\n")
         layout.addWidget(info_lbl)
-
-        cb_no_unmount = None
-        if has_unmount:
-            cb_no_unmount = QCheckBox("Don't run unmount command after completion")
-            layout.addWidget(cb_no_unmount)
 
         layout.addSpacing(4)
 
@@ -243,16 +264,18 @@ def mount_required_drives(drives: list[dict], parent=None) -> tuple[bool, list[d
                 logger.info("Skipping mount for managed drive '%s'", drive_name)
                 continue
             else:
-                QMessageBox.warning(parent, "Operation Cancelled", f"The required drive '{drive_name}' was not mounted.\n\n"
-                                                                   "The operation has been cancelled.")
-                return False, []
+                QMessageBox.warning(
+                    parent, "Operation Cancelled",
+                    f"The required drive '{drive_name}' was not mounted.\n\n"
+                    "The operation has been cancelled.")
+                return False
 
         success, error_msg = mount_drive(opt)
         if not success:
-            QMessageBox.critical(parent, "Mount Failed", f"Could not mount '{drive_name}':\n\n{error_msg}\n\n"
-                                                         "The operation has been cancelled.")
-            return False, []
-        if has_unmount and not (cb_no_unmount and cb_no_unmount.isChecked()):
-            drives_to_unmount.append(opt)
+            QMessageBox.critical(
+                parent, "Mount Failed",
+                f"Could not mount '{drive_name}':\n\n{error_msg}\n\n"
+                "The operation has been cancelled.")
+            return False
 
-    return True, drives_to_unmount
+    return True

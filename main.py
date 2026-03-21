@@ -4,15 +4,15 @@ from pathlib import Path
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
-    QHBoxLayout, QMenu, QMessageBox, QPushButton, QSystemTrayIcon, QWidget,
-    QApplication, QInputDialog, QMainWindow, QVBoxLayout, QFileDialog
+    QApplication, QInputDialog, QMainWindow, QVBoxLayout, QFileDialog,
+    QHBoxLayout, QMenu, QMessageBox, QPushButton, QSystemTrayIcon, QWidget
 )
 
 from themes import apply_style
 from dialogs import LogViewer, SysInfoDialog
 from backup_restore_settings import base_window
 
-from drive_utils import get_mount_output, is_mounted, unmount_drive
+from drive_utils import get_mount_output, is_mounted, unmount_drive, get_session_managed_mounts
 from state import S, _HOME, _PROFILES_DIR, _PROFILE_RE, save_profile, startup_load, logger, load_profile
 
 RESTART_DIALOG = 2
@@ -32,7 +32,7 @@ class MainWindow(QMainWindow):
         self.setFixedSize(400, 400)
         self._quitting = False
 
-        self.menu_actions: list[tuple[str, object, bool]] = [
+        self.menu_actions = [
             ("💾 Create Backup", lambda: self._open(base_window, "Backup"), False),
             ("📤 Restore Backup", lambda: self._open(base_window, "Restore"), False),
             ("🖥 System Manager", self._open_system_manager, False),
@@ -47,32 +47,32 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         central = QWidget()
-        layout = QVBoxLayout(central)
+        layout  = QVBoxLayout(central)
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(10)
 
-        i = 0
-        while i < len(self.menu_actions):
-            label, fn, pair_with_next = self.menu_actions[i]
-
-            if pair_with_next and i + 1 < len(self.menu_actions):
-                h_layout = QHBoxLayout()
-                h_layout.setSpacing(10)
-                btn1 = _main_btn(label)
-                btn1.clicked.connect(fn)
-                h_layout.addWidget(btn1)
-                i += 1
-                label2, fn2, _ = self.menu_actions[i]
-                btn2 = _main_btn(label2)
-                btn2.clicked.connect(fn2)
-                h_layout.addWidget(btn2)
-                layout.addLayout(h_layout)
+        it = iter(self.menu_actions)
+        for label, fn, pair_with_next in it:
+            if pair_with_next:
+                try:
+                    label2, fn2, _ = next(it)
+                    h_layout = QHBoxLayout()
+                    h_layout.setSpacing(10)
+                    btn1 = _main_btn(label)
+                    btn1.clicked.connect(fn)
+                    h_layout.addWidget(btn1)
+                    btn2 = _main_btn(label2)
+                    btn2.clicked.connect(fn2)
+                    h_layout.addWidget(btn2)
+                    layout.addLayout(h_layout)
+                except StopIteration:
+                    btn = _main_btn(label)
+                    btn.clicked.connect(fn)
+                    layout.addWidget(btn)
             else:
                 btn = _main_btn(label)
                 btn.clicked.connect(fn)
                 layout.addWidget(btn)
-
-            i += 1
 
         self.setCentralWidget(central)
 
@@ -107,12 +107,10 @@ class MainWindow(QMainWindow):
         self.tray.setToolTip("Backup Helper")
 
         menu = QMenu()
-
         show_act = QAction("🏠 Show Backup Helper", self)
         show_act.triggered.connect(self._show_and_raise)
         menu.addAction(show_act)
         menu.addSeparator()
-
         for label, fn, _pair in self.menu_actions:
             a = QAction(label, self)
             a.triggered.connect(fn)
@@ -132,36 +130,51 @@ class MainWindow(QMainWindow):
         if self._quitting:
             return
 
-        mount_out = get_mount_output()
-        mounted_drives = [o for o in S.mount_options if is_mounted(o, mount_out)]
+        mount_out       = get_mount_output()
+        std_mounted     = [o for o in S.mount_options if is_mounted(o, mount_out)]
+        std_ids         = {id(o) for o in std_mounted}
+        session_extras  = [o for o in get_session_managed_mounts() if id(o) not in std_ids]
+        mounted_drives  = std_mounted + session_extras
+
         unmountable = [o for o in mounted_drives if o.get("unmount_command")]
-        info_only = [o for o in mounted_drives if not o.get("unmount_command")]
+        info_only   = [o for o in mounted_drives if not o.get("unmount_command")]
 
         if unmountable:
             lines = [f"  • {o.get('drive_name', '?')}" for o in unmountable]
             if info_only:
                 lines += ["", "These drives have no unmount command and will be left mounted:"]
                 lines += [f"  • {o.get('drive_name', '?')}" for o in info_only]
-            ans = QMessageBox.question(self, "Quit — Drives Still Mounted",
-                                       "The following drives are still mounted:\n" + "\n".join(lines) +
-                                       "\n\nUnmount them before quitting?", QMessageBox.StandardButton.Yes
-                                       | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel)
+            ans = QMessageBox.question(
+                self, "Quit — Drives Still Mounted",
+                "The following drives are still mounted:\n\n" + "\n".join(lines) +
+                "\n\nUnmount before quitting?\n",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+            )
             if ans == QMessageBox.StandardButton.Cancel:
                 return
             if ans == QMessageBox.StandardButton.Yes:
-                failed = [f"• {o.get('drive_name', '?')}: {err}" for o in unmountable for ok, err in [unmount_drive(o)] if not ok]
+                failed = [f"• {o.get('drive_name', '?')}: {err}"
+                          for o in unmountable
+                          for ok, err in [unmount_drive(o)] if not ok]
                 if failed:
                     QMessageBox.warning(self, "Unmount Failed", "Could not unmount:\n\n" + "\n".join(failed))
 
         else:
-            msg = ("The following drives are still mounted but have no unmount command:\n" +
-                   "\n".join(f"  • {o.get('drive_name', '?')}" for o in info_only) + "\n\nQuit anyway?"
-                   if info_only else "Really quit Backup Helper?")
-            if QMessageBox.question(self, "Quit", msg, QMessageBox.StandardButton.Yes |
-                                                       QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            if info_only:
+                msg = ("The following drives are still mounted but have no unmount command:\n" +
+                       "\n".join(f"  • {o.get('drive_name', '?')}" for o in info_only) + "\n\nQuit anyway?")
+            else:
+                msg = "Really quit Backup Helper?"
+
+            if QMessageBox.question(
+                self, "Quit", msg,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
                 return
 
         self._quitting = True
+        self.hide()
+        if hasattr(self, "tray"):
+            self.tray.hide()
         QApplication.quit()
 
     def closeEvent(self, event) -> None:
@@ -206,12 +219,18 @@ def _first_run_wizard(parent) -> bool:
                 _PROFILES_DIR.mkdir(parents=True, exist_ok=True)
                 dest = _PROFILES_DIR / f"{clean_name}.json"
                 if dest.exists():
-                    confirm = QMessageBox.warning(parent, "Overwrite",
-                                                  f"Profile '{clean_name}' already exists. Overwrite?",
-                                                  QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                    confirm = QMessageBox.warning(
+                        parent, "Overwrite",
+                        f"Profile '{clean_name}' already exists. Overwrite?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    )
                     if confirm == QMessageBox.StandardButton.No:
                         continue
-                shutil.copy2(path, dest)
+                try:
+                    shutil.copy2(path, dest)
+                except OSError as copy_exc:
+                    QMessageBox.critical(parent, "Import Failed", f"Could not copy profile:\n{copy_exc}")
+                    continue
                 return load_profile(dest)
 
     S.profile_name = "Default"
@@ -229,9 +248,7 @@ def main() -> None:
         if issubclass(exc_type, KeyboardInterrupt):
             sys.__excepthook__(exc_type, exc_value, exc_tb)
             return
-
         logger.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_tb))
-
         try:
             QMessageBox.critical(None, "Critical Error",
                                  f"An unexpected error occurred:\n\n{exc_value}\n\nCheck the logs for details.")
@@ -253,4 +270,5 @@ def main() -> None:
     sys.exit(app.exec())
 
 
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    main()

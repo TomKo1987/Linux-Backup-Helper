@@ -1010,8 +1010,8 @@ class SystemManagerLauncher:
         t.taskStatusChanged.connect(d.on_task_status)
         t.passwordFailed.connect(lambda: self._on_fail(t, d))
         t.passwordSuccess.connect(self._on_ok)
-        t.start()
         t.finished.connect(d.mark_done)
+        t.start()
 
     def _show_sudo_dialog(self) -> None:
         from sudo_password import SudoPasswordDialog

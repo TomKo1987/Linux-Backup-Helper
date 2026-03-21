@@ -102,6 +102,9 @@ class _BaseCheckboxWindow(QDialog):
     def _src_dst(self, entry: dict) -> tuple[list, list]:
         return entry.get("source", []), entry.get("destination", [])
 
+    def _exclusion_note(self, entry: dict) -> str:
+        return ""
+
     def _add_action_buttons(self, grid: QGridLayout, row: int) -> None:
         pass
 
@@ -186,12 +189,23 @@ class _BaseCheckboxWindow(QDialog):
 
             col = 0
             for e in sorted(entries, key=lambda x: x.get("title", "").lower()):
-                title = e["title"]
-                cb    = QCheckBox(title.replace("<br>", "\n").replace("&", "&&"))
+                title      = e["title"]
+                excl_note  = self._exclusion_note(e)
+                cb_color   = t["muted"] if excl_note else color
+
+                cb = QCheckBox(title.replace("<br>", "\n").replace("&", "&&"))
                 cb.setToolTipDuration(600_000)
-                if title in tips:
-                    cb.setToolTip(tips[title])
-                cb.setStyleSheet(f"QCheckBox{{color:{color};}} QToolTip{{color:{t['success']};}}")
+
+                base_tip = tips.get(title, "")
+                if excl_note:
+                    warn = (f"<br><br><span style='color:{t['warning']};font-weight:bold;'>"
+                            f"⚠ {excl_note}</span>")
+                    cb.setToolTip((base_tip + warn) if base_tip else
+                                  f"<span style='color:{t['warning']};font-weight:bold;'>⚠ {excl_note}</span>")
+                elif base_tip:
+                    cb.setToolTip(base_tip)
+
+                cb.setStyleSheet(f"QCheckBox{{color:{cb_color};}} QToolTip{{color:{t['success']};}}")
                 cb.stateChanged.connect(self._sync_select_all)
                 cb.entry_data = e
 
@@ -281,7 +295,7 @@ class _CopyMixin:
 
     def _start_copy(self: "_BaseCheckboxWindow") -> None:
         from copy_worker import CopyDialog
-        from drive_utils import check_drives_to_mount, mount_required_drives, unmount_drive
+        from drive_utils import check_drives_to_mount, mount_required_drives
 
         selected = [(src, dst, title) for cb, src, dst, title in self.checkbox_dirs if cb.isChecked()]
         if not selected:
@@ -290,19 +304,10 @@ class _CopyMixin:
 
         paths = [p for src, dst, _title in selected for p in src + dst]
         drives_to_mount = check_drives_to_mount(paths)
-        proceed, drives_to_unmount = mount_required_drives(drives_to_mount, self)
-        if not proceed:
+        if not mount_required_drives(drives_to_mount, self):
             return
 
         CopyDialog(self, selected, self._op_label).exec()  # type: ignore[arg-type]
-
-        failed = []
-        for opt in drives_to_unmount:
-            ok, err = unmount_drive(opt)
-            if not ok:
-                failed.append(f"• {opt.get('drive_name', '?')}: {err}")
-        if failed:
-            QMessageBox.warning(self, "Unmount Failed", "Could not unmount the following drives:\n\n" + "\n".join(failed))
 
     def _add_action_buttons(self: "_BaseCheckboxWindow", grid: QGridLayout, row: int) -> None:
         action_btn = QPushButton(self._op_label)  # type: ignore[attr-defined]
@@ -358,14 +363,27 @@ class SettingsWindow(_BaseCheckboxWindow):
     def _make_config_path_label() -> QLabel:
         t    = current_theme()
         path = (str(_PROFILES_DIR / f"{S.profile_name}.json") if S.profile_name else str(_PROFILES_DIR))
-        lbl = QLabel(" 󰔨  "
-                     f"<span style='font-size:16px;color:{t['accent2']};"
-                     f"text-decoration:underline dotted;'>{apply_replacements(path)}</span>")
+        lbl  = QLabel(" 󰔨  "
+                      f"<span style='font-size:16px;color:{t['accent2']};"
+                      f"text-decoration:underline dotted;'>{apply_replacements(path)}</span>")
         lbl.setTextFormat(Qt.TextFormat.RichText)
         lbl.setToolTip(_COPY_LOGIC_TOOLTIP)
         lbl.setToolTipDuration(600_000)
         lbl.setCursor(Qt.CursorShape.WhatsThisCursor)
         return lbl
+
+    @staticmethod
+    def _exclusion_note(entry: dict, **kwargs) -> str:
+        details = entry.get("details", {})
+        no_b = details.get("no_backup",  False)
+        no_r = details.get("no_restore", False)
+        if no_b and no_r:
+            return "Excluded from backup and restore"
+        if no_b:
+            return "Excluded from backup"
+        if no_r:
+            return "Excluded from restore"
+        return ""
 
     def _add_action_buttons(self, grid: QGridLayout, row: int) -> None:
         def _btn(lbl: str, fn) -> QPushButton:
@@ -381,17 +399,20 @@ class SettingsWindow(_BaseCheckboxWindow):
 
         grid.addLayout(_hrow(_btn("System Manager Options", self._open_sm_options)), row, 0, 1, self.cols)
         row += 1
-        grid.addLayout(_hrow(_btn("New Entry", self._new_entry), _btn("Edit Entry", self._edit_entry),
-                             _btn("Delete Entry", self._del_entry), _btn("Header Settings", self._header_settings)),
+        grid.addLayout(_hrow(_btn("New Entry",         self._new_entry),
+                             _btn("Edit Entry",        self._edit_entry),
+                             _btn("Delete Entry",      self._del_entry),
+                             _btn("Header Settings",   self._header_settings)),
                        row, 0, 1, self.cols)
         row += 1
-        grid.addLayout(_hrow(_btn("Mount Options", self._manage_mounts), _btn("Samba Credentials", self._samba_credentials),
-                             _btn("Profile Manager", self._manage_profiles)), row, 0, 1, self.cols)
+        grid.addLayout(_hrow(_btn("Mount Options",       self._manage_mounts),
+                             _btn("Samba Credentials",   self._samba_credentials),
+                             _btn("Profile Manager",     self._manage_profiles)),
+                       row, 0, 1, self.cols)
         row += 1
         grid.addWidget(_btn("Change Theme", self._change_theme), row, 0, 1, self.cols)
         row += 1
         grid.addWidget(_btn("Close", self.close), row, 0, 1, self.cols)
-
 
     def _new_entry(self) -> None:
         if not S.headers:
@@ -466,8 +487,10 @@ class SettingsWindow(_BaseCheckboxWindow):
 
         to_delete = [e for e in S.entries if id(e) in to_delete_ids]
         names = ", ".join(e["title"].replace("<br>", " ") for e in to_delete)
-        if QMessageBox.question(self, "Delete", f"Really delete: {names}?",
-                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+        if QMessageBox.question(
+            self, "Delete", f"Really delete: {names}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        ) == QMessageBox.StandardButton.Yes:
             S.entries = [e for e in S.entries if id(e) not in to_delete_ids]
             save_profile()
             self.changed.emit()
@@ -598,4 +621,4 @@ def base_window(parent, mode: str = "Settings") -> "_BaseCheckboxWindow":
     return cls(parent)
 
 
-_WINDOW_MAP.update({"Backup": BackupWindow, "Restore":  RestoreWindow, "Settings": SettingsWindow})
+_WINDOW_MAP.update({"Backup": BackupWindow, "Restore": RestoreWindow, "Settings": SettingsWindow})

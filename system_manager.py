@@ -410,7 +410,7 @@ class SystemManagerThread(QThread):
                 return
             result = _make_askpass(self._pw)
             if result is None:
-                self.outputReceived.emit("Failed to initialise secure askpass context.", "error")
+                self.outputReceived.emit("Failed to initialise secure askpass context", "error")
                 self.passwordFailed.emit()
                 return
             self._tmp_dir, self._askpass = result
@@ -639,8 +639,8 @@ class SystemManagerThread(QThread):
                     proc.wait()
 
             self.outputReceived.emit(
-                "Sudo access successfully verified." if ok
-                else "Authentication failed: Invalid Password.",
+                "Sudo access successfully verified" if ok
+                else "Authentication failed: Invalid Password",
                 "success" if ok else "error",
             )
 
@@ -651,7 +651,7 @@ class SystemManagerThread(QThread):
                  and f.get("source", "").strip() and f.get("destination", "").strip()]
 
         if not files:
-            self.outputReceived.emit("No system files configured.", "warning")
+            self.outputReceived.emit("No system files configured", "warning")
             return True
 
         from drive_utils import check_drives_to_mount, mount_drive
@@ -663,7 +663,7 @@ class SystemManagerThread(QThread):
             if not ok:
                 self.outputReceived.emit(f"Failed to mount '{name}': {err}", "error")
                 return False
-            self.outputReceived.emit(f"Mounted '{name}'.", "success")
+            self.outputReceived.emit(f"Mounted '{name}'", "success")
 
         overall = True
         for f in files:
@@ -703,11 +703,11 @@ class SystemManagerThread(QThread):
         if not self.distro:
             return False
         if distro_family(self.distro.distro_id) != "arch":
-            self.outputReceived.emit("Mirror update is only supported on Arch Linux.", "info")
+            self.outputReceived.emit("Mirror update is only supported on Arch Linux", "info")
             return True
         country = self._detect_country()
         self.outputReceived.emit(
-            f"Detected country: {country}" if country else "Country detection failed — using worldwide mirrors.",
+            f"Detected country: {country}" if country else "Country detection failed — using worldwide mirrors",
             "info" if country else "warning")
 
         if not shutil.which("reflector"):
@@ -722,7 +722,7 @@ class SystemManagerThread(QThread):
             cmd += ["--country", country]
         self.outputReceived.emit(f"Running: {' '.join(cmd)}", "info")
         ok = self._ok(self._stream_cmd(cmd, timeout=180))
-        self.outputReceived.emit("Mirrors successfully updated." if ok else "Mirror update failed.",
+        self.outputReceived.emit("Mirrors successfully updated" if ok else "Mirror update failed",
                                  "success" if ok else "error")
         return ok
 
@@ -742,7 +742,7 @@ class SystemManagerThread(QThread):
             return False
 
         if current == shell:
-            self.outputReceived.emit(f"Shell is already '{target}' ({shell}).", "success")
+            self.outputReceived.emit(f"Shell is already '{target}' ({shell})", "success")
             return True
 
         if not self.distro.package_is_installed(pkg):
@@ -763,7 +763,7 @@ class SystemManagerThread(QThread):
                     self.outputReceived.emit(f"Adding '{shell}' to /etc/shells…", "info")
                     if not self._ok(
                             self._run_cmd(["sudo", "tee", "-a", "/etc/shells"], input_text=shell + "\n", timeout=10)):
-                        self.outputReceived.emit("Could not update /etc/shells.", "error")
+                        self.outputReceived.emit("Could not update /etc/shells", "error")
                         return False
         except OSError as exc:
             self.outputReceived.emit(f"Could not verify /etc/shells: {exc}", "warning")
@@ -783,7 +783,7 @@ class SystemManagerThread(QThread):
             ok = self._ok(
                 self._stream_cmd(["sudo", "sh", "-c", cmd]) if ("&" in cmd or "|" in cmd) else self._stream_cmd(
                     shlex.split(cmd)))
-        self.outputReceived.emit("System successfully updated." if ok else "System update failed.",
+        self.outputReceived.emit("System successfully updated" if ok else "System update failed",
                                  "success" if ok else "error")
         return ok
 
@@ -795,19 +795,19 @@ class SystemManagerThread(QThread):
             return False
         self.outputReceived.emit(f"Installing {label}: {name}", "info")
         if self._pkg_cache.is_installed(name):
-            self.outputReceived.emit(f"{name} already installed.", "success")
+            self.outputReceived.emit(f"{name} already installed", "success")
             return True
         ok = self._ok(self._stream_cmd(shlex.split(self.distro.get_pkg_install_cmd(name))))
         if ok:
             self._pkg_cache.mark_installed(name)
-            self.outputReceived.emit(f"{name} successfully installed.", "success")
+            self.outputReceived.emit(f"{name} successfully installed", "success")
         else:
-            self.outputReceived.emit(f"failed to install {name}.", "error")
+            self.outputReceived.emit(f"failed to install {name}", "error")
         return ok
 
     def _batch_install(self, pkg_list, label: str) -> bool:
         if not self.distro:
-            self.outputReceived.emit(f"Cannot install {label}s: no distro helper.", "error")
+            self.outputReceived.emit(f"Cannot install {label}s: no distro helper", "error")
             return False
 
         items: list[str] = []
@@ -822,12 +822,12 @@ class SystemManagerThread(QThread):
                 items.append(name)
 
         if not items:
-            self.outputReceived.emit(f"No active {label}s configured.", "info")
+            self.outputReceived.emit(f"No active {label}s configured", "info")
             return True
 
-        to_install = self.distro.filter_not_installed(items) if self._pkg_cache else items
+        to_install = self.distro.filter_not_installed(items) if self.distro else items
         if not to_install:
-            self.outputReceived.emit(f"All {label}s already installed.", "success")
+            self.outputReceived.emit(f"All {label}s already installed", "success")
             return True
 
         failed: list[str] = []
@@ -849,16 +849,16 @@ class SystemManagerThread(QThread):
                         failed.append(pkg)
 
         self.outputReceived.emit(
-            f"All {label}s successfully installed." if not failed else f"Failed {label}(s): {', '.join(failed)}",
+            f"All {label}s successfully installed" if not failed else f"Failed {label}(s): {', '.join(failed)}",
             "success" if not failed else "warning")
         return not failed
 
     def _install_yay(self) -> bool:
         if not self.distro or not self.distro.has_aur:
-            self.outputReceived.emit("yay is not supported on this distribution.", "warning")
+            self.outputReceived.emit("yay is not supported on this distribution", "warning")
             return True
         if self._pkg_cache and self._pkg_cache.is_installed("yay"):
-            self.outputReceived.emit("yay already installed.", "success")
+            self.outputReceived.emit("yay already installed", "success")
             return True
 
         build_deps = ("base-devel", "git", "go")
@@ -867,7 +867,7 @@ class SystemManagerThread(QThread):
         if deps and not self._ok(self._stream_cmd(shlex.split(self.distro.get_pkg_install_cmd(" ".join(deps))))):
             return False
 
-        yay_dir = Path(_HOME) / "yay"
+        yay_dir = _HOME / "yay"
         shutil.rmtree(yay_dir, ignore_errors=True)
 
         self.outputReceived.emit("Cloning yay…", "subprocess")
@@ -888,7 +888,7 @@ class SystemManagerThread(QThread):
             key=lambda f: (0 if "-debug-" not in f.name else 1, -f.stat().st_mtime),
         )
         if not pkgs:
-            self.outputReceived.emit("No yay package file found after build.", "error")
+            self.outputReceived.emit("No yay package file found after build", "error")
             return False
 
         ok = self._ok(self._stream_cmd(["sudo", "pacman", "-U", "--noconfirm", str(pkgs[0])]))
@@ -896,7 +896,7 @@ class SystemManagerThread(QThread):
         shutil.rmtree(Path(_HOME) / ".config" / "go", ignore_errors=True)
         if ok and self._pkg_cache:
             self._pkg_cache.mark_installed("yay")
-        self.outputReceived.emit("yay successfully installed." if ok else "yay installation failed.",
+        self.outputReceived.emit("yay successfully installed" if ok else "yay installation failed",
                                  "success" if ok else "error")
         return ok
 
@@ -905,7 +905,7 @@ class SystemManagerThread(QThread):
             return False
         session = self.distro.detect_session()
         if not session:
-            self.outputReceived.emit("Cannot determine desktop session.", "warning")
+            self.outputReceived.emit("Cannot determine desktop session", "warning")
             return False
         self.outputReceived.emit(f"Detected session: {session}", "success")
 
@@ -913,7 +913,7 @@ class SystemManagerThread(QThread):
                 and "package" in p and not p.get("disabled", False)]
         to_install = self.distro.filter_not_installed(pkgs) if pkgs else []
         if not to_install:
-            self.outputReceived.emit(f"All Specific Packages for {session} already installed.", "success")
+            self.outputReceived.emit(f"All Specific Packages for {session} already installed", "success")
             return True
 
         self.outputReceived.emit(f"Installing: {', '.join(to_install)}", "info")
@@ -923,7 +923,7 @@ class SystemManagerThread(QThread):
             if pkg not in failed and self._pkg_cache:
                 self._pkg_cache.mark_installed(pkg)
         self.outputReceived.emit(
-            "All Specific Packages successfully installed." if not failed else f"Failed to install: {', '.join(failed)}",
+            "All Specific Packages successfully installed" if not failed else f"Failed to install: {', '.join(failed)}",
             "success" if not failed else "warning")
         return not failed
 
@@ -937,7 +937,7 @@ class SystemManagerThread(QThread):
             cmd = shlex.split(self.distro.flatpak_add_flathub())
             self.outputReceived.emit(f"Running: {' '.join(cmd)}", "info")
             ok = self._ok(self._stream_cmd(cmd))
-            self.outputReceived.emit("Flathub remote successfully added." if ok else "Failed to add Flathub remote.",
+            self.outputReceived.emit("Flathub remote successfully added" if ok else "Failed to add Flathub remote",
                                      "success" if ok else "warning")
             return ok
         except Exception as exc:
@@ -951,17 +951,17 @@ class SystemManagerThread(QThread):
     def _enable_service(self, service: str) -> bool:
         self.outputReceived.emit(f"Enabling {service}.service", "info")
         if self._ok(self._run_cmd(["systemctl", "is-active", "--quiet", f"{service}.service"])):
-            self.outputReceived.emit(f"{service}.service already active.", "success")
+            self.outputReceived.emit(f"{service}.service already active", "success")
             return True
         ok = self._ok(self._stream_cmd(["sudo", "systemctl", "enable", "--now", f"{service}.service"]))
         if ok:
-            self.outputReceived.emit(f"{service}.service successfully enabled.", "success")
+            self.outputReceived.emit(f"{service}.service successfully enabled", "success")
             if service == "ufw":
                 for c in (["sudo", "ufw", "default", "deny"], ["sudo", "ufw", "enable"], ["sudo", "ufw", "reload"]):
                     if not self._ok(self._stream_cmd(c)):
                         return False
         else:
-            self.outputReceived.emit(f"Failed to enable {service}.service.", "error")
+            self.outputReceived.emit(f"Failed to enable {service}.service", "error")
         return ok
 
     def _remove_orphans(self) -> bool:
@@ -969,7 +969,7 @@ class SystemManagerThread(QThread):
             return False
         cmd = self.distro.get_find_orphans_cmd()
         if not cmd:
-            self.outputReceived.emit("Orphan removal not supported on this distribution.", "info")
+            self.outputReceived.emit("Orphan removal not supported on this distribution", "info")
             return True
         needs_shell = "|" in cmd or "&&" in cmd
         try:
@@ -980,12 +980,12 @@ class SystemManagerThread(QThread):
             return False
         pkgs = self.distro.parse_orphan_output(raw) if raw else []
         if not pkgs:
-            self.outputReceived.emit("No orphaned packages found.", "success")
+            self.outputReceived.emit("No orphaned packages found", "success")
             return True
         self.outputReceived.emit(f"Found orphaned packages: {', '.join(pkgs)}", "info")
         ok = self._ok(self._stream_cmd(shlex.split(self.distro.get_pkg_remove_cmd(" ".join(pkgs)))))
         self.outputReceived.emit(
-            "Orphaned packages successfully removed." if ok else "Could not remove orphaned packages.",
+            "Orphaned packages successfully removed" if ok else "Could not remove orphaned packages",
             "success" if ok else "error")
         return ok
 
@@ -998,13 +998,13 @@ class SystemManagerThread(QThread):
         ok = self._ok(self._stream_cmd(["sudo", "sh", "-c", cmd]) if ("&" in cmd or "|" in cmd) else self._stream_cmd(
             shlex.split(cmd)))
         self.outputReceived.emit(
-            f"{pm_name} cache successfully cleaned." if ok else f"{pm_name} cache cleaning failed.",
+            f"{pm_name} cache successfully cleaned" if ok else f"{pm_name} cache cleaning failed",
             "success" if ok else "error")
         if ok and self._pkg_cache and self._pkg_cache.is_installed("yay"):
             self.outputReceived.emit("", "info")
             self.outputReceived.emit("Cleaning yay cache", "info")
             yay_ok = self._ok(self._stream_cmd(["yay", "-Scc", "--noconfirm"]))
-            self.outputReceived.emit("yay cache successfully cleaned." if yay_ok else "yay cache cleaning failed.",
+            self.outputReceived.emit("yay cache successfully cleaned" if yay_ok else "yay cache cleaning failed",
                                      "success" if yay_ok else "error")
             ok = ok and yay_ok
         return ok
