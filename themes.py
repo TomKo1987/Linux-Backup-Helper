@@ -1,7 +1,7 @@
 import base64
+from functools import lru_cache
 
 from PyQt6.QtWidgets import QApplication
-
 from state import S
 
 THEMES: dict[str, dict[str, str]] = {
@@ -114,6 +114,7 @@ def current_theme() -> dict[str, str]:
     return THEMES.get(_current_theme_name, THEMES[DEFAULT_THEME])
 
 
+@lru_cache(maxsize=32)
 def _build_indeterminate_svg(colour: str) -> str:
     svg = ("<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14'>"
            f"<rect x='3' y='3' width='8' height='8' fill='{colour}' /></svg>")
@@ -335,7 +336,7 @@ QFrame[frameShape="4"], QFrame[frameShape="5"] {{
 
 
 def get_style() -> str:
-    ui_config = getattr(S, "ui", {})
+    ui_config = S.ui
     font = ui_config.get("font_family", "") or ""
     try:
         size = int(ui_config.get("font_size", 14))
@@ -347,7 +348,7 @@ def get_style() -> str:
 
 def apply_style() -> None:
     global _current_theme_name
-    ui_config = getattr(S, "ui", {})
+    ui_config = S.ui
     _current_theme_name = ui_config.get("theme", DEFAULT_THEME)
 
     app = QApplication.instance()

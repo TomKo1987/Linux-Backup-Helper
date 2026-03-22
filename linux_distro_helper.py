@@ -1,5 +1,5 @@
 from typing import Callable
-import concurrent.futures, os, platform, re, shlex, subprocess
+import concurrent.futures, os, re, shlex, subprocess
 
 from state import logger
 
@@ -32,6 +32,16 @@ _SHELL_BINARIES: dict[str, str] = {
     "nushell":      "nu",
     "powershell":   "pwsh",
     "powershell-bin": "pwsh",
+}
+
+_SHELL_PKG_MAP: dict[str, str] = {
+    "bash":    "bash",
+    "zsh":     "zsh",
+    "fish":    "fish",
+    "elvish":  "elvish",
+    "nushell": "nushell",
+    "xonsh":   "xonsh",
+    "ngs":     "ngs",
 }
 
 SESSIONS = ["KDE", "GNOME", "XFCE", "Cinnamon", "MATE", "LXDE", "LXQt", "Budgie", "Deepin", "Openbox", "i3", "Sway",
@@ -287,7 +297,7 @@ class LinuxDistroHelper:
                         d_like = v.lower()
         except Exception as exc:
             logger.error("/etc/os-release: %s", exc)
-            d_id = platform.system().lower()
+            d_id = os.uname().sysname.lower()
 
         resolved = d_id or "unknown"
         if distro_family(resolved) == resolved and d_like:
@@ -301,9 +311,9 @@ class LinuxDistroHelper:
         return resolved or "unknown", d_name, d_pretty
 
     def _init_pkg(self) -> None:
-        fam = self.family()
-        cfg = _PKG.get(fam) or _PKG["unknown"]
-        if fam == "unknown":
+        self._family: str = distro_family(self.distro_id)
+        cfg = _PKG.get(self._family) or _PKG["unknown"]
+        if self._family == "unknown":
             logger.warning("Unknown distro '%s', using generic commands.", self.distro_id)
 
         self._check_fn: Callable[[str], list[str]] = cfg["check"]
@@ -316,7 +326,7 @@ class LinuxDistroHelper:
         self._kernel_pkg   = cfg["kernel"]
 
     def family(self) -> str:
-        return distro_family(self.distro_id)
+        return self._family
 
     def pkg_manager_name(self) -> str:
         return _PKG_MGR_NAME.get(self.family(), "unknown")
@@ -469,19 +479,9 @@ class LinuxDistroHelper:
         return None
 
     def get_shell_package_name(self, shell_name: str) -> str:
-        fam = self.family()
-        shell_map: dict[str, str] = {
-            "bash":    "bash",
-            "zsh":     "zsh",
-            "fish":    "fish",
-            "elvish":  "elvish",
-            "nushell": "nushell",
-            "xonsh":   "xonsh",
-            "ngs":     "ngs",
-        }
         if shell_name.lower() in ("pwsh", "powershell"):
-            return "powershell-bin" if fam == "arch" else "powershell"
-        return shell_map.get(shell_name.lower(), shell_name.lower())
+            return "powershell-bin" if self.family() == "arch" else "powershell"
+        return _SHELL_PKG_MAP.get(shell_name.lower(), shell_name.lower())
 
     def get_shell_binary_name(self, shell_name: str) -> str:
         pkg = self.get_shell_package_name(shell_name)

@@ -1,4 +1,4 @@
-from typing import Protocol, Type, runtime_checkable
+from typing import Type, Optional
 
 from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -64,7 +64,7 @@ class _BaseCheckboxWindow(QDialog):
         super().__init__(parent)
         self.setWindowTitle(self._window_title)
 
-        self.checkbox_dirs: list[tuple[QCheckBox, list, list, str]] = []
+        self.checkbox_dirs: list[tuple[QCheckBox, list, list, str, dict]] = []
         self.cols = S.ui.get(self._cols_key, _COLS_NARROW)
         self._selectall:     QCheckBox   | None = None
         self._col_btn:       QPushButton | None = None
@@ -207,10 +207,10 @@ class _BaseCheckboxWindow(QDialog):
 
                 cb.setStyleSheet(f"QCheckBox{{color:{cb_color};}} QToolTip{{color:{t['success']};}}")
                 cb.stateChanged.connect(self._sync_select_all)
-                cb.entry_data = e
+                cb.setProperty("entry_data", e)
 
                 src, dst = self._src_dst(e)
-                self.checkbox_dirs.append((cb, src, dst, title))
+                self.checkbox_dirs.append((cb, src, dst, title, e))
                 grid.addWidget(cb, row, col)
                 col += 1
                 if col >= self.cols:
@@ -280,16 +280,6 @@ class _BaseCheckboxWindow(QDialog):
             super().keyPressEvent(event)
 
 
-@runtime_checkable
-class _CopyWindowProtocol(Protocol):
-    checkbox_dirs: list
-    cols: int
-    _op_label: str
-
-    def close(self) -> None: ...
-    def information(self, *a, **k) -> None: ...
-
-
 class _CopyMixin:
     _op_label: str = ""
 
@@ -297,7 +287,7 @@ class _CopyMixin:
         from copy_worker import CopyDialog
         from drive_utils import check_drives_to_mount, mount_required_drives
 
-        selected = [(src, dst, title) for cb, src, dst, title in self.checkbox_dirs if cb.isChecked()]
+        selected = [(src, dst, title) for cb, src, dst, title, *_ in self.checkbox_dirs if cb.isChecked()]
         if not selected:
             QMessageBox.information(self, "Note", "Nothing selected.")
             return
@@ -372,10 +362,9 @@ class SettingsWindow(_BaseCheckboxWindow):
         lbl.setCursor(Qt.CursorShape.WhatsThisCursor)
         return lbl
 
-    @staticmethod
-    def _exclusion_note(entry: dict, **kwargs) -> str:
+    def _exclusion_note(self, entry: dict) -> str:
         details = entry.get("details", {})
-        no_b = details.get("no_backup",  False)
+        no_b = details.get("no_backup", False)
         no_r = details.get("no_restore", False)
         if no_b and no_r:
             return "Excluded from backup and restore"
@@ -426,9 +415,12 @@ class SettingsWindow(_BaseCheckboxWindow):
             save_profile()
             self.changed.emit()
 
+        current_entry: Optional[dict] = None
         pairs: list[list[str]] = []
+        pairs_initialized = False
         while True:
-            dlg  = EntryDialog(self, None, stacked=self._entry_stacked, _pairs=pairs or None)
+            dlg = EntryDialog(self, current_entry, stacked=self._entry_stacked,
+                              _pairs=pairs if pairs_initialized else None)
             code = dlg.exec()
             if code == QDialog.DialogCode.Accepted:
                 S.entries.append(dlg.result)
@@ -439,11 +431,13 @@ class SettingsWindow(_BaseCheckboxWindow):
             elif code == 2:
                 self._entry_stacked = dlg.stacked
                 pairs = dlg.pairs
+                pairs_initialized = True
+                current_entry = dlg.snapshot
             else:
                 break
 
     def _edit_entry(self) -> None:
-        checked = [cb for cb, *_ in self.checkbox_dirs if cb.isChecked()]
+        checked = [(cb, entry) for cb, src, dst, title, entry in self.checkbox_dirs if cb.isChecked()]
         if not checked:
             QMessageBox.information(self, "Edit Entry", "Please check one or more entries to edit.")
             return
@@ -451,18 +445,20 @@ class SettingsWindow(_BaseCheckboxWindow):
         changed_any = False
         total = len(checked)
 
-        for i, cb in enumerate(checked):
-            entry = getattr(cb, "entry_data", None)
-            if not entry:
+        for i, (cb, original_entry) in enumerate(checked):
+            if not original_entry:
                 continue
+            current_entry = original_entry
             pairs: list[list[str]] = []
+            pairs_initialized = False
             while True:
-                dlg  = EntryDialog(self, entry, stacked=self._entry_stacked, _pairs=pairs or None)
+                dlg = EntryDialog(self, current_entry, stacked=self._entry_stacked,
+                                  _pairs=pairs if pairs_initialized else None)
                 if total > 1:
-                    dlg.setWindowTitle(f"Edit Entry ({i + 1}/{total}) — {entry['title']}")
+                    dlg.setWindowTitle(f"Edit Entry ({i + 1}/{total}) — {original_entry['title']}")
                 code = dlg.exec()
                 if code == QDialog.DialogCode.Accepted:
-                    idx = next((j for j, e in enumerate(S.entries) if e is entry), None)
+                    idx = next((j for j, e in enumerate(S.entries) if e is original_entry), None)
                     if idx is not None:
                         S.entries[idx] = dlg.result
                         changed_any = True
@@ -470,6 +466,8 @@ class SettingsWindow(_BaseCheckboxWindow):
                 elif code == 2:
                     self._entry_stacked = dlg.stacked
                     pairs = dlg.pairs
+                    pairs_initialized = True
+                    current_entry = dlg.snapshot
                 else:
                     break
 
@@ -479,26 +477,23 @@ class SettingsWindow(_BaseCheckboxWindow):
             self.done(2)
 
     def _del_entry(self) -> None:
-        to_delete_ids = {id(cb.entry_data) for cb, *_ in self.checkbox_dirs
-                         if cb.isChecked() and getattr(cb, "entry_data", None) is not None}
-        if not to_delete_ids:
+        to_delete = [entry for cb, src, dst, title, entry in self.checkbox_dirs
+                     if cb.isChecked() and entry is not None]
+        if not to_delete:
             QMessageBox.information(self, "Delete Entry", "Please check one or more entries to delete.")
             return
 
-        to_delete = [e for e in S.entries if id(e) in to_delete_ids]
         names = ", ".join(e["title"].replace("<br>", " ") for e in to_delete)
-        if QMessageBox.question(
-            self, "Delete", f"Really delete: {names}?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        ) == QMessageBox.StandardButton.Yes:
-            S.entries = [e for e in S.entries if id(e) not in to_delete_ids]
+        if QMessageBox.question(self, "Delete", f"Really delete: {names}?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+            S.entries = [e for e in S.entries if e not in to_delete]
             save_profile()
             self.changed.emit()
             self.done(2)
 
     def _header_settings(self) -> None:
         dlg = HeaderSettingsDialog(self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
+        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.was_changed:
             save_profile()
             self.changed.emit()
             self.done(2)
@@ -511,7 +506,8 @@ class SettingsWindow(_BaseCheckboxWindow):
 
     def _manage_profiles(self) -> None:
         dlg = ProfilesDialog(self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
+        dlg.exec()
+        if dlg.was_changed:
             self.changed.emit()
             self.done(2)
 
@@ -613,12 +609,12 @@ class _ThemeDialog(QDialog):
             super().keyPressEvent(event)
 
 
-_WINDOW_MAP: "dict[str, Type[_BaseCheckboxWindow]]" = {}
-
+_WINDOW_MAP: "dict[str, Type[_BaseCheckboxWindow]]" = {
+    "Backup": BackupWindow,
+    "Restore": RestoreWindow,
+    "Settings": SettingsWindow,
+}
 
 def base_window(parent, mode: str = "Settings") -> "_BaseCheckboxWindow":
     cls = _WINDOW_MAP.get(mode, SettingsWindow)
     return cls(parent)
-
-
-_WINDOW_MAP.update({"Backup": BackupWindow, "Restore": RestoreWindow, "Settings": SettingsWindow})

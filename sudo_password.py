@@ -101,6 +101,7 @@ class SecureString:
             mv = memoryview(self._buf)
             for i in range(len(mv)):
                 mv[i] = 0
+            del mv
             self._buf = bytearray()
             gc.collect()
 

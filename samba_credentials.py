@@ -1,11 +1,11 @@
 from typing import Optional
 from keyring.backends import SecretService
-import getpass, hmac, json, os, shutil, subprocess, keyring, keyring.errors, pwd, threading
+import hmac, json, shutil, subprocess, keyring, keyring.errors, threading
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QCheckBox, QDialog, QErrorMessage, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout
 
-from state import logger
+from state import logger, _USER
 from themes import current_theme
 
 __all__ = ["SambaPasswordManager", "SambaPasswordDialog"]
@@ -31,18 +31,6 @@ def _init_keyring() -> None:
             logger.debug("Could not set SecretService keyring backend: %s", exc)
         finally:
             _KEYRING_INITIALIZED = True
-
-
-def _current_username() -> str:
-    for fn in (getpass.getuser, os.getlogin):
-        try:
-            return fn()
-        except OSError:
-            pass
-    try:
-        return pwd.getpwuid(os.getuid()).pw_name
-    except OSError:
-        return "user"
 
 
 def _kwallet_available() -> bool:
@@ -96,23 +84,34 @@ class _VerifyPasswordDialog(QDialog):
 
     def _verify(self) -> None:
         entered = self._pw_input.text()
+        stored  = self._stored_pw
         self._pw_input.clear()
-        if hmac.compare_digest(entered, self._stored_pw):
-            self._stored_pw = ""
+        self._stored_pw = ""
+
+        matched = hmac.compare_digest(entered, stored)
+        del entered
+
+        if matched:
+            del stored
             self.accept()
             return
 
         self._attempts += 1
-
         if self._attempts >= self._MAX_ATTEMPTS:
+            del stored
             QMessageBox.critical(self, "Access Denied", "Too many failed attempts.")
-            self._stored_pw = ""
             self.reject()
             return
 
-        _remaining_attempts = self._MAX_ATTEMPTS - self._attempts
-        self._err_lbl.setText(f"Incorrect password. Remaining attempts: {_remaining_attempts}")
+        self._stored_pw = stored
+        remaining = self._MAX_ATTEMPTS - self._attempts
+        self._err_lbl.setText(f"Incorrect password. Remaining attempts: {remaining}")
         self._pw_input.setFocus()
+
+    def closeEvent(self, event) -> None:
+        self._stored_pw = ""
+        self._pw_input.clear()
+        super().closeEvent(event)
 
 
 class SambaPasswordManager:
@@ -160,7 +159,7 @@ class SambaPasswordManager:
             data = json.loads(raw)
             return data.get("login"), data.get("password")
         except json.JSONDecodeError:
-            return _current_username(), raw
+            return _USER, raw
 
     def _write_to_kwallet(self, entry: str, username: str, password: str) -> None:
         payload = json.dumps({"login": username, "password": password})
@@ -175,7 +174,7 @@ class SambaPasswordManager:
             logger.info("Retrieved Samba credentials from KWallet")
             return username, password, True
         try:
-            user = _current_username()
+            user = _USER
             pw   = keyring.get_password(_KEYRING_SERVICE, user)
             if pw:
                 logger.info("Retrieved Samba credentials from system keyring")
@@ -246,7 +245,7 @@ class SambaPasswordDialog(QDialog):
             )
             if ans != QMessageBox.StandardButton.Yes:
                 return
-            cls(parent, manager, _current_username(), None, False, first_setup=True, kwallet_available=has_kw).exec()
+            cls(parent, manager, _USER, None, False, first_setup=True, kwallet_available=has_kw).exec()
 
     def __init__(
         self, parent=None, manager: Optional[SambaPasswordManager] = None,
@@ -361,3 +360,8 @@ class SambaPasswordDialog(QDialog):
                 QMessageBox.warning(self, "Failed", "Could not delete credentials. They might not exist.")
         except Exception as exc:
             self._error_dialog.showMessage(f"Failed to delete credentials:\n{exc}")
+
+    def closeEvent(self, event) -> None:
+        if self._password_field:
+            self._password_field.clear()
+        super().closeEvent(event)

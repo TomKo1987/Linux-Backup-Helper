@@ -9,8 +9,12 @@ from PyQt6.QtWidgets import (
 from state import logger, _USER
 
 _DRIVE_NAME_RE = re.compile(r"^[\w\- .()@:]+$")
-_DANGER_SEQS   = ("&&", "||", "$(", ";", "|", "`", ">", "<", "\n", "\r", "\x00")
-_ALLOWED_CMDS  = frozenset({"mount", "umount", "udisksctl", "kdeconnect-cli", "sshfs", "fusermount3", "fusermount"})
+_DANGER_SEQS = ("&&", "||", "$(", "${", ";", "|", "`", ">", "<", "\n", "\r", "\x00")
+_ALLOWED_CMDS = frozenset({
+    "mount", "umount", "mount.cifs",
+    "udisksctl", "kdeconnect-cli",
+    "sshfs", "fusermount3", "fusermount"
+})
 
 _session_managed_mounts: list[dict] = []
 
@@ -184,8 +188,9 @@ def check_drives_to_mount(paths: list[str]) -> list[dict]:
         return f == m or f.startswith(m + os.sep)
 
     def _is_on_smb_mount(_mount_path: str, file_path: str) -> bool:
-        base = _mount_path if _mount_path.endswith("/") else _mount_path + "/"
-        return file_path == _mount_path or file_path.startswith(base)
+        mp = _mount_path.rstrip("/")
+        fp = file_path.rstrip("/")
+        return fp == mp or fp.startswith(mp + "/")
 
     for opt in S.mount_options:
         if is_mounted(opt, mount_out):

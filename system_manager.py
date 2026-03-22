@@ -1,7 +1,8 @@
 from pathlib import Path
 from typing import Optional
-import atexit, html as _html, os, queue, re, select, shlex, shutil, signal, socket, gc
+import atexit, gc, html as _html, os, queue, re, select, shlex, shutil, signal
 import subprocess, tempfile, threading, time, urllib.error, urllib.request, pwd
+from types import SimpleNamespace
 
 from PyQt6.QtGui import QColor, QIcon, QTextCursor
 from PyQt6.QtCore import Qt, QElapsedTimer, QThread, QTimer, pyqtSignal
@@ -14,7 +15,6 @@ from themes import current_theme
 from linux_distro_helper import distro_family
 from state import S, _HOME, _USER, logger, apply_replacements
 
-from types import SimpleNamespace
 
 _cleanup_lock = threading.Lock()
 _cleanup_paths: list[str] = []
@@ -96,7 +96,7 @@ def _make_askpass(pw_secure) -> Optional[tuple[str, Path]]:
         try:
             fd = os.open(str(pw_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
             try:
-                os.write(fd, bytes(pw_buf))
+                os.write(fd, pw_buf)
                 os.fsync(fd)
             finally:
                 os.close(fd)
@@ -452,7 +452,7 @@ class SystemManagerThread(QThread):
                                            lambda: self._batch_install(S.basic_packages, "Basic Package")),
                 "install_yay": ("Installing yay…", self._install_yay),
                 "install_aur_packages": ("Installing AUR Packages with yay…",
-                                         lambda: self._batch_install(S.aur_packages, "AUR Package")),
+                                         lambda: self._batch_install(S.aur_packages, "AUR Package", use_aur=True)),
                 "install_specific_packages": ("Installing Specific Packages…", self._install_specific),
                 "enable_flatpak_integration": ("Enabling Flatpak integration…", self._install_flatpak)}
 
@@ -554,7 +554,10 @@ class SystemManagerThread(QThread):
                 rc = proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                rc = proc.wait()
+                try:
+                    rc = proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    rc = 1
 
         t1.join(5)
         t2.join(5)
@@ -695,7 +698,7 @@ class SystemManagerThread(QThread):
                         code = r.read().decode().strip().upper()
                         if len(code) == 2 and code.isalpha():
                             return code
-            except (urllib.error.URLError, socket.timeout, OSError):
+            except (urllib.error.URLError, TimeoutError, OSError):
                 continue
         return ""
 
@@ -714,7 +717,7 @@ class SystemManagerThread(QThread):
             self.outputReceived.emit("Installing reflector", "info")
             self._stream_cmd(shlex.split(self.distro.get_pkg_install_cmd("reflector")))
         else:
-            self.outputReceived.emit("Package reflector is already installed", "info")
+            self.outputReceived.emit("Package reflector already installed", "info")
 
         cmd = ["sudo", "-A", "reflector", "--verbose", "--latest", "10", "--protocol", "https", "--sort", "rate",
                "--save", "/etc/pacman.d/mirrorlist"]
@@ -805,7 +808,7 @@ class SystemManagerThread(QThread):
             self.outputReceived.emit(f"failed to install {name}", "error")
         return ok
 
-    def _batch_install(self, pkg_list, label: str) -> bool:
+    def _batch_install(self, pkg_list, label: str, *, use_aur: bool = False) -> bool:
         if not self.distro:
             self.outputReceived.emit(f"Cannot install {label}s: no distro helper", "error")
             return False
@@ -836,7 +839,7 @@ class SystemManagerThread(QThread):
                 break
             batch = to_install[i:i + 20]
             self.outputReceived.emit(f"Installing: {', '.join(batch)}", "info")
-            cmd = (["yay", "-S", "--noconfirm", "--needed"] + batch if label == "AUR Package" else shlex.split(
+            cmd = (["yay", "-S", "--noconfirm", "--needed"] + batch if use_aur else shlex.split(
                 self.distro.get_batch_install_cmd(batch)))
             if self._ok(self._stream_cmd(cmd)):
                 for pkg in batch:

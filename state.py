@@ -41,9 +41,10 @@ def _make_logger(name: str) -> logging.Logger:
 
 logger = _make_logger("backup_helper")
 
-text_replacements: list = [(_HOME.as_posix(), "~"), (f"/run/media/{_USER}/", ""), ("\x1b[1m", ""), ("\x1b[0m", "")]
+text_replacements: list[tuple[str, str]]\
+    = [(_HOME.as_posix(), "~"), (f"/run/media/{_USER}/", ""), ("\x1b[1m", ""), ("\x1b[0m", "")]
 
-_tooltip_cache: "tuple[dict, dict, dict] | None" = None
+_tooltip_cache: Optional[tuple[dict, dict, dict]] = None
 
 
 def invalidate_tooltip_cache() -> None:
@@ -138,6 +139,14 @@ def _norm_paths(raw: Any) -> list[str]:
 def load_profile(path: Path) -> bool:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+        return _load_profile_from_data(path, data)
+    except Exception as exc:
+        logger.error("load_profile failed: %s", exc)
+        return False
+
+
+def _load_profile_from_data(path: Path, data: dict) -> bool:
+    try:
         S.profile_name = path.stem
 
         hdr = data.get("header", {})
@@ -192,7 +201,8 @@ def save_profile(path: Optional[Path] = None) -> bool:
     data = {
         "is_default": True,
         "mount_options": S.mount_options,
-        "header": {k: {"inactive": v.get("inactive", False), "header_color": v.get("color", "#ffffff")} for k, v in S.headers.items()},
+        "header": {k: {"inactive": v.get("inactive", False),
+                       "header_color": v.get("color", "#ffffff")} for k, v in S.headers.items()},
         "system_manager_operations": S.system_manager_ops,
         "system_files":      S.system_files,
         "basic_packages":    S.basic_packages,
@@ -224,29 +234,34 @@ def startup_load() -> bool:
         return False
 
     valid_paths = [_PROFILES_DIR / f"{name}.json" for name in profiles]
-    default_path = None
+    parsed: list[tuple[Path, dict]] = []
 
     for p in valid_paths:
         try:
-            data = json.loads(p.read_text(encoding="utf-8"))
-            if data.get("is_default"):
-                if default_path is None:
-                    default_path = p
-                else:
-                    data.pop("is_default")
-                    try:
-                        _atomic_write(p, data)
-                    except OSError as exc:
-                        logger.error("startup_load: could not clear duplicate is_default in '%s': %s", p.stem, exc)
-                    logger.warning("Cleared duplicate is_default flag in '%s'", p.stem)
+            parsed.append((p, json.loads(p.read_text(encoding="utf-8"))))
         except Exception as exc:
             logger.error("startup_load: %s", exc)
 
-    if default_path:
-        return load_profile(default_path)
+    default_path: Optional[Path] = None
+    default_data: Optional[dict] = None
 
-    for p in valid_paths:
-        if load_profile(p):
+    for p, data in parsed:
+        if data.get("is_default"):
+            if default_path is None:
+                default_path, default_data = p, data
+            else:
+                data.pop("is_default")
+                try:
+                    _atomic_write(p, data)
+                except OSError as exc:
+                    logger.error("startup_load: could not clear duplicate is_default in '%s': %s", p.stem, exc)
+                logger.warning("Cleared duplicate is_default flag in '%s'", p.stem)
+
+    if default_path and default_data is not None:
+        return _load_profile_from_data(default_path, default_data)
+
+    for p, data in parsed:
+        if _load_profile_from_data(p, data):
             return True
     return False
 
@@ -258,18 +273,17 @@ _session_detected: bool = False
 
 def generate_tooltip() -> tuple[dict, dict, dict]:
     global _cached_session, _session_detected, _tooltip_cache
-    if _tooltip_cache is not None:
-        return _tooltip_cache
     from themes import current_theme
     from linux_distro_helper import LinuxDistroHelper
 
     with _session_lock:
         if _tooltip_cache is not None:
             return _tooltip_cache
-
         if not _session_detected:
-            try: _cached_session = LinuxDistroHelper().detect_session() or ""
-            except Exception as e: logger.warning("Session detect failed: %s", e)
+            try:
+                _cached_session = LinuxDistroHelper().detect_session() or ""
+            except Exception as e:
+                logger.warning("Session detect failed: %s", e)
             _session_detected = True
         session = _cached_session or None
 
@@ -367,4 +381,4 @@ def generate_tooltip() -> tuple[dict, dict, dict]:
     with _session_lock:
         if _tooltip_cache is None:
             _tooltip_cache = (backup_tips, restore_tips, sm_tips)
-    return _tooltip_cache
+        return _tooltip_cache

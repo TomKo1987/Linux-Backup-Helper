@@ -5,9 +5,9 @@ if TYPE_CHECKING:
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
+    QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea, QSizePolicy,
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QTextEdit,
-    QFileDialog, QFormLayout, QFrame, QGridLayout, QHBoxLayout, QVBoxLayout, QWidget,
-    QInputDialog, QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea, QSizePolicy
+    QFileDialog, QFormLayout, QFrame, QGridLayout, QHBoxLayout, QVBoxLayout, QWidget
 )
 
 from linux_distro_helper import LinuxDistroHelper, SESSIONS, USER_SHELLS
@@ -197,6 +197,8 @@ class SystemManagerOptions(QDialog):
         self.setWindowTitle("System Manager Options")
         self.setMinimumSize(1200, 680)
         self._distro = LinuxDistroHelper()
+        self._session = self._distro.detect_session()
+        self._yay_installed = self._distro.has_aur and self._distro.package_is_installed("yay")
         self._build()
 
     def _build(self) -> None:
@@ -204,8 +206,7 @@ class SystemManagerOptions(QDialog):
 
         yay_info = ""
         if self._distro.has_aur:
-            detected = self._distro.package_is_installed("yay")
-            yay_info = f"   |   AUR Helper: 'yay' {'detected' if detected else 'not detected'}"
+            yay_info = f"   |   AUR Helper: 'yay' {'detected' if self._yay_installed else 'not detected'}"
 
         info = QLabel(f"Recognized Linux distribution: {self._distro.distro_pretty_name}"
                       f"   |   Session: {self._distro.detect_session()}{yay_info}")
@@ -213,20 +214,21 @@ class SystemManagerOptions(QDialog):
         info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(info)
 
-        cmd      = self._distro.get_pkg_install_cmd("")
-        top_text = QLabel(f"First you can select 'System Files' in System Manager. These files will be copied using 'sudo', "
-                          f"for root privilege.\nIf you have 'System Files' selected, System Manager will copy these first. "
-                          f"This allows you to copy files\nsuch as 'pacman.conf' or 'smb.conf' to '/etc/'.\n\n\n"
-                          f"Under 'System Manager Operations' you can specify how you would like to proceed. "
-                          f"Each operation is executed\none after the other. Uncheck operations to disable them.\n\n"
-                          f"Tips:\n\n"
-                          f"'Basic Packages' will be installed using '{cmd}PACKAGE'.\n\n"
-                          f"'AUR Packages' provides access to the Arch User Repository. "
-                          f"Therefore 'yay' must and will be installed."
-                          f"\nThis feature is available only on Arch Linux based distributions.\n\n"
-                          f"You can also define 'Specific Packages'. These packages will be installed only "
-                          f"(using '{cmd}PACKAGE') if the corresponding session has been recognized.\n"
-                          f"Both full desktop environments and window managers such as 'Hyprland' and others are supported.")
+        cmd = self._distro.get_pkg_install_cmd("")
+        top_text = QLabel(
+            f"First you can select 'System Files' in System Manager. These files will be copied using 'sudo', "
+            f"for root privilege.\nIf you have 'System Files' selected, System Manager will copy these first. "
+            f"This allows you to copy files\nsuch as 'pacman.conf' or 'smb.conf' to '/etc/'.\n\n\n"
+            f"Under 'System Manager Operations' you can specify how you would like to proceed. "
+            f"Each operation is executed\none after the other. Uncheck operations to disable them.\n\n"
+            f"Tips:\n\n"
+            f"'Basic Packages' will be installed using '{cmd}PACKAGE'.\n\n"
+            f"'AUR Packages' provides access to the Arch User Repository. "
+            f"Therefore 'yay' must and will be installed."
+            f"\nThis feature is available only on Arch Linux based distributions.\n\n"
+            f"You can also define 'Specific Packages'. These packages will be installed only "
+            f"(using '{cmd}PACKAGE') if the corresponding session has been recognized.\n"
+            f"Both full desktop environments and window managers such as 'Hyprland' and others are supported.")
         top_text.setWordWrap(True)
         top_text.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         top_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -247,10 +249,10 @@ class SystemManagerOptions(QDialog):
         lay.addLayout(shell_row)
 
         for row_specs in [[("System Manager Operations", self._edit_ops),
-            ("System Files", self._edit_sysfiles)],
-            [("Basic Packages",    lambda: self._edit_pkgs("basic_packages")),
-             ("AUR Packages",      lambda: self._edit_pkgs("aur_packages")),
-             ("Specific Packages", lambda: self._edit_pkgs("specific_packages"))]]:
+                           ("System Files", self._edit_sysfiles)],
+                          [("Basic Packages", lambda: self._edit_pkgs("basic_packages")),
+                           ("AUR Packages", lambda: self._edit_pkgs("aur_packages")),
+                           ("Specific Packages", lambda: self._edit_pkgs("specific_packages"))]]:
             row = QHBoxLayout()
             for label, fn in row_specs:
                 b = QPushButton(label)
@@ -313,7 +315,10 @@ class SystemManagerOptions(QDialog):
             _sync_sa()
 
         def _toggle_all(state=None):
-            checked = int(state) != Qt.CheckState.Unchecked.value if state is not None else False
+            if state is None:
+                checked = False
+            else:
+                checked = Qt.CheckState(state) != Qt.CheckState.Unchecked
             for _cb, _ in widgets:
                 _cb.blockSignals(True)
             for _cb, _ in widgets:
@@ -650,7 +655,7 @@ class SystemManagerOptions(QDialog):
                 QMessageBox.information(self, "Added", f"Added:\n\n  • {name} [{sess}]")
         else:
             label    = pkg_type.replace("_", " ").title().rstrip("s")
-            name, ok = QInputDialog.getText(self, f"Add {label}", "                    Package name:                    ")
+            name, ok = _ask_pkg_name(self, f"Add {label}")
             if ok and name.strip():
                 name    = name.strip()
                 current = getattr(S, pkg_type, []) or []
@@ -716,8 +721,8 @@ class SystemManagerOptions(QDialog):
             return
 
         current = getattr(S, pkg_type, []) or []
-        names   = [l.strip() for l in te.toPlainText().splitlines() if l.strip()
-                   and all(c.isalnum() or c in "-_.+" for c in l.strip())]
+        names   = [line.strip() for line in te.toPlainText().splitlines() if line.strip()
+                   and all(c.isalnum() or c in "-_.+" for c in line.strip())]
         added, dupes = [], []
 
         if is_specific and sess_cb:
@@ -809,14 +814,30 @@ class SystemManagerOptions(QDialog):
         lines = [
             (f"{p.get('package','')},{p.get('session','')}" if is_specific else (p.get("name", "") if isinstance(p, dict) else str(p))) for p in packages]
         try:
-            Path(path).write_text("\n".join(l for l in lines if l) + "\n", encoding="utf-8")
+            Path(path).write_text("\n".join(entry for entry in lines if entry) + "\n", encoding="utf-8")
             QMessageBox.information(self, "Exported", f"Exported to:\n{path}")
         except OSError as exc:
             QMessageBox.critical(self, "Export Error", str(exc))
 
+def _ask_pkg_name(parent, title: str) -> tuple[str, bool]:
+    from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QDialogButtonBox
+    dlg = QDialog(parent)
+    dlg.setWindowTitle(title)
+    dlg.setMinimumWidth(440)
+    vl = QVBoxLayout(dlg)
+    vl.addWidget(QLabel("Package name:"))
+    edit = QLineEdit()
+    edit.setFocus()
+    vl.addWidget(edit)
+    bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel) # type: ignore
+    bb.accepted.connect(dlg.accept)
+    bb.rejected.connect(dlg.reject)
+    vl.addWidget(bb)
+    ok = dlg.exec() == QDialog.DialogCode.Accepted
+    return edit.text(), ok
 
 def _pkg_form_dialog(parent, title: str, *, prefill_name: str = "", prefill_sess: Optional[str] = None) \
-        -> Optional[tuple[str, str]] | Optional[tuple[str]]:
+        -> Optional[tuple[str, str] | tuple[str]]:
 
     with_session = prefill_sess is not None
     dlg     = QDialog(parent)
@@ -860,7 +881,8 @@ class SystemManagerLauncher:
         self.failed_attempts = getattr(parent, "sm_failed_attempts", 0)
         self._distro         = LinuxDistroHelper()
         self._distro_name    = self._distro.distro_pretty_name
-        self._session        = self._distro.detect_session()
+        self._session = self._distro.detect_session()
+        self._yay_installed = self._distro.has_aur and self._distro.package_is_installed("yay")
         self._sudo_checkbox: QCheckBox | None = None
         self._sm_thread = None
         self._sm_dialog = None
@@ -891,7 +913,8 @@ class SystemManagerLauncher:
 
         yay_info = ""
         if self._distro.has_aur:
-            yay_info = ("   |   AUR Helper: 'yay' detected" if self._distro.package_is_installed("yay") else "   |   AUR Helper: 'yay' not detected")
+            yay_info = ("   |   AUR Helper: 'yay' detected" if self._yay_installed
+                        else "   |   AUR Helper: 'yay' not detected")
 
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
