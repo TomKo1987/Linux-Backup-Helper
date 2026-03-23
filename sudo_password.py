@@ -21,10 +21,13 @@ class SudoPasswordDialog(QDialog):
 
     def _build_ui(self) -> None:
         from themes import current_theme
-        t = current_theme()
+        t      = current_theme()
         layout = QVBoxLayout(self)
 
-        intro = QLabel("Enter your sudo password to run System Manager.\nIt will be used for all privileged commands during this session.")
+        intro = QLabel(
+            "Enter your sudo password to run System Manager.\n"
+            "It will be used for all privileged commands during this session."
+        )
         intro.setAlignment(Qt.AlignmentFlag.AlignCenter)
         intro.setWordWrap(True)
         layout.addWidget(intro)
@@ -41,17 +44,14 @@ class SudoPasswordDialog(QDialog):
         self._note.setStyleSheet(f"color:{t['muted']};font-style:italic;")
         self._note.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._note)
-
         layout.addSpacing(10)
 
-        btn_row = QHBoxLayout()
+        btn_row   = QHBoxLayout()
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.reject)
-
         self.auth_btn = QPushButton("Authenticate")
         self.auth_btn.setDefault(True)
         self.auth_btn.clicked.connect(self._on_authenticate)
-
         btn_row.addWidget(close_btn)
         btn_row.addWidget(self.auth_btn)
         layout.addLayout(btn_row)
@@ -73,8 +73,8 @@ class SudoPasswordDialog(QDialog):
     def update_failed_attempts(self, count: int) -> None:
         from themes import current_theme
         t = current_theme()
-
         self.failed_attempts = count
+
         if count >= 2:
             self._note.setText(_NOTE_WARNING)
             self._note.setStyleSheet(f"color:{t['error']};font-style:italic;font-weight:bold;")

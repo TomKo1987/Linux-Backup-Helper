@@ -1,4 +1,5 @@
 from typing import Callable
+from pathlib import Path
 import concurrent.futures, os, re, shlex, subprocess
 
 from state import logger
@@ -7,30 +8,47 @@ __all__ = ["LinuxDistroHelper", "distro_family", "USER_SHELLS", "SESSIONS"]
 
 _MIN_PARALLEL = 5
 
-_ARCH   = {"arch", "manjaro", "garuda", "endeavouros", "omarchy", "archman", "rebornos", "cachyos", "artix",
-           "arcolinux", "blendos", "crystal", "archcraft", "archbang", "archlabs"}
+_DISTROS_ARCH      = {"arch", "manjaro", "garuda", "endeavouros", "omarchy", "archman", "rebornos", "cachyos", "artix",
+                       "arcolinux", "blendos", "crystal", "archcraft", "archbang", "archlabs"}
 
-_DEBIAN = {"debian", "ubuntu", "pop", "popos", "mint", "linuxmint", "elementary", "lmde", "kali", "parrot", "zorin",
-           "zorinos", "mxlinux", "mx", "antix", "raspbian", "peppermint", "deepin", "lite", "linuxlite", "tails",
-           "siduction", "sparky", "sparkylinux", "bodhi", "bunsenlabs", "pureos", "devuan", "q4os", "refracta",
-           "kubuntu", "xubuntu", "lubuntu", "ubuntu-mate", "ubuntu-budgie"}
+_DISTROS_DEBIAN    = {"debian", "ubuntu", "pop", "popos", "mint", "linuxmint", "elementary", "lmde", "kali", "parrot", "zorin",
+                       "zorinos", "mxlinux", "mx", "antix", "raspbian", "peppermint", "deepin", "lite", "linuxlite", "tails",
+                       "siduction", "sparky", "sparkylinux", "bodhi", "bunsenlabs", "pureos", "devuan", "q4os", "refracta",
+                       "kubuntu", "xubuntu", "lubuntu", "ubuntu-mate", "ubuntu-budgie"}
 
-_FEDORA = {"fedora", "rhel", "centos", "rocky", "almalinux", "nobara", "ultramarine", "mageia", "openmandriva", "pclinuxos"}
+_DISTROS_FEDORA    = {"fedora", "rhel", "centos", "rocky", "almalinux", "nobara", "ultramarine", "mageia", "openmandriva", "pclinuxos"}
 
-_SUSE   = {"opensuse", "opensuse-leap", "opensuse-tumbleweed", "opensuse-slowroot", "suse", "sled", "sles"}
+_DISTROS_SUSE      = {"opensuse", "opensuse-leap", "opensuse-tumbleweed", "opensuse-slowroot", "suse", "sled", "sles"}
+_DISTROS_VOID      = {"void"}
+_DISTROS_GENTOO    = {"gentoo", "funtoo", "calculate", "sabayon"}
+_DISTROS_NIXOS     = {"nixos"}
+_DISTROS_ALPINE    = {"alpine", "postmarketos"}
+_DISTROS_SLACKWARE = {"slackware", "salix", "porteus", "slax"}
+_DISTROS_SOLUS     = {"solus"}
 
-_VOID      = {"void"}
-_GENTOO    = {"gentoo", "funtoo", "calculate", "sabayon"}
-_NIXOS     = {"nixos"}
-_ALPINE    = {"alpine", "postmarketos"}
-_SLACKWARE = {"slackware", "salix", "porteus", "slax"}
-_SOLUS     = {"solus"}
+
+_DISTRO_FAMILY_MAP: dict[str, str] = {
+    distro_id: family
+    for family, distro_set in [
+        ("arch",      _DISTROS_ARCH),
+        ("debian",    _DISTROS_DEBIAN),
+        ("fedora",    _DISTROS_FEDORA),
+        ("suse",      _DISTROS_SUSE),
+        ("void",      _DISTROS_VOID),
+        ("gentoo",    _DISTROS_GENTOO),
+        ("nixos",     _DISTROS_NIXOS),
+        ("alpine",    _DISTROS_ALPINE),
+        ("slackware", _DISTROS_SLACKWARE),
+        ("solus",     _DISTROS_SOLUS),
+    ]
+    for distro_id in distro_set
+}
 
 USER_SHELLS = ["bash", "fish", "zsh", "elvish", "nushell", "powershell", "xonsh", "ngs"]
 
 _SHELL_BINARIES: dict[str, str] = {
-    "nushell":      "nu",
-    "powershell":   "pwsh",
+    "nushell":        "nu",
+    "powershell":     "pwsh",
     "powershell-bin": "pwsh",
 }
 
@@ -44,12 +62,23 @@ _SHELL_PKG_MAP: dict[str, str] = {
     "ngs":     "ngs",
 }
 
-SESSIONS = ["KDE", "GNOME", "XFCE", "Cinnamon", "MATE", "LXDE", "LXQt", "Budgie", "Deepin", "Openbox", "i3", "Sway",
-            "Hyprland", "bspwm", "dwm", "awesome", "qtile", "xmonad", "Wayfire", "River", "niri", "COSMIC"]
+SESSIONS = ["KDE", "GNOME", "XFCE", "Cinnamon", "MATE", "LXDE", "LXQt", "Budgie", "Deepin", "Openbox",
+            "i3", "Sway", "Hyprland", "bspwm", "dwm", "awesome", "qtile", "xmonad",
+            "Wayfire", "River", "niri", "COSMIC"]
 
-_PKG_MGR_NAME: dict[str, str] = {"arch": "pacman", "debian": "apt", "fedora": "dnf", "suse": "zypper", "void": "xbps-install",
-                                 "gentoo": "emerge", "nixos": "nix-env", "alpine": "apk", "slackware": "pkgtool",
-                                 "solus": "eopkg", "unknown": "unknown"}
+_PKG_MGR_NAME: dict[str, str] = {
+    "arch":      "pacman",
+    "debian":    "apt",
+    "fedora":    "dnf",
+    "suse":      "zypper",
+    "void":      "xbps-install",
+    "gentoo":    "emerge",
+    "nixos":     "nix-env",
+    "alpine":    "apk",
+    "slackware": "pkgtool",
+    "solus":     "eopkg",
+    "unknown":   "unknown",
+}
 
 
 def _nixos_check(p: str) -> list[str]:
@@ -57,7 +86,7 @@ def _nixos_check(p: str) -> list[str]:
 
 
 def _slackware_check(p: str) -> list[str]:
-    return ["sh", "-c", f"test -n \"$(ls /var/log/packages/{p}-* 2>/dev/null)\""]
+    return ["sh", "-c", f"test -n \"$(ls /var/log/packages/{shlex.quote(p)}-* 2>/dev/null)\""]
 
 
 _PKG: dict[str, dict] = {
@@ -186,7 +215,7 @@ _SSH_PKGS: dict = {
     "solus":     ["openssh-server"],
     None:        ["openssh-server"],
 }
-_SSH_SVC    = {"debian": "ssh", None: "sshd"}
+_SSH_SVC    = {"debian": "ssh",  None: "sshd"}
 _SAMBA_SVC  = {"debian": "smbd", None: "smb"}
 _SAMBA_PKGS: dict = {
     "debian":    ["samba", "samba-common-bin"],
@@ -226,47 +255,37 @@ _BT_PKGS: dict = {
     None:     ["bluez", "bluez-tools"],
 }
 
-_PKG_RE  = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._+-]*$")
+_PKG_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._+-]*$")
 
 _WM_PROCS: dict[str, str] = {
-    "kwin_wayland":  "KDE",
-    "kwin_x11":      "KDE",
-    "gnome-shell":   "GNOME",
-    "xfce4-session": "XFCE",
-    "cinnamon":      "Cinnamon",
-    "mate-session":  "MATE",
-    "lxsession":     "LXDE",
-    "lxqt-session":  "LXQt",
-    "budgie-wm":     "Budgie",
-    "deepin-session":"Deepin",
-    "openbox":       "Openbox",
-    "i3":            "i3",
-    "sway":          "Sway",
-    "hyprland":      "Hyprland",
-    "wayfire":       "Wayfire",
-    "river":         "River",
-    "niri":          "niri",
-    "cosmic-comp":   "COSMIC",
-    "bspwm":         "bspwm",
-    "dwm":           "dwm",
-    "awesome":       "awesome",
-    "qtile":         "qtile",
-    "xmonad":        "xmonad",
+    "kwin_wayland":   "KDE",
+    "kwin_x11":       "KDE",
+    "gnome-shell":    "GNOME",
+    "xfce4-session":  "XFCE",
+    "cinnamon":       "Cinnamon",
+    "mate-session":   "MATE",
+    "lxsession":      "LXDE",
+    "lxqt-session":   "LXQt",
+    "budgie-wm":      "Budgie",
+    "deepin-session": "Deepin",
+    "openbox":        "Openbox",
+    "i3":             "i3",
+    "sway":           "Sway",
+    "hyprland":       "Hyprland",
+    "wayfire":        "Wayfire",
+    "river":          "River",
+    "niri":           "niri",
+    "cosmic-comp":    "COSMIC",
+    "bspwm":          "bspwm",
+    "dwm":            "dwm",
+    "awesome":        "awesome",
+    "qtile":          "qtile",
+    "xmonad":         "xmonad",
 }
 
 
 def distro_family(distro_id: str) -> str:
-    if distro_id in _ARCH:      return "arch"
-    if distro_id in _DEBIAN:    return "debian"
-    if distro_id in _FEDORA:    return "fedora"
-    if distro_id in _SUSE:      return "suse"
-    if distro_id in _VOID:      return "void"
-    if distro_id in _GENTOO:    return "gentoo"
-    if distro_id in _NIXOS:     return "nixos"
-    if distro_id in _ALPINE:    return "alpine"
-    if distro_id in _SLACKWARE: return "slackware"
-    if distro_id in _SOLUS:     return "solus"
-    return distro_id
+    return _DISTRO_FAMILY_MAP.get(distro_id, distro_id)
 
 
 def _lookup(table: dict, family: str) -> list:
@@ -287,14 +306,10 @@ class LinuxDistroHelper:
                 for line in fh:
                     k, _, v = line.partition("=")
                     v = v.strip().strip('"')
-                    if k == "ID":
-                        d_id = v.lower()
-                    elif k == "NAME":
-                        d_name = v
-                    elif k == "PRETTY_NAME":
-                        d_pretty = v
-                    elif k == "ID_LIKE":
-                        d_like = v.lower()
+                    if   k == "ID":          d_id     = v.lower()
+                    elif k == "NAME":        d_name   = v
+                    elif k == "PRETTY_NAME": d_pretty = v
+                    elif k == "ID_LIKE":     d_like   = v.lower()
         except Exception as exc:
             logger.error("/etc/os-release: %s", exc)
             d_id = os.uname().sysname.lower()
@@ -317,11 +332,11 @@ class LinuxDistroHelper:
             logger.warning("Unknown distro '%s', using generic commands.", self.distro_id)
 
         self._check_fn: Callable[[str], list[str]] = cfg["check"]
-        self._install  = cfg["install"]
-        self._update   = cfg["update"]
-        self._remove   = cfg["remove"]
-        self._clean    = cfg["clean"]
-        self._orphans  = cfg["orphans"]
+        self._install   = cfg["install"]
+        self._update    = cfg["update"]
+        self._remove    = cfg["remove"]
+        self._clean     = cfg["clean"]
+        self._orphans   = cfg["orphans"]
         self.has_aur: bool = cfg["has_aur"]
         self._kernel_pkg   = cfg["kernel"]
 
@@ -336,15 +351,18 @@ class LinuxDistroHelper:
 
     @staticmethod
     def _valid(name: str) -> bool:
-        if not isinstance(name, str) or not name.strip() or len(name) > 255:
-            return False
-        return bool(_PKG_RE.match(name.strip()))
+        return (isinstance(name, str)
+                and bool(name.strip())
+                and len(name) <= 255
+                and bool(_PKG_RE.match(name.strip())))
 
     def package_is_installed(self, pkg: str) -> bool:
         if not self._valid(pkg):
             return False
         try:
-            r = subprocess.run(self._check_fn(pkg.strip()), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=False)
+            r = subprocess.run(self._check_fn(pkg.strip()),
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               timeout=10, check=False)
             return r.returncode == 0
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
             logger.warning("pkg check '%s': %s", pkg, exc)
@@ -388,11 +406,9 @@ class LinuxDistroHelper:
             return ""
         fam = self.family()
         if fam == "nixos":
-            attrs = " ".join(f"nixpkgs.{p}" for p in packages)
-            return f"nix-env -iA {attrs}"
+            return "nix-env -iA " + " ".join(f"nixpkgs.{p}" for p in packages)
         if fam == "slackware":
-            names = " ".join(packages)
-            return f"sudo slackpkg install {names}"
+            return "sudo slackpkg install " + " ".join(packages)
         return self._install.format(p=" ".join(packages))
 
     def parse_orphan_output(self, raw: str) -> list[str]:
@@ -412,14 +428,9 @@ class LinuxDistroHelper:
             return pkgs
 
         if fam == "debian":
-            pkgs = []
-            for line in lines:
-                line = line.strip()
-                if line.startswith("Remv "):
-                    parts = line.split()
-                    if len(parts) >= 2 and self._valid(parts[1]):
-                        pkgs.append(parts[1])
-            return pkgs
+            return [parts[1] for line in lines
+                    if (parts := line.strip().split()) and line.strip().startswith("Remv ")
+                    and len(parts) >= 2 and self._valid(parts[1])]
 
         if fam == "fedora":
             pkgs = []
@@ -433,12 +444,7 @@ class LinuxDistroHelper:
                     pkgs.append(name)
             return pkgs
 
-        pkgs = []
-        for line in lines:
-            name = line.strip()
-            if name and self._valid(name):
-                pkgs.append(name)
-        return pkgs
+        return [name for line in lines if (name := line.strip()) and self._valid(name)]
 
     def get_kernel_headers_pkg(self) -> str:
         try:
@@ -462,17 +468,28 @@ class LinuxDistroHelper:
 
     @staticmethod
     def detect_session() -> str | None:
-        lc: dict[str, str] = {s.lower(): s for s in SESSIONS}
+        session_lowercase: dict[str, str] = {s.lower(): s for s in SESSIONS}
+
         for var in ("XDG_CURRENT_DESKTOP", "XDG_SESSION_DESKTOP", "DESKTOP_SESSION"):
             for part in os.getenv(var, "").split(":"):
-                match = lc.get(part.strip().lower())
+                match = session_lowercase.get(part.strip().lower())
                 if match:
                     return match
+
         try:
-            procs = subprocess.check_output(["ps", "-e", "-o", "cmd="], text=True, timeout=3).splitlines()
-            proc_set = {os.path.basename(p.split()[0]).strip().lower() for p in procs if p.strip()}
+            running_procs: set[str] = set()
+            with os.scandir("/proc") as it:
+                for entry in it:
+                    if not entry.name.isdigit():
+                        continue
+                    try:
+                        comm = Path(f"/proc/{entry.name}/comm").read_text().strip().lower()
+                        if comm:
+                            running_procs.add(comm)
+                    except OSError:
+                        pass
             for proc_name, session in _WM_PROCS.items():
-                if proc_name in proc_set:
+                if proc_name in running_procs:
                     return session
         except Exception as err:
             logger.error("Error detect_session: %s", err)
@@ -492,14 +509,9 @@ class LinuxDistroHelper:
     def get_bluetooth_packages(self) -> list: return _lookup(_BT_PKGS,    self.family())
     def get_cron_packages(self)      -> list: return _lookup(_CRON_PKGS,  self.family())
 
-    def get_ssh_service_name(self) -> str:
-        return _SSH_SVC.get(self.family()) or _SSH_SVC[None]
-
-    def get_samba_service_name(self) -> str:
-        return _SAMBA_SVC.get(self.family()) or _SAMBA_SVC[None]
-
-    def get_cron_service_name(self) -> str:
-        return _CRON_SVC.get(self.family()) or _CRON_SVC[None]
+    def get_ssh_service_name(self)   -> str: return _SSH_SVC.get(self.family())   or _SSH_SVC[None]
+    def get_samba_service_name(self) -> str: return _SAMBA_SVC.get(self.family()) or _SAMBA_SVC[None]
+    def get_cron_service_name(self)  -> str: return _CRON_SVC.get(self.family())  or _CRON_SVC[None]
 
     @staticmethod
     def get_printer_packages()  -> list: return ["cups", "ghostscript", "system-config-printer", "gutenprint"]

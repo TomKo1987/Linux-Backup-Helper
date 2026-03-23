@@ -3,38 +3,48 @@ from keyring.backends import SecretService
 import hmac, json, shutil, subprocess, keyring, keyring.errors, threading
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QCheckBox, QDialog, QErrorMessage, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout
+from PyQt6.QtWidgets import (
+    QCheckBox, QDialog, QErrorMessage, QHBoxLayout, QLabel,
+    QLineEdit, QMessageBox, QPushButton, QVBoxLayout,
+)
 
 from state import logger, _USER
 from themes import current_theme
 
 __all__ = ["SambaPasswordManager", "SambaPasswordDialog"]
 
-_KWALLET_TIMEOUT = 2
-_KWALLET_WALLET  = "kdewallet"
-_KEYRING_SERVICE = "backup-helper-samba"
+_KWALLET_TIMEOUT  = 2
+_KWALLET_WALLET   = "kdewallet"
+_KEYRING_SERVICE  = "backup-helper-samba"
 
-_KEYRING_INITIALIZED = False
-_KEYRING_LOCK        = threading.Lock()
+_keyring_init_lock = threading.Lock()
+_keyring_ready     = False
+
+_kwallet_cmd: Optional[str] = None
+_kwallet_checked = False
+
+
+def _kwallet_available() -> bool:
+    global _kwallet_cmd, _kwallet_checked
+    if not _kwallet_checked:
+        _kwallet_cmd     = shutil.which("kwallet-query")
+        _kwallet_checked = True
+    return _kwallet_cmd is not None
 
 
 def _init_keyring() -> None:
-    global _KEYRING_INITIALIZED
-    if _KEYRING_INITIALIZED:
+    global _keyring_ready
+    if _keyring_ready:
         return
-    with _KEYRING_LOCK:
-        if _KEYRING_INITIALIZED:
+    with _keyring_init_lock:
+        if _keyring_ready:
             return
         try:
             keyring.set_keyring(SecretService.Keyring())
         except Exception as exc:
             logger.debug("Could not set SecretService keyring backend: %s", exc)
         finally:
-            _KEYRING_INITIALIZED = True
-
-
-def _kwallet_available() -> bool:
-    return shutil.which("kwallet-query") is not None
+            _keyring_ready = True
 
 
 class _VerifyPasswordDialog(QDialog):
@@ -50,11 +60,12 @@ class _VerifyPasswordDialog(QDialog):
         t      = current_theme()
         layout = QVBoxLayout(self)
 
-        info = QLabel(f"Samba credentials are stored for <b>{username}</b>.<br>Please enter your current Samba password to continue.")
-
+        info = QLabel(
+            f"Samba credentials are stored for <b>{username}</b>.<br>"
+            f"Please enter your current Samba password to continue."
+        )
         info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(info)
-
         layout.addSpacing(8)
 
         self._pw_input = QLineEdit()
@@ -67,7 +78,6 @@ class _VerifyPasswordDialog(QDialog):
         self._err_lbl.setStyleSheet(f"color:{t['error']};font-style:italic;")
         self._err_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._err_lbl)
-
         layout.addSpacing(8)
 
         btn_row    = QHBoxLayout()
@@ -83,8 +93,8 @@ class _VerifyPasswordDialog(QDialog):
         self._pw_input.setFocus()
 
     def _verify(self) -> None:
-        entered = self._pw_input.text()
-        stored  = self._stored_pw
+        entered     = self._pw_input.text()
+        stored      = self._stored_pw
         self._pw_input.clear()
         self._stored_pw = ""
 
@@ -122,6 +132,8 @@ class SambaPasswordManager:
 
     @staticmethod
     def _run_kwallet(args: list[str], input_data: Optional[str] = None) -> Optional[str]:
+        if not _kwallet_available():
+            return None
         try:
             result = subprocess.run(
                 ["kwallet-query"] + args,
@@ -165,6 +177,7 @@ class SambaPasswordManager:
         payload = json.dumps({"login": username, "password": password})
         result  = self._run_kwallet(["--write-password", entry, _KWALLET_WALLET], input_data=payload)
         if result is None:
+            self._cached_kwallet_entry = None
             raise RuntimeError("Failed to write credentials to KWallet")
         logger.info("Updated Samba credentials in KWallet entry: %s", entry)
 
@@ -174,25 +187,18 @@ class SambaPasswordManager:
             logger.info("Retrieved Samba credentials from KWallet")
             return username, password, True
         try:
-            user = _USER
-            pw   = keyring.get_password(_KEYRING_SERVICE, user)
+            pw = keyring.get_password(_KEYRING_SERVICE, _USER)
             if pw:
                 logger.info("Retrieved Samba credentials from system keyring")
-                return user, pw, False
+                return _USER, pw, False
         except Exception as exc:
             logger.exception("Failed to retrieve from system keyring: %s", exc)
         return None, None, False
 
     def save_credentials(self, username: str, password: str) -> None:
-        entry = self._find_kwallet_entry()
-        if entry:
-            self._write_to_kwallet(entry, username, password)
-        else:
-            try:
-                keyring.set_password(_KEYRING_SERVICE, username, password)
-                logger.info("Saved Samba credentials to system keyring.")
-            except Exception as exc:
-                logger.exception("Failed to save to system keyring: %s", exc)
+        entry  = self._find_kwallet_entry()
+        target = "kwallet" if entry else "keyring"
+        self.save_credentials_to(username, password, target)
 
     def save_credentials_to(self, username: str, password: str, target: str) -> None:
         if target == "kwallet":
@@ -224,8 +230,8 @@ class SambaPasswordDialog(QDialog):
 
     @classmethod
     def open(cls, parent=None) -> None:
-        manager                      = SambaPasswordManager()
-        username, stored_pw, from_kw = manager.get_credentials()
+        manager                        = SambaPasswordManager()
+        username, stored_pw, from_kw  = manager.get_credentials()
 
         if stored_pw:
             if _VerifyPasswordDialog(parent, username, stored_pw).exec() != QDialog.DialogCode.Accepted:
@@ -233,12 +239,13 @@ class SambaPasswordDialog(QDialog):
             cls(parent, manager, username or "", stored_pw, from_kw).exec()
         else:
             has_kw = _kwallet_available()
-            if has_kw:
-                msg = ("No Samba credentials are stored yet.\nWould you like to set up credentials now? "
-                       "You can choose to store them in KWallet or the system keyring.")
-            else:
-                msg = "No Samba credentials are stored yet.\n\nWould you like to store credentials in the system keyring?"
-
+            msg = (
+                "No Samba credentials are stored yet.\nWould you like to set up credentials now? "
+                "You can choose to store them in KWallet or the system keyring."
+                if has_kw else
+                "No Samba credentials are stored yet.\n\n"
+                "Would you like to store credentials in the system keyring?"
+            )
             ans = QMessageBox.question(
                 parent, "Samba Credentials", msg,
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,

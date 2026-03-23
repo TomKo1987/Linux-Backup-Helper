@@ -2,7 +2,7 @@ import base64
 from functools import lru_cache
 
 from PyQt6.QtWidgets import QApplication
-from state import S
+from state import S, logger
 
 THEMES: dict[str, dict[str, str]] = {
     "Ayu Dark": {
@@ -109,32 +109,78 @@ THEMES: dict[str, dict[str, str]] = {
 DEFAULT_THEME = "Tokyo Night"
 _current_theme_name = DEFAULT_THEME
 
+_style_listeners: list = []
+
+
+def register_style_listener(fn) -> None:
+    if fn not in _style_listeners:
+        _style_listeners.append(fn)
+
+
+def unregister_style_listener(fn) -> None:
+    try:
+        _style_listeners.remove(fn)
+    except ValueError:
+        pass
+
 
 def current_theme() -> dict[str, str]:
     return THEMES.get(_current_theme_name, THEMES[DEFAULT_THEME])
 
 
+def _base_font_size() -> int:
+    try:
+        return int(S.ui.get("font_size", 14))
+    except (ValueError, TypeError):
+        return 14
+
+
+def _font_sizes(base: int) -> dict[str, int]:
+    return {
+        "xs":          max(9,  base - 3),
+        "sm":          max(11, base - 2),
+        "md":          base,
+        "lg":          base + 2,
+        "xl":          base + 3,
+        "xxl":         base + 6,
+        "card_title":  base + 4,
+        "card_val":    base + 18,
+        "card_val_sm": base + 10,
+    }
+
+
+def font_scale() -> dict[str, int]:
+    return _font_sizes(_base_font_size())
+
+
+def font_sz(delta: int = 0) -> int:
+    return max(9, _base_font_size() + delta)
+
+
 @lru_cache(maxsize=32)
 def _build_indeterminate_svg(colour: str) -> str:
-    svg = ("<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14'>"
+    svg = (f"<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14'>"
            f"<rect x='3' y='3' width='8' height='8' fill='{colour}' /></svg>")
     return base64.b64encode(svg.encode()).decode()
 
 
 def tri_styles() -> tuple[str, str, str]:
-    t = current_theme()
+    t   = current_theme()
     b64 = _build_indeterminate_svg(t["highlight"])
 
-    ind = ("QCheckBox::indicator{" 
+    ind = ("QCheckBox::indicator{"
            "width:8px;height:8px;border-radius:4px;"
            "background:transparent;border:1px solid transparent;image:none;}")
 
-    checked = f"QCheckBox::indicator:checked{{background:{t['green']};border:1px solid {t['green']};}}"
+    checked   = f"QCheckBox::indicator:checked{{background:{t['green']};border:1px solid {t['green']};}}"
     unchecked = f"QCheckBox::indicator:unchecked{{background:{t['bg3']};border:1px solid {t['text_dim']};}}"
     indet_std = f"QCheckBox::indicator:indeterminate{{background:{t['bg3']};border:1px solid {t['text_dim']};}}"
-    indet_svg = f"QCheckBox::indicator:indeterminate{{background:{t['bg3']};border:1px solid {t['highlight']};image:url('data:image/svg+xml;base64,{b64}');}}"
+    indet_svg = (f"QCheckBox::indicator:indeterminate{{background:{t['bg3']};"
+                 f"border:1px solid {t['highlight']};"
+                 f"image:url('data:image/svg+xml;base64,{b64}');}}")
 
-    active = f"QCheckBox{{color:{t['text']};font-weight:bold;spacing:8px;}}{ind}{checked}{unchecked}{indet_std}"
+    active = (f"QCheckBox{{color:{t['text']};font-weight:bold;spacing:8px;}}"
+              f"{ind}{checked}{unchecked}{indet_std}")
 
     disabled = (f"QCheckBox{{color:{t['muted']};text-decoration:line-through;spacing:8px;}}{ind}"
                 f"QCheckBox::indicator:checked{{background:{t['bg3']};border:1px solid {t['muted']};}}"
@@ -148,17 +194,20 @@ def tri_styles() -> tuple[str, str, str]:
     return active, disabled, delete
 
 
-def style_label_info(font_size: int = 20) -> str:
-    return f"font-size:{font_size}px;color:{current_theme()['success']};font-family:monospace;"
+def style_label_info(font_size: int = 0) -> str:
+    fs = font_size or font_scale()["xxl"]
+    return f"font-size:{fs}px;color:{current_theme()['success']};font-family:monospace;"
 
 
-def style_label_info_bold(font_size: int = 16) -> str:
-    t = current_theme()
-    return f"font-size:{font_size}px;color:{t['success']};font-weight:bold;padding:4px;font-family:monospace;"
+def style_label_info_bold(font_size: int = 0) -> str:
+    fs = font_size or font_scale()["lg"]
+    t  = current_theme()
+    return f"font-size:{fs}px;color:{t['success']};font-weight:bold;padding:4px;font-family:monospace;"
 
 
-def style_label_mono(font_size: int = 16) -> str:
-    return f"font-size:{font_size}px;padding:5px;qproperty-alignment:AlignLeft;font-family:monospace;"
+def style_label_mono(font_size: int = 0) -> str:
+    fs = font_size or font_scale()["lg"]
+    return f"font-size:{fs}px;padding:5px;qproperty-alignment:AlignLeft;font-family:monospace;"
 
 
 def style_checkbox_select_all() -> str:
@@ -173,23 +222,24 @@ def style_sudo_checkbox(muted: bool = False) -> str:
     t = current_theme()
     if muted:
         return f"color:{t['muted']};"
-    return f"font-size:16px;color:{t['cyan']};font-family:monospace;"
+    return f"font-size:{font_scale()['lg']}px;color:{t['cyan']};font-family:monospace;"
 
 
 def style_op_label(has_tip: bool) -> tuple[str, str]:
-    t = current_theme()
+    t     = current_theme()
     color = t["accent2"] if has_tip else t["accent"]
-    decoration = "text-decoration:underline dotted;" if has_tip else ""
-    return color, decoration
+    deco  = "text-decoration:underline dotted;" if has_tip else ""
+    return color, deco
 
 
 def _build_stylesheet(t: dict[str, str], font_family: str, font_size: int) -> str:
-    b64 = _build_indeterminate_svg(t["highlight"])
-    pb_bg = t.get("pb_bg", t["bg3"])
-    pb_text = t.get("pb_text", "#ffffff")
-    pb_chunk = t.get("pb_chunk", t["accent"])
+    b64       = _build_indeterminate_svg(t["highlight"])
+    pb_bg     = t.get("pb_bg",    t["bg3"])
+    pb_text   = t.get("pb_text",  "#ffffff")
+    pb_chunk  = t.get("pb_chunk",  t["accent"])
     pb_chunk2 = t.get("pb_chunk2", t["accent2"])
     font_rule = f'font-family: "{font_family}"; ' if font_family else ""
+    fs        = _font_sizes(font_size)
 
     return f"""
 * {{ {font_rule}font-size: {font_size}px; }}
@@ -220,6 +270,12 @@ QPushButton:hover {{
 QPushButton:focus {{ border: 1px solid {t['highlight']}; color: {t['highlight']}; outline: none; }}
 QPushButton:pressed {{ background: {t['bg']}; border: 1px solid {t['accent2']}; color: {t['accent2']}; }}
 QPushButton:disabled {{ color: {t['muted']}; border: 1px solid {t['bg3']}; background: {t['bg2']}; }}
+
+QPushButton#mainMenuBtn {{
+    font-size: {font_size + 4}px;
+    font-weight: bold;
+    min-height: {max(52, font_size * 3)}px;
+}}
 
 QCheckBox {{
     color: {t['text']};
@@ -280,7 +336,7 @@ QProgressBar {{
     border-radius: 6px;
     text-align: center;
     color: {pb_text};
-    font-size: 20px;
+    font-size: {fs['xxl']}px;
     font-weight: bold;
     min-height: 35px;
 }}
@@ -336,21 +392,18 @@ QFrame[frameShape="4"], QFrame[frameShape="5"] {{
 
 
 def get_style() -> str:
-    ui_config = S.ui
-    font = ui_config.get("font_family", "") or ""
-    try:
-        size = int(ui_config.get("font_size", 14))
-    except (ValueError, TypeError):
-        size = 14
-
-    return _build_stylesheet(current_theme(), font, size)
+    font = S.ui.get("font_family", "") or ""
+    return _build_stylesheet(current_theme(), font, _base_font_size())
 
 
 def apply_style() -> None:
     global _current_theme_name
-    ui_config = S.ui
-    _current_theme_name = ui_config.get("theme", DEFAULT_THEME)
-
+    _current_theme_name = S.ui.get("theme", DEFAULT_THEME)
     app = QApplication.instance()
     if isinstance(app, QApplication):
         app.setStyleSheet(get_style())
+    for fn in list(_style_listeners):
+        try:
+            fn()
+        except Exception as e:
+            logger.error("Style listener error (%s): %s", fn, e)

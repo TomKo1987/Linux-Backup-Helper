@@ -1,19 +1,17 @@
 from typing import Optional
 import os, shlex, subprocess, re, time
 
-from PyQt6.QtWidgets import (
-    QMessageBox, QPushButton, QVBoxLayout,
-    QDialog, QDialogButtonBox, QFrame, QLabel
-)
+from PyQt6.QtWidgets import QMessageBox
 
 from state import logger, _USER
 
 _DRIVE_NAME_RE = re.compile(r"^[\w\- .()@:]+$")
-_DANGER_SEQS = ("&&", "||", "$(", "${", ";", "|", "`", ">", "<", "\n", "\r", "\x00")
-_ALLOWED_CMDS = frozenset({
-    "mount", "umount", "mount.cifs",
-    "udisksctl", "kdeconnect-cli",
-    "sshfs", "fusermount3", "fusermount"
+
+_SHELL_INJECTION_SEQS = ("&&", "||", "$(", "${", ";", "|", "`", ">", "<", "\n", "\r", "\x00")
+
+_ALLOWED_MOUNT_CMDS = frozenset({
+    "mount", "umount", "mount.cifs", "udisksctl",
+    "kdeconnect-cli", "sshfs", "fusermount3", "fusermount",
 })
 
 _session_managed_mounts: list[dict] = []
@@ -38,29 +36,25 @@ def _untrack_session_mount(drive: dict) -> None:
 def _validate_cmd(cmd: str) -> tuple[bool, str, list[str]]:
     if not cmd.strip():
         return False, "Empty command", []
-
-    if any(s in cmd for s in _DANGER_SEQS):
+    if any(seq in cmd for seq in _SHELL_INJECTION_SEQS):
         return False, "Dangerous characters in command", []
     try:
         tokens = shlex.split(cmd)
     except ValueError as e:
         return False, str(e), []
-
     if not tokens:
         return False, "No command tokens found", []
 
     base = os.path.basename(tokens[0])
     if base == "sudo" and len(tokens) > 1:
         base = os.path.basename(tokens[1])
-
-    if base not in _ALLOWED_CMDS:
+    if base not in _ALLOWED_MOUNT_CMDS:
         return False, f"'{base}' is not an allowed command", []
 
     expanded = [os.path.expanduser(t) for t in tokens]
-    for tok in expanded:
-        tok_parts = tok.replace("\\", "/").split("/")
-        if ".." in tok_parts:
-            return False, f"Path traversal detected in token: {tok!r}", []
+    for token in expanded:
+        if ".." in token.replace("\\", "/").split("/"):
+            return False, f"Path traversal detected in token: {token!r}", []
 
     return True, "", expanded
 
@@ -75,12 +69,11 @@ def _mount_paths(name: str) -> tuple[str, ...]:
     return f"/run/media/{_USER}/{name}", f"/media/{_USER}/{name}", f"/mnt/{name}"
 
 
-def _execute_drive_op(drive: dict, key: str, timeout: int) -> tuple[bool, str]:
+def _execute_drive_op(drive: dict, cmd_key: str, timeout: int) -> tuple[bool, str]:
     name = drive.get("drive_name", "?")
-    cmd  = drive.get(key, "").strip()
-
+    cmd  = drive.get(cmd_key, "").strip()
     if not cmd:
-        return False, f"No {key.replace('_', ' ')} configured for '{name}'."
+        return False, f"No {cmd_key.replace('_', ' ')} configured for '{name}'."
 
     ok, reason, tokens = _validate_cmd(cmd)
     if not ok:
@@ -99,8 +92,10 @@ def _execute_drive_op(drive: dict, key: str, timeout: int) -> tuple[bool, str]:
 
 def get_mount_output() -> str:
     try:
-        return subprocess.check_output(["mount"], text=True, timeout=5)
-    except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError, PermissionError, OSError) as e:
+        with open("/proc/mounts", encoding="utf-8", errors="replace") as fh:
+            raw = fh.read()
+        return re.sub(r"\\(\d{3})", lambda m: chr(int(m.group(1), 8)), raw)
+    except OSError as e:
         logger.warning("get_mount_output: %s", e)
         return ""
 
@@ -128,9 +123,8 @@ def is_mounted(opt: dict, mount_out: Optional[str] = None) -> bool:
             pattern = rf"(?://{re.escape(host)}/{re.escape(share)}|{re.escape(host)}:/{re.escape(share)})(?:\s|$|/)"
             if re.search(pattern, mount_out, re.IGNORECASE):
                 return True
-    else:
-        if re.search(rf"{re.escape(mount_path)}(?:\s|$)", mount_out):
-            return True
+    elif re.search(rf"{re.escape(mount_path)}(?:\s|$)", mount_out):
+        return True
 
     return False
 
@@ -140,17 +134,15 @@ def mount_drive(drive: dict) -> tuple[bool, str]:
     success, error_msg = _execute_drive_op(drive, "mount_command", 15)
 
     if success:
-        _deadline = time.monotonic() + 1.5
-        while time.monotonic() < _deadline:
+        deadline = time.monotonic() + 1.5
+        while time.monotonic() < deadline:
             if is_mounted(drive, get_mount_output()):
                 break
             time.sleep(0.5)
         else:
             logger.warning("mount_drive: '%s' still not visible after 1.5 s", name)
-
         if has_managed_mount_path(drive):
             _track_session_mount(drive)
-
         logger.info("Mounted '%s'", name)
         return True, ""
 
@@ -179,35 +171,34 @@ def is_smb(path: str) -> bool:
 
 def check_drives_to_mount(paths: list[str]) -> list[dict]:
     from state import S
-    needed    = []
     mount_out = get_mount_output()
 
-    def _is_on_mount(mount_point: str, file_path: str) -> bool:
+    def _on_local(mount_point: str, file_path: str) -> bool:
         m = os.path.normpath(mount_point)
         f = os.path.normpath(file_path)
         return f == m or f.startswith(m + os.sep)
 
-    def _is_on_smb_mount(_mount_path: str, file_path: str) -> bool:
-        mp = _mount_path.rstrip("/")
+    def _on_smb(mount_point: str, file_path: str) -> bool:
+        mp = mount_point.rstrip("/")
         fp = file_path.rstrip("/")
         return fp == mp or fp.startswith(mp + "/")
 
+    needed = []
     for opt in S.mount_options:
         if is_mounted(opt, mount_out):
             continue
-
         name       = opt.get("drive_name", "")
         mount_path = opt.get("mount_path", "").strip()
 
         if mount_path and is_smb(mount_path):
-            if any(_is_on_smb_mount(mount_path, p) for p in paths):
+            if any(_on_smb(mount_path, p) for p in paths):
                 needed.append(opt)
         elif mount_path:
-            if any(_is_on_mount(mount_path, p) for p in paths):
+            if any(_on_local(mount_path, p) for p in paths):
                 needed.append(opt)
         elif _valid_drive_name(name):
             candidates = _mount_paths(name)
-            if any(any(_is_on_mount(c, p) for c in candidates) for p in paths):
+            if any(_on_local(c, p) for c in candidates for p in paths):
                 needed.append(opt)
 
     return needed
@@ -215,72 +206,41 @@ def check_drives_to_mount(paths: list[str]) -> list[dict]:
 
 def has_managed_mount_path(opt: dict) -> bool:
     mount_path = opt.get("mount_path", "").strip()
-    if not mount_path:
-        return False
-    name = opt.get("drive_name", "")
-    return mount_path not in _mount_paths(name)
+    return bool(mount_path) and mount_path not in _mount_paths(opt.get("drive_name", ""))
 
 
 def mount_required_drives(drives: list[dict], parent=None) -> bool:
-    if not drives:
-        return True
-
     for opt in drives:
         drive_name = opt.get("drive_name", "?")
         is_managed = has_managed_mount_path(opt)
 
-        dlg = QDialog(parent)
-        dlg.setWindowTitle("Drive Required")
-        dlg.setMinimumWidth(420)
-
-        layout = QVBoxLayout(dlg)
-        layout.setSpacing(12)
-        layout.setContentsMargins(20, 20, 20, 20)
-
-        title_lbl = QLabel(f"'{drive_name}' is required but not mounted.")
-        layout.addWidget(title_lbl)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        layout.addWidget(sep)
-
         if is_managed:
-            info_lbl = QLabel("This drive uses an external mount path and cannot be detected automatically.\n\n"
-                              "Run mount command now?")
+            msg = (f"'{drive_name}' is required but cannot be detected automatically "
+                   f"(external mount path).\n\nRun mount command now?")
         else:
-            info_lbl = QLabel("Run mount command now?\n")
-        layout.addWidget(info_lbl)
+            msg = f"'{drive_name}' is required but not mounted.\n\nRun mount command now?"
 
-        layout.addSpacing(4)
+        answer = QMessageBox.question(
+            parent, "Drive Required", msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
 
-        btn_box = QDialogButtonBox()
-        yes_btn = QPushButton("Run Mount Command")
-        no_btn  = QPushButton("Skip" if is_managed else "Cancel")
-        btn_box.addButton(yes_btn, QDialogButtonBox.ButtonRole.AcceptRole)
-        btn_box.addButton(no_btn,  QDialogButtonBox.ButtonRole.RejectRole)
-        btn_box.accepted.connect(dlg.accept)
-        btn_box.rejected.connect(dlg.reject)
-        layout.addWidget(btn_box)
-
-        yes_btn.setFocus()
-        accepted = dlg.exec() == QDialog.DialogCode.Accepted
-        if not accepted:
+        if answer != QMessageBox.StandardButton.Yes:
             if is_managed:
                 logger.info("Skipping mount for managed drive '%s'", drive_name)
                 continue
-            else:
-                QMessageBox.warning(
-                    parent, "Operation Cancelled",
-                    f"The required drive '{drive_name}' was not mounted.\n\n"
-                    "The operation has been cancelled.")
-                return False
+            QMessageBox.warning(
+                parent, "Operation Cancelled",
+                f"The required drive '{drive_name}' was not mounted.\n\nThe operation has been cancelled.",
+            )
+            return False
 
         success, error_msg = mount_drive(opt)
         if not success:
             QMessageBox.critical(
                 parent, "Mount Failed",
-                f"Could not mount '{drive_name}':\n\n{error_msg}\n\n"
-                "The operation has been cancelled.")
+                f"Could not mount '{drive_name}':\n\n{error_msg}\n\nThe operation has been cancelled.",
+            )
             return False
 
     return True

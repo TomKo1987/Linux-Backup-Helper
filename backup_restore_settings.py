@@ -8,50 +8,53 @@ from PyQt6.QtWidgets import (
 )
 
 from samba_credentials import SambaPasswordDialog
-from themes import THEMES, current_theme, apply_style
 from dialogs import EntryDialog, HeaderSettingsDialog, MountsDialog, ProfilesDialog
+from themes import THEMES, current_theme, apply_style, font_scale, register_style_listener, unregister_style_listener
 from state import S, _PROFILES_DIR, _COLS_NARROW, _COLS_WIDE, apply_replacements, block_set, save_profile, generate_tooltip
 
-_COPY_LOGIC_TOOLTIP = (
-    "<b>How files are copied and when they are skipped</b><br><br>"
-    "<b>Local File Logic:</b><br>"
-    "- A file is <b>copied</b> if the destination is missing, the size differs, "
-    "or the source is newer than the backup.<br>"
-    "- A file is <b>skipped</b> only if the size matches <b>and</b> the backup "
-    "is already as new as the source.<br><br>"
-    "<b>Samba (SMB) Difference:</b><br>"
-    "- For network shares, the system only checks <b>existence and file size</b> to save bandwidth.<br>"
-    "- Remote paths <b>must</b> follow the pattern: <code>'smb://ip/rest-of-path'</code>.<br>"
-    "- <b>Example:</b> <code>'smb://192.168.0.53/share/data'</code>.<br>"
-    "- <b>Local requirement:</b> <code>smbclient</code> must be installed on <b>this machine</b> "
-    "to communicate with SMB shares.<br>"
-    "- <b>Remote requirement:</b> Samba must be correctly installed and configured on the <b>target system</b>. "
-    "The share must be accessible and the firewall must allow SMB traffic (standard port 445).<br><br>"
-    "<b>Samba Credentials &amp; Security:</b><br>"
-    "- Passwords are <b>never stored in plain text</b>. They are managed securely via "
-    "<b>KWallet</b> (KDE) or your <b>System Keyring</b>.<br>"
-    "- <b>User Specific:</b> The system specifically looks for credentials belonging to the "
-    "<b>currently logged-in OS user</b>.<br>"
-    "- If KWallet is available and already contains an entry starting with <code>'smb-'</code>, "
-    "that entry is used — and can be updated in KWallet but not deleted.<br>"
-    "- Otherwise, credentials can be created and managed directly in Backup Helper "
-    "and are saved in the system keyring under the service name <code>'backup-helper-samba'</code>.<br><br>"
-    "The SMB password is passed to <code>smbclient</code> via the <code>PASSWD</code> "
-    "environment variable — <b>never as a command-line argument</b>, so it does not "
-    "appear in <code>/proc/&lt;pid&gt;/cmdline</code> or <code>ps aux</code>.<br><br>"
-    "- <b>Connection order:</b> First, a login with stored credentials is attempted. "
-    "If that fails or no credentials are stored, a <b>guest/anonymous</b> connection is tried. "
-    "If that also fails, all SMB tasks will be marked as errors with a corresponding note.<br><br>"
-    "<b>Always Skipped:</b><br>"
-    "- System lock files are automatically ignored to prevent errors.<br>"
-    "- Patterns: files named <code>lock</code> or <code>.lock</code>, "
-    "files ending in <code>.lock</code>, <code>.lck</code> or named exactly <code>lockfile</code>, "
-    "as well as <code>Singleton</code> (browser) and <code>cookies.sqlite-wal</code> (SQLite WAL).<br><br>"
-    "<b>Status Colors:</b><br>"
-    "- <span style='color:#31ff1a;'>Green</span> = Successfully copied, "
-    "<span style='color:#f7c948;'>Yellow</span> = Skipped, "
-    "<span style='color:#ff5370;'>Red</span> = Error."
-)
+
+def _copy_logic_tooltip() -> str:
+    t = current_theme()
+    return (
+        "<b>How files are copied and when they are skipped</b><br><br>"
+        "<b>Local File Logic:</b><br>"
+        "- A file is <b>copied</b> if the destination is missing, the size differs, "
+        "or the source is newer than the backup.<br>"
+        "- A file is <b>skipped</b> only if the size matches <b>and</b> the backup "
+        "is already as new as the source.<br><br>"
+        "<b>Samba (SMB) Difference:</b><br>"
+        "- For network shares, the system only checks <b>existence and file size</b> to save bandwidth.<br>"
+        "- Remote paths <b>must</b> follow the pattern: <code>'smb://ip/rest-of-path'</code>.<br>"
+        "- <b>Example:</b> <code>'smb://192.168.0.53/share/data'</code>.<br>"
+        "- <b>Local requirement:</b> <code>smbclient</code> must be installed on <b>this machine</b> "
+        "to communicate with SMB shares.<br>"
+        "- <b>Remote requirement:</b> Samba must be correctly installed and configured on the <b>target system</b>. "
+        "The share must be accessible and the firewall must allow SMB traffic (standard port 445).<br><br>"
+        "<b>Samba Credentials &amp; Security:</b><br>"
+        "- Passwords are <b>never stored in plain text</b>. They are managed securely via "
+        "<b>KWallet</b> (KDE) or your <b>System Keyring</b>.<br>"
+        "- <b>User Specific:</b> The system specifically looks for credentials belonging to the "
+        "<b>currently logged-in OS user</b>.<br>"
+        "- If KWallet is available and already contains an entry starting with <code>'smb-'</code>, "
+        "that entry is used — and can be updated in KWallet but not deleted.<br>"
+        "- Otherwise, credentials can be created and managed directly in Backup Helper "
+        "and are saved in the system keyring under the service name <code>'backup-helper-samba'</code>.<br><br>"
+        "The SMB password is passed to <code>smbclient</code> via the <code>PASSWD</code> "
+        "environment variable — <b>never as a command-line argument</b>, so it does not "
+        "appear in <code>/proc/&lt;pid&gt;/cmdline</code> or <code>ps aux</code>.<br><br>"
+        "- <b>Connection order:</b> First, a login with stored credentials is attempted. "
+        "If that fails or no credentials are stored, a <b>guest/anonymous</b> connection is tried. "
+        "If that also fails, all SMB tasks will be marked as errors with a corresponding note.<br><br>"
+        "<b>Always Skipped:</b><br>"
+        "- System lock files are automatically ignored to prevent errors.<br>"
+        "- Patterns: files named <code>lock</code> or <code>.lock</code>, "
+        "files ending in <code>.lock</code>, <code>.lck</code> or named exactly <code>lockfile</code>, "
+        "as well as <code>Singleton</code> (browser) and <code>cookies.sqlite-wal</code> (SQLite WAL).<br><br>"
+        "<b>Status Colors:</b><br>"
+        f"- <span style='color:{t['success']};'>Green</span> = Successfully copied, "
+        f"<span style='color:{t['warning']};'>Yellow</span> = Skipped, "
+        f"<span style='color:{t['error']};'>Red</span> = Error."
+    )
 
 
 # noinspection PyUnresolvedReferences
@@ -88,12 +91,19 @@ class _BaseCheckboxWindow(QDialog):
         self.main_layout.addWidget(self.scroll_area, 1)
 
         self._setup_ui()
+        register_style_listener(self._refresh_styles)
 
-    def _entry_filter(self, entry: dict) -> bool:
+    @staticmethod
+    def _entry_filter(entry: dict) -> bool:
         return True
 
-    def _show_inactive_headers(self) -> bool:
-        return False
+    def _refresh_styles(self) -> None:
+        saved = {id(e): cb.isChecked() for cb, _s, _d, _t, e in self.checkbox_dirs if e is not None}
+        self._setup_ui()
+        for cb, _s, _d, _t, e in self.checkbox_dirs:
+            if e is not None and id(e) in saved:
+                block_set(cb, saved[id(e)])
+        self._sync_select_all()
 
     def _tips(self) -> dict:
         backup_tips, _, _ = generate_tooltip()
@@ -126,10 +136,13 @@ class _BaseCheckboxWindow(QDialog):
 
         scr = QApplication.primaryScreen()
         if scr:
-            sg    = scr.availableGeometry()
-            hint  = content.sizeHint()
+            sg   = scr.availableGeometry()
+            hint = content.sizeHint()
             top_h = self._top_wrap.sizeHint().height() + 20
-            self.resize(min(max(hint.width() + 20, 0), sg.width()), min(hint.height() + top_h, sg.height()))
+            self.resize(
+                min(hint.width() + 20, sg.width()),
+                min(hint.height() + top_h, sg.height()),
+            )
 
     def _rebuild_top_controls(self) -> None:
         while self._top_hbox.count():
@@ -137,35 +150,33 @@ class _BaseCheckboxWindow(QDialog):
             if w := item.widget():
                 w.deleteLater()
 
-        next_cols_val = _COLS_NARROW if self.cols == _COLS_WIDE else _COLS_WIDE
+        next_cols = _COLS_NARROW if self.cols == _COLS_WIDE else _COLS_WIDE
 
         self._selectall = QCheckBox("Select All")
         self._selectall.clicked.connect(self._toggle_all)
 
-        self._col_btn = QPushButton(f"{next_cols_val} Columns")
+        self._col_btn = QPushButton(f"{next_cols} Columns")
         self._col_btn.clicked.connect(self._toggle_cols)
 
         self._top_hbox.addWidget(self._selectall)
-
         for w in self._extra_top_widgets():
             self._top_hbox.addStretch(1)
             self._top_hbox.addWidget(w)
-
         self._top_hbox.addStretch(1)
         self._top_hbox.addWidget(self._col_btn)
 
     def _populate_checkboxes(self, grid: QGridLayout) -> int:
         self.checkbox_dirs.clear()
-        tips          = self._tips()
-        show_inactive = self._show_inactive_headers()
+        tips = self._tips()
+        fs   = font_scale()
 
         grouped: dict[str, list] = {}
         for e in S.entries:
             if not self._entry_filter(e):
                 continue
             h = e.get("header", "Unknown")
-            if not show_inactive and S.headers.get(h, {}).get("inactive"):
-                continue
+            if S.headers.get(h, {}).get("inactive") is False:
+                pass
             grouped.setdefault(h, []).append(e)
 
         t   = current_theme()
@@ -177,21 +188,21 @@ class _BaseCheckboxWindow(QDialog):
                 continue
 
             hdr_data = S.headers[h]
-            inactive = show_inactive and hdr_data.get("inactive", False)
+            inactive = hdr_data.get("inactive", False)
             color    = t["text_dim"] if inactive else hdr_data.get("color", "#ffffff")
             label    = f"{h} (Inactive)" if inactive else h
 
             hdr_lbl = QLabel(label)
             hdr_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            hdr_lbl.setStyleSheet(f"font-size:17px;font-weight:bold;color:{color};padding:4px 0;")
+            hdr_lbl.setStyleSheet(f"font-size:{fs['xl']}px;font-weight:bold;color:{color};padding:4px 0;")
             grid.addWidget(hdr_lbl, row, 0, 1, self.cols)
             row += 1
 
             col = 0
             for e in sorted(entries, key=lambda x: x.get("title", "").lower()):
-                title      = e["title"]
-                excl_note  = self._exclusion_note(e)
-                cb_color   = t["muted"] if excl_note else color
+                title     = e["title"]
+                excl_note = self._exclusion_note(e)
+                cb_color  = t["muted"] if excl_note else color
 
                 cb = QCheckBox(title.replace("<br>", "\n").replace("&", "&&"))
                 cb.setToolTipDuration(600_000)
@@ -228,13 +239,13 @@ class _BaseCheckboxWindow(QDialog):
         return row
 
     def _toggle_all(self) -> None:
-        state = self._selectall.isChecked()
+        checked = self._selectall.isChecked()
         for cb, *_ in self.checkbox_dirs:
-            cb.setChecked(state)
+            cb.setChecked(checked)
 
     def _sync_select_all(self) -> None:
-        if self._selectall and (cbs := [cb for cb, *_ in self.checkbox_dirs]):
-            block_set(self._selectall, all(cb.isChecked() for cb in cbs))
+        if self._selectall and self.checkbox_dirs:
+            block_set(self._selectall, all(cb.isChecked() for cb, *_ in self.checkbox_dirs))
 
     def _toggle_cols(self) -> None:
         self.cols = _COLS_WIDE if self.cols == _COLS_NARROW else _COLS_NARROW
@@ -247,16 +258,13 @@ class _BaseCheckboxWindow(QDialog):
         super().showEvent(event)
         if not event.spontaneous():
             for cb, *_ in self.checkbox_dirs:
-                cb.blockSignals(True)
-                cb.setChecked(False)
-                cb.blockSignals(False)
+                block_set(cb, False)
             if self._selectall:
-                self._selectall.blockSignals(True)
-                self._selectall.setChecked(False)
-                self._selectall.blockSignals(False)
+                block_set(self._selectall, False)
                 self._selectall.setFocus()
 
     def closeEvent(self, event) -> None:
+        unregister_style_listener(self._refresh_styles)
         for cb, *_ in self.checkbox_dirs:
             try:
                 cb.stateChanged.disconnect()
@@ -300,14 +308,18 @@ class _CopyMixin:
         CopyDialog(self, selected, self._op_label).exec()  # type: ignore[arg-type]
 
     def _add_action_buttons(self: "_BaseCheckboxWindow", grid: QGridLayout, row: int) -> None:
+        fs         = font_scale()
+        btn_style  = f"font-size:{fs['xl']}px;font-weight:bold;"
+        close_style = f"font-size:{fs['xl']}px;"
+
         action_btn = QPushButton(self._op_label)  # type: ignore[attr-defined]
-        action_btn.setFixedHeight(30)
-        action_btn.setStyleSheet("font-size:15px;font-weight:bold;")
+        action_btn.setMinimumHeight(30)
+        action_btn.setStyleSheet(btn_style)
         action_btn.clicked.connect(self._start_copy)  # type: ignore[attr-defined]
 
         close_btn = QPushButton("Close")
-        close_btn.setFixedHeight(30)
-        close_btn.setStyleSheet("font-size:15px;")
+        close_btn.setMinimumHeight(30)
+        close_btn.setStyleSheet(close_style)
         close_btn.clicked.connect(self.close)
 
         grid.addWidget(action_btn, row,     0, 1, self.cols)
@@ -343,29 +355,30 @@ class SettingsWindow(_BaseCheckboxWindow):
     _window_title = "Settings"
     _cols_key     = "settings_window_columns"
 
-    def _show_inactive_headers(self) -> bool:
-        return True
-
     def _extra_top_widgets(self) -> list:
         return [self._make_config_path_label()]
 
     @staticmethod
     def _make_config_path_label() -> QLabel:
+        from themes import font_scale
         t    = current_theme()
+        fs   = font_scale()
         path = (str(_PROFILES_DIR / f"{S.profile_name}.json") if S.profile_name else str(_PROFILES_DIR))
-        lbl  = QLabel(" 󰔨  "
-                      f"<span style='font-size:16px;color:{t['accent2']};"
-                      f"text-decoration:underline dotted;'>{apply_replacements(path)}</span>")
+        lbl  = QLabel(
+            f" 󰔨  "
+            f"<span style='font-size:{fs['lg']}px;color:{t['accent2']};"
+            f"text-decoration:underline dotted;'>{apply_replacements(path)}</span>"
+        )
         lbl.setTextFormat(Qt.TextFormat.RichText)
-        lbl.setToolTip(_COPY_LOGIC_TOOLTIP)
+        lbl.setToolTip(_copy_logic_tooltip())
         lbl.setToolTipDuration(600_000)
         lbl.setCursor(Qt.CursorShape.WhatsThisCursor)
         return lbl
 
     def _exclusion_note(self, entry: dict) -> str:
         details = entry.get("details", {})
-        no_b = details.get("no_backup", False)
-        no_r = details.get("no_restore", False)
+        no_b    = details.get("no_backup",  False)
+        no_r    = details.get("no_restore", False)
         if no_b and no_r:
             return "Excluded from backup and restore"
         if no_b:
@@ -375,8 +388,8 @@ class SettingsWindow(_BaseCheckboxWindow):
         return ""
 
     def _add_action_buttons(self, grid: QGridLayout, row: int) -> None:
-        def _btn(lbl: str, fn) -> QPushButton:
-            b = QPushButton(lbl)
+        def _btn(label: str, fn) -> QPushButton:
+            b = QPushButton(label)
             b.clicked.connect(fn)
             return b
 
@@ -386,55 +399,66 @@ class SettingsWindow(_BaseCheckboxWindow):
                 hb.addWidget(b)
             return hb
 
-        grid.addLayout(_hrow(_btn("System Manager Options", self._open_sm_options)), row, 0, 1, self.cols)
-        row += 1
-        grid.addLayout(_hrow(_btn("New Entry",         self._new_entry),
-                             _btn("Edit Entry",        self._edit_entry),
-                             _btn("Delete Entry",      self._del_entry),
-                             _btn("Header Settings",   self._header_settings)),
-                       row, 0, 1, self.cols)
-        row += 1
-        grid.addLayout(_hrow(_btn("Mount Options",       self._manage_mounts),
-                             _btn("Samba Credentials",   self._samba_credentials),
-                             _btn("Profile Manager",     self._manage_profiles)),
-                       row, 0, 1, self.cols)
-        row += 1
-        grid.addWidget(_btn("Change Theme", self._change_theme), row, 0, 1, self.cols)
-        row += 1
-        grid.addWidget(_btn("Close", self.close), row, 0, 1, self.cols)
+        grid.addLayout(_hrow(_btn("System Manager Options", self._open_sm_options)),
+                       row, 0, 1, self.cols); row += 1
+        grid.addLayout(_hrow(_btn("New Entry",       self._new_entry),
+                             _btn("Edit Entry",      self._edit_entry),
+                             _btn("Delete Entry",    self._del_entry),
+                             _btn("Header Settings", self._header_settings)),
+                       row, 0, 1, self.cols); row += 1
+        grid.addLayout(_hrow(_btn("Mount Options",     self._manage_mounts),
+                             _btn("Samba Credentials", self._samba_credentials),
+                             _btn("Profile Manager",   self._manage_profiles)),
+                       row, 0, 1, self.cols); row += 1
+        grid.addWidget(_btn("Change Theme", self._change_theme), row, 0, 1, self.cols); row += 1
+        grid.addWidget(_btn("Close", self.close),                row, 0, 1, self.cols)
+
+    def _run_entry_dialog(self, initial_entry: Optional[dict], window_title: Optional[str] = None) -> Optional[dict]:
+
+        current_entry     = initial_entry
+        pairs: list[list[str]] = []
+        pairs_initialised = False
+
+        while True:
+            dlg  = EntryDialog(
+                self, current_entry,
+                stacked=self._entry_stacked,
+                _pairs=pairs if pairs_initialised else None,
+            )
+            if window_title:
+                dlg.setWindowTitle(window_title)
+            code = dlg.exec()
+
+            if code == QDialog.DialogCode.Accepted:
+                return dlg.result
+            if code == 2:
+                self._entry_stacked = dlg.stacked
+                pairs               = dlg.pairs
+                pairs_initialised   = True
+                current_entry       = dlg.snapshot
+            else:
+                return None
 
     def _new_entry(self) -> None:
         if not S.headers:
-            QMessageBox.information(self, "No Headers Found",
-                                    "Before creating an entry you need at least one header.\n\n"
-                                    "Headers group your entries and can each have their own colour.\n"
-                                    "The Header Settings dialog will open now — click '🆕 New' to add one.")
+            QMessageBox.information(
+                self, "No Headers Found",
+                "Before creating an entry you need at least one header.\n\n"
+                "Headers group your entries and can each have their own colour.\n"
+                "The Header Settings dialog will open now — click '🆕 New' to add one.",
+            )
             dlg = HeaderSettingsDialog(self)
             if dlg.exec() != QDialog.DialogCode.Accepted or not S.headers:
                 return
             save_profile()
             self.changed.emit()
 
-        current_entry: Optional[dict] = None
-        pairs: list[list[str]] = []
-        pairs_initialized = False
-        while True:
-            dlg = EntryDialog(self, current_entry, stacked=self._entry_stacked,
-                              _pairs=pairs if pairs_initialized else None)
-            code = dlg.exec()
-            if code == QDialog.DialogCode.Accepted:
-                S.entries.append(dlg.result)
-                save_profile()
-                self.changed.emit()
-                self.done(2)
-                break
-            elif code == 2:
-                self._entry_stacked = dlg.stacked
-                pairs = dlg.pairs
-                pairs_initialized = True
-                current_entry = dlg.snapshot
-            else:
-                break
+        result = self._run_entry_dialog(None)
+        if result is not None:
+            S.entries.append(result)
+            save_profile()
+            self.changed.emit()
+            self.done(2)
 
     def _edit_entry(self) -> None:
         checked = [(cb, entry) for cb, src, dst, title, entry in self.checkbox_dirs if cb.isChecked()]
@@ -443,33 +467,18 @@ class SettingsWindow(_BaseCheckboxWindow):
             return
 
         changed_any = False
-        total = len(checked)
+        total       = len(checked)
 
         for i, (cb, original_entry) in enumerate(checked):
             if not original_entry:
                 continue
-            current_entry = original_entry
-            pairs: list[list[str]] = []
-            pairs_initialized = False
-            while True:
-                dlg = EntryDialog(self, current_entry, stacked=self._entry_stacked,
-                                  _pairs=pairs if pairs_initialized else None)
-                if total > 1:
-                    dlg.setWindowTitle(f"Edit Entry ({i + 1}/{total}) — {original_entry['title']}")
-                code = dlg.exec()
-                if code == QDialog.DialogCode.Accepted:
-                    idx = next((j for j, e in enumerate(S.entries) if e is original_entry), None)
-                    if idx is not None:
-                        S.entries[idx] = dlg.result
-                        changed_any = True
-                    break
-                elif code == 2:
-                    self._entry_stacked = dlg.stacked
-                    pairs = dlg.pairs
-                    pairs_initialized = True
-                    current_entry = dlg.snapshot
-                else:
-                    break
+            title  = f"Edit Entry ({i + 1}/{total}) — {original_entry['title']}" if total > 1 else None
+            result = self._run_entry_dialog(original_entry, window_title=title)
+            if result is not None:
+                idx = next((j for j, e in enumerate(S.entries) if e is original_entry), None)
+                if idx is not None:
+                    S.entries[idx] = result
+                    changed_any    = True
 
         if changed_any:
             save_profile()
@@ -484,8 +493,10 @@ class SettingsWindow(_BaseCheckboxWindow):
             return
 
         names = ", ".join(e["title"].replace("<br>", " ") for e in to_delete)
-        if QMessageBox.question(self, "Delete", f"Really delete: {names}?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+        if QMessageBox.question(
+            self, "Delete", f"Really delete: {names}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        ) == QMessageBox.StandardButton.Yes:
             S.entries = [e for e in S.entries if e not in to_delete]
             save_profile()
             self.changed.emit()
@@ -498,11 +509,8 @@ class SettingsWindow(_BaseCheckboxWindow):
             self.changed.emit()
             self.done(2)
 
-    def _manage_mounts(self) -> None:
-        MountsDialog(self).exec()
-
-    def _samba_credentials(self) -> None:
-        SambaPasswordDialog.open(self)
+    def _manage_mounts(self)     -> None: MountsDialog(self).exec()
+    def _samba_credentials(self) -> None: SambaPasswordDialog.open(self)
 
     def _manage_profiles(self) -> None:
         dlg = ProfilesDialog(self)
@@ -524,7 +532,6 @@ class SettingsWindow(_BaseCheckboxWindow):
 
 
 class _ThemeDialog(QDialog):
-
     changed = pyqtSignal(int)
 
     def __init__(self, parent) -> None:
@@ -532,7 +539,11 @@ class _ThemeDialog(QDialog):
         self.setWindowTitle("Theme and Font Settings")
         self.setMinimumSize(480, 380)
         self.setWindowModality(Qt.WindowModality.NonModal)
-        self._orig = (S.ui.get("theme", "Tokyo Night"), S.ui.get("font_family", ""), S.ui.get("font_size", 14))
+        self._orig = (
+            S.ui.get("theme", "Tokyo Night"),
+            S.ui.get("font_family", ""),
+            S.ui.get("font_size", 14),
+        )
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -546,19 +557,11 @@ class _ThemeDialog(QDialog):
             layout.addWidget(cb)
             return cb
 
-        self._theme_cb = _combo(
-            "Select Theme:", list(THEMES.keys()), S.ui.get("theme", "Tokyo Night")
-        )
-        self._font_cb  = _combo(
-            "Select Font:",
-            ["(System Default)"] + sorted(QFontDatabase.families()),
-            S.ui.get("font_family", "") or "(System Default)",
-        )
-        self._size_cb  = _combo(
-            "Select Font Size:",
-            ["10", "11", "12", "13", "14", "15", "16", "17", "18", "20", "22", "24"],
-            str(S.ui.get("font_size", 14)),
-        )
+        self._theme_cb = _combo("Select Theme:",     list(THEMES.keys()), S.ui.get("theme", "Tokyo Night"))
+        self._font_cb  = _combo("Select Font:",      ["(System Default)"] + sorted(QFontDatabase.families()),
+                                S.ui.get("font_family", "") or "(System Default)")
+        self._size_cb  = _combo("Select Font Size:", ["10","11","12","13","14","15","16","17","18","20","22","24"],
+                                str(S.ui.get("font_size", 14)))
 
         prev_btn = QPushButton("Preview")
         prev_btn.clicked.connect(lambda: self._apply(save=False))
@@ -567,12 +570,8 @@ class _ThemeDialog(QDialog):
         bb         = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
         ok_btn     = bb.button(QDialogButtonBox.StandardButton.Ok)
         cancel_btn = bb.button(QDialogButtonBox.StandardButton.Cancel)
-
-        if ok_btn:
-            ok_btn.clicked.connect(self._on_ok)
-        if cancel_btn:
-            cancel_btn.clicked.connect(self._on_cancel)
-
+        if ok_btn:     ok_btn.clicked.connect(self._on_ok)
+        if cancel_btn: cancel_btn.clicked.connect(self._on_cancel)
         layout.addWidget(bb)
 
     def _apply(self, save: bool = False) -> None:
@@ -610,10 +609,11 @@ class _ThemeDialog(QDialog):
 
 
 _WINDOW_MAP: "dict[str, Type[_BaseCheckboxWindow]]" = {
-    "Backup": BackupWindow,
-    "Restore": RestoreWindow,
+    "Backup":   BackupWindow,
+    "Restore":  RestoreWindow,
     "Settings": SettingsWindow,
 }
+
 
 def base_window(parent, mode: str = "Settings") -> "_BaseCheckboxWindow":
     cls = _WINDOW_MAP.get(mode, SettingsWindow)

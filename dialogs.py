@@ -8,13 +8,13 @@ from PyQt6.QtGui import QColor, QTextCursor
 from PyQt6.QtWidgets import (
     QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QWidget, QVBoxLayout,
     QListWidgetItem, QMessageBox, QPlainTextEdit, QPushButton, QSizePolicy, QSplitter,
-    QCheckBox, QColorDialog, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QTextEdit
+    QCheckBox, QColorDialog, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QTextEdit,
 )
 
-from themes import current_theme
+from themes import current_theme, font_scale, font_sz
 from state import (
-    _norm_paths, list_profiles, load_profile, save_profile, logger,
-    S, _HOME, _LOG_FILE, _PROFILES_DIR, _PROFILE_RE, _atomic_write, apply_replacements
+    _norm_paths, list_profiles, load_profile, save_profile, logger, State,
+    S, _HOME, _LOG_FILE, _PROFILES_DIR, _PROFILE_RE, _atomic_write, apply_replacements,
 )
 
 
@@ -26,18 +26,25 @@ def _sep() -> QWidget:
     return w
 
 
-def _hdr_label(text: str, color: str = "", size: int = 15) -> QLabel:
+def _hdr_label(text: str, color: str = "", size: int | None = None) -> QLabel:
     lbl = QLabel(text)
-    lbl.setStyleSheet(f"font-size:{size}px;font-weight:bold;"
-                      f"color:{color or current_theme()['accent']};padding:4px 0;")
+    sz  = size if size is not None else font_sz(3)
+    lbl.setStyleSheet(
+        f"font-size:{sz}px;font-weight:bold;"
+        f"color:{color or current_theme()['accent']};padding:4px 0;"
+    )
     lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
     return lbl
 
 
-def _ok_cancel_buttons(dialog: QDialog, ok_fn, ok_label: str = "Save", cancel_label: str = "Cancel") -> QDialogButtonBox:
-    bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
-    bb.button(QDialogButtonBox.StandardButton.Ok).setText(ok_label)
-    bb.button(QDialogButtonBox.StandardButton.Cancel).setText(cancel_label)
+def _ok_cancel_buttons(
+    dialog: QDialog, ok_fn, ok_label: str = "Save", cancel_label: str = "Cancel"
+) -> QDialogButtonBox:
+    bb         = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
+    ok_btn     = bb.button(QDialogButtonBox.StandardButton.Ok)
+    cancel_btn = bb.button(QDialogButtonBox.StandardButton.Cancel)
+    if ok_btn:     ok_btn.setText(ok_label)
+    if cancel_btn: cancel_btn.setText(cancel_label)
     bb.accepted.connect(ok_fn)
     bb.rejected.connect(dialog.reject)
     return bb
@@ -73,10 +80,11 @@ def _do_browse(parent: QWidget, editor, mode: str, home: Path = _HOME) -> None:
     if hasattr(editor, "setPlainText"):
         editor.setPlainText(path)
         cur = editor.textCursor()
-        cur.movePosition(cur.MoveOperation.End)
+        cur.movePosition(QTextCursor.MoveOperation.End)
         editor.setTextCursor(cur)
     else:
         editor.setText(path)
+
 
 def _ask_text(parent, title: str, label: str, default: str = "", min_width: int = 440) -> tuple[str, bool]:
     dlg = QDialog(parent)
@@ -89,32 +97,37 @@ def _ask_text(parent, title: str, label: str, default: str = "", min_width: int 
     edit = QLineEdit(default)
     edit.selectAll()
     layout.addWidget(edit)
-    bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel) # type: ignore
+    bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
     bb.accepted.connect(dlg.accept)
     bb.rejected.connect(dlg.reject)
     layout.addWidget(bb)
     edit.setFocus()
-    ok = dlg.exec() == QDialog.DialogCode.Accepted
-    return edit.text(), ok
+    accepted = dlg.exec() == QDialog.DialogCode.Accepted
+    return edit.text(), accepted
+
 
 def _ask_profile_name(title: str, default: str, parent: Optional[QWidget] = None) -> Optional[str]:
     while True:
         name, ok = _ask_text(parent, title, "Profile name:", default=default)
         if not ok:
             return None
-        clean = name.strip()
-        if not clean:
+        name = name.strip()
+        if not name:
             QMessageBox.warning(parent, "Invalid Name", "Name must not be empty.")
             continue
-        if not _PROFILE_RE.match(clean):
-            QMessageBox.warning(parent, "Invalid Name", "Only letters, digits, spaces, hyphens and dots are allowed.")
+        if not _PROFILE_RE.match(name):
+            QMessageBox.warning(
+                parent, "Invalid Name",
+                "Only letters, digits, spaces, hyphens, underscores and dots are allowed.",
+            )
             continue
-        return clean
+        return name
 
 
 class _ListDialog(QDialog):
 
-    def __init__(self, parent, title: str, size: tuple[int, int], hdr_text: str, btn_specs: list[tuple[str, str]], close_label: str = "✕  Close"):
+    def __init__(self, parent, title: str, size: tuple[int, int], hdr_text: str,
+                 btn_specs: list[tuple[str, str]], close_label: str = "✕  Close"):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setMinimumSize(*size)
@@ -141,11 +154,13 @@ class _ListDialog(QDialog):
 
 class _TextViewDialog(QDialog):
 
-    def __init__(self, parent, title: str, min_size: tuple[int, int], font_size: int = 14, extra_buttons: list[tuple[str, object]] = ()):
+    def __init__(self, parent, title: str, min_size: tuple[int, int],
+                 font_size: int | None = None, extra_buttons: list[tuple[str, object]] = ()):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setMinimumSize(*min_size)
-        t = current_theme()
+        t  = current_theme()
+        fs = font_size if font_size is not None else font_sz()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
@@ -153,12 +168,12 @@ class _TextViewDialog(QDialog):
 
         self.view = QTextEdit()
         self.view.setReadOnly(True)
-        self.view.setStyleSheet(f"font-family:monospace;font-size:{font_size}px;border:none;border-radius:0;")
+        self.view.setStyleSheet(f"font-family:monospace;font-size:{fs}px;border:none;border-radius:0;")
         layout.addWidget(self.view, 1)
 
         bot = QWidget()
         bot.setStyleSheet(f"background:{t['bg2']};border-top:1px solid {t['header_sep']};")
-        bl = QHBoxLayout(bot)
+        bl  = QHBoxLayout(bot)
         bl.setContentsMargins(12, 8, 12, 8)
         bl.setSpacing(8)
         for label, fn in [*extra_buttons, ("✕ Close", self.accept)]:
@@ -171,21 +186,23 @@ class _TextViewDialog(QDialog):
 
 # noinspection PyUnresolvedReferences
 class EntryDialog(QDialog):
-    _COL_ACTIVE_BG  = QColor("#1a5fb4")
-    _COL_ACTIVE_FG  = QColor("#ffffff")
-    _COL_PARTNER_BG = QColor("#c17d11")
-    _COL_PARTNER_FG = QColor("#ffffff")
-    _COL_CLEAR      = QColor(0, 0, 0, 0)
+    _COL_CLEAR = QColor(0, 0, 0, 0)
 
-    def __init__(self, parent, entry: Optional[dict], *, stacked: bool = False, _pairs: Optional[list[list[str]]] = None):
+    def __init__(self, parent, entry: Optional[dict], *, stacked: bool = False,
+                 _pairs: Optional[list[list[str]]] = None):
         super().__init__(parent)
-        self.result: dict = {}
+        self.result: dict           = {}
         self.pairs: list[list[str]] = list(_pairs) if _pairs is not None else []
-        self.stacked: bool = stacked
-        self._suppress_sync: bool = False
-        self._entry_snapshot: dict = entry or {}
+        self.stacked: bool          = stacked
+        self._suppress_sync: bool   = False
+        self._entry_snapshot: dict  = entry or {}
         self._show_full_paths: bool = False
-        self._pairs_provided: bool = _pairs is not None
+        self._pairs_provided: bool  = _pairs is not None
+        t = current_theme()
+        self._COL_ACTIVE_BG  = QColor(t["info"])
+        self._COL_ACTIVE_FG  = QColor(t["bg"])
+        self._COL_PARTNER_BG = QColor(t["warning"])
+        self._COL_PARTNER_FG = QColor(t["bg"])
         self.setWindowTitle("Edit Entry" if entry else "New Entry")
         self._build(self._entry_snapshot)
 
@@ -204,8 +221,10 @@ class EntryDialog(QDialog):
             return 1200, 800
         pad = 80
         if self.stacked:
-            return max(1110, min(max_px + 140, screen.width() - pad)), max(900,  min(screen.height() - pad, 1100)) + 10
-        return max(1200, min(max_px * 2 + 150, screen.width() - pad)), max(800,  min(screen.height() - pad, 950)) + 10
+            return (max(1110, min(max_px + 140, screen.width() - pad)),
+                    max(900, min(screen.height() - pad, 1100)) + 10)
+        return (max(1200, min(max_px * 2 + 150, screen.width() - pad)),
+                max(800, min(screen.height() - pad, 950)) + 10)
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -216,20 +235,21 @@ class EntryDialog(QDialog):
 
     def _build(self, e: dict) -> None:
         from PyQt6.QtWidgets import QAbstractItemView
-        t = current_theme()
+        t  = current_theme()
+        fs = font_scale()
 
         src_paths = _norm_paths(e.get("source", []))
         dst_paths = _norm_paths(e.get("destination", []))
         if not self._pairs_provided and not self.pairs:
-            n = max(len(src_paths), len(dst_paths))
-            self.pairs = [[src_paths[i] if i < len(src_paths) else "", dst_paths[i] if i < len(dst_paths) else ""] for i
-                          in range(n)]
+            n          = max(len(src_paths), len(dst_paths))
+            self.pairs = [[src_paths[i] if i < len(src_paths) else "",
+                           dst_paths[i] if i < len(dst_paths) else ""] for i in range(n)]
 
         root = QVBoxLayout(self)
         root.setSpacing(8)
         root.setContentsMargins(12, 12, 12, 12)
 
-        title_row = QHBoxLayout()
+        title_row  = QHBoxLayout()
         title_row.addWidget(_hdr_label("Edit Entry" if e else "New Entry"))
         title_row.addStretch()
         layout_btn = QPushButton("Side-by-Side View" if self.stacked else "Stacked View")
@@ -249,17 +269,20 @@ class EntryDialog(QDialog):
         header_keys = list(S.headers.keys())
         self.hdr.addItems(header_keys)
         saved_hdr = e.get("header", "")
-        self.hdr.setCurrentText(saved_hdr) if saved_hdr else (self.hdr.setCurrentIndex(0) if header_keys else None)
+        if saved_hdr:
+            self.hdr.setCurrentText(saved_hdr)
+        elif header_keys:
+            self.hdr.setCurrentIndex(0)
 
         self.title_edit = QLineEdit(e.get("title", ""))
         self.title_edit.setPlaceholderText("Entry name (use <br> for line break)")
         form.addRow("Header:", self.hdr)
-        form.addRow("Title:", self.title_edit)
+        form.addRow("Title:",  self.title_edit)
         root.addLayout(form)
         root.addWidget(_sep())
 
-        lw_style = ("QListWidget { font-family:monospace;font-size:15px; }"
-                    "QListWidget::item { padding:6px 6px; }")
+        lw_style = (f"QListWidget {{ font-family:monospace;font-size:{fs['xl']}px; }}"
+                    f"QListWidget::item {{ padding:6px 6px; }}")
         self._src_list = QListWidget()
         self._dst_list = QListWidget()
         for lw in (self._src_list, self._dst_list):
@@ -270,7 +293,7 @@ class EntryDialog(QDialog):
             lw.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
 
         hint_html = (
-            f"<div style='color:{t['muted']};font-family:monospace;font-size:14px;"
+            f"<div style='color:{t['muted']};font-family:monospace;font-size:{fs['sm']}px;"
             f"line-height:180%;text-align:center;'>"
             f"Click <b style='color:{t['accent']};'>'➕ Add Pair'</b> to add source and destination pairs."
             f"<table cellspacing='0' cellpadding='4' align='center' style='text-align:left;'>"
@@ -280,7 +303,7 @@ class EntryDialog(QDialog):
             f"<tr><td style='white-space:nowrap;padding-right:20px;vertical-align:top;'>Local folder:</td>"
             f"    <td>~/.config/app/<br>"
             f"        <span style='color:{t['muted']};'>or /home/user/.config/app/</span></td></tr>"
-            f"<tr><td colspan='2' style='font-size:12px;padding-top:4px;padding-bottom:8px;'>"
+            f"<tr><td colspan='2' style='font-size:{fs['xs']}px;padding-top:4px;padding-bottom:8px;'>"
             f"(Replace 'user' with your actual username if using full paths)<br></td></tr>"
             f"<tr><td style='white-space:nowrap;padding-right:20px;vertical-align:top;'>Samba Shares:</td>"
             f"    <td>smb://192.168.0.53/share/data/</td></tr>"
@@ -301,7 +324,6 @@ class EntryDialog(QDialog):
             _hl.setGeometry(_lw.rect())
 
         self._src_list.resizeEvent = _src_resize
-
         self._populate_lists()
 
         self._src_list.currentRowChanged.connect(lambda r: self._on_selection(self._src_list, self._dst_list, r))
@@ -310,20 +332,20 @@ class EntryDialog(QDialog):
         self._dst_list.itemDoubleClicked.connect(lambda item: self._edit_pair(self._dst_list.row(item)))
 
         def _panel(_label: str, _lw: QListWidget) -> QWidget:
-            w = QWidget()
+            w  = QWidget()
             vl = QVBoxLayout(w)
             vl.setContentsMargins(0, 0, 0, 0)
             vl.setSpacing(4)
             lbl = QLabel(_label)
-            lbl.setStyleSheet(f"font-weight:bold;font-size:16px;color:{t['accent']};padding:1px 0;")
+            lbl.setStyleSheet(f"font-weight:bold;font-size:{fs['lg']}px;color:{t['accent']};padding:1px 0;")
             vl.addWidget(lbl)
             vl.addWidget(_lw, 1)
             return w
 
-        orientation = Qt.Orientation.Vertical if self.stacked else Qt.Orientation.Horizontal
+        orientation    = Qt.Orientation.Vertical if self.stacked else Qt.Orientation.Horizontal
         self._splitter = QSplitter(orientation)
         self._splitter.setChildrenCollapsible(False)
-        self._splitter.addWidget(_panel("Source", self._src_list))
+        self._splitter.addWidget(_panel("Source",      self._src_list))
         self._splitter.addWidget(_panel("Destination", self._dst_list))
         self._splitter.setSizes([10000, 10000])
         root.addWidget(self._splitter, 1)
@@ -332,11 +354,11 @@ class EntryDialog(QDialog):
         tb = QHBoxLayout()
         tb.setSpacing(6)
         for label, tip, fn in [
-            ("➕ Add Pair", "Add a new source/destination pair", self._add_pair),
-            ("✏️ Edit", "Edit selected pair (or double-click)", self._edit_selected),
-            ("🗑 Remove", "Remove selected pair", self._remove_selected),
-            ("▲ Move Up", "Move selected pair up", self._move_up),
-            ("▼ Move Down", "Move selected pair down", self._move_down),
+            ("➕ Add Pair",  "Add a new source/destination pair",   self._add_pair),
+            ("✏️ Edit",      "Edit selected pair (or double-click)", self._edit_selected),
+            ("🗑 Remove",    "Remove selected pair",                 self._remove_selected),
+            ("▲ Move Up",   "Move selected pair up",                self._move_up),
+            ("▼ Move Down", "Move selected pair down",              self._move_down),
         ]:
             b = QPushButton(label)
             b.setToolTip(tip)
@@ -354,9 +376,9 @@ class EntryDialog(QDialog):
 
         root.addWidget(_sep())
         flags = QHBoxLayout()
-        self.no_backup = QCheckBox("Exclude from backup")
+        self.no_backup  = QCheckBox("Exclude from backup")
         self.no_restore = QCheckBox("Exclude from restore")
-        self.no_backup.setChecked(e.get("details", {}).get("no_backup", False))
+        self.no_backup.setChecked( e.get("details", {}).get("no_backup",  False))
         self.no_restore.setChecked(e.get("details", {}).get("no_restore", False))
         flags.addWidget(self.no_backup)
         flags.addSpacing(16)
@@ -371,7 +393,7 @@ class EntryDialog(QDialog):
         self._src_list.clear()
         self._dst_list.clear()
         expand = os.path.expanduser
-        fmt = (lambda p: expand(p)) if self._show_full_paths else (lambda p: apply_replacements(expand(p)))
+        fmt    = expand if self._show_full_paths else (lambda p: apply_replacements(expand(p)))
         for src, dst in self.pairs:
             self._src_list.addItem(fmt(src))
             self._dst_list.addItem(fmt(dst))
@@ -390,11 +412,10 @@ class EntryDialog(QDialog):
             item.setData(Qt.ItemDataRole.ForegroundRole, fg)
 
     def _clear_all_colours(self) -> None:
-        transparent = QColor(0, 0, 0, 0)
         for lw in (self._src_list, self._dst_list):
             fg = lw.palette().color(lw.foregroundRole())
             for i in range(lw.count()):
-                lw.item(i).setData(Qt.ItemDataRole.BackgroundRole, transparent)
+                lw.item(i).setData(Qt.ItemDataRole.BackgroundRole, self._COL_CLEAR)
                 lw.item(i).setData(Qt.ItemDataRole.ForegroundRole, fg)
 
     def _on_selection(self, active: QListWidget, partner: QListWidget, row: int) -> None:
@@ -413,8 +434,8 @@ class EntryDialog(QDialog):
         from PyQt6.QtGui import QFont, QFontMetrics
         from PyQt6.QtWidgets import QApplication
 
-        scr    = QApplication.primaryScreen()
-        screen = scr.availableGeometry() if scr else None
+        scr       = QApplication.primaryScreen()
+        screen    = scr.availableGeometry() if scr else None
         dlg_w     = max(700, min((screen.width() - 80) if screen else 900, 1200))
         dlg_max_h = (screen.height() - 80) if screen else 800
 
@@ -424,10 +445,10 @@ class EntryDialog(QDialog):
         if screen:
             dlg.setMaximumSize(screen.width() - 40, dlg_max_h)
 
-        mono    = QFont("monospace", 13)
-        fm      = QFontMetrics(mono)
-        line_h  = fm.height() + 6
-        t       = current_theme()
+        mono   = QFont("monospace", 13)
+        fm     = QFontMetrics(mono)
+        line_h = fm.height() + 6
+        t      = current_theme()
 
         def _make_editor(prefill: str, placeholder: str) -> QPlainTextEdit:
             ed = QPlainTextEdit(prefill)
@@ -437,15 +458,17 @@ class EntryDialog(QDialog):
             ed.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
             ed.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
             ed.setPlaceholderText(placeholder)
-            ed.setStyleSheet(f"QPlainTextEdit{{background:{t['bg2']};color:{t['text']};"
-                             f"border:1px solid {t['header_sep']};border-radius:4px;padding:6px}}"
-                             f"QPlainTextEdit:focus{{border:1px solid {t['accent']};}}")
+            ed.setStyleSheet(
+                f"QPlainTextEdit{{background:{t['bg2']};color:{t['text']};"
+                f"border:1px solid {t['header_sep']};border-radius:4px;padding:6px}}"
+                f"QPlainTextEdit:focus{{border:1px solid {t['accent']};}}"
+            )
             ph_lines = placeholder.count("\n") + 1
 
             def _adjust():
-                doc_h  = int(ed.document().size().height())
-                eff    = max(doc_h, ph_lines if not ed.toPlainText() else 1)
-                new_h  = max(min(eff * line_h + 12, dlg_max_h // 3), line_h + 12)
+                doc_h = int(ed.document().size().height())
+                eff   = max(doc_h, ph_lines if not ed.toPlainText() else 1)
+                new_h = max(min(eff * line_h + 12, dlg_max_h // 3), line_h + 12)
                 ed.setFixedHeight(new_h)
                 dlg.adjustSize()
 
@@ -453,7 +476,7 @@ class EntryDialog(QDialog):
             _adjust()
             return ed
 
-        vl  = QVBoxLayout(dlg)
+        vl = QVBoxLayout(dlg)
         vl.setSpacing(10)
         vl.setContentsMargins(16, 16, 16, 16)
 
@@ -468,8 +491,10 @@ class EntryDialog(QDialog):
         dst_ed = _path_row("Destination path:", dst, "Enter path or use '📄 File' or '📁 Directory'")
 
         vl.addWidget(_sep())
-        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
-        bb.button(QDialogButtonBox.StandardButton.Ok).setText("OK")
+        bb     = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
+        ok_btn = bb.button(QDialogButtonBox.StandardButton.Ok)
+        if ok_btn:
+            ok_btn.setText("OK")
         bb.accepted.connect(dlg.accept)
         bb.rejected.connect(dlg.reject)
         vl.addWidget(bb)
@@ -523,14 +548,18 @@ class EntryDialog(QDialog):
     def _move_down(self) -> None:
         row = self._src_list.currentRow()
         if 0 <= row < len(self.pairs) - 1:
-            self.pairs[row + 1], self.pairs[row] = self.pairs[row], self.pairs[row + 1]
+            self.pairs[row], self.pairs[row + 1] = self.pairs[row + 1], self.pairs[row]
             self._populate_lists()
             self._src_list.setCurrentRow(row + 1)
 
     def _toggle_layout(self) -> None:
-        self._entry_snapshot = {**self._entry_snapshot, "header":  self.hdr.currentText().strip(),
-                                "title":   self.title_edit.text().strip(),
-                                "details": {"no_backup": self.no_backup.isChecked(), "no_restore": self.no_restore.isChecked()}}
+        self._entry_snapshot = {
+            **self._entry_snapshot,
+            "header":  self.hdr.currentText().strip(),
+            "title":   self.title_edit.text().strip(),
+            "details": {"no_backup":  self.no_backup.isChecked(),
+                        "no_restore": self.no_restore.isChecked()},
+        }
         self.stacked = not self.stacked
         self.done(2)
 
@@ -541,19 +570,24 @@ class EntryDialog(QDialog):
             QMessageBox.warning(self, "Error", "Header and title are required fields.")
             return
 
-        valid = [(p[0].strip(), p[1].strip()) for p in self.pairs if p[0].strip() and p[1].strip()]
-        if not valid:
+        valid_pairs = [(s.strip(), d.strip()) for s, d in self.pairs if s.strip() and d.strip()]
+        if not valid_pairs:
             QMessageBox.warning(self, "Error", "At least one source and one destination path are required.")
             return
 
         if hdr not in S.headers:
             S.headers[hdr] = {"inactive": False, "color": "#ffffff"}
 
-        self.result = {"header": hdr,
-                       "title": title,
-                       "source": [p[0] for p in valid],
-                       "destination": [p[1] for p in valid],
-                       "details": {"no_backup":  self.no_backup.isChecked(), "no_restore": self.no_restore.isChecked()}}
+        self.result = {
+            "header":      hdr,
+            "title":       title,
+            "source":      [s for s, _ in valid_pairs],
+            "destination": [d for _, d in valid_pairs],
+            "details": {
+                "no_backup":  self.no_backup.isChecked(),
+                "no_restore": self.no_restore.isChecked(),
+            },
+        }
         self.accept()
 
 
@@ -595,7 +629,6 @@ class MountDialog(QDialog):
         form.addRow(self.name)
 
         self.mount_path = _field("mount_path", "e.g. smb://192.168.0.38/Backup Drive/")
-
         form.addRow(_info_label("󰔨 Mount path (optional)",
                                 "<u>Mount Path (optional)</u><br><br>"
                                 "Only needed if this drive cannot be detected automatically.<br><br>"
@@ -603,27 +636,25 @@ class MountDialog(QDialog):
                                 "automatically under <code>/run/media/&lt;user&gt;/&lt;name&gt;</code>, "
                                 "<code>/media/&lt;user&gt;/&lt;name&gt;</code> or <code>/mnt/&lt;name&gt;</code>"
                                 " using the name from above.<br><br>"
-                                "<i>Fill in</i> when the drive is mounted elsewhere (sshfs, KDE Connect, etc.).<br>"
-                                "The path must match the beginning of the paths in your backup entries.<br><br>"
-                                "<small>Allowed commands: mount, umount,  mount.cifs, udisksctl, kdeconnect-cli, "
-                                "sshfs, fusermount3, fusermount</small>"))
+                                "<i>Fill in</i> when the drive is mounted elsewhere (sshfs, KDE Connect, etc.)."))
         form.addRow(self.mount_path)
 
         self.mount = _field("mount_command", "udisksctl mount --block-device /dev/sdX1")
-
         form.addRow(_info_label("󰔨 Mount command:",
                                 "<u>Mount Command</u><br><br>"
-                                "The command is executed non-interactively — <b>no password prompt will appear</b>.<br><br>"
-                                "<b>sshfs:</b> SSH connections must use key-based authentication.<br>"
+                                "The command is executed non-interactively — <b>no password prompt will appear</b>."
+                                "<br><br><b>sshfs:</b> SSH connections must use key-based authentication.<br>"
                                 "Set up a key pair first:<br>"
                                 "<code>ssh-keygen -t ed25519 &amp;&amp; ssh-copy-id user@host</code><br><br>"
                                 "Example: <code>sshfs user@host:/remote/path ~/local/mountpoint</code><br><br>"
                                 "<b>udisksctl / mount:</b> Work as usual for local drives.<br>"
-                                "<b>kdeconnect-cli:</b> The device must already be paired and reachable."))
+                                "<b>kdeconnect-cli:</b> The device must already be paired and reachable.<br><br>"
+                                "<small>Allowed commands: mount, umount, mount.cifs, udisksctl, kdeconnect-cli, "
+                                "sshfs, fusermount3, fusermount</small>"))
         form.addRow(self.mount)
 
-        self.unmnt = _field("unmount_command", "udisksctl unmount --block-device /dev/sdX1")
-        lbl_unmnt = QLabel("Unmount command:")
+        self.unmnt    = _field("unmount_command", "udisksctl unmount --block-device /dev/sdX1")
+        lbl_unmnt     = QLabel("Unmount command:")
         lbl_unmnt.setAlignment(Qt.AlignmentFlag.AlignCenter)
         form.addRow(lbl_unmnt)
         form.addRow(self.unmnt)
@@ -637,10 +668,12 @@ class MountDialog(QDialog):
         if not self.name.text().strip():
             QMessageBox.warning(self, "Error", "Name is a required field.")
             return
-        self.result = {"drive_name": self.name.text().strip(),
-                       "mount_path": self.mount_path.text().strip(),
-                       "mount_command": self.mount.text().strip(),
-                       "unmount_command": self.unmnt.text().strip()}
+        self.result = {
+            "drive_name":      self.name.text().strip(),
+            "mount_path":      self.mount_path.text().strip(),
+            "mount_command":   self.mount.text().strip(),
+            "unmount_command": self.unmnt.text().strip(),
+        }
         self.accept()
 
 
@@ -659,12 +692,14 @@ class HeaderSettingsDialog(QDialog):
         layout.addWidget(_sep())
         self.item_list = QListWidget()
         layout.addWidget(self.item_list, 1)
-        layout.addLayout(_btn_row([("🆕 New", self._new),
-                                   ("🎨 Color", self._color),
-                                   ("⏸ Toggle active", self._toggle),
-                                   ("✕ Delete", self._delete),
-                                   ("↑ Up", self._move_up),
-                                   ("↓ Down", self._move_down)]))
+        layout.addLayout(_btn_row([
+            ("🆕 New",         self._new),
+            ("🎨 Color",       self._color),
+            ("⏸ Toggle active", self._toggle),
+            ("✕ Delete",       self._delete),
+            ("↑ Up",           self._move_up),
+            ("↓ Down",         self._move_down),
+        ]))
         layout.addWidget(_sep())
         layout.addWidget(_ok_cancel_buttons(self, self.accept, "Save && Close"))
         self._refresh()
@@ -699,7 +734,7 @@ class HeaderSettingsDialog(QDialog):
         if name in S.headers:
             QMessageBox.warning(self, "Duplicate", f"Header '{name}' already exists.")
             return
-        col = QColorDialog.getColor(QColor("#7dcfff"), self, "Choose header colour")
+        col = QColorDialog.getColor(QColor(current_theme()["accent"]), self, "Choose header colour")
         S.headers[name] = {"inactive": False, "color": col.name() if col.isValid() else "#ffffff"}
         self.was_changed = True
         self._refresh()
@@ -730,9 +765,10 @@ class HeaderSettingsDialog(QDialog):
         if not name:
             return
         if QMessageBox.question(self, "Delete", f"Delete header '{name}' and all its entries?",
-                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) \
+                == QMessageBox.StandardButton.Yes:
             del S.headers[name]
-            S.entries = [e for e in S.entries if e["header"] != name]
+            S.entries    = [e for e in S.entries if e["header"] != name]
             self.was_changed = True
             self._refresh()
 
@@ -740,18 +776,18 @@ class HeaderSettingsDialog(QDialog):
         name = self._selected_name()
         if not name:
             return False
-        keys = list(S.headers.keys())
-        idx = keys.index(name)
-        new = idx + direction
-        if not (0 <= new < len(keys)):
+        keys    = list(S.headers.keys())
+        idx     = keys.index(name)
+        new_idx = idx + direction
+        if not (0 <= new_idx < len(keys)):
             return False
-        keys[idx], keys[new] = keys[new], keys[idx]
+        keys[idx], keys[new_idx] = keys[new_idx], keys[idx]
         S.headers = {k: S.headers[k] for k in keys}
         self._refresh()
-        self.item_list.setCurrentRow(new)
+        self.item_list.setCurrentRow(new_idx)
         return True
 
-    def _move_up(self) -> None:
+    def _move_up(self)   -> None:
         if self._move_header(-1): self.was_changed = True
 
     def _move_down(self) -> None:
@@ -772,7 +808,8 @@ class MountsDialog(_ListDialog):
         out = get_mount_output()
         for opt in S.mount_options:
             mounted = is_mounted(opt, out)
-            item    = QListWidgetItem(f"  {'●' if mounted else '○'}  {opt.get('drive_name', '?')}")
+            status  = "●" if mounted else "○"
+            item    = QListWidgetItem(f"  {status}  {opt.get('drive_name', '?')}")
             item.setForeground(QColor(t["green"] if mounted else t["text_dim"]))
             item.setData(Qt.ItemDataRole.UserRole, opt)
             self.item_list.addItem(item)
@@ -813,6 +850,7 @@ class ProfilesDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Profile Manager")
         self.setMinimumSize(700, 520)
+        self.was_changed: bool = False
 
         t      = current_theme()
         layout = QVBoxLayout(self)
@@ -828,18 +866,22 @@ class ProfilesDialog(QDialog):
         self.item_list.itemDoubleClicked.connect(self._load)
         layout.addWidget(self.item_list, 1)
 
-        layout.addLayout(_btn_row([("▶ Load", self._load),
-                                   ("🆕 New", self._new),
-                                   ("⎘ Duplicate", self._copy),
-                                   ("✕ Delete", self._del)]))
-
-        layout.addLayout(_btn_row([("⬆ Import", self._import), ("⬇ Export",  self._export)]))
+        layout.addLayout(_btn_row([("▶ Load", self._load), ("🆕 New",      self._new),
+                                   ("⎘ Duplicate", self._copy), ("✕ Delete", self._del)]))
+        layout.addLayout(_btn_row([("⬆ Import", self._import), ("⬇ Export", self._export)]))
         layout.addWidget(_sep())
         close_btn = QPushButton("✕ Close")
         close_btn.clicked.connect(self.accept)
         layout.addWidget(close_btn)
-        self.was_changed: bool = False
         self._refresh()
+
+    def _activate_profile(self, name: str) -> bool:
+        if load_profile(_PROFILES_DIR / f"{name}.json"):
+            save_profile()
+            self.was_changed = True
+            self._refresh()
+            return True
+        return False
 
     def _refresh(self) -> None:
         t   = current_theme()
@@ -876,11 +918,7 @@ class ProfilesDialog(QDialog):
             except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
                 logger.warning("_load: could not clear is_default from '%s': %s", old_path.name, exc)
 
-        new_path = _PROFILES_DIR / f"{name}.json"
-        if load_profile(new_path):
-            save_profile()
-            self.was_changed = True
-            self._refresh()
+        if self._activate_profile(name):
             QMessageBox.information(self, "Profile Loaded", f"Profile '{name}' is now active.")
         else:
             QMessageBox.critical(self, "Error", f"Could not load profile '{name}'.")
@@ -890,22 +928,30 @@ class ProfilesDialog(QDialog):
         if not name:
             return
         dest = _PROFILES_DIR / f"{name}.json"
-        if dest.exists() and QMessageBox.question(self, "Overwrite?", f"Profile '{name}' already exists. Overwrite it?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+        if dest.exists() and QMessageBox.question(
+                self, "Overwrite?", f"Profile '{name}' already exists. Overwrite it?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
-        S.profile_name = name
-        S.entries = []; S.headers = {}; S.mount_options = []
-        S.system_manager_ops = []
-        S.system_files = []
-        S.basic_packages = [];  S.aur_packages = []; S.specific_packages = []
-        S.user_shell = "bash"
-        S.ui = {"theme": "Tokyo Night", "font_family": "", "font_size": 14,
-                "backup_window_columns": 2, "restore_window_columns": 2, "settings_window_columns": 2}
+        fresh = State()
+        S.profile_name        = name
+        S.entries             = fresh.entries
+        S.headers             = fresh.headers
+        S.mount_options       = fresh.mount_options
+        S.system_manager_ops  = fresh.system_manager_ops
+        S.system_files        = fresh.system_files
+        S.basic_packages      = fresh.basic_packages
+        S.aur_packages        = fresh.aur_packages
+        S.specific_packages   = fresh.specific_packages
+        S.user_shell          = fresh.user_shell
+        S.ui                  = dict(fresh.ui)
         save_profile()
         self.was_changed = True
         self._refresh()
-        QMessageBox.information(self, "Profile Created", f"Blank profile '{name}' created and is now active.\n\n"
-                                                         "Go to Settings → Header Settings to add headers before creating entries.")
+        QMessageBox.information(
+            self, "Profile Created",
+            f"Blank profile '{name}' created and is now active.\n\n"
+            "Go to Settings → Header Settings to add headers before creating entries.",
+        )
 
     def _copy(self) -> None:
         src_name = self._selected_name() or S.profile_name
@@ -923,8 +969,9 @@ class ProfilesDialog(QDialog):
             QMessageBox.warning(self, "Duplicate", f"Source file for '{src_name}' not found.")
             return
         dest = _PROFILES_DIR / f"{name}.json"
-        if dest.exists() and QMessageBox.question(self, "Overwrite?", f"Profile '{name}' already exists. Overwrite it?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+        if dest.exists() and QMessageBox.question(
+                self, "Overwrite?", f"Profile '{name}' already exists. Overwrite it?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
         shutil.copy2(src_path, dest)
         self.was_changed = True
@@ -939,7 +986,8 @@ class ProfilesDialog(QDialog):
             QMessageBox.warning(self, "Delete Profile", "Cannot delete the currently active profile.")
             return
         if QMessageBox.question(self, "Delete Profile", f"Permanently delete profile '{name}'?",
-                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) \
+                == QMessageBox.StandardButton.Yes:
             try:
                 (_PROFILES_DIR / f"{name}.json").unlink(missing_ok=True)
                 self.was_changed = True
@@ -948,8 +996,9 @@ class ProfilesDialog(QDialog):
                 QMessageBox.critical(self, "Error", f"Could not delete profile: {exc}")
 
     def _import(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Import profile(s)", str(_HOME),
-                                              "Profile files (*.json *.tar.gz *.tgz);;JSON (*.json);;Archive (*.tar.gz *.tgz)")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import profile(s)", str(_HOME),
+            "Profile files (*.json *.tar.gz *.tgz);;JSON (*.json);;Archive (*.tar.gz *.tgz)")
         if not path:
             return
         _PROFILES_DIR.mkdir(parents=True, exist_ok=True)
@@ -960,17 +1009,18 @@ class ProfilesDialog(QDialog):
         if not name:
             return
         dest = _PROFILES_DIR / f"{name}.json"
-        if dest.exists() and QMessageBox.question(self, "Overwrite?", f"Profile '{name}' already exists. Overwrite it?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+        if dest.exists() and QMessageBox.question(
+                self, "Overwrite?", f"Profile '{name}' already exists. Overwrite it?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
         shutil.copy2(path, dest)
         self._refresh()
-        if QMessageBox.question(self, "Import Complete", f"'{name}' imported successfully.\nLoad it now?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
-            if load_profile(_PROFILES_DIR / f"{name}.json"):
-                save_profile()
-                self.was_changed = True
-                self._refresh()
+        if QMessageBox.question(self, "Import Complete",
+                                f"'{name}' imported successfully.\nLoad it now?",
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) \
+                == QMessageBox.StandardButton.Yes:
+            if not self._activate_profile(name):
+                QMessageBox.critical(self, "Error", f"Could not load profile '{name}'.")
 
     def _import_archive(self, path: str) -> None:
         try:
@@ -988,8 +1038,9 @@ class ProfilesDialog(QDialog):
                     dest      = _PROFILES_DIR / f"{stem}.json"
                     overwrite = True
                     if dest.exists():
-                        ans = QMessageBox.question(self, "Overwrite?", f"Profile '{stem}' already exists. Overwrite?",
-                                                   QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel)
+                        ans = QMessageBox.question(
+                            self, "Overwrite?", f"Profile '{stem}' already exists. Overwrite?",
+                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel)
                         if ans == QMessageBox.StandardButton.Cancel:
                             break
                         overwrite = ans == QMessageBox.StandardButton.Yes
@@ -1010,12 +1061,11 @@ class ProfilesDialog(QDialog):
         if skipped:  parts.append("Skipped:\n  "  + "\n  ".join(skipped))
         QMessageBox.information(self, "Import Complete", "\n\n".join(parts) or "Nothing imported.")
 
-        if len(imported) == 1 and QMessageBox.question(self, "Load Profile", f"Load '{imported[0]}' now?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
-            if load_profile(_PROFILES_DIR / f"{imported[0]}.json"):
-                save_profile()
-                self.was_changed = True
-                self._refresh()
+        if len(imported) == 1 and QMessageBox.question(
+                self, "Load Profile", f"Load '{imported[0]}' now?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+            if not self._activate_profile(imported[0]):
+                QMessageBox.critical(self, "Error", f"Could not load profile '{imported[0]}'.")
 
     def _export(self) -> None:
         profiles = list_profiles()
@@ -1029,7 +1079,7 @@ class ProfilesDialog(QDialog):
             from PyQt6.QtWidgets import QButtonGroup, QRadioButton
             choice_dlg = QDialog(self)
             choice_dlg.setWindowTitle("Export — What to export?")
-            vl = QVBoxLayout(choice_dlg)
+            vl     = QVBoxLayout(choice_dlg)
             vl.addWidget(QLabel("What would you like to export?"))
             rb_sel = QRadioButton(f"Selected profile only  ({selected_name})  →  .json")
             rb_all = QRadioButton(f"All {len(profiles)} profiles  →  .tar.gz archive")
@@ -1048,9 +1098,10 @@ class ProfilesDialog(QDialog):
             export_all = rb_all.isChecked()
 
         if export_all:
-            ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
-            path, _ = QFileDialog.getSaveFileName(self, "Export all profiles", str(_HOME / f"backup_helper_profiles_{ts}.tar.gz"),
-                                                  "Archive (*.tar.gz)")
+            ts      = datetime.now().strftime("%Y%m%d_%H%M%S")
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Export all profiles",
+                str(_HOME / f"backup_helper_profiles_{ts}.tar.gz"), "Archive (*.tar.gz)")
             if not path:
                 return
             if not path.endswith(".tar.gz"):
@@ -1081,7 +1132,8 @@ class ProfilesDialog(QDialog):
             else:
                 QMessageBox.warning(self, "Export", f"Profile file for '{name}' not found.")
                 return
-        path, _ = QFileDialog.getSaveFileName(self, "Export profile", str(_HOME / f"{name}.json"), "JSON (*.json)")
+        path, _ = QFileDialog.getSaveFileName(self, "Export profile",
+                                              str(_HOME / f"{name}.json"), "JSON (*.json)")
         if path:
             shutil.copy2(src, path)
             QMessageBox.information(self, "Exported", f"Profile '{name}' exported to:\n{path}")
@@ -1091,14 +1143,14 @@ class LogViewer(_TextViewDialog):
 
     def __init__(self, parent):
         t = current_theme()
-        super().__init__(parent, "Log Viewer", (1350, 950), extra_buttons=[("🔄 Refresh", self._load), ("🗑 Clear", self._clear)])
-
+        super().__init__(parent, "Log Viewer", (1350, 950),
+                         extra_buttons=[("🔄 Refresh", self._load), ("🗑 Clear", self._clear)])
         top = QWidget()
         top.setStyleSheet(f"background:{t['bg2']};border-bottom:1px solid {t['header_sep']};")
         tl  = QHBoxLayout(top)
         tl.setContentsMargins(14, 8, 14, 8)
         tl.addStretch()
-        tl.addWidget(_hdr_label("📋  Log File"))
+        tl.addWidget(_hdr_label("📋 Log File"))
         tl.addStretch(1)
         tl.addWidget(QLabel(apply_replacements(str(_LOG_FILE))))
         layout = self.layout()
@@ -1122,7 +1174,8 @@ class LogViewer(_TextViewDialog):
 
     def _clear(self) -> None:
         if QMessageBox.question(self, "Clear log", "Permanently delete all log entries?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) \
+                == QMessageBox.StandardButton.Yes:
             try:
                 _LOG_FILE.write_text("", encoding="utf-8")
             except OSError as e:
@@ -1135,14 +1188,15 @@ class SysInfoDialog(_TextViewDialog):
     done_sig = pyqtSignal(str)
 
     def __init__(self, parent):
-        super().__init__(parent, "System Information", (1350, 800), font_size=16)
+        super().__init__(parent, "System Information", (1350, 825), font_size=font_sz(2))
         self.view.setPlainText("⏳ Loading system information…")
         self.done_sig.connect(self.view.setPlainText)
         threading.Thread(target=self._run, daemon=True).start()
 
     def _run(self) -> None:
         try:
-            r = subprocess.run(["inxi", "-SMCGAz", "--no-host", "--color", "0"], capture_output=True, text=True, timeout=15,
+            r = subprocess.run(["inxi", "-SMCGAz", "--no-host", "--color", "0"],
+                               capture_output=True, text=True, timeout=15,
                                env={**os.environ, "LANG": "C"}, check=False)
             self.done_sig.emit(r.stdout.strip() or r.stderr.strip() or "No output received from inxi.")
         except FileNotFoundError:
@@ -1156,3 +1210,10 @@ class SysInfoDialog(_TextViewDialog):
             self.done_sig.emit("System information request timed out.")
         except Exception as exc:
             self.done_sig.emit(f"An unexpected error occurred: {exc}")
+
+    def closeEvent(self, event) -> None:
+        try:
+            self.done_sig.disconnect()
+        except RuntimeError:
+            pass
+        super().closeEvent(event)

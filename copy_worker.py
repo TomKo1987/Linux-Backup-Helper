@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
 )
 
 from drive_utils import is_smb
-from themes import current_theme
+from themes import current_theme, font_sz
 from state import apply_replacements, logger
 
 _CHUNK             = 8 * 1024 * 1024
@@ -169,18 +169,18 @@ def _kernel_copy(rfd: int, wfd: int, size: int, cancel: threading.Event) -> None
         remaining -= len(buf)
 
 
-def _copy_file(src: str, dst: str, cancel: threading.Event) -> tuple[str, str]:
+def _copy_file(src: str, dst: str, cancel: threading.Event) -> tuple[str, str, int]:
     tmp = f"{dst}.part.{os.getpid()}.{threading.get_ident()}"
     try:
         if cancel.is_set():
-            return "skip", ""
+            return "skip", "", 0
 
         st = os.stat(src)
 
         try:
             dst_st = os.stat(dst)
             if st.st_size == dst_st.st_size and dst_st.st_mtime >= st.st_mtime:
-                return "skip", "Up to date"
+                return "skip", "Up to date", st.st_size
         except FileNotFoundError:
             pass
 
@@ -210,15 +210,15 @@ def _copy_file(src: str, dst: str, cancel: threading.Event) -> tuple[str, str]:
 
         os.utime(tmp, (st.st_atime, st.st_mtime))
         os.replace(tmp, dst)
-        return "ok", dst
+        return "ok", dst, st.st_size
 
     except InterruptedError:
         _unlink(tmp)
-        return "skip", ""
+        return "skip", "", 0
     except Exception as exc:
         _unlink(tmp)
         msg = f"OS Error: {exc.strerror}" if isinstance(exc, OSError) else f"Unexpected: {exc}"
-        return "error", msg
+        return "error", msg, 0
 
 
 def _scan_local(scan_jobs, cancel, progress_cb=None) -> tuple[list, list, list]:
@@ -384,8 +384,6 @@ class _SmbClient:
             return False, "timeout"
         except Exception as exc:
             return False, str(exc)
-        finally:
-            env.pop("PASSWD", None)
 
     def probe(self) -> str:
         if self._user and self._pw is not None:
@@ -453,8 +451,6 @@ class _SmbClient:
         except Exception as exc:
             logger.debug("SMB ls index failed: %s", exc)
             return {}
-        finally:
-            env.pop("PASSWD", None)
         return index
 
 
@@ -1068,12 +1064,11 @@ class CopyWorker(QThread):
         tracker.emit_all(self.entry_status)
         return flusher.done, flusher.copied, flusher.skipped, flusher.errors
 
-    def _run_local(self, pairs, done_in: int, total: int, copied_in: int,
-                   skipped_in: int, errors_in: int, cancel,
-                   pre_counts: dict | None = None) -> tuple[int, int, int, int]:
+    def _run_local(self, pairs, done_in: int, total: int, copied_in: int, skipped_in: int, errors_in: int,
+                   cancel, pre_counts: dict | None = None) -> tuple[int, int, int, int]:
+
         flusher = _Flusher(self.batch_update, total,
-                           done=done_in, copied=copied_in,
-                           skipped=skipped_in, errors=errors_in)
+                           done=done_in, copied=copied_in, skipped=skipped_in, errors=errors_in)
         tracker = _EntryTracker()
         if pre_counts:
             tracker.merge_pre(pre_counts)
@@ -1088,8 +1083,7 @@ class CopyWorker(QThread):
                         break
                     src, dst, title = futures[fut]
                     try:
-                        sz     = _file_size(src)
-                        status, aux = fut.result()
+                        status, aux, sz = fut.result()
                         if status == "ok":
                             flusher.push(ok=[(src, dst, sz)])
                             tracker.ok(title)
@@ -1116,9 +1110,12 @@ def _lbl(text: str, style: str) -> QLabel:
     return w
 
 
-def _make_card(color, title, val, size_title=18, size_val=32, bold_val=True,
+def _make_card(color, title, val, size_title=0, size_val=0, bold_val=True,
                contents_margins=(16, 14, 16, 14), spacing=None):
+
     t = current_theme()
+    if size_title == 0: size_title = font_sz(3)
+    if size_val   == 0: size_val   = font_sz(16)
     frame = QFrame()
     style = f"QFrame {{background:{t['bg3']};border-radius:8px;"
     if color:
@@ -1134,25 +1131,27 @@ def _make_card(color, title, val, size_title=18, size_val=32, bold_val=True,
 
     title_lbl = QLabel(title)
     title_lbl.setStyleSheet(_mono_style(size_title, t["text_dim"], extra="border:none;"))
+
     val_lbl = QLabel(val)
     val_lbl.setStyleSheet(_mono_style(size_val, color or t["text"], bold=bold_val, extra="border:none;"))
-    val_lbl.setFixedWidth(200 if color else 225)
+    val_lbl.setMinimumWidth(225 if color else 250)
     val_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom)
-
-    size_lbl = QLabel("")
-    if color:
-        size_lbl.setText("0 B")
-        size_lbl.setStyleSheet(_mono_style(28, color, extra="border:none;"))
-        size_lbl.setFixedWidth(175)
-        size_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom)
 
     inner.addWidget(title_lbl)
 
     val_row = QHBoxLayout()
-    val_row.setSpacing(10)
+    val_row.setSpacing(5)
     val_row.setContentsMargins(5, 2, 5, 2)
-    val_row.addWidget(val_lbl,  0, Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignLeft)
-    val_row.addWidget(size_lbl, 0, Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignLeft)
+    val_row.addWidget(val_lbl, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom)
+
+    size_lbl = QLabel("")
+    if color:
+        size_lbl.setText("0 B")
+        size_lbl.setStyleSheet(_mono_style(font_sz(14), color, extra="border:none;"))
+        size_lbl.setMinimumWidth(200)
+        size_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom)
+        val_row.addWidget(size_lbl, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom)
+
     val_row.addStretch()
     inner.addLayout(val_row)
 
@@ -1210,7 +1209,7 @@ class CopyDialog(QDialog):
         self.tabs.setStyleSheet("QTabBar::tab { width: 200px; }")
 
         self.cancel_btn = QPushButton("⏹ Cancel")
-        self.cancel_btn.setFixedHeight(50)
+        self.cancel_btn.setMinimumHeight(50)
         self._cancel_connected = True
         self.cancel_btn.clicked.connect(self.worker.cancel)
 
@@ -1225,10 +1224,7 @@ class CopyDialog(QDialog):
         self.timer.start()
         self._tick = QTimer(self)
         self._tick.timeout.connect(self._update_ui_tick)
-        self._tick.start(400)
-        self._clock_tick = QTimer(self)
-        self._clock_tick.timeout.connect(self._update_clock)
-        self._clock_tick.start(500)
+        self._tick.start(250)
 
         self.worker.scan_finished.connect(self._on_scan_finished)
         self.worker.batch_update.connect(self._on_batch)
@@ -1245,7 +1241,7 @@ class CopyDialog(QDialog):
     @staticmethod
     def _status_html(icon, label, label_color, bg, border) -> str:
         return (
-            f"<span style='display:inline-block;font-size:22px;font-weight:bold;"
+            f"<span style='display:inline-block;font-size:{font_sz(8)}px;font-weight:bold;"
             f"font-family:monospace;color:{label_color};background:{bg};"
             f"border-left:5px solid {border};border-radius:7px;"
             f"padding:6px 18px;'>{icon}&thinsp;{label}</span>"
@@ -1280,9 +1276,6 @@ class CopyDialog(QDialog):
         self.tabs.setTabText(2, f"↷ Skipped ({self.skipped:,})")
         self.tabs.setTabText(3, f"✗ Errors ({self.errors:,})")
 
-    def _update_clock(self) -> None:
-        self._summary.update_elapsed(self._elapsed_s(), self._done, self._total)
-
     @staticmethod
     def _fmt_ok(s, d) -> str:
         return f"{apply_replacements(s)}\n Copied to ⤵\n{apply_replacements(d)}"
@@ -1296,7 +1289,8 @@ class CopyDialog(QDialog):
         return f"{apply_replacements(p)} ❌ {m}"
 
     def _update_ui_tick(self) -> None:
-        max_per = 250 if len(self._pending_ok) > 5000 else 500
+        self._summary.update_elapsed(self._elapsed_s(), self._done, self._total)
+        max_per = 500 if len(self._pending_ok) > 5000 else 750
         changed = False
 
         for pending, widget, fmt in zip(
@@ -1321,11 +1315,6 @@ class CopyDialog(QDialog):
             self._summary.card_errors["val"].setText(f"{self.errors:,}")
             total_bytes = self._size_copied + self._size_skipped
             self._summary.update_total_size(total_bytes)
-            self._summary.refresh(
-                self._operation, self._done, self._total,
-                self.copied, self.skipped, self.errors,
-                self._elapsed_s(), False,
-            )
 
     def _on_scan_progress(self, phase: str, scanned: int) -> None:
         self._set_status_scanning(phase, scanned)
@@ -1351,7 +1340,6 @@ class CopyDialog(QDialog):
 
     def _on_done(self, c, s, e, cancelled) -> None:
         self._tick.stop()
-        self._clock_tick.stop()
         self._final_elapsed = self.timer.elapsed() // 1000
 
         for pending, widget, fmt in zip(
@@ -1440,7 +1428,7 @@ class _SummaryWidget(QWidget):
         hdr.setColumnStretch(2, 1)
 
         self.op_lbl = QLabel("-")
-        self.op_lbl.setStyleSheet(_mono_style(24, t["text"], bold=True))
+        self.op_lbl.setStyleSheet(_mono_style(font_sz(10), t["text"], bold=True))
 
         self._status_center_lbl = QLabel()
         self._status_center_lbl.setTextFormat(Qt.TextFormat.RichText)
@@ -1481,24 +1469,24 @@ class _SummaryWidget(QWidget):
         prog_lay.setContentsMargins(20, 14, 20, 14)
         prog_lay.setSpacing(8)
         prog_hdr = QHBoxLayout()
-        prog_hdr.addWidget(_lbl("Progress", _mono_style(16, t["text_dim"], extra="border:none;")))
+        prog_hdr.addWidget(_lbl("Progress", _mono_style(font_sz(2), t["text_dim"], extra="border:none;")))
         prog_hdr.addStretch()
         self._prog_pct = QLabel("0%")
         self._prog_pct.setFixedWidth(60)
         self._prog_pct.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self._prog_pct.setStyleSheet(_mono_style(16, t["text"], bold=True, extra="border:none;"))
+        self._prog_pct.setStyleSheet(_mono_style(font_sz(2), t["text"], bold=True, extra="border:none;"))
         prog_hdr.addWidget(self._prog_pct)
         self._progress_bar = QProgressBar()
         self._progress_bar.setRange(0, 0)
         self._progress_bar.setTextVisible(True)
         self._progress_bar.setFormat("0%  —  0 / 0 files")
-        self._progress_bar.setFixedHeight(32)
+        self._progress_bar.setMinimumHeight(32)
         prog_lay.addLayout(prog_hdr)
         prog_lay.addWidget(self._progress_bar)
 
         metrics_lay = QHBoxLayout()
         metrics_lay.setSpacing(12)
-        kw = dict(size_title=16, size_val=24, contents_margins=(16, 12, 16, 12), spacing=4)
+        kw = dict(size_title=font_sz(2), size_val=font_sz(10), contents_margins=(16, 12, 16, 12), spacing=4)
         self._card_elapsed = _make_card(None, "⏲️ Elapsed", "--:--", **kw)
         self._card_speed   = _make_card(None, "🚤 Speed",   "---",   **kw)
         self._card_eta     = _make_card(None, "🏁 ETA",     "--:--", **kw)
@@ -1510,8 +1498,8 @@ class _SummaryWidget(QWidget):
         rate_lay = QVBoxLayout(self._rate_card)
         rate_lay.setContentsMargins(20, 14, 20, 14)
         rate_lay.setSpacing(8)
-        bd_lbl = _lbl("File breakdown", _mono_style(16, t["text_dim"], extra="border:none;"))
-        bd_lbl.setFixedHeight(22)
+        bd_lbl = _lbl("File breakdown", _mono_style(font_sz(2), t["text_dim"], extra="border:none;"))
+        bd_lbl.setMinimumHeight(22)
         rate_lay.addWidget(bd_lbl)
 
         self._seg_track = QFrame()
@@ -1538,8 +1526,8 @@ class _SummaryWidget(QWidget):
         legend_row.setSpacing(20)
         for key, text in (("success", "Copied"), ("warning", "Skipped"), ("error", "Errors")):
             dot = QLabel(f"<span style='color:{t[key]}'>■</span>  {text}")
-            dot.setStyleSheet(_mono_style(14, t["text"], extra="border:none;"))
-            dot.setFixedHeight(20)
+            dot.setStyleSheet(_mono_style(font_sz(), t["text"], extra="border:none;"))
+            dot.setMinimumHeight(20)
             legend_row.addWidget(dot)
         legend_row.addStretch()
 
@@ -1551,7 +1539,7 @@ class _SummaryWidget(QWidget):
         entry_lay = QVBoxLayout(self._entry_card)
         entry_lay.setContentsMargins(15, 10, 15, 10)
         entry_lay.setSpacing(5)
-        entry_lay.addWidget(_lbl("Entries processed", _mono_style(16, t["text_dim"], extra="border:none;")))
+        entry_lay.addWidget(_lbl("Entries processed", _mono_style(font_sz(2), t["text_dim"], extra="border:none;")))
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -1640,7 +1628,7 @@ class _SummaryWidget(QWidget):
                 lbl = QLabel()
                 lbl.setTextFormat(Qt.TextFormat.RichText)
                 lbl.setWordWrap(False)
-                lbl.setStyleSheet(_mono_style(13, t["text"], extra="border:none; padding:2px 0px;"))
+                lbl.setStyleSheet(_mono_style(font_sz(-1), t["text"], extra="border:none; padding:2px 0px;"))
                 self._entry_row_labels[title] = lbl
             lbl = self._entry_row_labels[title]
             lbl.setText(html)
@@ -1686,7 +1674,7 @@ class _SummaryWidget(QWidget):
             card.setStyleSheet(f"QFrame{{background:{t['bg3']};border-radius:8px;}}")
         self._op_name = operation
         self.op_lbl.setText(operation)
-        self.op_lbl.setStyleSheet(_mono_style(24, accent, bold=True))
+        self.op_lbl.setStyleSheet(_mono_style(font_sz(10), accent, bold=True))
         self._refresh_op_lbl()
 
         size_str = _format_unit(self._total_size_bytes)
@@ -1755,11 +1743,11 @@ class _LogWidget(QWidget):
         self._search.setPlaceholderText(" 🔍  Search…")
         self._search.setClearButtonEnabled(True)
         self._search.textChanged.connect(self._on_search)
-        self._search.setFixedHeight(44)
+        self._search.setMinimumHeight(44)
 
         self._view = QTextEdit()
         self._view.setReadOnly(True)
-        self._view.setStyleSheet(f"font-family:monospace;font-size:14px;color:{color};")
+        self._view.setStyleSheet(f"font-family:monospace;font-size:{font_sz(int(-1.5))}px;color:{color};")
 
         t = current_theme()
         self._first = QPushButton("««")
@@ -1773,7 +1761,7 @@ class _LogWidget(QWidget):
             (self._last,  lambda: self._go(self._pages() - 1)),
         ):
             btn.clicked.connect(cb)
-            btn.setFixedHeight(28)
+            btn.setMinimumHeight(28)
 
         self._spin = QSpinBox()
         self._spin.setMinimum(1)
@@ -1783,15 +1771,15 @@ class _LogWidget(QWidget):
             f"padding:2px 5px;background:{t['bg3']};color:{t['text']};font-weight:bold}}"
             f"QSpinBox:focus{{border:1px solid {t['accent']};background:{t['bg2']}}}"
         )
-        self._spin.setFixedHeight(28)
+        self._spin.setMinimumHeight(28)
         self._spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._spin.editingFinished.connect(self._spin_changed)
 
         self._page_lbl  = QLabel("")
-        self._page_lbl.setFixedHeight(28)
+        self._page_lbl.setMinimumHeight(28)
         self._total_lbl = QLabel("")
-        self._total_lbl.setStyleSheet(f"color:{t['muted']};font-size:14px;margin-left:10px;")
-        self._total_lbl.setFixedHeight(28)
+        self._total_lbl.setStyleSheet(f"color:{t['muted']};font-size:{font_sz()}px;margin-left:10px;")
+        self._total_lbl.setMinimumHeight(28)
 
         nav = QHBoxLayout()
         nav.setContentsMargins(5, 5, 5, 5)
@@ -1803,7 +1791,7 @@ class _LogWidget(QWidget):
         pg = QHBoxLayout()
         pg.setSpacing(5)
         for w in (QLabel("Page"), self._spin, QLabel("of"), self._page_lbl):
-            w.setFixedHeight(28)
+            w.setMinimumHeight(28)
             pg.addWidget(w)
         nav.addLayout(pg)
         nav.addStretch(1)

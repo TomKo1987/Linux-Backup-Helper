@@ -11,24 +11,23 @@ from PyQt6.QtWidgets import (
     QLabel, QListWidget, QListWidgetItem, QPushButton, QTextEdit, QVBoxLayout
 )
 
-from themes import current_theme
+from themes import current_theme, font_sz
 from linux_distro_helper import distro_family
 from state import S, _HOME, _USER, logger, apply_replacements
 
-
 _cleanup_lock = threading.Lock()
-_cleanup_paths: list[str] = []
+_pending_cleanup_dirs: list[str] = []
 
 
 def _register_tmpdir(path: str) -> None:
     with _cleanup_lock:
-        _cleanup_paths.append(path)
+        _pending_cleanup_dirs.append(path)
 
 
 def _unregister_tmpdir(path: str) -> None:
     with _cleanup_lock:
         try:
-            _cleanup_paths.remove(path)
+            _pending_cleanup_dirs.remove(path)
         except ValueError:
             pass
 
@@ -56,8 +55,8 @@ def _wipe_tmpdir(path: str) -> None:
 
 def _emergency_cleanup() -> None:
     with _cleanup_lock:
-        paths = list(_cleanup_paths)
-        _cleanup_paths.clear()
+        paths = list(_pending_cleanup_dirs)
+        _pending_cleanup_dirs.clear()
     for p in paths:
         _wipe_tmpdir(p)
 
@@ -114,6 +113,109 @@ def _make_askpass(pw_secure) -> Optional[tuple[str, Path]]:
         return None
 
 
+_INFO_RE = re.compile(
+    r"INFO:|rating|mirror|download|synchroniz|\$srcdir/|Erfolg|Übertragung|avg speed|=====|OK|"
+    r"Statuserläuterung|Klon|PGP|MiB|Fertig|\.\.\.",
+    re.IGNORECASE,
+)
+
+
+class _Status:
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    SUCCESS = "success"
+    WARNING = "warning"
+    ERROR = "error"
+
+
+class _Style:
+    _FONT_MAIN = "DejaVu Sans Mono, Fira Code, monospace"
+    _FONT_SUB = "Hack, Fira Mono, monospace"
+
+    KIND_CFG: dict[str, tuple[str, int, float, str]] = {
+        "operation": (_FONT_MAIN, 16, 1.2, "info"),
+        "info": (_FONT_MAIN, 15, 1.0, "success"),
+        "subprocess": (_FONT_SUB, 13, 0.6, "text"),
+        "success": (_FONT_MAIN, 15, 1.0, "success"),
+        "warning": (_FONT_MAIN, 15, 1.0, "warning"),
+        "error": (_FONT_MAIN, 15, 1.0, "error"),
+    }
+
+    STATUS_CFG: dict[str, tuple[str, str]] = {
+        _Status.SUCCESS: ("success", "dialog-ok-apply"),
+        _Status.ERROR: ("error", "dialog-error"),
+        _Status.WARNING: ("warning", "dialog-warning"),
+        _Status.IN_PROGRESS: ("info", "media-playback-start"),
+    }
+
+    @classmethod
+    def style_str(cls, kind: str) -> str:
+        cfg = cls.KIND_CFG.get(kind)
+        if not cfg:
+            return ""
+        font, size, lh, color_key = cfg
+        color = current_theme().get(color_key, current_theme()["text"])
+        return (f"font-family:{font};font-size:{size}px;color:{color};"
+                f"padding:5px;line-height:{lh};word-break:break-word;")
+
+    @classmethod
+    def border_style(cls) -> str:
+        p = current_theme()["accent"]
+        return (f"border-radius:8px;border-right:1px solid {p};border-top:1px solid {p};"
+                f"border-bottom:1px solid {p};border-left:4px solid {p};")
+
+
+def _fmt_html(text: str, kind: str) -> str:
+    style = _Style.style_str(kind)
+    if kind == "operation":
+        esc = _html.escape(apply_replacements(text))
+        return (
+            "<hr style='border:none;margin:15px 30px;border-top:1px dashed rgba(111,255,245,0.3);'>"
+            f"<div style='padding:10px;border-radius:8px;margin:5px 0;'>"
+            f"<p style='{style}'>{esc}</p></div><br>"
+        )
+    lines = [f"<p style='{style}'>{_html.escape(apply_replacements(ln))}</p>"
+             for ln in text.splitlines() if ln.strip()]
+    return "\n".join(lines) + "<br>"
+
+
+class _PackageCache:
+    _TTL = 600
+    _MAX_SIZE = 1000
+
+    def __init__(self, distro) -> None:
+        self._distro = distro
+        self._cache: dict[str, bool] = {}
+        self._ts = 0.0
+        self._lock = threading.Lock()
+
+    def is_installed(self, pkg: str) -> bool:
+        now = time.monotonic()
+        with self._lock:
+            if now - self._ts > self._TTL:
+                self._cache.clear()
+                self._ts = now
+            elif len(self._cache) > self._MAX_SIZE:
+                items = list(self._cache.items())
+                self._cache = dict(items[self._MAX_SIZE // 2:])
+            if pkg in self._cache:
+                return self._cache[pkg]
+
+        try:
+            result = self._distro.package_is_installed(pkg)
+        except Exception as exc:
+            logger.warning("PackageCache(%s): %s", pkg, exc)
+            return False
+
+        with self._lock:
+            self._cache[pkg] = result
+        return result
+
+    def mark_installed(self, pkg: str) -> None:
+        with self._lock:
+            self._cache[pkg] = True
+
+
 class SystemManagerDialog(QDialog):
     DIALOG_SIZE = (1850, 1000)
     BUTTON_SIZE = (160, 50)
@@ -131,18 +233,19 @@ class SystemManagerDialog(QDialog):
     def _build_ui(self) -> None:
         t = current_theme()
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
-        self.setFixedSize(*self.DIALOG_SIZE)
+        self.setMinimumSize(*self.DIALOG_SIZE)
         self.setStyleSheet(f"QTextEdit{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
                            f"stop:0 {t['bg']},stop:1 {t['bg2']});color:{t['text']};border:none;border-radius:8px;}}")
 
         self._text_edit = QTextEdit()
         self._text_edit.setReadOnly(True)
         self._text_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-        self._text_edit.setHtml(f"<p style='color:{t['success']};font-size:20px;text-align:center;margin-top:25px;'>"
-                                "<b>System Manager</b><br>Initialising…</p>")
+        self._text_edit.setHtml(
+            f"<p style='color:{t['success']};font-size:{font_sz(6)}px;text-align:center;margin-top:25px;'>"
+            "<b>System Manager</b><br>Initialising…</p>")
 
         self._fail_lbl = QLabel()
-        self._fail_lbl.setStyleSheet(f"color:{t['error']};font-size:16px;font-weight:bold;padding:10px;"
+        self._fail_lbl.setStyleSheet(f"color:{t['error']};font-size:{font_sz(2)}px;font-weight:bold;padding:10px;"
                                      f"margin-top:8px;border-radius:8px;"
                                      f"background-color:{t['bg3']};border-left:4px solid {t['error']};")
         self._fail_lbl.setMinimumHeight(52)
@@ -167,7 +270,7 @@ class SystemManagerDialog(QDialog):
         self._style_elapsed(shadow)
 
         self._close_btn = QPushButton("Close")
-        self._close_btn.setFixedSize(*self.BUTTON_SIZE)
+        self._close_btn.setMinimumSize(*self.BUTTON_SIZE)
         self._close_btn.clicked.connect(self.accept)
         self._close_btn.setEnabled(False)
 
@@ -195,20 +298,20 @@ class SystemManagerDialog(QDialog):
 
     def _style_checklist(self) -> None:
         t, bs = current_theme(), _Style.border_style()
-        self._checklist_lbl.setStyleSheet(f"color:{t['info']};font-size:18px;font-weight:bold;padding:10px;"
+        self._checklist_lbl.setStyleSheet(f"color:{t['info']};font-size:{font_sz(4)}px;font-weight:bold;padding:10px;"
                                           f"background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {t['bg2']},stop:1 {t['header_sep']});{bs}")
-        self._checklist_lbl.setFixedWidth(self.RIGHT_ITEMS_WIDTH)
+        self._checklist_lbl.setMinimumWidth(self.RIGHT_ITEMS_WIDTH)
         self._checklist.setStyleSheet(f"QListWidget{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-                                      f"stop:0 {t['bg2']},stop:1 {t['header_sep']});font-size:15px;padding:4px;{bs}}}"
+                                      f"stop:0 {t['bg2']},stop:1 {t['header_sep']});font-size:{font_sz()}px;padding:4px;{bs}}}"
                                       "QListWidget::item{padding:4px;border-radius:4px;border:1px solid transparent;}")
-        self._checklist.setFixedWidth(self.RIGHT_ITEMS_WIDTH)
+        self._checklist.setMinimumWidth(self.RIGHT_ITEMS_WIDTH)
 
     def _style_elapsed(self, shadow: QGraphicsDropShadowEffect) -> None:
         t, bs = current_theme(), _Style.border_style()
         self._elapsed_lbl.setGraphicsEffect(shadow)
         self._elapsed_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._elapsed_lbl.setFixedSize(self.RIGHT_ITEMS_WIDTH, 75)
-        self._elapsed_lbl.setStyleSheet(f"color:{t['info']};font-size:17px;{bs}"
+        self._elapsed_lbl.setMinimumSize(self.RIGHT_ITEMS_WIDTH, 75)
+        self._elapsed_lbl.setStyleSheet(f"color:{t['info']};font-size:{font_sz(3)}px;{bs}"
                                         f"background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {t['bg2']},stop:1 {t['header_sep']});"
                                         "text-align:center;font-weight:bold;padding:3px;")
 
@@ -304,10 +407,10 @@ class SystemManagerDialog(QDialog):
         r, g, b = ec.red(), ec.green(), ec.blue()
         self._append_html(f"<hr style='border:none;margin:10px 20px;border-top:1px dashed rgba({r},{g},{b},0.4);'>"
                           f"<div style='padding:15px;margin:10px;border-radius:10px;border-left:4px solid {t['error']};'>"
-                          f"<p style='color:{t['error']};font-size:18px;text-align:center;'>"
+                          f"<p style='color:{t['error']};font-size:{font_sz(4)}px;text-align:center;'>"
                           f"<b>⚠️ Installation Aborted</b><br>"
-                          f"<span style='font-size:16px;'>/var/lib/pacman/db.lck detected!</span><br>"
-                          f"<span style='color:{t['text']};font-size:14px;'>"
+                          f"<span style='font-size:{font_sz(2)}px;'>/var/lib/pacman/db.lck detected!</span><br>"
+                          f"<span style='color:{t['text']};font-size:{font_sz()}px;'>"
                           f"Remove with: <code>sudo rm /var/lib/pacman/db.lck</code></span></p></div>")
         self.mark_done()
 
@@ -326,13 +429,13 @@ class SystemManagerDialog(QDialog):
         self._append_html(f"<hr style='border:none;margin:25px 50px;border-top:2px solid {colour};'>"
                           f"<div style='text-align:center;padding:20px;margin:15px 30px;"
                           f"border-radius:15px;border:1px solid rgba({r},{g},{b},0.3);'>"
-                          f"<p style='color:{colour};font-size:20px;font-weight:bold;'>{icon} {summary}</p>"
-                          f"<p style='color:{colour};font-size:18px;'>System Manager {msg}</p></div>")
+                          f"<p style='color:{colour};font-size:{font_sz(6)}px;font-weight:bold;'>{icon} {summary}</p>"
+                          f"<p style='color:{colour};font-size:{font_sz(4)}px;'>System Manager {msg}</p></div>")
         self._close_btn.setEnabled(True)
         self._close_btn.setFocus()
         bs = _Style.border_style()
         self._checklist_lbl.setText(f"{icon} {summary}")
-        self._checklist_lbl.setStyleSheet(f"color:{colour};font-size:18px;font-weight:bold;padding:10px;"
+        self._checklist_lbl.setStyleSheet(f"color:{colour};font-size:{font_sz(4)}px;font-weight:bold;padding:10px;"
                                           f"background-color:rgba({r},{g},{b},0.15);{bs}")
 
     def _update_elapsed(self) -> None:
@@ -470,8 +573,8 @@ class SystemManagerThread(QThread):
                                            d.get_cron_packages),
                  "install_snap": ("Installing Snap…", "snapd", d.get_snap_packages),
                  "enable_firewall": ("Initialising firewall…", "ufw", d.get_firewall_packages)}
-        return {k: (desc, (lambda svc, fn: lambda: self._setup_service(svc, fn()))(svc, pkg_fn)) for
-                k, (desc, svc, pkg_fn) in specs.items()}
+        return {k: (desc, self._make_service_fn(svc, pkg_fn))
+                for k, (desc, svc, pkg_fn) in specs.items()}
 
     def _run_all_tasks(self) -> None:
         for task_id, (desc, fn) in self._enabled_tasks.items():
@@ -649,6 +752,17 @@ class SystemManagerThread(QThread):
 
         return ok
 
+    def _emit_result(self, ok: bool, msg_ok: str, msg_err: str) -> None:
+        self.outputReceived.emit(msg_ok if ok else msg_err, "success" if ok else "error")
+
+    def _stream_shell_cmd(self, cmd: str, **kwargs):
+        if "&" in cmd or "|" in cmd:
+            return self._stream_cmd(["sudo", "sh", "-c", cmd], **kwargs)
+        return self._stream_cmd(shlex.split(cmd), **kwargs)
+
+    def _make_service_fn(self, service: str, pkg_fn) -> object:
+        return lambda: self._setup_service(service, pkg_fn())
+
     def _copy_sysfiles(self) -> bool:
         files = [f for f in (S.system_files or []) if isinstance(f, dict) and not f.get("disabled")
                  and f.get("source", "").strip() and f.get("destination", "").strip()]
@@ -659,6 +773,7 @@ class SystemManagerThread(QThread):
 
         from drive_utils import check_drives_to_mount, mount_drive
         paths = [p for f in files for p in (f["source"], f["destination"])]
+
         for drive in check_drives_to_mount(paths):
             name = drive.get("drive_name", "?")
             self.outputReceived.emit(f"Mounting drive: {name}…", "info")
@@ -675,18 +790,21 @@ class SystemManagerThread(QThread):
                 self.outputReceived.emit(f"Source not found: {src}", "error")
                 overall = False
                 continue
+
             dst_dir = Path(dst).parent
             if not dst_dir.exists():
                 if not self._ok(self._stream_cmd(["sudo", "mkdir", "-p", "--mode=755", str(dst_dir)])):
                     self.outputReceived.emit(f"Cannot create directory: {dst_dir}", "error")
                     overall = False
                     continue
+
             cmd = ["sudo", "cp"] + (["-r"] if Path(src).is_dir() else []) + [src, dst]
             if self._ok(self._stream_cmd(cmd)):
                 self.outputReceived.emit(f"Copied successfully:\n'{src}' 󰧂 '{dst}'", "success")
             else:
                 self.outputReceived.emit(f"Error copying: {src}", "error")
                 overall = False
+
         return overall
 
     @staticmethod
@@ -708,10 +826,12 @@ class SystemManagerThread(QThread):
         if distro_family(self.distro.distro_id) != "arch":
             self.outputReceived.emit("Mirror update is only supported on Arch Linux", "info")
             return True
+
         country = self._detect_country()
         self.outputReceived.emit(
             f"Detected country: {country}" if country else "Country detection failed — using worldwide mirrors",
-            "info" if country else "warning")
+            "info" if country else "warning"
+        )
 
         if not shutil.which("reflector"):
             self.outputReceived.emit("Installing reflector", "info")
@@ -721,13 +841,12 @@ class SystemManagerThread(QThread):
 
         cmd = ["sudo", "-A", "reflector", "--verbose", "--latest", "10", "--protocol", "https", "--sort", "rate",
                "--save", "/etc/pacman.d/mirrorlist"]
+
         if country:
             cmd += ["--country", country]
+
         self.outputReceived.emit(f"Running: {' '.join(cmd)}", "info")
-        ok = self._ok(self._stream_cmd(cmd, timeout=180))
-        self.outputReceived.emit("Mirrors successfully updated" if ok else "Mirror update failed",
-                                 "success" if ok else "error")
-        return ok
+        return self._ok(self._stream_cmd(cmd))
 
     def _set_shell(self) -> bool:
         if not self.distro:
@@ -772,8 +891,11 @@ class SystemManagerThread(QThread):
             self.outputReceived.emit(f"Could not verify /etc/shells: {exc}", "warning")
 
         ok = self._ok(self._stream_cmd(["sudo", "chsh", "-s", shell, _USER]))
-        self.outputReceived.emit(f"Shell for '{_USER}' {'set to' if ok else 'failed to change to'} '{shell}'",
-                                 "success" if ok else "error")
+        self._emit_result(
+            ok,
+            f"Shell for '{_USER}' set to '{shell}'",
+            f"Shell for '{_USER}' failed to change to '{shell}'",
+        )
         return ok
 
     def _update_system(self) -> bool:
@@ -782,12 +904,8 @@ class SystemManagerThread(QThread):
         if self.distro.has_aur and self._pkg_cache and self._pkg_cache.is_installed("yay"):
             ok = self._ok(self._stream_cmd(["yay", "-Syu", "--noconfirm"]))
         else:
-            cmd = self.distro.get_update_system_cmd()
-            ok = self._ok(
-                self._stream_cmd(["sudo", "sh", "-c", cmd]) if ("&" in cmd or "|" in cmd) else self._stream_cmd(
-                    shlex.split(cmd)))
-        self.outputReceived.emit("System successfully updated" if ok else "System update failed",
-                                 "success" if ok else "error")
+            ok = self._ok(self._stream_shell_cmd(self.distro.get_update_system_cmd()))
+        self._emit_result(ok, "System successfully updated", "System update failed")
         return ok
 
     def _install_kernel_header(self) -> bool:
@@ -803,9 +921,7 @@ class SystemManagerThread(QThread):
         ok = self._ok(self._stream_cmd(shlex.split(self.distro.get_pkg_install_cmd(name))))
         if ok:
             self._pkg_cache.mark_installed(name)
-            self.outputReceived.emit(f"{name} successfully installed", "success")
-        else:
-            self.outputReceived.emit(f"failed to install {name}", "error")
+        self._emit_result(ok, f"{name} successfully installed", f"failed to install {name}")
         return ok
 
     def _batch_install(self, pkg_list, label: str, *, use_aur: bool = False) -> bool:
@@ -864,10 +980,12 @@ class SystemManagerThread(QThread):
             self.outputReceived.emit("yay already installed", "success")
             return True
 
-        build_deps = ("base-devel", "git", "go")
-        deps = [p for p in build_deps if not self.distro.package_is_installed(p)]
-        freshly_got = set(deps)
-        if deps and not self._ok(self._stream_cmd(shlex.split(self.distro.get_pkg_install_cmd(" ".join(deps))))):
+        build_deps    = ("base-devel", "git", "go")
+        missing_deps  = [p for p in build_deps if not self.distro.package_is_installed(p)]
+        freshly_added = set(missing_deps)
+        if missing_deps and not self._ok(
+            self._stream_cmd(shlex.split(self.distro.get_pkg_install_cmd(" ".join(missing_deps))))
+        ):
             return False
 
         yay_dir = _HOME / "yay"
@@ -881,10 +999,13 @@ class SystemManagerThread(QThread):
         if not self._ok(self._stream_cmd(["makepkg", "-c", "--noconfirm"], cwd=str(yay_dir))):
             return False
 
-        to_rm = (["go"] if "go" in freshly_got and self.distro.package_is_installed("go") else []) + \
-                (["yay-debug"] if self.distro.package_is_installed("yay-debug") else [])
-        if to_rm:
-            self._stream_cmd(["sudo", "pacman", "-R", "--noconfirm"] + to_rm)
+        to_remove = []
+        if "go" in freshly_added and self.distro.package_is_installed("go"):
+            to_remove.append("go")
+        if self.distro.package_is_installed("yay-debug"):
+            to_remove.append("yay-debug")
+        if to_remove:
+            self._stream_cmd(["sudo", "pacman", "-R", "--noconfirm"] + to_remove)
 
         pkgs = sorted(
             (f for f in yay_dir.iterdir() if f.name.endswith(".pkg.tar.zst")),
@@ -899,8 +1020,7 @@ class SystemManagerThread(QThread):
         shutil.rmtree(Path(_HOME) / ".config" / "go", ignore_errors=True)
         if ok and self._pkg_cache:
             self._pkg_cache.mark_installed("yay")
-        self.outputReceived.emit("yay successfully installed" if ok else "yay installation failed",
-                                 "success" if ok else "error")
+        self._emit_result(ok, "yay successfully installed", "yay installation failed")
         return ok
 
     def _install_specific(self) -> bool:
@@ -920,11 +1040,14 @@ class SystemManagerThread(QThread):
             return True
 
         self.outputReceived.emit(f"Installing: {', '.join(to_install)}", "info")
-        self._stream_cmd(shlex.split(self.distro.get_pkg_install_cmd(" ".join(to_install))))
+        if not self._ok(self._stream_cmd(shlex.split(self.distro.get_pkg_install_cmd(" ".join(to_install))))):
+            self.outputReceived.emit("Install command failed — verifying individually…", "warning")
+
         failed = [p for p in to_install if not self.distro.package_is_installed(p)]
         for pkg in to_install:
             if pkg not in failed and self._pkg_cache:
                 self._pkg_cache.mark_installed(pkg)
+
         self.outputReceived.emit(
             "All Specific Packages successfully installed" if not failed else f"Failed to install: {', '.join(failed)}",
             "success" if not failed else "warning")
@@ -940,8 +1063,7 @@ class SystemManagerThread(QThread):
             cmd = shlex.split(self.distro.flatpak_add_flathub())
             self.outputReceived.emit(f"Running: {' '.join(cmd)}", "info")
             ok = self._ok(self._stream_cmd(cmd))
-            self.outputReceived.emit("Flathub remote successfully added" if ok else "Failed to add Flathub remote",
-                                     "success" if ok else "warning")
+            self._emit_result(ok, "Flathub remote successfully added", "Failed to add Flathub remote")
             return ok
         except Exception as exc:
             self.outputReceived.emit(f"Flathub setup error: {exc}", "error")
@@ -998,11 +1120,15 @@ class SystemManagerThread(QThread):
         pm_name = self.distro.pkg_manager_name()
         self.outputReceived.emit(f"Cleaning {pm_name} cache", "info")
         cmd = self.distro.get_clean_cache_cmd()
-        ok = self._ok(self._stream_cmd(["sudo", "sh", "-c", cmd]) if ("&" in cmd or "|" in cmd) else self._stream_cmd(
-            shlex.split(cmd)))
+        if "&" in cmd or "|" in cmd:
+            result = self._stream_cmd(["sudo", "sh", "-c", cmd])
+        else:
+            result = self._stream_cmd(shlex.split(cmd))
+        ok = self._ok(result)
         self.outputReceived.emit(
             f"{pm_name} cache successfully cleaned" if ok else f"{pm_name} cache cleaning failed",
             "success" if ok else "error")
+
         if ok and self._pkg_cache and self._pkg_cache.is_installed("yay"):
             self.outputReceived.emit("", "info")
             self.outputReceived.emit("Cleaning yay cache", "info")
@@ -1011,96 +1137,3 @@ class SystemManagerThread(QThread):
                                      "success" if yay_ok else "error")
             ok = ok and yay_ok
         return ok
-
-
-class _Status:
-    PENDING = "pending"
-    IN_PROGRESS = "in_progress"
-    SUCCESS = "success"
-    WARNING = "warning"
-    ERROR = "error"
-
-
-class _Style:
-    _FONT_MAIN = "DejaVu Sans Mono, Fira Code, monospace"
-    _FONT_SUB = "Hack, Fira Mono, monospace"
-
-    KIND_CFG: dict[str, tuple[str, int, float, str]] = {"operation": (_FONT_MAIN, 16, 1.2, "info"),
-                                                        "info": (_FONT_MAIN, 15, 1.0, "success"),
-                                                        "subprocess": (_FONT_SUB, 13, 0.6, "text"),
-                                                        "success": (_FONT_MAIN, 15, 1.0, "success"),
-                                                        "warning": (_FONT_MAIN, 15, 1.0, "warning"),
-                                                        "error": (_FONT_MAIN, 15, 1.0, "error")}
-
-    STATUS_CFG: dict[str, tuple[str, str]] = {_Status.SUCCESS: ("success", "dialog-ok-apply"),
-                                              _Status.ERROR: ("error", "dialog-error"),
-                                              _Status.WARNING: ("warning", "dialog-warning"),
-                                              _Status.IN_PROGRESS: ("info", "media-playback-start")}
-
-    @classmethod
-    def style_str(cls, kind: str) -> str:
-        cfg = cls.KIND_CFG.get(kind)
-        if not cfg:
-            return ""
-        font, size, lh, color_key = cfg
-        color = current_theme().get(color_key, current_theme()["text"])
-        return f"font-family:{font};font-size:{size}px;color:{color};padding:5px;line-height:{lh};word-break:break-word;"
-
-    @classmethod
-    def border_style(cls) -> str:
-        p = current_theme()["accent"]
-        return (f"border-radius:8px;border-right:1px solid {p};border-top:1px solid {p};"
-                f"border-bottom:1px solid {p};border-left:4px solid {p};")
-
-
-def _fmt_html(text: str, kind: str) -> str:
-    style = _Style.style_str(kind)
-    if kind == "operation":
-        esc = _html.escape(apply_replacements(text))
-        return ("<hr style='border:none;margin:15px 30px;border-top:1px dashed rgba(111,255,245,0.3);'>"
-                f"<div style='padding:10px;border-radius:8px;margin:5px 0;'>"
-                f"<p style='{style}'>{esc}</p></div><br>")
-    lines = [f"<p style='{style}'>{_html.escape(apply_replacements(ln))}</p>"
-             for ln in text.splitlines() if ln.strip()]
-    return "\n".join(lines) + "<br>"
-
-
-class _PackageCache:
-    _TTL = 600
-    _MAX_SIZE = 1000
-
-    def __init__(self, distro) -> None:
-        self._distro = distro
-        self._cache: dict[str, bool] = {}
-        self._ts = 0.0
-        self._lock = threading.Lock()
-
-    def is_installed(self, pkg: str) -> bool:
-        now = time.monotonic()
-        with self._lock:
-            if now - self._ts > self._TTL:
-                self._cache.clear()
-                self._ts = now
-            elif len(self._cache) > self._MAX_SIZE:
-                items = list(self._cache.items())
-                self._cache = dict(items[self._MAX_SIZE // 2:])
-            if pkg in self._cache:
-                return self._cache[pkg]
-
-        try:
-            result = self._distro.package_is_installed(pkg)
-        except Exception as exc:
-            logger.warning("PackageCache(%s): %s", pkg, exc)
-            return False
-
-        with self._lock:
-            self._cache[pkg] = result
-        return result
-
-    def mark_installed(self, pkg: str) -> None:
-        with self._lock:
-            self._cache[pkg] = True
-
-
-_INFO_RE = re.compile(r"INFO:|rating|mirror|download|synchroniz|\$srcdir/|Erfolg|Übertragung|avg speed|=====|OK|"
-                      r"Statuserläuterung|Klon|PGP|MiB|Fertig|\.\.\.", re.IGNORECASE)
