@@ -16,8 +16,8 @@ from state import apply_replacements, logger
 _CHUNK             = 8 * 1024 * 1024
 _SCAN_WORKERS      = 25
 _COPY_WORKERS      = min(16, (os.cpu_count() or 4) * 2)
-_SMB_SHARE_WORKERS = 25
-_SMB_SCAN_WORKERS  = 35
+_SMB_SHARE_WORKERS = 15
+_SMB_SCAN_WORKERS  = 15
 _SMB_PROBE_TO      = 5
 _SMB_BASE_TIMEOUT  = 15
 _SMB_SECS_PER_FILE = 3
@@ -44,7 +44,6 @@ _DIRS_LOCK = threading.Lock()
 _CREATED_DIRS: set[str] = set()
 
 def _clear_dir_cache() -> None:
-    global _CREATED_DIRS
     with _DIRS_LOCK:
         _CREATED_DIRS.clear()
 
@@ -62,9 +61,8 @@ def _ensure_dir(path: str) -> bool:
         logger.error("Failed to create directory %s: %s", path, e)
         return False
 
-_O_NOATIME       = os.O_NOATIME
-_copy_file_range = getattr(os, "copy_file_range", None)
-_CACHE_MISS      = object()
+_O_NOATIME  = os.O_NOATIME
+_CACHE_MISS = object()
 
 
 _THEME_CACHE = None
@@ -540,20 +538,17 @@ class _SmbScanner:
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=_SMB_SCAN_WORKERS) as pool:
             futs = [pool.submit(fn) for fn in scan_tasks if not self._cancel.is_set()]
-            try:
-                for fut in concurrent.futures.as_completed(futs):
-                    if self._cancel.is_set():
-                        for f in futs:
-                            f.cancel()
-                        break
-                    try:
-                        fut.result()
-                    except Exception as exc:
-                        logger.error("SMB scan error: %s", exc)
-                        with self._result_lock:
-                            errors.append(("smb scan error", str(exc)))
-            finally:
-                pool.shutdown(wait=True, cancel_futures=True)
+            for fut in concurrent.futures.as_completed(futs):
+                if self._cancel.is_set():
+                    for f in futs:
+                        f.cancel()
+                    break
+                try:
+                    fut.result()
+                except Exception as exc:
+                    logger.error("SMB scan error: %s", exc)
+                    with self._result_lock:
+                        errors.append(("smb scan error", str(exc)))
 
         return ([], []) if self._cancel.is_set() else (expanded, errors)
 
@@ -566,7 +561,11 @@ class _SmbScanner:
                 return
             idx = self._client(host, share).ls_index(rpath)
             with self._cache_lock:
-                self._ls_cache[ck] = idx
+                existing = self._ls_cache.get(ck, _CACHE_MISS)
+                if existing is _CACHE_MISS:
+                    self._ls_cache[ck] = idx
+                else:
+                    idx = existing
         if self._cancel.is_set():
             return
         src_url = f"smb://{host}/{share}/{rpath}"
@@ -682,7 +681,7 @@ class _ShareProcessor:
         if get_to_transfer and not self._cancel.is_set():
             for d in {os.path.dirname(j.dst_path) for j in get_to_transfer}:
                 if d:
-                    os.makedirs(d, exist_ok=True)
+                    _ensure_dir(d)
             for i in range(0, len(get_to_transfer), _SMB_CHUNK_SIZE):
                 if self._cancel.is_set():
                     break
@@ -784,13 +783,24 @@ class _ShareProcessor:
         def _meta(_url: str) -> tuple[str, int]:
             return self._url_title.get(_url, ("", 0))
 
-        ok_w = [(s, d, _meta(s)[1]) for s, d in ok_c]
-        sk_w = [(s, r, _meta(s)[1]) for s, r in sk_c]
-        er_w = [(s, e, 0)           for s, e in er_c]
+        ok_w, ok_titles = [], []
+        for s, d in ok_c:
+            title, sz = _meta(s)
+            ok_w.append((s, d, sz))
+            ok_titles.append(title)
+
+        sk_w, sk_titles = [], []
+        for s, r in sk_c:
+            title, sz = _meta(s)
+            sk_w.append((s, r, sz))
+            sk_titles.append(title)
+
+        er_w = [(s, e, 0) for s, e in er_c]
+
         self._flusher.push(ok=ok_w, sk=sk_w, er=er_w)
-        for url, _, _ in ok_w: self._tracker.ok(_meta(url)[0])
-        for url, _, _ in sk_w: self._tracker.skip(_meta(url)[0])
-        for url, _, _ in er_w: self._tracker.err(_meta(url)[0])
+        for title in ok_titles:           self._tracker.ok(title)
+        for title in sk_titles:           self._tracker.skip(title)
+        for url, _, _ in er_w:            self._tracker.err(_meta(url)[0])
 
     def _fail_jobs(self, remaining: list, is_get: bool, reason: str) -> None:
         er_c = [
@@ -1075,23 +1085,17 @@ class CopyWorker(QThread):
                               share_groups[(host, share)]["put"])
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=_SMB_SHARE_WORKERS) as pool:
-            futs = {
-                pool.submit(run_share, h, sh): (h, sh)
-                for (h, sh) in share_groups
-                if not cancel.is_set()
-            }
-            try:
-                for fut in concurrent.futures.as_completed(futs):
-                    if cancel.is_set():
-                        for f in futs:
-                            f.cancel()
-                        break
-                    try:
-                        fut.result()
-                    except Exception as exc:
-                        logger.error("SMB share error: %s", exc)
-            finally:
-                pool.shutdown(wait=True, cancel_futures=True)
+
+            futs = {pool.submit(run_share, h, sh): (h, sh) for (h, sh) in share_groups if not cancel.is_set()}
+            for fut in concurrent.futures.as_completed(futs):
+                if cancel.is_set():
+                    for f in futs:
+                        f.cancel()
+                    break
+                try:
+                    fut.result()
+                except Exception as exc:
+                    logger.error("SMB share error: %s", exc)
 
         flusher.flush()
         tracker.emit_all(self.entry_status)
@@ -1108,29 +1112,27 @@ class CopyWorker(QThread):
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=_COPY_WORKERS) as pool:
             futures = {pool.submit(_copy_file, s, d, cancel): (s, d, t) for s, d, t in pairs}
-            try:
-                for fut in concurrent.futures.as_completed(futures):
-                    if cancel.is_set():
-                        for f in futures:
-                            f.cancel()
-                        break
-                    src, dst, title = futures[fut]
-                    try:
-                        status, aux, sz = fut.result()
-                        if status == "ok":
-                            flusher.push(ok=[(src, dst, sz)])
-                            tracker.ok(title)
-                        elif status == "skip":
-                            flusher.push(sk=[(src, aux or "Up to date", sz)])
-                            tracker.skip(title)
-                        elif status == "error":
-                            flusher.push(er=[(src, aux, 0)])
-                            tracker.err(title)
-                    except Exception as exc:
-                        flusher.push(er=[("Error", str(exc), 0)])
+
+            for fut in concurrent.futures.as_completed(futures):
+                if cancel.is_set():
+                    for f in futures:
+                        f.cancel()
+                    break
+                src, dst, title = futures[fut]
+                try:
+                    status, aux, sz = fut.result()
+                    if status == "ok":
+                        flusher.push(ok=[(src, dst, sz)])
+                        tracker.ok(title)
+                    elif status == "skip":
+                        flusher.push(sk=[(src, aux or "Up to date", sz)])
+                        tracker.skip(title)
+                    elif status == "error":
+                        flusher.push(er=[(src, aux, 0)])
                         tracker.err(title)
-            finally:
-                pool.shutdown(wait=True, cancel_futures=True)
+                except Exception as exc:
+                    flusher.push(er=[("Error", str(exc), 0)])
+                    tracker.err(title)
 
         flusher.flush()
         tracker.emit_all(self.entry_status)
@@ -1146,7 +1148,7 @@ def _lbl(text: str, style: str) -> QLabel:
 def _make_card(color, title, val, size_title=0, size_val=0, bold_val=True,
                contents_margins=(16, 14, 16, 14), spacing=None):
 
-    t = _get_theme()
+    t = current_theme()
     if size_title == 0: size_title = font_sz(3)
     if size_val == 0: size_val = font_sz(16)
 
@@ -1369,14 +1371,13 @@ class CopyDialog(QDialog):
         self.skipped += len(sk)
         self.errors  += len(er)
 
-        for _, _, sz in ok:
-            self._size_copied  += sz
-        for _, _, sz in sk:
+        for s, d, sz in ok:
+            self._size_copied += sz
+            self._pending_ok.append((s, d))
+        for s, r, sz in sk:
             self._size_skipped += sz
-
-        self._pending_ok.extend([(s, d) for s, d, _sz in ok])
-        self._pending_sk.extend([(s, r) for s, r, _sz in sk])
-        self._pending_er.extend([(s, m) for s, m, _sz in er])
+            self._pending_sk.append((s, r))
+        self._pending_er.extend((s, m) for s, m, _sz in er)
 
         if total > 0:
             self._summary.update_progress(done, total)
@@ -1660,8 +1661,7 @@ class _SummaryWidget(QWidget):
         cols = self._entry_grid_cols
         needs_rebuild = False
 
-        with self._lock if hasattr(self, '_lock') else threading.Lock():
-            results_snapshot = {k: v[:] for k, v in self._entry_results.items()}
+        results_snapshot = {k: v[:] for k, v in self._entry_results.items()}
 
         for title, ec in results_snapshot.items():
             ok, err, skip = ec
