@@ -1,7 +1,7 @@
 from typing import Protocol
 from dataclasses import dataclass
 from urllib.parse import urlparse
-import errno, os, subprocess, re, threading, concurrent.futures
+import errno, os, subprocess, re, threading, concurrent.futures, stat
 
 from PyQt6.QtCore import Qt, QElapsedTimer, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -22,8 +22,8 @@ _SMB_PROBE_TO      = 5
 _SMB_BASE_TIMEOUT  = 15
 _SMB_SECS_PER_FILE = 3
 _SMB_LS_TIMEOUT    = 15
-_FLUSH_THRESHOLD   = 75
-_SMB_CHUNK_SIZE    = 50
+_FLUSH_THRESHOLD   = 500
+_SMB_CHUNK_SIZE    = 500
 
 _SKIP_RE = re.compile(
     r"(^\.?lock$|\.lock$|lockfile$|Singleton\w*$|cookies\.sqlite-wal$|\.lck$)", re.I
@@ -32,15 +32,19 @@ _SMB_LINE_RE = re.compile(
     r"^(.+?)\s+([ADRHNSV]*)\s*(?:\(.*?\)\s*)?(\d+)"
     r"\s+\w{3}\s+\w{3}\s+[\s\d]\d\s+[\d:]+\s*\d*$"
 )
+
 _SMB_UNREACHABLE = frozenset((
-    "Host is down", "NT_STATUS_HOST_UNREACHABLE", "NT_STATUS_IO_TIMEOUT", "NT_STATUS_CONNECTION_REFUSED",
+    "HOST IS DOWN", "NT_STATUS_HOST_UNREACHABLE", "NT_STATUS_IO_TIMEOUT", "NT_STATUS_CONNECTION_REFUSED",
     "NT_STATUS_NETWORK_UNREACHABLE", "NT_STATUS_CONNECTION_RESET", "NT_STATUS_CONNECTION_DISCONNECTED",
-    "Connection refused", "No route to host", "Network is unreachable", "Connection timed out", "timeout",
+    "CONNECTION REFUSED", "NO ROUTE TO HOST", "NETWORK IS UNREACHABLE", "CONNECTION TIMED OUT", "TIMEOUT",
 ))
 
-_O_NOATIME:   int = getattr(os, "O_NOATIME", 0)
-_copy_file_range  = getattr(os, "copy_file_range", None)
-_CACHE_MISS       = object()
+_DIRS_LOCK = threading.Lock()
+_CREATED_DIRS: set[str] = set()
+
+_O_NOATIME       = os.O_NOATIME
+_copy_file_range = getattr(os, "copy_file_range", None)
+_CACHE_MISS      = object()
 
 
 def _mono_style(size: int, color: str, bold: bool = False, extra: str = "") -> str:
@@ -116,61 +120,53 @@ def _get_smb_credentials() -> tuple[str, "_SecurePw | None"]:
 def _open_src(path: str) -> int:
     try:
         return os.open(path, os.O_RDONLY | _O_NOATIME)
-    except PermissionError:
+    except (PermissionError, OSError):
         return os.open(path, os.O_RDONLY)
 
 
 def _kernel_copy(rfd: int, wfd: int, size: int, cancel: threading.Event) -> None:
     remaining = size
-    offset    = 0
+    offset = 0
 
-    if _copy_file_range and remaining > 0:
+    while remaining > 0:
+        if cancel.is_set(): raise InterruptedError
         try:
-            while remaining > 0:
-                if cancel.is_set():
-                    raise InterruptedError
-                n = _copy_file_range(
-                    rfd, wfd, min(remaining, _CHUNK),
-                    offset_src=offset, offset_dst=offset,
-                )
-                if n == 0:
+            n = os.copy_file_range(rfd, wfd, min(remaining, _CHUNK),
+                                   offset_src=offset, offset_dst=offset)
+            if n == 0: break
+            offset += n
+            remaining -= n
+        except OSError as e:
+            if e.errno in (errno.EXDEV, errno.EINVAL, errno.ENOSYS, errno.EOPNOTSUPP):
+                break
+            raise
+
+    if remaining > 0:
+        while remaining > 0:
+            if cancel.is_set(): raise InterruptedError
+            try:
+                sent = os.sendfile(wfd, rfd, offset, min(remaining, _CHUNK))
+                if sent == 0: break
+                offset += sent
+                remaining -= sent
+            except OSError as e:
+                if e.errno in (errno.EINVAL, errno.ENOSYS):
                     break
-                offset    += n
-                remaining -= n
-            return
-        except OSError as exc:
-            if exc.errno not in (errno.EXDEV, errno.EINVAL, errno.ENOSYS, errno.EOPNOTSUPP):
                 raise
 
     if remaining > 0:
-        try:
-            while remaining > 0:
-                if cancel.is_set():
-                    raise InterruptedError
-                sent = os.sendfile(wfd, rfd, offset, min(remaining, _CHUNK))
-                if sent == 0:
-                    break
-                offset    += sent
-                remaining -= sent
-            return
-        except OSError as exc:
-            if exc.errno not in (errno.EINVAL, errno.ENOSYS):
-                raise
-            os.lseek(rfd, offset, os.SEEK_SET)
-            os.lseek(wfd, offset, os.SEEK_SET)
-
-    while remaining > 0:
-        if cancel.is_set():
-            raise InterruptedError
-        buf = os.read(rfd, min(remaining, _CHUNK))
-        if not buf:
-            break
-        os.write(wfd, buf)
-        remaining -= len(buf)
+        os.lseek(rfd, offset, os.SEEK_SET)
+        os.lseek(wfd, offset, os.SEEK_SET)
+        while remaining > 0:
+            if cancel.is_set(): raise InterruptedError
+            buf = os.read(rfd, min(remaining, _CHUNK))
+            if not buf: break
+            os.write(wfd, buf)
+            remaining -= len(buf)
 
 
 def _copy_file(src: str, dst: str, cancel: threading.Event) -> tuple[str, str, int]:
-    tmp = f"{dst}.part.{os.getpid()}.{threading.get_ident()}"
+    tmp = f"{dst}.{os.getpid()}.{threading.get_ident()}.part"
     try:
         if cancel.is_set():
             return "skip", "", 0
@@ -184,8 +180,12 @@ def _copy_file(src: str, dst: str, cancel: threading.Event) -> tuple[str, str, i
         except FileNotFoundError:
             pass
 
-        if dst_dir := os.path.dirname(dst):
-            os.makedirs(dst_dir, exist_ok=True)
+        dst_dir = os.path.dirname(dst)
+        if dst_dir:
+            with _DIRS_LOCK:
+                if dst_dir not in _CREATED_DIRS:
+                    os.makedirs(dst_dir, exist_ok=True)
+                    _CREATED_DIRS.add(dst_dir)
 
         rfd = _open_src(src)
         try:
@@ -223,38 +223,40 @@ def _copy_file(src: str, dst: str, cancel: threading.Event) -> tuple[str, str, i
 
 def _scan_local(scan_jobs, cancel, progress_cb=None) -> tuple[list, list, list]:
     pairs, skipped, errors = [], [], []
-    lock    = threading.Lock()
+    lock = threading.Lock()
     counter = [0]
 
     def scan_one(src_root: str, dst_root: str, title: str = "") -> None:
-        lp: list = []
-        ls: list = []
-        if os.path.isfile(src_root):
-            if _SKIP_RE.search(os.path.basename(src_root)):
-                ls.append((src_root, "Lock/Temp file", title))
-            else:
-                lp.append((src_root, dst_root, title))
-        elif not os.path.exists(src_root):
+        lp, ls = [], []
+        try:
+            st = os.stat(src_root)
+        except OSError:
             with lock:
                 errors.append((src_root, "Source path does not exist", title))
             return
-        else:
+
+        if stat.S_ISREG(st.st_mode):
+            if _SKIP_RE.search(os.path.basename(src_root)):
+                ls.append((src_root, "Skipped", title))
+            else:
+                lp.append((src_root, dst_root, title))
+        elif stat.S_ISDIR(st.st_mode):
             stack = [src_root]
             while stack:
-                if cancel.is_set():
-                    break
+                if cancel.is_set(): break
                 try:
                     with os.scandir(stack.pop()) as it:
                         for e in it:
                             if e.is_dir(follow_symlinks=False):
                                 stack.append(e.path)
                             elif _SKIP_RE.search(e.name):
-                                ls.append((e.path, "Lock/Temp file", title))
+                                ls.append((e.path, "Skipped", title))
                             else:
                                 rel = os.path.relpath(e.path, src_root)
                                 lp.append((e.path, os.path.join(dst_root, rel), title))
                 except PermissionError:
                     pass
+
         with lock:
             pairs.extend(lp)
             skipped.extend(ls)
@@ -262,24 +264,13 @@ def _scan_local(scan_jobs, cancel, progress_cb=None) -> tuple[list, list, list]:
         if progress_cb:
             progress_cb(counter[0])
 
-    if not scan_jobs:
-        return pairs, skipped, errors
+    if not scan_jobs: return pairs, skipped, errors
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=_SCAN_WORKERS) as pool:
         futs = [pool.submit(scan_one, s, d, t) for s, d, t in scan_jobs]
-        try:
-            for fut in concurrent.futures.as_completed(futs):
-                if cancel.is_set():
-                    for f in futs:
-                        f.cancel()
-                    break
-                try:
-                    fut.result()
-                except Exception as exc:
-                    with lock:
-                        errors.append(("scan error", str(exc), ""))
-        finally:
-            pool.shutdown(wait=True, cancel_futures=True)
+        for fut in concurrent.futures.as_completed(futs):
+            if cancel.is_set(): break
+            fut.result()
 
     return pairs, skipped, errors
 
@@ -319,34 +310,31 @@ def _build_smb_get_cmds(jobs: list[_SmbJob]) -> str:
 
 def _build_smb_put_cmds(jobs: list[_SmbJob]) -> str:
     rdirs = sorted({os.path.dirname(j.remote_path).replace("\\", "/").strip("/") for j in jobs})
-    mkdir_lines: list[str] = []
+    mkdir_lines, seen_dirs = [], set()
+
     for rdir in rdirs:
-        if not rdir:
-            continue
-        parts = [p for p in rdir.split("/") if p]
+        if not rdir: continue
+        parts = rdir.split("/")
         for i in range(len(parts)):
-            mkdir_lines.append(f'mkdir "{_q("/".join(parts[:i + 1]))}"')
-    transfer_lines: list[str] = []
-    cur_local_dir = cur_rdir = None
-    for j in sorted(
-        jobs,
-        key=lambda x: (
-            os.path.dirname(x.remote_path),
-            os.path.dirname(os.path.abspath(str(x.src_url))),
-        ),
-    ):
-        src_abs   = os.path.abspath(str(j.src_url))
-        local_dir = os.path.dirname(src_abs)
-        rdir      = os.path.dirname(j.remote_path).replace("\\", "/").strip("/")
+            d = "/".join(parts[:i + 1])
+            if d not in seen_dirs:
+                seen_dirs.add(d)
+                mkdir_lines.append(f'mkdir "{_q(d)}"')
+
+    transfer_lines, cur_local_dir, cur_rdir = [], None, None
+    for j in sorted(jobs, key=lambda x: (os.path.dirname(x.remote_path), x.src_url)):
+        local_dir = os.path.dirname(j.src_url)
+        rdir = os.path.dirname(j.remote_path).replace("\\", "/").strip("/")
+
         if local_dir != cur_local_dir:
             transfer_lines.append(f'lcd "{_q(local_dir)}"')
             cur_local_dir = local_dir
         if rdir != cur_rdir:
             transfer_lines.append(f'cd "/{_q(rdir)}"' if rdir else 'cd "/"')
             cur_rdir = rdir
-        transfer_lines.append(
-            f'put "{_q(os.path.basename(src_abs))}" "{_q(os.path.basename(j.remote_path))}"'
-        )
+
+        transfer_lines.append(f'put "{_q(os.path.basename(j.src_url))}" "{_q(os.path.basename(j.remote_path))}"')
+
     return "\n".join(mkdir_lines + transfer_lines + ["exit\n"])
 
 
@@ -474,8 +462,9 @@ class _SmbScanner:
     def _report(self, n: int) -> None:
         with self._result_lock:
             self._counter += n
+            current = self._counter
         if self._progress_cb:
-            self._progress_cb(self._counter)
+            self._progress_cb(current)
 
     def resolve(self, jobs) -> tuple[list, list]:
         expanded: list = []
@@ -861,28 +850,20 @@ class CopyWorker(QThread):
 
     @staticmethod
     def _normalize_tasks(tasks) -> list[tuple[str, str, str]]:
-        normalized: list[tuple[str, str, str]] = []
+        normalized = []
         for t in tasks:
-            src, dst = t[0], t[1]
-            title    = t[2] if len(t) > 2 else ""
-            if isinstance(src, (list, tuple)) and isinstance(dst, (list, tuple)):
-                if len(src) != len(dst):
-                    logger.warning("CopyWorker: src/dst list length mismatch, skipping: %r", t)
-                    continue
-                for s, d in zip(src, dst):
-                    s = os.path.expanduser(str(s))
-                    d = os.path.expanduser(str(d))
-                    if s and d:
-                        normalized.append((s, d, str(title)))
-                continue
-            if isinstance(src, (list, tuple)):
-                src = src[0] if src else ""
-            if isinstance(dst, (list, tuple)):
-                dst = dst[0] if dst else ""
-            if not isinstance(src, str) or not isinstance(dst, str) or not src or not dst:
-                logger.warning("CopyWorker: skipping malformed task: %r", t)
-                continue
-            normalized.append((os.path.expanduser(src), os.path.expanduser(dst), str(title)))
+            if not isinstance(t, (list, tuple)) or len(t) < 2: continue
+            src_raw, dst_raw = t[0], t[1]
+            title = str(t[2]) if len(t) > 2 else ""
+
+            srcs = [src_raw] if isinstance(src_raw, str) else src_raw
+            dsts = [dst_raw] if isinstance(dst_raw, str) else dst_raw
+
+            if not srcs or not dsts or len(srcs) != len(dsts): continue
+
+            for s, d in zip(srcs, dsts):
+                if s and d: normalized.append((os.path.expanduser(str(s)), os.path.expanduser(str(d)), title))
+
         return normalized
 
     def cancel(self) -> None:
@@ -982,21 +963,40 @@ class CopyWorker(QThread):
         unreachable: set[tuple[str, str]] = set()
         auth_failed: set[tuple[str, str]] = set()
         guest = False
-        seen:  set[tuple[str, str]] = set()
+        seen: set[tuple[str, str]] = set()
+        shares_to_probe = []
         for s, d, _ in smb_tasks:
             if self._cancel.is_set():
                 break
             h, sh, _ = _parse_smb(s if is_smb(s) else d)
-            if (h, sh) in seen:
-                continue
-            seen.add((h, sh))
-            result = _SmbClient(h, sh, user, pw).probe()
-            if result == "timeout":
-                unreachable.add((h, sh))
-            elif result == "auth":
-                auth_failed.add((h, sh))
-            elif result == "guest" and not guest:
-                guest = True
+            if (h, sh) not in seen:
+                seen.add((h, sh))
+                shares_to_probe.append((h, sh))
+
+        lock = threading.Lock()
+
+        def probe_one(_h: str, _sh: str):
+            if self._cancel.is_set(): return
+            result = _SmbClient(_h, _sh, user, pw).probe()
+            with lock:
+                nonlocal guest
+                if result == "timeout":
+                    unreachable.add((_h, _sh))
+                elif result == "auth":
+                    auth_failed.add((_h, _sh))
+                elif result == "guest" and not guest:
+                    guest = True
+
+        if shares_to_probe:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(10, len(shares_to_probe))) as pool:
+                futs = [pool.submit(probe_one, h, sh) for h, sh in shares_to_probe]
+                for fut in concurrent.futures.as_completed(futs):
+                    if self._cancel.is_set():
+                        for f in futs:
+                            f.cancel()
+                        break
+                    fut.result()
+
         return unreachable, auth_failed, guest
 
     @staticmethod
@@ -1224,7 +1224,7 @@ class CopyDialog(QDialog):
         self.timer.start()
         self._tick = QTimer(self)
         self._tick.timeout.connect(self._update_ui_tick)
-        self._tick.start(250)
+        self._tick.start(500)
 
         self.worker.scan_finished.connect(self._on_scan_finished)
         self.worker.batch_update.connect(self._on_batch)
@@ -1290,31 +1290,43 @@ class CopyDialog(QDialog):
 
     def _update_ui_tick(self) -> None:
         self._summary.update_elapsed(self._elapsed_s(), self._done, self._total)
-        max_per = 500 if len(self._pending_ok) > 5000 else 750
-        changed = False
 
-        for pending, widget, fmt in zip(
-            (self._pending_ok, self._pending_sk, self._pending_er),
-            (self._w_copied,   self._w_skipped,  self._w_errors),
-            (self._fmt_ok,     self._fmt_sk,      self._fmt_er),
-        ):
+        if not (self._pending_ok or self._pending_sk or self._pending_er):
+            return
+
+        max_per = 400
+
+        def process_batch(pending, widget, fmt):
             if not pending:
-                continue
+                return 0
+
             batch = pending[:max_per]
             del pending[:max_per]
-            for args in batch:
-                widget.bulk_add([fmt(*args)])
-            changed = True
 
-        if changed or self._size_copied + self._size_skipped > 0:
-            self._update_tab_labels()
-            self._summary.card_copied["val"].setText(f"{self.copied:,}")
-            self._summary.card_copied["size_lbl"].setText(_format_unit(self._size_copied))
-            self._summary.card_skipped["val"].setText(f"{self.skipped:,}")
-            self._summary.card_skipped["size_lbl"].setText(_format_unit(self._size_skipped))
-            self._summary.card_errors["val"].setText(f"{self.errors:,}")
-            total_bytes = self._size_copied + self._size_skipped
-            self._summary.update_total_size(total_bytes)
+            widget.bulk_add([fmt(*args) for args in batch])
+            return len(batch)
+
+        processed = (
+                process_batch(self._pending_ok, self._w_copied, self._fmt_ok) +
+                process_batch(self._pending_sk, self._w_skipped, self._fmt_sk) +
+                process_batch(self._pending_er, self._w_errors, self._fmt_er)
+        )
+
+        if processed == 0:
+            return
+
+        self._update_tab_labels()
+
+        self._summary.card_copied["val"].setText(f"{self.copied:,}")
+        self._summary.card_copied["size_lbl"].setText(_format_unit(self._size_copied))
+
+        self._summary.card_skipped["val"].setText(f"{self.skipped:,}")
+        self._summary.card_skipped["size_lbl"].setText(_format_unit(self._size_skipped))
+
+        self._summary.card_errors["val"].setText(f"{self.errors:,}")
+
+        total_bytes = self._size_copied + self._size_skipped
+        self._summary.update_total_size(total_bytes)
 
     def _on_scan_progress(self, phase: str, scanned: int) -> None:
         self._set_status_scanning(phase, scanned)
@@ -1343,19 +1355,19 @@ class CopyDialog(QDialog):
         self._final_elapsed = self.timer.elapsed() // 1000
 
         for pending, widget, fmt in zip(
-            (self._pending_ok, self._pending_sk, self._pending_er),
-            (self._w_copied,   self._w_skipped,  self._w_errors),
-            (self._fmt_ok,     self._fmt_sk,      self._fmt_er),
+                (self._pending_ok, self._pending_sk, self._pending_er),
+                (self._w_copied, self._w_skipped, self._w_errors),
+                (self._fmt_ok, self._fmt_sk, self._fmt_er),
         ):
-            for args in pending:
-                widget.bulk_add([fmt(*args)])
-            pending.clear()
+            if pending:
+                widget.bulk_add([fmt(*args) for args in pending])
+                pending.clear()
 
         if not cancelled:
             self.copied, self.skipped, self.errors = c, s, e
 
         elapsed = self._final_elapsed
-        tstr    = f"{elapsed // 60:02d}:{elapsed % 60:02d}"
+        tstr = f"{elapsed // 60:02d}:{elapsed % 60:02d}"
 
         if cancelled:
             icon, label, col = "⏹", f"Cancelled after {tstr}", self.c_sk
@@ -1415,9 +1427,9 @@ class _SummaryWidget(QWidget):
         lay.setSpacing(12)
         t = current_theme()
 
-        self._op_name           = "-"
+        self._op_name = "-"
         self._status_html_content = ""
-        self._total_size_bytes  = 0
+        self._total_size_bytes = 0
 
         self.header_card = QFrame()
         self.header_card.setObjectName("headerCard")
@@ -1488,8 +1500,8 @@ class _SummaryWidget(QWidget):
         metrics_lay.setSpacing(12)
         kw = dict(size_title=font_sz(2), size_val=font_sz(10), contents_margins=(16, 12, 16, 12), spacing=4)
         self._card_elapsed = _make_card(None, "⏲️ Elapsed", "--:--", **kw)
-        self._card_speed   = _make_card(None, "🚤 Speed",   "---",   **kw)
-        self._card_eta     = _make_card(None, "🏁 ETA",     "--:--", **kw)
+        self._card_speed = _make_card(None, "🚤 Speed", "---", **kw)
+        self._card_eta = _make_card(None, "🏁 ETA", "--:--", **kw)
         for card in (self._card_elapsed, self._card_speed, self._card_eta):
             metrics_lay.addWidget(card["frame"])
 
@@ -1508,17 +1520,20 @@ class _SummaryWidget(QWidget):
         seg_row = QHBoxLayout(self._seg_track)
         seg_row.setSpacing(0)
         seg_row.setContentsMargins(0, 0, 0, 0)
-        self._seg_copied  = QFrame()
+        self._seg_copied = QFrame()
         self._seg_skipped = QFrame()
-        self._seg_errors  = QFrame()
+        self._seg_errors = QFrame()
         for seg, color, radius in (
-            (self._seg_copied,  t["success"],  "border-radius:5px 0 0 5px;"),
-            (self._seg_skipped, t["warning"], "border-radius:5px 0 0 5px;"),
-            (self._seg_errors,  t["error"],   "border-radius:0 5px 5px 0;"),
+                (self._seg_copied, t["success"], "border-radius:5px 0 0 5px;"),
+                (self._seg_skipped, t["warning"], ""),
+                (self._seg_errors, t["error"], "border-radius:0 5px 5px 0;"),
         ):
             seg.setFixedHeight(10)
             seg.setFixedWidth(0)
-            seg.setStyleSheet(f"background:{color};{radius}")
+            if radius:
+                seg.setStyleSheet(f"background:{color};{radius}")
+            else:
+                seg.setStyleSheet(f"background:{color};")
             seg_row.addWidget(seg, 0)
         seg_row.addStretch(1)
 
@@ -1545,20 +1560,20 @@ class _SummaryWidget(QWidget):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setStyleSheet("QScrollArea { background:transparent; border:none; }")
-        self._entry_scroll      = scroll
+        self._entry_scroll = scroll
         self._entry_list_widget = QWidget()
         self._entry_list_widget.setStyleSheet("background:transparent;")
         self._entry_grid = QGridLayout(self._entry_list_widget)
-        self._entry_grid.setContentsMargins(1, 0, 1, 10)
+        self._entry_grid.setContentsMargins(1, 0, 1, 0)
         self._entry_grid.setHorizontalSpacing(5)
         self._entry_grid.setVerticalSpacing(8)
         scroll.setWidget(self._entry_list_widget)
         entry_lay.addWidget(scroll)
 
         self._entry_row_labels: dict = {}
-        self._entry_results:    dict = {}
-        self._entry_grid_cols       = 1
-        self._last_total            = 0
+        self._entry_results: dict = {}
+        self._entry_grid_cols = 1
+        self._last_total = 0
 
         lay.addWidget(self.header_card)
         lay.addLayout(stats_lay)
@@ -1607,51 +1622,48 @@ class _SummaryWidget(QWidget):
 
     def _refresh_entry_labels(self) -> None:
         self._recalculate_grid()
-        t      = current_theme()
-        cols   = self._entry_grid_cols
-        line_h = 20
-        pad    = 5
-
+        t = current_theme()
+        cols = self._entry_grid_cols
+        needs_rebuild = False
         for title, ec in self._entry_results.items():
             ok, err, skip = ec
             parts = []
-            if ok >= 0:   parts.append(f"<span style='color:{t['success']}'>⤵ {ok:,}</span>")
-            if skip >= 0: parts.append(f"<span style='color:{t['warning']}'>↷ {skip:,}</span>")
-            if err:       parts.append(f"<span style='color:{t['error']}'>✗ {err:,}</span>")
-            suffix     = "&nbsp; ".join(parts) if parts else f"<span style='color:{t['text_dim']}'>–</span>"
+
+            if ok : parts.append(f"<span style='color:{t['success']}'>⤵ {ok:,}</span>")
+            if skip: parts.append(f"<span style='color:{t['warning']}'>↷ {skip:,}</span>")
+            if err: parts.append(f"<span style='color:{t['error']}'>✗ {err:,}</span>")
+
+            suffix = "&nbsp; ".join(parts) if parts else f"<span style='color:{t['text_dim']}'>–</span>"
             safe_title = self._html_title(title)
-            html       = f"<span style='color:{t['text']}'>{safe_title}</span><br>{suffix}"
-            title_lines = self._count_html_lines(safe_title)
-            min_h       = (title_lines + 1) * line_h + pad
+            html = f"<span style='color:{t['text']}'>{safe_title}</span><br>{suffix}"
 
             if title not in self._entry_row_labels:
                 lbl = QLabel()
                 lbl.setTextFormat(Qt.TextFormat.RichText)
                 lbl.setWordWrap(False)
-                lbl.setStyleSheet(_mono_style(font_sz(-1), t["text"], extra="border:none; padding:2px 0px;"))
+                lbl.setStyleSheet(_mono_style(font_sz(-2), t["text"], extra="border:none; padding:2px 0px;"))
+
                 self._entry_row_labels[title] = lbl
+                needs_rebuild = True
+
             lbl = self._entry_row_labels[title]
             lbl.setText(html)
-            lbl.setMinimumHeight(min_h)
 
-        while self._entry_grid.count():
-            item = self._entry_grid.takeAt(0)
-            if item.widget():
-                item.widget().hide()
-        for idx, title in enumerate(sorted(self._entry_row_labels)):
-            row, col = divmod(idx, cols)
-            lbl = self._entry_row_labels[title]
-            lbl.show()
-            self._entry_grid.addWidget(lbl, row, col, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-        for r in range(self._entry_grid.rowCount()):
-            self._entry_grid.setRowStretch(r, 0)
-        self._entry_list_widget.adjustSize()
+        if needs_rebuild:
+            while self._entry_grid.count():
+                item = self._entry_grid.takeAt(0)
+                if item.widget():
+                    item.widget().hide()
+
+            for idx, title in enumerate(sorted(self._entry_row_labels)):
+                row, col = divmod(idx, cols)
+                lbl = self._entry_row_labels[title]
+                lbl.show()
+                self._entry_grid.addWidget(lbl, row, col, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+
+            self._entry_list_widget.adjustSize()
 
     def _update_segments(self, copied: int, skipped: int, errors: int, finished: bool = False) -> None:
-        t = current_theme()
-        self._seg_copied.setStyleSheet(f"background:{t['success']}; border-radius:5px 0 0 5px;")
-        self._seg_skipped.setStyleSheet(f"background:{t['warning']};")
-        self._seg_errors.setStyleSheet(f"background:{t['error']}; border-radius:0 5px 5px 0;")
         if not finished:
             for seg in (self._seg_copied, self._seg_skipped, self._seg_errors):
                 seg.setFixedWidth(0)
@@ -1734,10 +1746,11 @@ class _LogWidget(QWidget):
 
     def __init__(self, color: str) -> None:
         super().__init__()
-        self._items:    list[str] = []
+        self._items: list[str] = []
         self._filtered: list[str] = []
-        self._page      = 0
+        self._page = 0
         self._finalized = False
+        self._last_rendered_content = ""
 
         self._search = QLineEdit()
         self._search.setPlaceholderText(" 🔍  Search…")
@@ -1747,18 +1760,19 @@ class _LogWidget(QWidget):
 
         self._view = QTextEdit()
         self._view.setReadOnly(True)
-        self._view.setStyleSheet(f"font-family:monospace;font-size:{font_sz(int(-1.5))}px;color:{color};")
+        self._view.setStyleSheet(f"font-family:monospace;font-size:{font_sz(-1)}px;color:{color};")
 
         t = current_theme()
         self._first = QPushButton("««")
-        self._prev  = QPushButton("‹ Prev")
-        self._next  = QPushButton("Next ›")
-        self._last  = QPushButton("»»")
+        self._prev = QPushButton("‹ Prev")
+        self._next = QPushButton("Next ›")
+        self._last = QPushButton("»»")
+
         for btn, cb in (
-            (self._first, lambda: self._go(0)),
-            (self._prev,  lambda: self._go(self._page - 1)),
-            (self._next,  lambda: self._go(self._page + 1)),
-            (self._last,  lambda: self._go(self._pages() - 1)),
+                (self._first, lambda: self._go(0)),
+                (self._prev, lambda: self._go(self._page - 1)),
+                (self._next, lambda: self._go(self._page + 1)),
+                (self._last, lambda: self._go(self._pages() - 1)),
         ):
             btn.clicked.connect(cb)
             btn.setMinimumHeight(28)
@@ -1775,7 +1789,7 @@ class _LogWidget(QWidget):
         self._spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._spin.editingFinished.connect(self._spin_changed)
 
-        self._page_lbl  = QLabel("")
+        self._page_lbl = QLabel("")
         self._page_lbl.setMinimumHeight(28)
         self._total_lbl = QLabel("")
         self._total_lbl.setStyleSheet(f"color:{t['muted']};font-size:{font_sz()}px;margin-left:10px;")
@@ -1806,10 +1820,6 @@ class _LogWidget(QWidget):
         lay.addWidget(self._view)
         lay.addLayout(nav)
 
-        self._timer = QTimer(self)
-        self._timer.setInterval(300)
-        self._timer.timeout.connect(self._render)
-
     def _pages(self) -> int:
         return max(1, (len(self._filtered) + self._PAGE - 1) // self._PAGE)
 
@@ -1823,28 +1833,29 @@ class _LogWidget(QWidget):
             self._go(target)
 
     def _render(self) -> None:
-        pages  = self._pages()
-        self._page = max(0, min(self._page, pages - 1))
-        start  = self._page * self._PAGE
-        chunk  = self._filtered[start: start + self._PAGE]
-        lines: list[str] = []
+        pages = self._pages()
+        start = self._page * self._PAGE
+        chunk = self._filtered[start:start + self._PAGE]
+        lines = []
         for i, item in enumerate(chunk):
-            idx   = start + i + 1
+            idx = start + i + 1
             parts = item.split("\n")
             lines.append(f"{idx:,}: {parts[0]}")
             lines.extend(parts[1:])
             lines.append("")
-        self._view.setPlainText("\n".join(lines))
-
+        new_text = "\n".join(lines)
+        if new_text != self._last_rendered_content:
+            self._view.setPlainText(new_text)
+            self._last_rendered_content = new_text
         total = len(self._filtered)
         self._page_lbl.setText(f"<b>{pages}</b>")
         self._total_lbl.setText(f"({total:,} {'entry' if total == 1 else 'entries'})")
-        self._spin.setMaximum(pages)
         self._spin.blockSignals(True)
+        self._spin.setMaximum(pages)
         self._spin.setValue(self._page + 1)
         self._spin.blockSignals(False)
         can_back = self._page > 0
-        can_fwd  = self._page < pages - 1
+        can_fwd = self._page < pages - 1
         self._first.setEnabled(can_back)
         self._prev.setEnabled(can_back)
         self._next.setEnabled(can_fwd)
@@ -1853,30 +1864,35 @@ class _LogWidget(QWidget):
     def bulk_add(self, entries: list[str]) -> None:
         if not entries:
             return
-        needle = self._search.text().lower()
+        needle = self._search.text().lower().strip()
         self._items.extend(entries)
         if not self._finalized:
             if needle:
                 self._filtered.extend(e for e in entries if needle in e.lower())
             else:
-                self._filtered = self._items
-        if not self._timer.isActive():
-            self._timer.start()
+                self._filtered.extend(entries)
 
     def flush_final(self) -> None:
-        self._timer.stop()
         self._finalized = True
-        self._items.sort()
-        needle = self._search.text().lower()
-        self._filtered = (
-            [i for i in self._items if needle in i.lower()] if needle else self._items
-        )
+        self._items.sort(key=self._natural_sort_key)
+        needle = self._search.text().lower().strip()
+        if needle:
+            self._filtered = [i for i in self._items if needle in i.lower()]
+        else:
+            self._filtered = list(self._items)
+        self._page = 0
         self._render()
 
     def _on_search(self) -> None:
         self._page = 0
-        needle     = self._search.text().lower()
-        self._filtered = (
-            [i for i in self._items if needle in i.lower()] if needle else self._items
-        )
+        needle = self._search.text().lower().strip()
+        if not needle:
+            self._filtered = list(self._items)
+        else:
+            self._filtered = [i for i in self._items if needle in i.lower()]
         self._render()
+
+    @staticmethod
+    def _natural_sort_key(s: str) -> list:
+        return [int(text) if text.isdigit() else text.lower()
+                for text in re.split(r'(\d+)', s)]
