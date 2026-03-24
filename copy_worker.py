@@ -39,17 +39,53 @@ _SMB_UNREACHABLE = frozenset((
     "CONNECTION REFUSED", "NO ROUTE TO HOST", "NETWORK IS UNREACHABLE", "CONNECTION TIMED OUT", "TIMEOUT",
 ))
 
+
 _DIRS_LOCK = threading.Lock()
 _CREATED_DIRS: set[str] = set()
+
+def _clear_dir_cache() -> None:
+    global _CREATED_DIRS
+    with _DIRS_LOCK:
+        _CREATED_DIRS.clear()
+
+def _ensure_dir(path: str) -> bool:
+    if not path:
+        return True
+    try:
+        with _DIRS_LOCK:
+            if path in _CREATED_DIRS:
+                return True
+            os.makedirs(path, exist_ok=True)
+            _CREATED_DIRS.add(path)
+        return True
+    except OSError as e:
+        logger.error("Failed to create directory %s: %s", path, e)
+        return False
 
 _O_NOATIME       = os.O_NOATIME
 _copy_file_range = getattr(os, "copy_file_range", None)
 _CACHE_MISS      = object()
 
 
-def _mono_style(size: int, color: str, bold: bool = False, extra: str = "") -> str:
-    w = "font-weight:bold;" if bold else ""
-    return f"font-size:{size}px;{w}color:{color};font-family:monospace;{extra}"
+_THEME_CACHE = None
+
+def _get_theme():
+    global _THEME_CACHE
+    if _THEME_CACHE is None:
+        _THEME_CACHE = current_theme()
+    return _THEME_CACHE
+
+_STYLE_CACHE = {}
+
+def _cached_mono_style(size, color, bold=False, extra=""):
+    key = (size, color, bold, extra)
+    if key not in _STYLE_CACHE:
+        base = f"font-family:monospace;font-size:{size}px;color:{color};"
+        if bold:
+            base += "font-weight:bold;"
+        base += extra
+        _STYLE_CACHE[key] = base
+    return _STYLE_CACHE[key]
 
 
 def _format_unit(value: float, units=None) -> str:
@@ -181,11 +217,8 @@ def _copy_file(src: str, dst: str, cancel: threading.Event) -> tuple[str, str, i
             pass
 
         dst_dir = os.path.dirname(dst)
-        if dst_dir:
-            with _DIRS_LOCK:
-                if dst_dir not in _CREATED_DIRS:
-                    os.makedirs(dst_dir, exist_ok=True)
-                    _CREATED_DIRS.add(dst_dir)
+        if dst_dir and not _ensure_dir(dst_dir):
+            return "error", f"Cannot create directory: {dst_dir}", 0
 
         rfd = _open_src(src)
         try:
@@ -368,9 +401,15 @@ class _SmbClient:
                 timeout=timeout, env=env, encoding="utf-8",
             )
             return r.returncode == 0, (r.stderr.strip() or f"exit {r.returncode}")
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as e:
+            logger.warning("SMB command timeout after %ds", timeout)
+            if e.stdout:
+                logger.debug("SMB stdout before timeout: %.200s", e.stdout)
+            if e.stderr:
+                logger.debug("SMB stderr before timeout: %.200s", e.stderr)
             return False, "timeout"
         except Exception as exc:
+            logger.error("SMB command failed: %s", exc)
             return False, str(exc)
 
     def probe(self) -> str:
@@ -381,9 +420,7 @@ class _SmbClient:
             if _is_unreachable(err):
                 logger.warning("SMB unreachable //%s/%s: %s", self.host, self.share, err)
                 return "timeout"
-        ok, err = _SmbClient(self.host, self.share, "", None, guest=True).run(
-            "exit\n", _SMB_PROBE_TO
-        )
+        ok, err = _SmbClient(self.host, self.share, "", None, guest=True).run("exit\n", _SMB_PROBE_TO)
         if ok:
             return "guest"
         if _is_unreachable(err):
@@ -789,17 +826,18 @@ class _EntryTracker:
                     ec[i] += pc[i]
 
     def emit_all(self, signal) -> None:
-        for t, ec in self._counts.items():
+        with self._lock:
+            counts_snapshot = {t: ec[:] for t, ec in self._counts.items()}
+        for t, ec in counts_snapshot.items():
             if t:
                 signal.emit(t, ec[0], ec[1], ec[2])
 
 
 class _Flusher:
-    __slots__ = ("_signal", "_total", "_lock", "_ok", "_sk", "_er",
-                 "done", "copied", "skipped", "errors")
 
-    def __init__(self, signal, total: int, done: int = 0, copied: int = 0,
-                 skipped: int = 0, errors: int = 0) -> None:
+    __slots__ = ("_signal", "_total", "_lock", "_ok", "_sk", "_er", "done", "copied", "skipped", "errors")
+
+    def __init__(self, signal, total: int, done: int = 0, copied: int = 0, skipped: int = 0, errors: int = 0) -> None:
         self._signal  = signal
         self._total   = total
         self._lock    = threading.Lock()
@@ -872,10 +910,10 @@ class CopyWorker(QThread):
     def run(self) -> None:
         pw: "_SecurePw | None" = None
         try:
-            user: str  = ""
+            user: str = ""
             guest: bool = False
 
-            smb_tasks   = [(s, d, t) for s, d, t in self.tasks if     is_smb(s) or is_smb(d)]
+            smb_tasks = [(s, d, t) for s, d, t in self.tasks if is_smb(s) or is_smb(d)]
             local_tasks = [(s, d, t) for s, d, t in self.tasks if not (is_smb(s) or is_smb(d))]
 
             if smb_tasks:
@@ -888,23 +926,19 @@ class CopyWorker(QThread):
                 unreachable, auth_failed, guest = self._probe_shares(smb_tasks, user, pw)
                 dead = unreachable | auth_failed
                 if dead:
-                    smb_tasks, smb_pre_errors = self._filter_dead_tasks(
-                        smb_tasks, dead, unreachable)
+                    smb_tasks, smb_pre_errors = self._filter_dead_tasks(smb_tasks, dead, unreachable)
 
             smb_expanded: list = []
-            smb_errors:   list = list(smb_pre_errors)
+            smb_errors: list = list(smb_pre_errors)
             if smb_tasks and not self._cancel.is_set():
-                scanner = _SmbScanner(
-                    user, pw, guest, self._cancel,
-                    lambda n: self.scan_progress.emit("Scanning SMB", n),
-                )
+                scanner = _SmbScanner(user, pw, guest, self._cancel, lambda n: self.scan_progress.emit("Scanning SMB", n))
                 exp, err = scanner.resolve(smb_tasks)
                 smb_expanded.extend(exp)
                 smb_errors.extend(err)
 
-            local_pairs:   list = []
+            local_pairs: list = []
             local_skipped: list = []
-            local_errors:  list = []
+            local_errors: list = []
             if local_tasks and not self._cancel.is_set():
                 local_pairs, local_skipped, local_errors = _scan_local(
                     local_tasks, self._cancel,
@@ -912,8 +946,7 @@ class CopyWorker(QThread):
                 )
 
             total_files = (
-                len(smb_expanded) + len(smb_errors)
-                + len(local_pairs) + len(local_skipped) + len(local_errors)
+                    len(smb_expanded) + len(smb_errors) + len(local_pairs) + len(local_skipped) + len(local_errors)
             )
             self.scan_finished.emit(total_files)
 
@@ -929,11 +962,11 @@ class CopyWorker(QThread):
                 )
 
             pre_sk = [(path, reason, 0) for path, reason, _ in local_skipped]
-            pre_er = [(path, msg,    0) for path, msg,    _ in local_errors]
+            pre_er = [(path, msg, 0) for path, msg, _ in local_errors]
             if pre_sk or pre_er:
                 skipped += len(pre_sk)
-                errors  += len(pre_er)
-                done    += len(pre_sk) + len(pre_er)
+                errors += len(pre_er)
+                done += len(pre_sk) + len(pre_er)
                 self.batch_update.emit([], pre_sk, pre_er, done, total_files)
 
             pre_counts: dict[str, list[int]] = {}
@@ -946,8 +979,7 @@ class CopyWorker(QThread):
 
             if local_pairs and not self._cancel.is_set():
                 done, copied, skipped, errors = self._run_local(
-                    local_pairs, done, total_files, copied, skipped, errors,
-                    self._cancel, pre_counts,
+                    local_pairs, done, total_files, copied, skipped, errors, self._cancel, pre_counts,
                 )
 
             self.finished_work.emit(copied, skipped, errors, self._cancel.is_set())
@@ -958,6 +990,7 @@ class CopyWorker(QThread):
         finally:
             if pw is not None:
                 pw.clear()
+            _clear_dir_cache()
 
     def _probe_shares(self, smb_tasks, user, pw) -> tuple[set, set, bool]:
         unreachable: set[tuple[str, str]] = set()
@@ -1113,15 +1146,18 @@ def _lbl(text: str, style: str) -> QLabel:
 def _make_card(color, title, val, size_title=0, size_val=0, bold_val=True,
                contents_margins=(16, 14, 16, 14), spacing=None):
 
-    t = current_theme()
+    t = _get_theme()
     if size_title == 0: size_title = font_sz(3)
-    if size_val   == 0: size_val   = font_sz(16)
+    if size_val == 0: size_val = font_sz(16)
+
     frame = QFrame()
-    style = f"QFrame {{background:{t['bg3']};border-radius:8px;"
+
+    style_parts = [f"QFrame {{background:{t['bg3']};border-radius:8px;"]
     if color:
-        style += f"border-left:4px solid {color};"
-    style += "}"
-    frame.setStyleSheet(style)
+        style_parts.append(f"border-left:4px solid {color};")
+    style_parts.append("}")
+
+    frame.setStyleSheet("".join(style_parts))
     frame.setMinimumWidth(240)
 
     inner = QVBoxLayout(frame)
@@ -1130,10 +1166,10 @@ def _make_card(color, title, val, size_title=0, size_val=0, bold_val=True,
         inner.setSpacing(spacing)
 
     title_lbl = QLabel(title)
-    title_lbl.setStyleSheet(_mono_style(size_title, t["text_dim"], extra="border:none;"))
+    title_lbl.setStyleSheet(_cached_mono_style(size_title, t["text_dim"], extra="border:none;"))
 
     val_lbl = QLabel(val)
-    val_lbl.setStyleSheet(_mono_style(size_val, color or t["text"], bold=bold_val, extra="border:none;"))
+    val_lbl.setStyleSheet(_cached_mono_style(size_val, color or t["text"], bold=bold_val, extra="border:none;"))
     val_lbl.setMinimumWidth(225 if color else 250)
     val_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom)
 
@@ -1147,7 +1183,7 @@ def _make_card(color, title, val, size_title=0, size_val=0, bold_val=True,
     size_lbl = QLabel("")
     if color:
         size_lbl.setText("0 B")
-        size_lbl.setStyleSheet(_mono_style(font_sz(14), color, extra="border:none;"))
+        size_lbl.setStyleSheet(_cached_mono_style(font_sz(14), color, extra="border:none;"))
         size_lbl.setMinimumWidth(200)
         size_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom)
         val_row.addWidget(size_lbl, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom)
@@ -1294,15 +1330,13 @@ class CopyDialog(QDialog):
         if not (self._pending_ok or self._pending_sk or self._pending_er):
             return
 
-        max_per = 400
+        max_per = 100
 
         def process_batch(pending, widget, fmt):
             if not pending:
                 return 0
-
             batch = pending[:max_per]
             del pending[:max_per]
-
             widget.bulk_add([fmt(*args) for args in batch])
             return len(batch)
 
@@ -1319,10 +1353,8 @@ class CopyDialog(QDialog):
 
         self._summary.card_copied["val"].setText(f"{self.copied:,}")
         self._summary.card_copied["size_lbl"].setText(_format_unit(self._size_copied))
-
         self._summary.card_skipped["val"].setText(f"{self.skipped:,}")
         self._summary.card_skipped["size_lbl"].setText(_format_unit(self._size_skipped))
-
         self._summary.card_errors["val"].setText(f"{self.errors:,}")
 
         total_bytes = self._size_copied + self._size_skipped
@@ -1378,7 +1410,9 @@ class CopyDialog(QDialog):
 
         self._set_status_finished(icon, label, col)
 
-        self._summary.update_total_size(self._size_copied + self._size_skipped)
+        total_size = self._size_copied + self._size_skipped
+        self._summary.update_total_size(total_size)
+
         self._summary.refresh(
             self._operation, self._done, self._total,
             self.copied, self.skipped, self.errors, elapsed, True, cancelled,
@@ -1440,7 +1474,7 @@ class _SummaryWidget(QWidget):
         hdr.setColumnStretch(2, 1)
 
         self.op_lbl = QLabel("-")
-        self.op_lbl.setStyleSheet(_mono_style(font_sz(10), t["text"], bold=True))
+        self.op_lbl.setStyleSheet(_cached_mono_style(font_sz(10), t["text"], bold=True))
 
         self._status_center_lbl = QLabel()
         self._status_center_lbl.setTextFormat(Qt.TextFormat.RichText)
@@ -1481,12 +1515,12 @@ class _SummaryWidget(QWidget):
         prog_lay.setContentsMargins(20, 14, 20, 14)
         prog_lay.setSpacing(8)
         prog_hdr = QHBoxLayout()
-        prog_hdr.addWidget(_lbl("Progress", _mono_style(font_sz(2), t["text_dim"], extra="border:none;")))
+        prog_hdr.addWidget(_lbl("Progress", _cached_mono_style(font_sz(2), t["text_dim"], extra="border:none;")))
         prog_hdr.addStretch()
         self._prog_pct = QLabel("0%")
         self._prog_pct.setFixedWidth(60)
         self._prog_pct.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self._prog_pct.setStyleSheet(_mono_style(font_sz(2), t["text"], bold=True, extra="border:none;"))
+        self._prog_pct.setStyleSheet(_cached_mono_style(font_sz(2), t["text"], bold=True, extra="border:none;"))
         prog_hdr.addWidget(self._prog_pct)
         self._progress_bar = QProgressBar()
         self._progress_bar.setRange(0, 0)
@@ -1510,7 +1544,7 @@ class _SummaryWidget(QWidget):
         rate_lay = QVBoxLayout(self._rate_card)
         rate_lay.setContentsMargins(20, 14, 20, 14)
         rate_lay.setSpacing(8)
-        bd_lbl = _lbl("File breakdown", _mono_style(font_sz(2), t["text_dim"], extra="border:none;"))
+        bd_lbl = _lbl("File breakdown", _cached_mono_style(font_sz(2), t["text_dim"], extra="border:none;"))
         bd_lbl.setMinimumHeight(22)
         rate_lay.addWidget(bd_lbl)
 
@@ -1541,7 +1575,7 @@ class _SummaryWidget(QWidget):
         legend_row.setSpacing(20)
         for key, text in (("success", "Copied"), ("warning", "Skipped"), ("error", "Errors")):
             dot = QLabel(f"<span style='color:{t[key]}'>■</span>  {text}")
-            dot.setStyleSheet(_mono_style(font_sz(), t["text"], extra="border:none;"))
+            dot.setStyleSheet(_cached_mono_style(font_sz(), t["text"], extra="border:none;"))
             dot.setMinimumHeight(20)
             legend_row.addWidget(dot)
         legend_row.addStretch()
@@ -1554,7 +1588,7 @@ class _SummaryWidget(QWidget):
         entry_lay = QVBoxLayout(self._entry_card)
         entry_lay.setContentsMargins(15, 10, 15, 10)
         entry_lay.setSpacing(5)
-        entry_lay.addWidget(_lbl("Entries processed", _mono_style(font_sz(2), t["text_dim"], extra="border:none;")))
+        entry_lay.addWidget(_lbl("Entries processed", _cached_mono_style(font_sz(2), t["text_dim"], extra="border:none;")))
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -1625,11 +1659,15 @@ class _SummaryWidget(QWidget):
         t = current_theme()
         cols = self._entry_grid_cols
         needs_rebuild = False
-        for title, ec in self._entry_results.items():
+
+        with self._lock if hasattr(self, '_lock') else threading.Lock():
+            results_snapshot = {k: v[:] for k, v in self._entry_results.items()}
+
+        for title, ec in results_snapshot.items():
             ok, err, skip = ec
             parts = []
 
-            if ok : parts.append(f"<span style='color:{t['success']}'>⤵ {ok:,}</span>")
+            if ok: parts.append(f"<span style='color:{t['success']}'>⤵ {ok:,}</span>")
             if skip: parts.append(f"<span style='color:{t['warning']}'>↷ {skip:,}</span>")
             if err: parts.append(f"<span style='color:{t['error']}'>✗ {err:,}</span>")
 
@@ -1641,7 +1679,7 @@ class _SummaryWidget(QWidget):
                 lbl = QLabel()
                 lbl.setTextFormat(Qt.TextFormat.RichText)
                 lbl.setWordWrap(False)
-                lbl.setStyleSheet(_mono_style(font_sz(-2), t["text"], extra="border:none; padding:2px 0px;"))
+                lbl.setStyleSheet(_cached_mono_style(font_sz(-2), t["text"], extra="border:none; padding:2px 0px;"))
 
                 self._entry_row_labels[title] = lbl
                 needs_rebuild = True
@@ -1686,7 +1724,7 @@ class _SummaryWidget(QWidget):
             card.setStyleSheet(f"QFrame{{background:{t['bg3']};border-radius:8px;}}")
         self._op_name = operation
         self.op_lbl.setText(operation)
-        self.op_lbl.setStyleSheet(_mono_style(font_sz(10), accent, bold=True))
+        self.op_lbl.setStyleSheet(_cached_mono_style(font_sz(10), accent, bold=True))
         self._refresh_op_lbl()
 
         size_str = _format_unit(self._total_size_bytes)
@@ -1751,6 +1789,7 @@ class _LogWidget(QWidget):
         self._page = 0
         self._finalized = False
         self._last_rendered_content = ""
+        self._search_cache: dict[str, list[str]] = {}
 
         self._search = QLineEdit()
         self._search.setPlaceholderText(" 🔍  Search…")
@@ -1871,25 +1910,27 @@ class _LogWidget(QWidget):
                 self._filtered.extend(e for e in entries if needle in e.lower())
             else:
                 self._filtered.extend(entries)
+            self._search_cache.clear()
 
     def flush_final(self) -> None:
         self._finalized = True
         self._items.sort(key=self._natural_sort_key)
         needle = self._search.text().lower().strip()
-        if needle:
-            self._filtered = [i for i in self._items if needle in i.lower()]
-        else:
-            self._filtered = list(self._items)
+        self._filtered = [i for i in self._items if not needle or needle in i.lower()]
         self._page = 0
         self._render()
 
     def _on_search(self) -> None:
-        self._page = 0
         needle = self._search.text().lower().strip()
-        if not needle:
-            self._filtered = list(self._items)
+        if needle in self._search_cache:
+            self._filtered = self._search_cache[needle][:]
         else:
-            self._filtered = [i for i in self._items if needle in i.lower()]
+            self._filtered = [i for i in self._items if not needle or needle in i.lower()]
+            self._search_cache[needle] = self._filtered[:]
+        if len(self._search_cache) > 50:
+            oldest = next(iter(self._search_cache))
+            del self._search_cache[oldest]
+        self._page = 0
         self._render()
 
     @staticmethod
