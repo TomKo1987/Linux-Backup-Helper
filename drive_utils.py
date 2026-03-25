@@ -34,7 +34,7 @@ def _untrack_session_mount(drive: dict) -> None:
 
 
 def _validate_cmd(cmd: str) -> tuple[bool, str, list[str]]:
-    if not cmd.strip():
+    if not cmd:
         return False, "Empty command", []
     if any(seq in cmd for seq in _SHELL_INJECTION_SEQS):
         return False, "Dangerous characters in command", []

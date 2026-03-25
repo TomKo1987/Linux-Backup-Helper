@@ -1,7 +1,12 @@
 from typing import Protocol
+from itertools import groupby
 from dataclasses import dataclass
 from urllib.parse import urlparse
-import errno, os, subprocess, re, threading, concurrent.futures, stat
+from pathlib import PurePosixPath
+from collections import OrderedDict
+from functools import partial, lru_cache
+import os, subprocess, re, threading, concurrent.futures, stat
+from collections import deque as _deque
 
 from PyQt6.QtCore import Qt, QElapsedTimer, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -13,11 +18,11 @@ from drive_utils import is_smb
 from themes import current_theme, font_sz
 from state import apply_replacements, logger
 
-_CHUNK             = 8 * 1024 * 1024
-_SCAN_WORKERS      = 25
-_COPY_WORKERS      = min(16, (os.cpu_count() or 4) * 2)
-_SMB_SHARE_WORKERS = 15
-_SMB_SCAN_WORKERS  = 15
+_CHUNK             = 256 * 1024 * 1024
+_SCAN_WORKERS      = max(8, min(32, (os.cpu_count() or 4)))
+_COPY_WORKERS      = min(8, (os.cpu_count() or 4) // 2)
+_SMB_SHARE_WORKERS = 10
+_SMB_SCAN_WORKERS  = 10
 _SMB_PROBE_TO      = 5
 _SMB_BASE_TIMEOUT  = 15
 _SMB_SECS_PER_FILE = 3
@@ -50,40 +55,30 @@ def _clear_dir_cache() -> None:
 def _ensure_dir(path: str) -> bool:
     if not path:
         return True
+    with _DIRS_LOCK:
+        if path in _CREATED_DIRS:
+            return True
     try:
-        with _DIRS_LOCK:
-            if path in _CREATED_DIRS:
-                return True
-            os.makedirs(path, exist_ok=True)
-            _CREATED_DIRS.add(path)
-        return True
+        os.makedirs(path, exist_ok=True)
     except OSError as e:
         logger.error("Failed to create directory %s: %s", path, e)
         return False
+    with _DIRS_LOCK:
+        _CREATED_DIRS.add(path)
+    return True
+
 
 _O_NOATIME  = os.O_NOATIME
+_PID        = os.getpid()
 _CACHE_MISS = object()
 
 
-_THEME_CACHE = None
-
-def _get_theme():
-    global _THEME_CACHE
-    if _THEME_CACHE is None:
-        _THEME_CACHE = current_theme()
-    return _THEME_CACHE
-
-_STYLE_CACHE = {}
-
-def _cached_mono_style(size, color, bold=False, extra=""):
-    key = (size, color, bold, extra)
-    if key not in _STYLE_CACHE:
-        base = f"font-family:monospace;font-size:{size}px;color:{color};"
-        if bold:
-            base += "font-weight:bold;"
-        base += extra
-        _STYLE_CACHE[key] = base
-    return _STYLE_CACHE[key]
+@lru_cache(maxsize=256)
+def _cached_mono_style(size: int, color: str, bold: bool = False, extra: str = "") -> str:
+    base = f"font-family:monospace;font-size:{size}px;color:{color};"
+    if bold:
+        base += "font-weight:bold;"
+    return base + extra
 
 
 def _format_unit(value: float, units=None) -> str:
@@ -144,7 +139,6 @@ def _get_smb_credentials() -> tuple[str, "_SecurePw | None"]:
         from sudo_password import SecureString
         u, p, _ = SambaPasswordManager().get_credentials()
         pw = SecureString(p) if p else None
-        del p
         return (u or ""), pw
     except Exception as exc:
         logger.warning("SMB credentials unavailable: %s", exc)
@@ -158,98 +152,153 @@ def _open_src(path: str) -> int:
         return os.open(path, os.O_RDONLY)
 
 
-def _kernel_copy(rfd: int, wfd: int, size: int, cancel: threading.Event) -> None:
-    remaining = size
-    offset = 0
-
-    while remaining > 0:
-        if cancel.is_set(): raise InterruptedError
-        try:
-            n = os.copy_file_range(rfd, wfd, min(remaining, _CHUNK),
-                                   offset_src=offset, offset_dst=offset)
-            if n == 0: break
-            offset += n
-            remaining -= n
-        except OSError as e:
-            if e.errno in (errno.EXDEV, errno.EINVAL, errno.ENOSYS, errno.EOPNOTSUPP):
-                break
-            raise
-
-    if remaining > 0:
-        while remaining > 0:
-            if cancel.is_set(): raise InterruptedError
-            try:
-                sent = os.sendfile(wfd, rfd, offset, min(remaining, _CHUNK))
-                if sent == 0: break
-                offset += sent
-                remaining -= sent
-            except OSError as e:
-                if e.errno in (errno.EINVAL, errno.ENOSYS):
-                    break
-                raise
-
-    if remaining > 0:
-        os.lseek(rfd, offset, os.SEEK_SET)
-        os.lseek(wfd, offset, os.SEEK_SET)
-        while remaining > 0:
-            if cancel.is_set(): raise InterruptedError
-            buf = os.read(rfd, min(remaining, _CHUNK))
-            if not buf: break
-            os.write(wfd, buf)
-            remaining -= len(buf)
-
-
 def _copy_file(src: str, dst: str, cancel: threading.Event) -> tuple[str, str, int]:
     tmp = f"{dst}.{os.getpid()}.{threading.get_ident()}.part"
+    rfd = wfd = None
+    _tmp_replaced = False
+
     try:
         if cancel.is_set():
             return "skip", "", 0
 
-        st = os.stat(src)
+        st = _stat_safe(src)
+        if st is None:
+            return "error", "Source not readable", 0
 
-        try:
-            dst_st = os.stat(dst)
-            if st.st_size == dst_st.st_size and dst_st.st_mtime >= st.st_mtime:
-                return "skip", "Up to date", st.st_size
-        except FileNotFoundError:
-            pass
+        if _is_up_to_date(dst, st):
+            return "skip", "Up to date", st.st_size
 
         dst_dir = os.path.dirname(dst)
         if dst_dir and not _ensure_dir(dst_dir):
             return "error", f"Cannot create directory: {dst_dir}", 0
 
-        rfd = _open_src(src)
         try:
-            if st.st_size > 0:
-                try:
-                    os.posix_fadvise(rfd, 0, st.st_size, os.POSIX_FADV_SEQUENTIAL)
-                except OSError:
-                    pass
+            rfd = _open_src(src)
+        except (PermissionError, OSError) as e:
+            return "error", f"Cannot open source: {e.strerror}", 0
 
+        try:
             wfd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, st.st_mode & 0o777)
-            try:
-                if st.st_size > 0:
-                    try:
-                        os.posix_fallocate(wfd, 0, st.st_size)
-                    except OSError:
-                        pass
-                    _kernel_copy(rfd, wfd, st.st_size, cancel)
-            finally:
-                os.close(wfd)
-        finally:
-            os.close(rfd)
+        except OSError as e:
+            return "error", f"Cannot create temp: {e.strerror}", 0
 
-        os.utime(tmp, (st.st_atime, st.st_mtime))
-        os.replace(tmp, dst)
-        return "ok", dst, st.st_size
+        if st.st_size > 0:
+            try:
+                os.posix_fadvise(rfd, 0, st.st_size, os.POSIX_FADV_SEQUENTIAL)
+            except (OSError, AttributeError):
+                pass
+            try:
+                os.posix_fallocate(wfd, 0, st.st_size)
+            except (OSError, AttributeError):
+                pass
+
+        bytes_copied = _copy_loop(rfd, wfd, st.st_size, cancel)
+
+        try:
+            os.fdatasync(wfd)
+        except OSError:
+            pass
+
+        if st.st_size > 0:
+            try:
+                os.posix_fadvise(rfd, 0, st.st_size, os.POSIX_FADV_DONTNEED)
+            except (OSError, AttributeError):
+                pass
+
+        try:
+            os.utime(tmp, (st.st_atime, st.st_mtime))
+        except OSError:
+            pass
+
+        try:
+            os.replace(tmp, dst)
+            _tmp_replaced = True
+        except OSError as e:
+            return "error", f"Cannot move to destination: {e.strerror}", 0
+
+        return "ok", dst, bytes_copied
 
     except InterruptedError:
         _unlink(tmp)
         return "skip", "", 0
     except Exception as exc:
         _unlink(tmp)
-        msg = f"OS Error: {exc.strerror}" if isinstance(exc, OSError) else f"Unexpected: {exc}"
+        msg = str(exc)
+        logger.error("File copy failed %s → %s: %s", src, dst, msg, exc_info=True)
         return "error", msg, 0
+    finally:
+        if rfd is not None:
+            try:
+                os.close(rfd)
+            except OSError:
+                pass
+        if wfd is not None:
+            try:
+                os.close(wfd)
+            except OSError:
+                pass
+        if not _tmp_replaced:
+            _unlink(tmp)
+
+
+def _stat_safe(path: str) -> "os.stat_result | None":
+    try:
+        return os.stat(path)
+    except OSError:
+        return None
+
+
+def _is_up_to_date(dst: str, src_st: "os.stat_result") -> bool:
+    try:
+        dst_st = os.stat(dst)
+        return src_st.st_size == dst_st.st_size and dst_st.st_mtime >= src_st.st_mtime
+    except OSError:
+        return False
+
+
+def _copy_loop(rfd: int, wfd: int, total_size: int, cancel: threading.Event) -> int:
+    remaining = total_size
+
+    try:
+        while remaining > 0:
+            if cancel.is_set():
+                raise InterruptedError("Copy cancelled")
+            n = os.copy_file_range(rfd, wfd, min(remaining, _CHUNK))
+            if n == 0:
+                break
+            remaining -= n
+    except InterruptedError:
+        raise
+    except (OSError, AttributeError):
+        pass
+
+    if remaining > 0:
+        try:
+            offset = os.lseek(rfd, 0, os.SEEK_CUR)
+            while remaining > 0:
+                if cancel.is_set():
+                    raise InterruptedError("Copy cancelled")
+                n = os.sendfile(wfd, rfd, offset, min(remaining, _CHUNK))
+                if n == 0:
+                    break
+                offset += n
+                remaining -= n
+        except InterruptedError:
+            raise
+        except (OSError, AttributeError):
+            pass
+
+    if remaining > 0:
+        while remaining > 0:
+            if cancel.is_set():
+                raise InterruptedError("Copy cancelled")
+            buf = os.read(rfd, min(remaining, _CHUNK))
+            if not buf:
+                break
+            os.write(wfd, buf)
+            remaining -= len(buf)
+
+    return total_size - remaining
 
 
 def _scan_local(scan_jobs, cancel, progress_cb=None) -> tuple[list, list, list]:
@@ -327,30 +376,30 @@ class _SmbJob:
 
 
 def _build_smb_get_cmds(jobs: list[_SmbJob]) -> str:
-    lines, cur_rdir = [], None
-    for j in sorted(jobs, key=lambda x: os.path.dirname(x.remote_path)):
-        rdir  = os.path.dirname(j.remote_path).replace("\\", "/").strip("/")
-        fname = os.path.basename(j.remote_path)
-        if rdir != cur_rdir:
-            lines.append(f'cd "/{_q(rdir)}"' if rdir else 'cd "/"')
-            cur_rdir = rdir
-        lines.append(f'get "{_q(fname)}" "{_q(j.dst_path)}"')
+    lines = []
+    jobs_sorted = sorted(jobs, key=lambda x: os.path.dirname(x.remote_path))
+    for rdir, group in groupby(jobs_sorted, key=lambda x: os.path.dirname(x.remote_path)):
+        lines.append(f'cd "/{_q(rdir)}"' if rdir else 'cd "/"')
+        for j in group:
+            fname = os.path.basename(j.remote_path)
+            lines.append(f'get "{_q(fname)}" "{_q(j.dst_path)}"')
     lines.append("exit\n")
     return "\n".join(lines)
 
 
 def _build_smb_put_cmds(jobs: list[_SmbJob]) -> str:
-    rdirs = sorted({os.path.dirname(j.remote_path).replace("\\", "/").strip("/") for j in jobs})
+    rdirs = sorted({str(PurePosixPath(j.remote_path).parent) for j in jobs})
     mkdir_lines, seen_dirs = [], set()
 
     for rdir in rdirs:
-        if not rdir: continue
-        parts = rdir.split("/")
-        for i in range(len(parts)):
-            d = "/".join(parts[:i + 1])
-            if d not in seen_dirs:
-                seen_dirs.add(d)
-                mkdir_lines.append(f'mkdir "{_q(d)}"')
+        if not rdir:
+            continue
+        path = PurePosixPath(rdir)
+        for parent in [path, *path.parents]:
+            parent_str = str(parent)
+            if parent_str not in seen_dirs and parent_str != ".":
+                seen_dirs.add(parent_str)
+                mkdir_lines.append(f'mkdir "{_q(parent_str)}"')
 
     transfer_lines, cur_local_dir, cur_rdir = [], None, None
     for j in sorted(jobs, key=lambda x: (os.path.dirname(x.remote_path), x.src_url)):
@@ -371,33 +420,35 @@ def _build_smb_put_cmds(jobs: list[_SmbJob]) -> str:
 
 class _SmbClient:
 
-    def __init__(self, host: str, share: str, user: str,
-                 pw: "_SecurePw | None", guest: bool = False) -> None:
-        self.host   = host
-        self.share  = share
-        self._user  = user
-        self._pw    = pw
+    def __init__(self, host: str, share: str, user: str, pw: "_SecurePw | None", guest: bool = False) -> None:
+        self.host = host
+        self.share = share
+        self._user = user
+        self._pw = pw
         self._guest = guest
-
-    def _argv(self) -> list[str]:
-        base = ["smbclient", f"//{self.host}/{self.share}"]
-        return base + (["-N"] if self._guest else ["-U", self._user])
-
-    def _env(self) -> dict:
+        self._argv_cache = (
+            ["smbclient", f"//{host}/{share}", "-N"]
+            if guest else ["smbclient", f"//{host}/{share}", "-U", user]
+            )
         env = os.environ.copy()
-        if self._pw is not None and not self._guest:
-            env["PASSWD"] = self._pw.get()
+        if pw is not None and not guest:
+            env["PASSWD"] = pw.get()
         else:
             env.pop("PASSWD", None)
-        return env
+        self._env_cache = env
+
+    def _argv(self) -> list[str]:
+        return self._argv_cache
+
+    def _env(self) -> dict:
+        return self._env_cache
 
     def run(self, cmds: str, timeout: int) -> tuple[bool, str]:
         env = self._env()
         try:
             r = subprocess.run(
-                self._argv(), input=cmds, text=True, capture_output=True,
-                timeout=timeout, env=env, encoding="utf-8",
-            )
+                self._argv(), input=cmds, text=True, capture_output=True, timeout=timeout, env=env, encoding="utf-8",
+                )
             return r.returncode == 0, (r.stderr.strip() or f"exit {r.returncode}")
         except subprocess.TimeoutExpired as e:
             logger.warning("SMB command timeout after %ds", timeout)
@@ -437,17 +488,14 @@ class _SmbClient:
         env = self._env()
         try:
             result = subprocess.run(
-                self._argv(), input=cmd, text=True, capture_output=True,
-                timeout=_SMB_LS_TIMEOUT, env=env, encoding="utf-8",
-            )
+                self._argv(), input=cmd, text=True, capture_output=True, timeout=_SMB_LS_TIMEOUT, env=env, encoding="utf-8",
+                )
             if result.returncode != 0:
                 stderr = result.stderr.strip()
                 if _is_unreachable(stderr):
-                    logger.warning("SMB ls unreachable //%s/%s: %s",
-                                   self.host, self.share, stderr)
+                    logger.warning("SMB ls unreachable //%s/%s: %s", self.host, self.share, stderr)
                     return None
-                logger.debug("SMB ls failed //%s/%s (rc=%d): %s",
-                             self.host, self.share, result.returncode, stderr)
+                logger.debug("SMB ls failed //%s/%s (rc=%d): %s", self.host, self.share, result.returncode, stderr)
                 return {}
             cur_dir = base
             for raw in result.stdout.splitlines():
@@ -456,10 +504,7 @@ class _SmbClient:
                     continue
                 if line.startswith("\\"):
                     path    = line.replace("\\", "/").strip("/")
-                    cur_dir = (
-                        path if (not base or path.startswith(base + "/") or path == base)
-                        else f"{base}/{path}"
-                    )
+                    cur_dir = (path if (not base or path.startswith(base + "/") or path == base) else f"{base}/{path}")
                     continue
                 m = _SMB_LINE_RE.match(line)
                 if not m:
@@ -479,23 +524,24 @@ class _SmbClient:
 
 class _SmbScanner:
 
-    def __init__(self, user: str, pw: "_SecurePw | None", guest: bool,
-                 cancel: threading.Event, progress_cb=None) -> None:
+    _CACHE_MAX_SIZE = 1000
+
+    def __init__(self, user: str, pw: "_SecurePw | None", guest: bool, cancel: threading.Event, progress_cb=None) -> None:
         self._user        = user
         self._pw          = pw
         self._guest       = guest
         self._cancel      = cancel
         self._progress_cb = progress_cb
-        self._ls_cache:   dict = {}
-        self._cache_lock  = threading.Lock()
-        self._result_lock = threading.Lock()
-        self._counter     = 0
+        self._ls_cache: OrderedDict = OrderedDict()
+        self._cache_lock   = threading.Lock()
+        self._result_lock  = threading.Lock()
+        self._counter_lock = threading.Lock()
+        self._counter      = 0
 
-    def _client(self, host: str, share: str) -> _SmbClient:
-        return _SmbClient(host, share, self._user, self._pw, self._guest)
+    def _client(self, host: str, share: str) -> _SmbClient: return _SmbClient(host, share, self._user, self._pw, self._guest)
 
     def _report(self, n: int) -> None:
-        with self._result_lock:
+        with self._counter_lock:
             self._counter += n
             current = self._counter
         if self._progress_cb:
@@ -518,20 +564,11 @@ class _SmbScanner:
                 if key in seen_get:
                     continue
                 seen_get.add(key)
-                scan_tasks.append(
-                    lambda h=host, sh=share, rp=rpath, d=dst, ti=title:
-                        self._do_get(h, sh, rp, d, ti, expanded, errors)
-                )
+                scan_tasks.append(partial(self._do_get, host, share, rpath, dst, title, expanded, errors))
             elif os.path.isfile(src):
-                scan_tasks.append(
-                    lambda s=src, d=dst, h=host, sh=share, rp=rpath, ti=title:
-                        self._do_put_file(s, d, h, sh, rp, ti, expanded)
-                )
+                scan_tasks.append(partial(self._do_put_file, src, dst, host, share, rpath, title, expanded))
             else:
-                scan_tasks.append(
-                    lambda s=src, d=dst, h=host, sh=share, rp=rpath, ti=title:
-                        self._do_put_dir(s, d, h, sh, rp, ti, expanded)
-                )
+                scan_tasks.append(partial(self._do_put_dir, src, dst, host, share, rpath, title, expanded))
 
         if self._cancel.is_set():
             return [], []
@@ -555,6 +592,8 @@ class _SmbScanner:
     def _do_get(self, host, share, rpath, dst, title, expanded, errors) -> None:
         ck = f"{host}:{share}:{rpath}"
         with self._cache_lock:
+            if len(self._ls_cache) > self._CACHE_MAX_SIZE:
+                self._ls_cache.popitem(last=False)
             idx = self._ls_cache.get(ck, _CACHE_MISS)
         if idx is _CACHE_MISS:
             if self._cancel.is_set():
@@ -580,10 +619,8 @@ class _SmbScanner:
             for path, (sz,) in idx.items():
                 if self._cancel.is_set():
                     break
-                rel = (os.path.relpath(path, rpath) if path.startswith(prefix)
-                       else os.path.basename(path))
-                lexp.append(_SmbJob(src_url, str(os.path.join(dst, rel)),
-                                    "smb_get", host, share, path, sz, title))
+                rel = (os.path.relpath(path, rpath) if path.startswith(prefix) else os.path.basename(path))
+                lexp.append(_SmbJob(src_url, str(os.path.join(dst, rel)), "smb_get", host, share, path, sz, title))
         with self._result_lock:
             expanded.extend(lexp)
             errors.extend(lerr)
@@ -611,9 +648,7 @@ class _SmbScanner:
                         elif not _SKIP_RE.search(e.name):
                             rel = os.path.relpath(e.path, src)
                             rp  = f"{rpath}/{rel}".replace(os.sep, "/").lstrip("/")
-                            lexp.append(
-                                _SmbJob(e.path, dst, "smb_put", host, share, rp, title=title)
-                            )
+                            lexp.append(_SmbJob(e.path, dst, "smb_put", host, share, rp, title=title))
             except PermissionError:
                 pass
         with self._result_lock:
@@ -623,9 +658,9 @@ class _SmbScanner:
 
 class _ShareProcessor:
 
-    def __init__(self, client: _SmbClient, cancel: threading.Event,
-                 flusher: "_Flusher", tracker: "_EntryTracker",
+    def __init__(self, client: _SmbClient, cancel: threading.Event, flusher: "_Flusher", tracker: "_EntryTracker",
                  ri_cache: dict, ri_lock: threading.Lock) -> None:
+
         self._client      = client
         self._cancel      = cancel
         self._flusher     = flusher
@@ -648,8 +683,7 @@ class _ShareProcessor:
             return
 
         for j in get_jobs:
-            self._url_title[f"smb://{self.host}/{self.share}/{j.remote_path}"] = (
-                j.title, j.remote_size)
+            self._url_title[f"smb://{self.host}/{self.share}/{j.remote_path}"] = (j.title, j.remote_size)
         for j in put_jobs:
             self._url_title[j.src_url] = (j.title, _file_size(j.src_url))
 
@@ -657,8 +691,7 @@ class _ShareProcessor:
         get_to_transfer: list = []
         for j in get_jobs:
             if j.up_to_date():
-                sk_immediate.append(
-                    (f"smb://{self.host}/{self.share}/{j.remote_path}", "Up to date"))
+                sk_immediate.append((f"smb://{self.host}/{self.share}/{j.remote_path}", "Up to date"))
             else:
                 get_to_transfer.append(j)
 
@@ -686,11 +719,9 @@ class _ShareProcessor:
                 if self._cancel.is_set():
                     break
                 if self._unreachable.is_set():
-                    self._fail_jobs(get_to_transfer[i:], is_get=True,
-                                    reason="NT_STATUS_HOST_UNREACHABLE")
+                    self._fail_jobs(get_to_transfer[i:], is_get=True, reason="NT_STATUS_HOST_UNREACHABLE")
                     break
-                ok_c, er_c = self._transfer(get_to_transfer[i: i + _SMB_CHUNK_SIZE],
-                                             _build_smb_get_cmds)
+                ok_c, er_c = self._transfer(get_to_transfer[i: i + _SMB_CHUNK_SIZE], _build_smb_get_cmds)
                 self._record(ok_c, [], er_c)
 
         if put_to_transfer and not self._cancel.is_set():
@@ -698,18 +729,13 @@ class _ShareProcessor:
                 if self._cancel.is_set():
                     break
                 if self._unreachable.is_set():
-                    self._fail_jobs(put_to_transfer[i:], is_get=False,
-                                    reason="NT_STATUS_HOST_UNREACHABLE")
+                    self._fail_jobs(put_to_transfer[i:], is_get=False, reason="NT_STATUS_HOST_UNREACHABLE")
                     break
-                ok_c, er_c = self._transfer(put_to_transfer[i: i + _SMB_CHUNK_SIZE],
-                                             _build_smb_put_cmds)
+                ok_c, er_c = self._transfer(put_to_transfer[i: i + _SMB_CHUNK_SIZE], _build_smb_put_cmds)
                 self._record(ok_c, [], er_c)
 
     def _remote_index(self, put_jobs: list) -> dict:
-        needed = {
-            (os.path.dirname(j.remote_path).replace("\\", "/") or "").split("/")[0]
-            for j in put_jobs
-        }
+        needed = {(os.path.dirname(j.remote_path).replace("\\", "/") or "").split("/")[0] for j in put_jobs}
         merged: dict = {}
         for top in needed:
             key = f"{self.host}:{self.share}:{top}"
@@ -720,9 +746,7 @@ class _ShareProcessor:
                 if cached is None:
                     with self._ri_lock:
                         self._ri_cache[key] = {}
-                    logger.warning(
-                        "SMB remote index unreachable //%s/%s — skipping remaining tops",
-                        self.host, self.share)
+                    logger.warning("SMB remote index unreachable //%s/%s — skipping remaining tops", self.host, self.share)
                     break
                 with self._ri_lock:
                     self._ri_cache[key] = cached
@@ -736,8 +760,7 @@ class _ShareProcessor:
         stack    = [list(jobs)]
 
         def _job_src(_j: _SmbJob) -> str:
-            return (f"smb://{self.host}/{self.share}/{_j.remote_path}"
-                    if is_get else _j.src_url)
+            return f"smb://{self.host}/{self.share}/{_j.remote_path}" if is_get else _j.src_url
 
         def _drain(reason: str) -> None:
             while stack:
@@ -758,20 +781,17 @@ class _ShareProcessor:
                 for j in batch:
                     ok_list.append(
                         (f"smb://{self.host}/{self.share}/{j.remote_path}", j.dst_path)
-                        if is_get
-                        else (j.src_url, f"smb://{self.host}/{self.share}/{j.remote_path}")
-                    )
+                        if is_get else (j.src_url, f"smb://{self.host}/{self.share}/{j.remote_path}")
+                        )
             elif _is_unreachable(err):
-                logger.warning("SMB unreachable //%s/%s: %s — aborting share",
-                               self.host, self.share, err)
+                logger.warning("SMB unreachable //%s/%s: %s — aborting share", self.host, self.share, err)
                 self._unreachable.set()
                 for j in batch:
                     er_list.append((_job_src(j), err))
                 _drain(err)
                 break
             elif len(batch) == 1:
-                logger.warning("SMB op failed %s/%s/%s: %s",
-                               self.host, self.share, batch[0].remote_path, err)
+                logger.warning("SMB op failed %s/%s/%s: %s", self.host, self.share, batch[0].remote_path, err)
                 er_list.append((_job_src(batch[0]), err))
             elif not self._cancel.is_set():
                 mid = len(batch) // 2
@@ -804,9 +824,8 @@ class _ShareProcessor:
 
     def _fail_jobs(self, remaining: list, is_get: bool, reason: str) -> None:
         er_c = [
-            (f"smb://{self.host}/{self.share}/{j.remote_path}" if is_get else j.src_url, reason)
-            for j in remaining
-        ]
+            (f"smb://{self.host}/{self.share}/{j.remote_path}" if is_get else j.src_url, reason) for j in remaining
+            ]
         if er_c:
             self._record([], [], er_c)
 
@@ -835,20 +854,20 @@ class _EntryTracker:
                 for i in range(3):
                     ec[i] += pc[i]
 
-    def emit_all(self, signal) -> None:
+    def emit_all(self, _signal) -> None:
         with self._lock:
             counts_snapshot = {t: ec[:] for t, ec in self._counts.items()}
         for t, ec in counts_snapshot.items():
             if t:
-                signal.emit(t, ec[0], ec[1], ec[2])
+                _signal.emit(t, ec[0], ec[1], ec[2])
 
 
 class _Flusher:
 
     __slots__ = ("_signal", "_total", "_lock", "_ok", "_sk", "_er", "done", "copied", "skipped", "errors")
 
-    def __init__(self, signal, total: int, done: int = 0, copied: int = 0, skipped: int = 0, errors: int = 0) -> None:
-        self._signal  = signal
+    def __init__(self, _signal, total: int, done: int = 0, copied: int = 0, skipped: int = 0, errors: int = 0) -> None:
+        self._signal  = _signal
         self._total   = total
         self._lock    = threading.Lock()
         self._ok: list = []
@@ -955,9 +974,7 @@ class CopyWorker(QThread):
                     lambda n: self.scan_progress.emit("Scanning Local", n),
                 )
 
-            total_files = (
-                    len(smb_expanded) + len(smb_errors) + len(local_pairs) + len(local_skipped) + len(local_errors)
-            )
+            total_files = (len(smb_expanded) + len(smb_errors) + len(local_pairs) + len(local_skipped) + len(local_errors))
             self.scan_finished.emit(total_files)
 
             if self._cancel.is_set():
@@ -1057,8 +1074,8 @@ class CopyWorker(QThread):
                 alive.append((s, d, t))
         return alive, pre_errors
 
-    def _run_smb(self, smb_expanded, smb_exp_errors, user, pw, guest,
-                 done_in: int, total: int, cancel) -> tuple[int, int, int, int]:
+    def _run_smb(self, smb_expanded, smb_exp_errors, user, pw, guest, done_in: int, total: int, cancel) -> tuple[int, int, int, int]:
+
         formatted_errors = [(src, err, 0) for src, err in smb_exp_errors]
         done = done_in
         if formatted_errors:
@@ -1081,8 +1098,7 @@ class CopyWorker(QThread):
         def run_share(host, share) -> None:
             client    = _SmbClient(host, share, user, pw, guest)
             processor = _ShareProcessor(client, cancel, flusher, tracker, ri_cache, ri_lock)
-            processor.process(share_groups[(host, share)]["get"],
-                              share_groups[(host, share)]["put"])
+            processor.process(share_groups[(host, share)]["get"], share_groups[(host, share)]["put"])
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=_SMB_SHARE_WORKERS) as pool:
 
@@ -1217,9 +1233,9 @@ class CopyDialog(QDialog):
         self.copied = self.skipped = self.errors = 0
         self._done  = self._total = 0
         self._final_elapsed = None
-        self._pending_ok:    list = []
-        self._pending_sk:    list = []
-        self._pending_er:    list = []
+        self._pending_ok:    _deque = _deque()
+        self._pending_sk:    _deque = _deque()
+        self._pending_er:    _deque = _deque()
         self._size_copied  = self._size_skipped = 0
 
         self._summary = _SummaryWidget()
@@ -1334,13 +1350,13 @@ class CopyDialog(QDialog):
 
         max_per = 100
 
-        def process_batch(pending, widget, fmt):
+        def process_batch(pending: _deque, widget, fmt):
             if not pending:
                 return 0
-            batch = pending[:max_per]
-            del pending[:max_per]
+            n     = min(max_per, len(pending))
+            batch = [pending.popleft() for _ in range(n)]
             widget.bulk_add([fmt(*args) for args in batch])
-            return len(batch)
+            return n
 
         processed = (
                 process_batch(self._pending_ok, self._w_copied, self._fmt_ok) +
