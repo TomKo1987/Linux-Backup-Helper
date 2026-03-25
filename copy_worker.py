@@ -1,12 +1,11 @@
 from typing import Protocol
 from itertools import groupby
+from functools import lru_cache
 from dataclasses import dataclass
 from urllib.parse import urlparse
 from pathlib import PurePosixPath
-from collections import OrderedDict
-from functools import partial, lru_cache
-import os, subprocess, re, threading, concurrent.futures, stat
 from collections import deque as _deque
+import os, subprocess, re, threading, concurrent.futures, stat
 
 from PyQt6.QtCore import Qt, QElapsedTimer, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -20,7 +19,7 @@ from state import apply_replacements, logger
 
 _CHUNK             = 256 * 1024 * 1024
 _SCAN_WORKERS      = max(8, min(32, (os.cpu_count() or 4)))
-_COPY_WORKERS      = min(8, (os.cpu_count() or 4) // 2)
+_COPY_WORKERS      = max(1, min(8, (os.cpu_count() or 2) // 2))
 _SMB_SHARE_WORKERS = 10
 _SMB_SCAN_WORKERS  = 10
 _SMB_PROBE_TO      = 5
@@ -304,9 +303,10 @@ def _copy_loop(rfd: int, wfd: int, total_size: int, cancel: threading.Event) -> 
 def _scan_local(scan_jobs, cancel, progress_cb=None) -> tuple[list, list, list]:
     pairs, skipped, errors = [], [], []
     lock = threading.Lock()
-    counter = [0]
+    counter = 0
 
     def scan_one(src_root: str, dst_root: str, title: str = "") -> None:
+        nonlocal counter
         lp, ls = [], []
         try:
             st = os.stat(src_root)
@@ -334,15 +334,15 @@ def _scan_local(scan_jobs, cancel, progress_cb=None) -> tuple[list, list, list]:
                             else:
                                 rel = os.path.relpath(e.path, src_root)
                                 lp.append((e.path, os.path.join(dst_root, rel), title))
-                except PermissionError:
+                except OSError:
                     pass
 
         with lock:
             pairs.extend(lp)
             skipped.extend(ls)
-            counter[0] += len(lp) + len(ls)
+            counter += len(lp) + len(ls)
         if progress_cb:
-            progress_cb(counter[0])
+            progress_cb(counter)
 
     if not scan_jobs: return pairs, skipped, errors
 
@@ -437,18 +437,12 @@ class _SmbClient:
             env.pop("PASSWD", None)
         self._env_cache = env
 
-    def _argv(self) -> list[str]:
-        return self._argv_cache
-
-    def _env(self) -> dict:
-        return self._env_cache
-
     def run(self, cmds: str, timeout: int) -> tuple[bool, str]:
-        env = self._env()
+        env = self._env_cache
         try:
             r = subprocess.run(
-                self._argv(), input=cmds, text=True, capture_output=True, timeout=timeout, env=env, encoding="utf-8",
-                )
+                self._argv_cache, input=cmds, text=True, capture_output=True, timeout=timeout, env=env, encoding="utf-8"
+            )
             return r.returncode == 0, (r.stderr.strip() or f"exit {r.returncode}")
         except subprocess.TimeoutExpired as e:
             logger.warning("SMB command timeout after %ds", timeout)
@@ -485,10 +479,10 @@ class _SmbClient:
             cmd += f'cd "{_q(base)}"\n'
         cmd += "ls\n"
         index: dict = {}
-        env = self._env()
+        env = self._env_cache
         try:
             result = subprocess.run(
-                self._argv(), input=cmd, text=True, capture_output=True, timeout=_SMB_LS_TIMEOUT, env=env, encoding="utf-8",
+                self._argv_cache, input=cmd, text=True, capture_output=True, timeout=_SMB_LS_TIMEOUT, env=env, encoding="utf-8"
                 )
             if result.returncode != 0:
                 stderr = result.stderr.strip()
@@ -527,21 +521,20 @@ class _SmbScanner:
     _CACHE_MAX_SIZE = 1000
 
     def __init__(self, user: str, pw: "_SecurePw | None", guest: bool, cancel: threading.Event, progress_cb=None) -> None:
-        self._user        = user
-        self._pw          = pw
-        self._guest       = guest
-        self._cancel      = cancel
-        self._progress_cb = progress_cb
-        self._ls_cache: OrderedDict = OrderedDict()
+        self._ls_cache: dict = {}
+        self._user         = user
+        self._pw           = pw
+        self._guest        = guest
+        self._cancel       = cancel
+        self._progress_cb  = progress_cb
         self._cache_lock   = threading.Lock()
         self._result_lock  = threading.Lock()
-        self._counter_lock = threading.Lock()
         self._counter      = 0
 
     def _client(self, host: str, share: str) -> _SmbClient: return _SmbClient(host, share, self._user, self._pw, self._guest)
 
     def _report(self, n: int) -> None:
-        with self._counter_lock:
+        with self._result_lock:
             self._counter += n
             current = self._counter
         if self._progress_cb:
@@ -564,11 +557,14 @@ class _SmbScanner:
                 if key in seen_get:
                     continue
                 seen_get.add(key)
-                scan_tasks.append(partial(self._do_get, host, share, rpath, dst, title, expanded, errors))
+                scan_tasks.append(
+                    lambda h=host, sh=share, rp=rpath, d=dst, ti=title: self._do_get(h, sh, rp, d, ti, expanded, errors))
             elif os.path.isfile(src):
-                scan_tasks.append(partial(self._do_put_file, src, dst, host, share, rpath, title, expanded))
+                scan_tasks.append(
+                    lambda s=src, d=dst, h=host, sh=share, rp=rpath, ti=title: self._do_put_file(s, d, h, sh, rp, ti, expanded))
             else:
-                scan_tasks.append(partial(self._do_put_dir, src, dst, host, share, rpath, title, expanded))
+                scan_tasks.append(
+                    lambda s=src, d=dst, h=host, sh=share, rp=rpath, ti=title: self._do_put_dir(s, d, h, sh, rp, ti, expanded))
 
         if self._cancel.is_set():
             return [], []
@@ -593,8 +589,9 @@ class _SmbScanner:
         ck = f"{host}:{share}:{rpath}"
         with self._cache_lock:
             if len(self._ls_cache) > self._CACHE_MAX_SIZE:
-                self._ls_cache.popitem(last=False)
-            idx = self._ls_cache.get(ck, _CACHE_MISS)
+                oldest = next(iter(self._ls_cache))
+                del self._ls_cache[oldest]
+                idx = self._ls_cache.get(ck, _CACHE_MISS)
         if idx is _CACHE_MISS:
             if self._cancel.is_set():
                 return
@@ -886,16 +883,13 @@ class _Flusher:
             n = len(self._ok) + len(self._sk) + len(self._er)
             if n == 0 or (not force and n < _FLUSH_THRESHOLD):
                 return
-            payload_ok = self._ok[:]
-            payload_sk = self._sk[:]
-            payload_er = self._er[:]
-            self.done    += n
-            self.copied  += len(payload_ok)
+            payload_ok, self._ok = self._ok, []
+            payload_sk, self._sk = self._sk, []
+            payload_er, self._er = self._er, []
+            self.done += n
+            self.copied += len(payload_ok)
             self.skipped += len(payload_sk)
-            self.errors  += len(payload_er)
-            self._ok.clear()
-            self._sk.clear()
-            self._er.clear()
+            self.errors += len(payload_er)
             done_snap = self.done
         self._signal.emit(payload_ok, payload_sk, payload_er, done_snap, self._total)
 
