@@ -37,9 +37,7 @@ def _hdr_label(text: str, color: str = "", size: int | None = None) -> QLabel:
     return lbl
 
 
-def _ok_cancel_buttons(
-    dialog: QDialog, ok_fn, ok_label: str = "Save", cancel_label: str = "Cancel"
-) -> QDialogButtonBox:
+def _ok_cancel_buttons(dialog: QDialog, ok_fn, ok_label: str = "Save", cancel_label: str = "Cancel") -> QDialogButtonBox:
     bb         = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
     ok_btn     = bb.button(QDialogButtonBox.StandardButton.Ok)
     cancel_btn = bb.button(QDialogButtonBox.StandardButton.Cancel)
@@ -578,16 +576,9 @@ class EntryDialog(QDialog):
         if hdr not in S.headers:
             S.headers[hdr] = {"inactive": False, "color": "#ffffff"}
 
-        self.result = {
-            "header":      hdr,
-            "title":       title,
-            "source":      [s for s, _ in valid_pairs],
-            "destination": [d for _, d in valid_pairs],
-            "details": {
-                "no_backup":  self.no_backup.isChecked(),
-                "no_restore": self.no_restore.isChecked(),
-            },
-        }
+        self.result = {"header": hdr, "title": title,
+                       "source": [s for s, _ in valid_pairs], "destination": [d for _, d in valid_pairs],
+                       "details": {"no_backup":  self.no_backup.isChecked(), "no_restore": self.no_restore.isChecked()}}
         self.accept()
 
 
@@ -600,12 +591,10 @@ class MountDialog(QDialog):
         self.setMinimumSize(900, 500)
         opt = opt or {}
         t   = current_theme()
-
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
         layout.addWidget(_hdr_label("Configure Drive"))
         layout.addWidget(_sep())
-
         form = QFormLayout()
         form.setSpacing(15)
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
@@ -623,11 +612,9 @@ class MountDialog(QDialog):
             lbl.setCursor(Qt.CursorShape.WhatsThisCursor)
             lbl.setStyleSheet(f"color:{t['accent2']};text-decoration:underline dotted;")
             return lbl
-
         self.name = _field("drive_name", "e.g. Backup 1")
         form.addRow(QLabel("Drive name:"))
         form.addRow(self.name)
-
         self.mount_path = _field("mount_path", "e.g. smb://192.168.0.38/Backup Drive/")
         form.addRow(_info_label("󰔨 Mount path (optional)",
                                 "<u>Mount Path (optional)</u><br><br>"
@@ -638,7 +625,6 @@ class MountDialog(QDialog):
                                 " using the name from above.<br><br>"
                                 "<i>Fill in</i> when the drive is mounted elsewhere (sshfs, KDE Connect, etc.)."))
         form.addRow(self.mount_path)
-
         self.mount = _field("mount_command", "udisksctl mount --block-device /dev/sdX1")
         form.addRow(_info_label("󰔨 Mount command:",
                                 "<u>Mount Command</u><br><br>"
@@ -652,13 +638,11 @@ class MountDialog(QDialog):
                                 "<small>Allowed commands: mount, umount, mount.cifs, udisksctl, kdeconnect-cli, "
                                 "sshfs, fusermount3, fusermount</small>"))
         form.addRow(self.mount)
-
         self.unmnt    = _field("unmount_command", "udisksctl unmount --block-device /dev/sdX1")
         lbl_unmnt     = QLabel("Unmount command:")
         lbl_unmnt.setAlignment(Qt.AlignmentFlag.AlignCenter)
         form.addRow(lbl_unmnt)
         form.addRow(self.unmnt)
-
         layout.addLayout(form)
         layout.addStretch()
         layout.addWidget(_sep())
@@ -668,12 +652,8 @@ class MountDialog(QDialog):
         if not self.name.text().strip():
             QMessageBox.warning(self, "Error", "Name is a required field.")
             return
-        self.result = {
-            "drive_name":      self.name.text().strip(),
-            "mount_path":      self.mount_path.text().strip(),
-            "mount_command":   self.mount.text().strip(),
-            "unmount_command": self.unmnt.text().strip(),
-        }
+        self.result = {"drive_name": self.name.text().strip(), "mount_path": self.mount_path.text().strip(),
+                       "mount_command": self.mount.text().strip(), "unmount_command": self.unmnt.text().strip()}
         self.accept()
 
 
@@ -686,20 +666,13 @@ class HeaderSettingsDialog(QDialog):
         self.was_changed: bool = False
         self.setWindowTitle("Header Settings")
         self.setMinimumSize(750, 500)
-
         layout = QVBoxLayout(self)
         layout.addWidget(_hdr_label("Headers"))
         layout.addWidget(_sep())
         self.item_list = QListWidget()
         layout.addWidget(self.item_list, 1)
-        layout.addLayout(_btn_row([
-            ("🆕 New",         self._new),
-            ("🎨 Color",       self._color),
-            ("⏸ Toggle active", self._toggle),
-            ("✕ Delete",       self._delete),
-            ("↑ Up",           self._move_up),
-            ("↓ Down",         self._move_down),
-        ]))
+        layout.addLayout(_btn_row([("🆕 New", self._new), ("🎨 Color", self._color), ("⏸ Toggle active", self._toggle),
+                                   ("✕ Delete", self._delete), ("↑ Up", self._move_up), ("↓ Down", self._move_down)]))
         layout.addWidget(_sep())
         layout.addWidget(_ok_cancel_buttons(self, self.accept, "Save && Close"))
         self._refresh()
@@ -745,8 +718,7 @@ class HeaderSettingsDialog(QDialog):
 
     def _color(self) -> None:
         name = self._selected_name()
-        if not name:
-            return
+        if not name: return
         col = QColorDialog.getColor(QColor(S.headers[name]["color"]), self)
         if col.isValid():
             S.headers[name]["color"] = col.name()
@@ -762,11 +734,9 @@ class HeaderSettingsDialog(QDialog):
 
     def _delete(self) -> None:
         name = self._selected_name()
-        if not name:
-            return
+        if not name: return
         if QMessageBox.question(self, "Delete", f"Delete header '{name}' and all its entries?",
-                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) \
-                == QMessageBox.StandardButton.Yes:
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
             del S.headers[name]
             S.entries    = [e for e in S.entries if e["header"] != name]
             self.was_changed = True
@@ -774,13 +744,11 @@ class HeaderSettingsDialog(QDialog):
 
     def _move_header(self, direction: int) -> bool:
         name = self._selected_name()
-        if not name:
-            return False
+        if not name: return False
         keys    = list(S.headers.keys())
         idx     = keys.index(name)
         new_idx = idx + direction
-        if not (0 <= new_idx < len(keys)):
-            return False
+        if not (0 <= new_idx < len(keys)): return False
         keys[idx], keys[new_idx] = keys[new_idx], keys[idx]
         S.headers = {k: S.headers[k] for k in keys}
         self._refresh()
@@ -824,8 +792,7 @@ class MountsDialog(_ListDialog):
 
     def _edit(self) -> None:
         opt = self._selected_data()
-        if not opt:
-            return
+        if not opt: return
         dlg = MountDialog(self, opt)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             idx = next((i for i, o in enumerate(S.mount_options) if o is opt), None)
@@ -851,21 +818,17 @@ class ProfilesDialog(QDialog):
         self.setWindowTitle("Profile Manager")
         self.setMinimumSize(700, 520)
         self.was_changed: bool = False
-
         t      = current_theme()
         layout = QVBoxLayout(self)
         layout.addWidget(_hdr_label("Profile Manager"))
         layout.addWidget(_sep())
-
         self._active_lbl = QLabel()
         self._active_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._active_lbl.setStyleSheet(f"color:{t['accent']};font-weight:bold;padding:4px;")
         layout.addWidget(self._active_lbl)
-
         self.item_list = QListWidget()
         self.item_list.itemDoubleClicked.connect(self._load)
         layout.addWidget(self.item_list, 1)
-
         layout.addLayout(_btn_row([("▶ Load", self._load), ("🆕 New",      self._new),
                                    ("⎘ Duplicate", self._copy), ("✕ Delete", self._del)]))
         layout.addLayout(_btn_row([("⬆ Import", self._import), ("⬇ Export", self._export)]))
@@ -894,8 +857,7 @@ class ProfilesDialog(QDialog):
             item.setForeground(QColor(t["accent"] if active else t["text"]))
             item.setData(Qt.ItemDataRole.UserRole, name)
             self.item_list.addItem(item)
-        if 0 <= row < self.item_list.count():
-            self.item_list.setCurrentRow(row)
+        if 0 <= row < self.item_list.count(): self.item_list.setCurrentRow(row)
 
     def _selected_name(self) -> Optional[str]:
         item = self.item_list.currentItem()
@@ -913,20 +875,17 @@ class ProfilesDialog(QDialog):
             old_path = _PROFILES_DIR / f"{S.profile_name}.json"
             try:
                 data = json.loads(old_path.read_text(encoding="utf-8"))
-                if data.pop("is_default", None):
-                    _atomic_write(old_path, data)
+                if data.pop("is_default", None): _atomic_write(old_path, data)
             except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
                 logger.warning("_load: could not clear is_default from '%s': %s", old_path.name, exc)
 
         if self._activate_profile(name):
             QMessageBox.information(self, "Profile Loaded", f"Profile '{name}' is now active.")
-        else:
-            QMessageBox.critical(self, "Error", f"Could not load profile '{name}'.")
+        else: QMessageBox.critical(self, "Error", f"Could not load profile '{name}'.")
 
     def _new(self) -> None:
         name = _ask_profile_name("New Profile", "", self)
-        if not name:
-            return
+        if not name: return
         dest = _PROFILES_DIR / f"{name}.json"
         if dest.exists() and QMessageBox.question(
                 self, "Overwrite?", f"Profile '{name}' already exists. Overwrite it?",
@@ -947,11 +906,8 @@ class ProfilesDialog(QDialog):
         save_profile()
         self.was_changed = True
         self._refresh()
-        QMessageBox.information(
-            self, "Profile Created",
-            f"Blank profile '{name}' created and is now active.\n\n"
-            "Go to Settings → Header Settings to add headers before creating entries.",
-        )
+        QMessageBox.information(self, "Profile Created", f"Blank profile '{name}' created and is now active.\n\n"
+            "Go to Settings → Header Settings to add headers before creating entries.")
 
     def _copy(self) -> None:
         src_name = self._selected_name() or S.profile_name
@@ -959,8 +915,7 @@ class ProfilesDialog(QDialog):
             QMessageBox.information(self, "Duplicate", "No profile selected.")
             return
         name = _ask_profile_name("Duplicate Profile", f"{src_name} copy", self)
-        if not name:
-            return
+        if not name: return
         src_path = _PROFILES_DIR / f"{src_name}.json"
         if not src_path.exists() and src_name == S.profile_name:
             save_profile()
@@ -980,8 +935,7 @@ class ProfilesDialog(QDialog):
 
     def _del(self) -> None:
         name = self._selected_name()
-        if not name:
-            return
+        if not name: return
         if name == S.profile_name:
             QMessageBox.warning(self, "Delete Profile", "Cannot delete the currently active profile.")
             return
@@ -992,22 +946,19 @@ class ProfilesDialog(QDialog):
                 (_PROFILES_DIR / f"{name}.json").unlink(missing_ok=True)
                 self.was_changed = True
                 self._refresh()
-            except Exception as exc:
-                QMessageBox.critical(self, "Error", f"Could not delete profile: {exc}")
+            except Exception as exc: QMessageBox.critical(self, "Error", f"Could not delete profile: {exc}")
 
     def _import(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self, "Import profile(s)", str(_HOME),
             "Profile files (*.json *.tar.gz *.tgz);;JSON (*.json);;Archive (*.tar.gz *.tgz)")
-        if not path:
-            return
+        if not path: return
         _PROFILES_DIR.mkdir(parents=True, exist_ok=True)
         if path.endswith((".tar.gz", ".tgz")):
             self._import_archive(path)
             return
         name = _ask_profile_name("Import Profile", Path(path).stem, self)
-        if not name:
-            return
+        if not name: return
         dest = _PROFILES_DIR / f"{name}.json"
         if dest.exists() and QMessageBox.question(
                 self, "Overwrite?", f"Profile '{name}' already exists. Overwrite it?",
@@ -1015,12 +966,10 @@ class ProfilesDialog(QDialog):
             return
         shutil.copy2(path, dest)
         self._refresh()
-        if QMessageBox.question(self, "Import Complete",
-                                f"'{name}' imported successfully.\nLoad it now?",
-                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) \
-                == QMessageBox.StandardButton.Yes:
-            if not self._activate_profile(name):
-                QMessageBox.critical(self, "Error", f"Could not load profile '{name}'.")
+        if QMessageBox.question(self, "Import Complete", f"'{name}' imported successfully.\nLoad it now?",
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+
+            if not self._activate_profile(name):QMessageBox.critical(self, "Error", f"Could not load profile '{name}'.")
 
     def _import_archive(self, path: str) -> None:
         try:
@@ -1038,31 +987,25 @@ class ProfilesDialog(QDialog):
                     dest      = _PROFILES_DIR / f"{stem}.json"
                     overwrite = True
                     if dest.exists():
-                        ans = QMessageBox.question(
-                            self, "Overwrite?", f"Profile '{stem}' already exists. Overwrite?",
+                        ans = QMessageBox.question(self, "Overwrite?", f"Profile '{stem}' already exists. Overwrite?",
                             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel)
-                        if ans == QMessageBox.StandardButton.Cancel:
-                            break
+                        if ans == QMessageBox.StandardButton.Cancel: break
                         overwrite = ans == QMessageBox.StandardButton.Yes
                     if overwrite:
                         f = tar.extractfile(member)
                         if f:
                             dest.write_bytes(f.read())
                         imported.append(stem)
-                    else:
-                        skipped.append(f"{stem}  (skipped)")
+                    else: skipped.append(f"{stem}  (skipped)")
         except Exception as exc:
             QMessageBox.critical(self, "Import Failed", str(exc))
             return
-
         self._refresh()
         parts = []
         if imported: parts.append("Imported:\n  " + "\n  ".join(imported))
         if skipped:  parts.append("Skipped:\n  "  + "\n  ".join(skipped))
         QMessageBox.information(self, "Import Complete", "\n\n".join(parts) or "Nothing imported.")
-
-        if len(imported) == 1 and QMessageBox.question(
-                self, "Load Profile", f"Load '{imported[0]}' now?",
+        if len(imported) == 1 and QMessageBox.question(self, "Load Profile", f"Load '{imported[0]}' now?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
             if not self._activate_profile(imported[0]):
                 QMessageBox.critical(self, "Error", f"Could not load profile '{imported[0]}'.")
@@ -1093,19 +1036,15 @@ class ProfilesDialog(QDialog):
             bb.accepted.connect(choice_dlg.accept)
             bb.rejected.connect(choice_dlg.reject)
             vl.addWidget(bb)
-            if choice_dlg.exec() != QDialog.DialogCode.Accepted:
-                return
+            if choice_dlg.exec() != QDialog.DialogCode.Accepted: return
             export_all = rb_all.isChecked()
 
         if export_all:
             ts      = datetime.now().strftime("%Y%m%d_%H%M%S")
-            path, _ = QFileDialog.getSaveFileName(
-                self, "Export all profiles",
-                str(_HOME / f"backup_helper_profiles_{ts}.tar.gz"), "Archive (*.tar.gz)")
-            if not path:
-                return
-            if not path.endswith(".tar.gz"):
-                path += ".tar.gz"
+            path, _ = QFileDialog.getSaveFileName(self, "Export all profiles",
+                                          str(_HOME / f"backup_helper_profiles_{ts}.tar.gz"), "Archive (*.tar.gz)")
+            if not path: return
+            if not path.endswith(".tar.gz"): path += ".tar.gz"
             try:
                 if S.profile_name:
                     save_profile()
@@ -1113,11 +1052,9 @@ class ProfilesDialog(QDialog):
                 with tarfile.open(path, "w:gz") as tar:
                     for name in profiles:
                         src = _PROFILES_DIR / f"{name}.json"
-                        if src.exists():
-                            tar.add(src, arcname=f"{name}.json")
+                        if src.exists(): tar.add(src, arcname=f"{name}.json")
                 QMessageBox.information(self, "Exported", f"All {len(profiles)} profiles exported to:\n{path}")
-            except Exception as exc:
-                QMessageBox.critical(self, "Export Failed", str(exc))
+            except Exception as exc: QMessageBox.critical(self, "Export Failed", str(exc))
             return
 
         name = selected_name
@@ -1154,8 +1091,7 @@ class LogViewer(_TextViewDialog):
         tl.addStretch(1)
         tl.addWidget(QLabel(apply_replacements(str(_LOG_FILE))))
         layout = self.layout()
-        if isinstance(layout, QVBoxLayout):
-            layout.insertWidget(0, top)
+        if isinstance(layout, QVBoxLayout): layout.insertWidget(0, top)
         self._load()
 
     def _load(self) -> None:
@@ -1169,8 +1105,7 @@ class LogViewer(_TextViewDialog):
             cursor = self.view.textCursor()
             cursor.movePosition(QTextCursor.MoveOperation.End)
             self.view.setTextCursor(cursor)
-        except Exception as e:
-            self.view.setPlainText(f"Error reading log file: {e}")
+        except Exception as e: self.view.setPlainText(f"Error reading log file: {e}")
 
     def _clear(self) -> None:
         if QMessageBox.question(self, "Clear log", "Permanently delete all log entries?",
@@ -1206,14 +1141,11 @@ class SysInfoDialog(_TextViewDialog):
                                "  Debian:   sudo apt install inxi\n"
                                "  Fedora:   sudo dnf install inxi\n"
                                "  openSUSE: sudo zypper install inxi\n")
-        except subprocess.TimeoutExpired:
-            self.done_sig.emit("System information request timed out.")
-        except Exception as exc:
-            self.done_sig.emit(f"An unexpected error occurred: {exc}")
+        except subprocess.TimeoutExpired: self.done_sig.emit("System information request timed out.")
+        except Exception as exc: self.done_sig.emit(f"An unexpected error occurred: {exc}")
 
     def closeEvent(self, event) -> None:
         try:
             self.done_sig.disconnect()
-        except RuntimeError:
-            pass
+        except RuntimeError: pass
         super().closeEvent(event)

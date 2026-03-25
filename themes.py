@@ -2,6 +2,7 @@ import base64
 from functools import lru_cache
 
 from PyQt6.QtWidgets import QApplication
+
 from state import S, logger
 
 THEMES: dict[str, dict[str, str]] = {

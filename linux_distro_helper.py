@@ -1,5 +1,5 @@
-from typing import Callable
 from pathlib import Path
+from typing import Callable
 import concurrent.futures, os, re, shlex, subprocess
 
 from state import logger

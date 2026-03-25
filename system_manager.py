@@ -1,8 +1,8 @@
 from pathlib import Path
 from typing import Optional
+from types import SimpleNamespace
 import atexit, gc, html as _html, os, queue, re, select, shlex, shutil, signal
 import subprocess, tempfile, threading, time, urllib.error, urllib.request, pwd
-from types import SimpleNamespace
 
 from PyQt6.QtGui import QColor, QIcon, QTextCursor
 from PyQt6.QtCore import Qt, QElapsedTimer, QThread, QTimer, pyqtSignal
@@ -31,7 +31,6 @@ def _unregister_tmpdir(path: str) -> None:
         except ValueError:
             pass
 
-
 def _wipe_tmpdir(path: str) -> None:
     if not path:
         return
@@ -52,7 +51,6 @@ def _wipe_tmpdir(path: str) -> None:
     except Exception as exc:
         logger.warning("_wipe_tmpdir rmtree: %s", exc)
 
-
 def _emergency_cleanup() -> None:
     with _cleanup_lock:
         paths = list(_pending_cleanup_dirs)
@@ -60,11 +58,8 @@ def _emergency_cleanup() -> None:
     for p in paths:
         _wipe_tmpdir(p)
 
-
 atexit.register(_emergency_cleanup)
-
 _orig_sigterm = signal.getsignal(signal.SIGTERM)
-
 
 def _sigterm_handler(signum, frame):
     logger.warning("SIGTERM — emergency cleanup")
@@ -74,9 +69,7 @@ def _sigterm_handler(signum, frame):
     else:
         raise SystemExit(0)
 
-
 signal.signal(signal.SIGTERM, _sigterm_handler)
-
 
 def _make_askpass(pw_secure) -> Optional[tuple[str, Path]]:
     try:
@@ -169,13 +162,11 @@ def _fmt_html(text: str, kind: str) -> str:
     style = _Style.style_str(kind)
     if kind == "operation":
         esc = _html.escape(apply_replacements(text))
-        return (
-            "<hr style='border:none;margin:15px 30px;border-top:1px dashed rgba(111,255,245,0.3);'>"
-            f"<div style='padding:10px;border-radius:8px;margin:5px 0;'>"
-            f"<p style='{style}'>{esc}</p></div><br>"
-        )
-    lines = [f"<p style='{style}'>{_html.escape(apply_replacements(ln))}</p>"
-             for ln in text.splitlines() if ln.strip()]
+        return ("<hr style='border:none;margin:15px 30px;border-top:1px dashed rgba(111,255,245,0.3);'>"
+                f"<div style='padding:10px;border-radius:8px;margin:5px 0;'>"
+                f"<p style='{style}'>{esc}</p></div><br>")
+
+    lines = [f"<p style='{style}'>{_html.escape(apply_replacements(ln))}</p>" for ln in text.splitlines() if ln.strip()]
     return "\n".join(lines) + "<br>"
 
 
@@ -298,12 +289,14 @@ class SystemManagerDialog(QDialog):
 
     def _style_checklist(self) -> None:
         t, bs = current_theme(), _Style.border_style()
-        self._checklist_lbl.setStyleSheet(f"color:{t['info']};font-size:{font_sz(4)}px;font-weight:bold;padding:10px;"
-                                          f"background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {t['bg2']},stop:1 {t['header_sep']});{bs}")
+        self._checklist_lbl.setStyleSheet(
+            f"color:{t['info']};font-size:{font_sz(4)}px;font-weight:bold;padding:10px;"
+            f"background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {t['bg2']},stop:1 {t['header_sep']});{bs}")
         self._checklist_lbl.setMinimumWidth(self.RIGHT_ITEMS_WIDTH)
-        self._checklist.setStyleSheet(f"QListWidget{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-                                      f"stop:0 {t['bg2']},stop:1 {t['header_sep']});font-size:{font_sz()}px;padding:4px;{bs}}}"
-                                      "QListWidget::item{padding:4px;border-radius:4px;border:1px solid transparent;}")
+        self._checklist.setStyleSheet(
+            f"QListWidget{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+            f"stop:0 {t['bg2']},stop:1 {t['header_sep']});font-size:{font_sz()}px;padding:4px;{bs}}}"
+            "QListWidget::item{padding:4px;border-radius:4px;border:1px solid transparent;}")
         self._checklist.setMinimumWidth(self.RIGHT_ITEMS_WIDTH)
 
     def _style_elapsed(self, shadow: QGraphicsDropShadowEffect) -> None:
@@ -311,9 +304,10 @@ class SystemManagerDialog(QDialog):
         self._elapsed_lbl.setGraphicsEffect(shadow)
         self._elapsed_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._elapsed_lbl.setMinimumSize(self.RIGHT_ITEMS_WIDTH, 75)
-        self._elapsed_lbl.setStyleSheet(f"color:{t['info']};font-size:{font_sz(3)}px;{bs}"
-                                        f"background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {t['bg2']},stop:1 {t['header_sep']});"
-                                        "text-align:center;font-weight:bold;padding:3px;")
+        self._elapsed_lbl.setStyleSheet(
+            f"color:{t['info']};font-size:{font_sz(3)}px;{bs}"
+            f"background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {t['bg2']},stop:1 {t['header_sep']});"
+            "text-align:center;font-weight:bold;padding:3px;")
 
     def on_output(self, text: str, kind: str) -> None:
         if "/var/lib/pacman/db.lck" in text:
@@ -703,9 +697,7 @@ class SystemManagerThread(QThread):
 
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
-                readable, _, _ = select.select(
-                    [proc.stdout, proc.stderr], [], [], 0.05
-                )
+                readable, _, _ = select.select([proc.stdout, proc.stderr], [], [], 0.05)
                 for stream in readable:
                     line = stream.readline()
                     if not line:
@@ -744,11 +736,8 @@ class SystemManagerThread(QThread):
                     proc.kill()
                     proc.wait()
 
-            self.outputReceived.emit(
-                "Sudo access successfully verified" if ok
-                else "Authentication failed: Invalid Password",
-                "success" if ok else "error",
-            )
+            self.outputReceived.emit("Sudo access successfully verified"
+                                     if ok else "Authentication failed: Invalid Password", "success" if ok else "error")
 
         return ok
 
@@ -891,11 +880,8 @@ class SystemManagerThread(QThread):
             self.outputReceived.emit(f"Could not verify /etc/shells: {exc}", "warning")
 
         ok = self._ok(self._stream_cmd(["sudo", "chsh", "-s", shell, _USER]))
-        self._emit_result(
-            ok,
-            f"Shell for '{_USER}' set to '{shell}'",
-            f"Shell for '{_USER}' failed to change to '{shell}'",
-        )
+        self._emit_result(ok, f"Shell for '{_USER}' set to '{shell}'",
+                          f"Shell for '{_USER}' failed to change to '{shell}'")
         return ok
 
     def _update_system(self) -> bool:
@@ -984,8 +970,7 @@ class SystemManagerThread(QThread):
         missing_deps  = [p for p in build_deps if not self.distro.package_is_installed(p)]
         freshly_added = set(missing_deps)
         if missing_deps and not self._ok(
-            self._stream_cmd(shlex.split(self.distro.get_pkg_install_cmd(" ".join(missing_deps))))
-        ):
+            self._stream_cmd(shlex.split(self.distro.get_pkg_install_cmd(" ".join(missing_deps))))):
             return False
 
         yay_dir = _HOME / "yay"
@@ -1007,10 +992,8 @@ class SystemManagerThread(QThread):
         if to_remove:
             self._stream_cmd(["sudo", "pacman", "-R", "--noconfirm"] + to_remove)
 
-        pkgs = sorted(
-            (f for f in yay_dir.iterdir() if f.name.endswith(".pkg.tar.zst")),
-            key=lambda f: (0 if "-debug-" not in f.name else 1, -f.stat().st_mtime),
-        )
+        pkgs = sorted((f for f in yay_dir.iterdir() if f.name.endswith(".pkg.tar.zst")),
+                      key=lambda f: (0 if "-debug-" not in f.name else 1, -f.stat().st_mtime))
         if not pkgs:
             self.outputReceived.emit("No yay package file found after build", "error")
             return False
@@ -1109,9 +1092,8 @@ class SystemManagerThread(QThread):
             return True
         self.outputReceived.emit(f"Found orphaned packages: {', '.join(pkgs)}", "info")
         ok = self._ok(self._stream_cmd(shlex.split(self.distro.get_pkg_remove_cmd(" ".join(pkgs)))))
-        self.outputReceived.emit(
-            "Orphaned packages successfully removed" if ok else "Could not remove orphaned packages",
-            "success" if ok else "error")
+        self.outputReceived.emit("Orphaned packages successfully removed" if ok else "Could not remove orphaned packages",
+                                 "success" if ok else "error")
         return ok
 
     def _clean_cache(self) -> bool:
