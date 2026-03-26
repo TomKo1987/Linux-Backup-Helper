@@ -18,7 +18,7 @@ _session_managed_mounts: list[dict] = []
 
 
 def get_session_managed_mounts() -> list[dict]:
-    return list(_session_managed_mounts)
+    return _session_managed_mounts.copy()
 
 
 def _track_session_mount(drive: dict) -> None:
@@ -27,10 +27,8 @@ def _track_session_mount(drive: dict) -> None:
 
 
 def _untrack_session_mount(drive: dict) -> None:
-    try:
+    if drive in _session_managed_mounts:
         _session_managed_mounts.remove(drive)
-    except ValueError:
-        pass
 
 
 def _validate_cmd(cmd: str) -> tuple[bool, str, list[str]]:
@@ -38,22 +36,25 @@ def _validate_cmd(cmd: str) -> tuple[bool, str, list[str]]:
         return False, "Empty command", []
     if any(seq in cmd for seq in _SHELL_INJECTION_SEQS):
         return False, "Dangerous characters in command", []
+
     try:
         tokens = shlex.split(cmd)
     except ValueError as e:
         return False, str(e), []
+
     if not tokens:
         return False, "No command tokens found", []
 
     base = os.path.basename(tokens[0])
     if base == "sudo" and len(tokens) > 1:
         base = os.path.basename(tokens[1])
+
     if base not in _ALLOWED_MOUNT_CMDS:
         return False, f"'{base}' is not an allowed command", []
 
     expanded = [os.path.expanduser(t) for t in tokens]
     for token in expanded:
-        if ".." in token.replace("\\", "/").split("/"):
+        if ".." in token.split("/"):
             return False, f"Path traversal detected in token: {token!r}", []
 
     return True, "", expanded
@@ -71,7 +72,7 @@ def _mount_paths(name: str) -> tuple[str, ...]:
 
 def _execute_drive_op(drive: dict, cmd_key: str, timeout: int) -> tuple[bool, str]:
     name = drive.get("drive_name", "?")
-    cmd  = drive.get(cmd_key, "").strip()
+    cmd = drive.get(cmd_key, "").strip()
     if not cmd:
         return False, f"No {cmd_key.replace('_', ' ')} configured for '{name}'."
 
@@ -90,41 +91,44 @@ def _execute_drive_op(drive: dict, cmd_key: str, timeout: int) -> tuple[bool, st
         return False, str(e)
 
 
-def get_mount_output() -> str:
+def get_mounts() -> list[tuple[str, str]]:
+    mounts = []
     try:
         with open("/proc/mounts", encoding="utf-8", errors="replace") as fh:
-            raw = fh.read()
-        return re.sub(r"\\(\d{3})", lambda m: chr(int(m.group(1), 8)), raw)
+            for line in fh:
+                parts = line.split()
+                if len(parts) >= 2:
+                    dev = re.sub(r"\\(\d{3})", lambda m: chr(int(m.group(1), 8)), parts[0])
+                    mnt = re.sub(r"\\(\d{3})", lambda m: chr(int(m.group(1), 8)), parts[1])
+                    mounts.append((dev, mnt))
     except OSError as e:
-        logger.warning("get_mount_output: %s", e)
-        return ""
+        logger.warning("get_mounts: %s", e)
+    return mounts
 
 
-def is_mounted(opt: dict, mount_out: Optional[str] = None) -> bool:
+def is_mounted(opt: dict, mounts: Optional[list[tuple[str, str]]] = None) -> bool:
     name = opt.get("drive_name", "")
     if not _valid_drive_name(name):
         return False
-    if mount_out is None:
-        mount_out = get_mount_output()
 
-    for p in _mount_paths(name):
-        if re.search(rf"{re.escape(p)}(?:\s|$)", mount_out):
+    if mounts is None:
+        mounts = get_mounts()
+
+    expected_paths = set(_mount_paths(name))
+    mount_path = opt.get("mount_path", "").strip()
+
+    for dev, mnt in mounts:
+        if mnt in expected_paths or (mount_path and mnt == mount_path):
             return True
 
-    mount_path = opt.get("mount_path", "").strip()
-    if not mount_path:
-        return False
-
-    if is_smb(mount_path):
-        without_schema = re.sub(r"^(smb|cifs)://", "", mount_path).rstrip("/")
-        parts = without_schema.split("/", 1)
-        if len(parts) == 2:
-            host, share = parts
-            pattern = rf"(?://{re.escape(host)}/{re.escape(share)}|{re.escape(host)}:/{re.escape(share)})(?:\s|$|/)"
-            if re.search(pattern, mount_out, re.IGNORECASE):
-                return True
-    elif re.search(rf"{re.escape(mount_path)}(?:\s|$)", mount_out):
-        return True
+        if mount_path and is_smb(mount_path):
+            without_schema = re.sub(r"^(smb|cifs)://", "", mount_path).rstrip("/")
+            parts = without_schema.split("/", 1)
+            if len(parts) == 2:
+                host, share = parts
+                smb_prefixes = (f"//{host}/{share}", f"{host}:/{share}")
+                if dev.lower().startswith(tuple(p.lower() for p in smb_prefixes)):
+                    return True
 
     return False
 
@@ -136,11 +140,12 @@ def mount_drive(drive: dict) -> tuple[bool, str]:
     if success:
         deadline = time.monotonic() + 1.5
         while time.monotonic() < deadline:
-            if is_mounted(drive, get_mount_output()):
+            if is_mounted(drive):
                 break
             time.sleep(0.5)
         else:
             logger.warning("mount_drive: '%s' still not visible after 1.5 s", name)
+
         if has_managed_mount_path(drive):
             _track_session_mount(drive)
         logger.info("Mounted '%s'", name)
@@ -169,44 +174,38 @@ def is_smb(path: str) -> bool:
     return path.startswith(("smb://", "cifs://"))
 
 
+def _is_subpath(parent: str, child: str) -> bool:
+    p = parent.rstrip("/") + "/"
+    c = child.rstrip("/") + "/"
+    return c.startswith(p)
+
+
 def check_drives_to_mount(paths: list[str]) -> list[dict]:
     from state import S
-    mount_out = get_mount_output()
-
-    def _on_local(mount_point: str, file_path: str) -> bool:
-        m = os.path.normpath(mount_point)
-        f = os.path.normpath(file_path)
-        return f == m or f.startswith(m + os.sep)
-
-    def _on_smb(mount_point: str, file_path: str) -> bool:
-        mp = mount_point.rstrip("/")
-        fp = file_path.rstrip("/")
-        return fp == mp or fp.startswith(mp + "/")
-
+    mounts = get_mounts()
     needed = []
+
     for opt in S.mount_options:
-        if is_mounted(opt, mount_out):
+        if is_mounted(opt, mounts):
             continue
-        name       = opt.get("drive_name", "")
+
+        name = opt.get("drive_name", "")
         mount_path = opt.get("mount_path", "").strip()
 
-        if mount_path and is_smb(mount_path):
-            if any(_on_smb(mount_path, p) for p in paths):
+        candidates = [mount_path] if mount_path else _mount_paths(name) if _valid_drive_name(name) else []
+
+        for candidate in candidates:
+            if not candidate: continue
+            if any(_is_subpath(candidate, p) for p in paths):
                 needed.append(opt)
-        elif mount_path:
-            if any(_on_local(mount_path, p) for p in paths):
-                needed.append(opt)
-        elif _valid_drive_name(name):
-            candidates = _mount_paths(name)
-            if any(_on_local(c, p) for c in candidates for p in paths):
-                needed.append(opt)
+                break
 
     return needed
 
 
 def has_managed_mount_path(opt: dict) -> bool:
     mount_path = opt.get("mount_path", "").strip()
-    return bool(mount_path) and mount_path not in _mount_paths(opt.get("drive_name", ""))
+    return bool(mount_path and mount_path not in _mount_paths(opt.get("drive_name", "")))
 
 
 def mount_required_drives(drives: list[dict], parent=None) -> bool:
