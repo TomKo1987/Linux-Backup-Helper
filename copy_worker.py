@@ -607,36 +607,37 @@ class _ShareProcessor:
 
     @property
     def host(self) -> str:  return self._client.host
+
     @property
     def share(self) -> str: return self._client.share
 
     def process(self, get_jobs: list, put_jobs: list) -> None:
-        if self._cancel.is_set():
-            return
-        for j in get_jobs:
-            self._url_title[f"smb://{self.host}/{self.share}/{j.remote_path}"] = (j.title, j.remote_size)
-        for j in put_jobs:
-            try:
-                sz = os.stat(j.src_url).st_size
-            except OSError:
-                sz = 0
-            self._url_title[j.src_url] = (j.title, sz)
+        if self._cancel.is_set(): return
 
-        sk_immediate: list = []
-        get_transfer: list = []
-        for j in get_jobs:
-            (sk_immediate if j.up_to_date() else get_transfer).append(j)
+        sk_immediate = []
+        get_transfer = []
 
-        put_transfer: list = []
+        for j in get_jobs:
+            full_url = f"smb://{self.host}/{self.share}/{j.remote_path}"
+            self._url_title[full_url] = (j.title, j.remote_size)
+            if j.up_to_date():
+                sk_immediate.append((full_url, "Up to date"))
+            else:
+                get_transfer.append(j)
+
+        put_transfer = []
         if put_jobs:
             ri = self._remote_index(put_jobs)
             for j in put_jobs:
-                key  = j.remote_path.replace("\\", "/").lstrip("/")
-                meta = ri.get(key)
                 try:
                     local_sz = os.stat(j.src_url).st_size
                 except OSError:
                     local_sz = 0
+
+                self._url_title[j.src_url] = (j.title, local_sz)
+
+                key = j.remote_path.replace("\\", "/").lstrip("/")
+                meta = ri.get(key)
                 if meta and local_sz == meta[0]:
                     sk_immediate.append((j.src_url, "Up to date"))
                 else:
@@ -691,14 +692,24 @@ class _ShareProcessor:
         return merged
 
     def _transfer(self, jobs: list, build_fn) -> tuple[list, list]:
-        is_get  = build_fn is _build_smb_get_cmds
+        is_get = build_fn is _build_smb_get_cmds
         ok_list: list = []
         er_list: list = []
         stack = [list(jobs)]
+
         while stack:
             batch = stack.pop()
-            if not batch or self._cancel.is_set() or self._unreachable.is_set():
+            if not batch or self._cancel.is_set():
                 break
+
+            if self._unreachable.is_set():
+                reason = "NT_STATUS_HOST_UNREACHABLE"
+                er_list.extend(
+                    (f"smb://{self.host}/{self.share}/{j.remote_path}" if is_get else j.src_url, reason)
+                    for j in batch
+                )
+                continue
+
             ok, err = self._client.run(build_fn(batch), max(_SMB_BASE_TO, len(batch) * _SMB_FILE_SECS))
             if ok:
                 for j in batch:
@@ -720,6 +731,7 @@ class _ShareProcessor:
                 mid = len(batch) // 2
                 stack.append(batch[mid:])
                 stack.append(batch[:mid])
+
         return ok_list, er_list
 
     def _record(self, ok_c: list, sk_c: list, er_c: list) -> None:
@@ -1011,10 +1023,18 @@ class CopyWorker(QThread):
         tracker = _EntryTracker()
 
         def run_share(host: str, share: str) -> None:
-            client    = _SmbClient(host, share, user, pw, guest)
-            processor = _ShareProcessor(client, cancel, flusher, tracker, ri_cache, ri_lock)
-            processor.process(share_groups[(host, share)]["get"],
-                              share_groups[(host, share)]["put"])
+            try:
+                client = _SmbClient(host, share, user, pw, guest)
+                processor = _ShareProcessor(client, cancel, flusher, tracker, ri_cache, ri_lock)
+                processor.process(share_groups[(host, share)]["get"],
+                                  share_groups[(host, share)]["put"])
+            except Exception as e:
+                logger.error("SMB share error: %s", e)
+                er_w = []
+                for _job in share_groups[(host, share)]["get"] + share_groups[(host, share)]["put"]:
+                    src = _job.src_url if _job.kind == "smb_put" else f"smb://{host}/{share}/{_job.remote_path}"
+                    er_w.append((src, f"Share processing crashed: {e}", 0))
+                flusher.push(er=er_w)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=_SMB_WORKERS) as pool:
             futs = {pool.submit(run_share, h, sh): (h, sh) for h, sh in share_groups
@@ -1026,7 +1046,7 @@ class CopyWorker(QThread):
                 try:
                     fut.result()
                 except Exception as exc:
-                    logger.error("SMB share error: %s", exc)
+                    logger.error("SMB share thread error: %s", exc)
 
         flusher.flush()
         tracker.emit_all(self.entry_status)
@@ -1257,9 +1277,9 @@ class _SummaryWidget(QWidget):
         self._seg_skipped = QFrame()
         self._seg_errors = QFrame()
 
-        self._seg_copied.setStyleSheet(f"background:{t['success']}; border-radius:5px 0 0 5px;")
+        self._seg_copied.setStyleSheet(f"background:{t['success']};")
         self._seg_skipped.setStyleSheet(f"background:{t['warning']};")
-        self._seg_errors.setStyleSheet(f"background:{t['error']}; border-radius:0 5px 5px 0;")
+        self._seg_errors.setStyleSheet(f"background:{t['error']};")
 
         for seg in (self._seg_copied, self._seg_skipped, self._seg_errors):
             seg.setFixedHeight(10)
@@ -1275,7 +1295,7 @@ class _SummaryWidget(QWidget):
         for key, text in (("success", "Copied"), ("warning", "Skipped"), ("error", "Errors")):
             dot = QLabel(f"<span style='color:{t[key]}'>■</span>  {text}")
             dot.setStyleSheet(legend_style)
-            dot.setMinimumHeight(20)
+            dot.setMinimumHeight(22)
             legend_row.addWidget(dot)
 
         legend_row.addStretch()
@@ -1850,6 +1870,7 @@ class CopyDialog(QDialog):
 
         if not cancelled:
             self.copied, self.skipped, self.errors = c, s, e
+            self._done = self._total
 
         elapsed = self._final_elapsed
         tstr = f"{elapsed // 60:02d}:{elapsed % 60:02d}"
