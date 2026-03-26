@@ -610,7 +610,7 @@ class MountDialog(QDialog):
             lbl.setToolTip(tooltip)
             lbl.setToolTipDuration(600_000)
             lbl.setCursor(Qt.CursorShape.WhatsThisCursor)
-            lbl.setStyleSheet(f"color:{t['accent2']};text-decoration:underline dotted;")
+            lbl.setStyleSheet(f"color:{t['accent2']};")
             return lbl
         self.name = _field("drive_name", "e.g. Backup 1")
         form.addRow(QLabel("Drive name:"))
@@ -655,6 +655,55 @@ class MountDialog(QDialog):
         self.result = {"drive_name": self.name.text().strip(), "mount_path": self.mount_path.text().strip(),
                        "mount_command": self.mount.text().strip(), "unmount_command": self.unmnt.text().strip()}
         self.accept()
+
+
+class MountsDialog(_ListDialog):
+
+    def __init__(self, parent):
+        self.was_changed: bool = False
+        super().__init__(parent, "Mount Options", (700, 460), "Mounted Drives",
+                         [("🆕 New", "_new"), ("✎ Edit", "_edit"), ("✕ Remove", "_del")])
+
+    def _refresh(self) -> None:
+        from drive_utils import get_mounts, is_mounted
+        self.item_list.clear()
+        t   = current_theme()
+        out = get_mounts()
+        for opt in S.mount_options:
+            mounted = is_mounted(opt, out)
+            status  = "●" if mounted else "○"
+            item    = QListWidgetItem(f"  {status}  {opt.get('drive_name', '?')}")
+            item.setForeground(QColor(t["green"] if mounted else t["text_dim"]))
+            item.setData(Qt.ItemDataRole.UserRole, opt)
+            self.item_list.addItem(item)
+
+    def _new(self) -> None:
+        dlg = MountDialog(self, None)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            S.mount_options.append(dlg.result)
+            save_profile()
+            self.was_changed = True
+            self._refresh()
+
+    def _edit(self) -> None:
+        opt = self._selected_data()
+        if not opt: return
+        dlg = MountDialog(self, opt)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            idx = next((i for i, o in enumerate(S.mount_options) if o is opt), None)
+            if idx is not None:
+                S.mount_options[idx] = dlg.result
+            save_profile()
+            self.was_changed = True
+            self._refresh()
+
+    def _del(self) -> None:
+        opt = self._selected_data()
+        if opt:
+            S.mount_options = [o for o in S.mount_options if o is not opt]
+            save_profile()
+            self.was_changed = True
+            self._refresh()
 
 
 class HeaderSettingsDialog(QDialog):
@@ -760,55 +809,6 @@ class HeaderSettingsDialog(QDialog):
 
     def _move_down(self) -> None:
         if self._move_header(+1): self.was_changed = True
-
-
-class MountsDialog(_ListDialog):
-
-    def __init__(self, parent):
-        self.was_changed: bool = False
-        super().__init__(parent, "Mount Options", (700, 460), "Mounted Drives",
-                         [("🆕 New", "_new"), ("✎ Edit", "_edit"), ("✕ Remove", "_del")])
-
-    def _refresh(self) -> None:
-        from drive_utils import get_mount_output, is_mounted
-        self.item_list.clear()
-        t   = current_theme()
-        out = get_mount_output()
-        for opt in S.mount_options:
-            mounted = is_mounted(opt, out)
-            status  = "●" if mounted else "○"
-            item    = QListWidgetItem(f"  {status}  {opt.get('drive_name', '?')}")
-            item.setForeground(QColor(t["green"] if mounted else t["text_dim"]))
-            item.setData(Qt.ItemDataRole.UserRole, opt)
-            self.item_list.addItem(item)
-
-    def _new(self) -> None:
-        dlg = MountDialog(self, None)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            S.mount_options.append(dlg.result)
-            save_profile()
-            self.was_changed = True
-            self._refresh()
-
-    def _edit(self) -> None:
-        opt = self._selected_data()
-        if not opt: return
-        dlg = MountDialog(self, opt)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            idx = next((i for i, o in enumerate(S.mount_options) if o is opt), None)
-            if idx is not None:
-                S.mount_options[idx] = dlg.result
-            save_profile()
-            self.was_changed = True
-            self._refresh()
-
-    def _del(self) -> None:
-        opt = self._selected_data()
-        if opt:
-            S.mount_options = [o for o in S.mount_options if o is not opt]
-            save_profile()
-            self.was_changed = True
-            self._refresh()
 
 
 class ProfilesDialog(QDialog):

@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
 
 from state import logger, _USER
 from themes import current_theme
+from sudo_password import SecureString
 
 __all__ = ["SambaPasswordManager", "SambaPasswordDialog"]
 
@@ -50,7 +51,7 @@ def _init_keyring() -> None:
 class _VerifyPasswordDialog(QDialog):
     _MAX_ATTEMPTS = 3
 
-    def __init__(self, parent, username: str, stored_pw: str) -> None:
+    def __init__(self, parent, username: str, stored_pw: SecureString) -> None:
         super().__init__(parent)
         self.setWindowTitle("Samba — Verify Password")
         self.setMinimumWidth(550)
@@ -93,33 +94,30 @@ class _VerifyPasswordDialog(QDialog):
         self._pw_input.setFocus()
 
     def _verify(self) -> None:
-        entered     = self._pw_input.text()
-        stored      = self._stored_pw
+        entered = self._pw_input.text()
         self._pw_input.clear()
-        self._stored_pw = ""
 
-        matched = hmac.compare_digest(entered, stored)
+        matched = hmac.compare_digest(entered, self._stored_pw.get())
         del entered
 
         if matched:
-            del stored
+            self._stored_pw.clear()
             self.accept()
             return
 
         self._attempts += 1
         if self._attempts >= self._MAX_ATTEMPTS:
-            del stored
+            self._stored_pw.clear()
             QMessageBox.critical(self, "Access Denied", "Too many failed attempts.")
             self.reject()
             return
 
-        self._stored_pw = stored
         remaining = self._MAX_ATTEMPTS - self._attempts
         self._err_lbl.setText(f"Incorrect password. Remaining attempts: {remaining}")
         self._pw_input.setFocus()
 
     def closeEvent(self, event) -> None:
-        self._stored_pw = ""
+        self._stored_pw.clear()
         self._pw_input.clear()
         super().closeEvent(event)
 
@@ -138,8 +136,8 @@ class SambaPasswordManager:
             result = subprocess.run(
                 ["kwallet-query"] + args,
                 input=input_data, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, timeout=_KWALLET_TIMEOUT, check=False,
-            )
+                text=True, timeout=_KWALLET_TIMEOUT, check=False)
+
             return result.stdout if result.returncode == 0 else None
         except FileNotFoundError:
             logger.debug("kwallet-query not found. KWallet integration disabled.")
@@ -230,13 +228,16 @@ class SambaPasswordDialog(QDialog):
 
     @classmethod
     def open(cls, parent=None) -> None:
-        manager                        = SambaPasswordManager()
+        manager                       = SambaPasswordManager()
         username, stored_pw, from_kw  = manager.get_credentials()
-
         if stored_pw:
-            if _VerifyPasswordDialog(parent, username, stored_pw).exec() != QDialog.DialogCode.Accepted:
+            secure_stored = SecureString(stored_pw)
+            del stored_pw
+            accepted = (_VerifyPasswordDialog(parent, username, secure_stored).exec()  == QDialog.DialogCode.Accepted)
+            secure_stored.clear()
+            if not accepted:
                 return
-            cls(parent, manager, username or "", stored_pw, from_kw).exec()
+            cls(parent, manager, username or "", from_kw, has_credentials=True).exec()
         else:
             has_kw = _kwallet_available()
             msg = (
@@ -244,22 +245,17 @@ class SambaPasswordDialog(QDialog):
                 "You can choose to store them in KWallet or the system keyring."
                 if has_kw else
                 "No Samba credentials are stored yet.\n\n"
-                "Would you like to store credentials in the system keyring?"
-            )
+                "Would you like to store credentials in the system keyring?")
             ans = QMessageBox.question(
-                parent, "Samba Credentials", msg,
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
+                parent, "Samba Credentials", msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
             if ans != QMessageBox.StandardButton.Yes:
                 return
-            cls(parent, manager, _USER, None, False, first_setup=True, kwallet_available=has_kw).exec()
+            cls(parent, manager, _USER, False, first_setup=True, kwallet_available=has_kw).exec()
 
-    def __init__(
-        self, parent=None, manager: Optional[SambaPasswordManager] = None,
-        username: str = "", password: Optional[str] = None,
-        from_kwallet: bool = False, *,
-        first_setup: bool = False, kwallet_available: bool = False,
-    ) -> None:
+    def __init__(self, parent=None, manager: Optional[SambaPasswordManager] = None, username: str = "",
+                 from_kwallet: bool = False, *, has_credentials: bool = False, first_setup: bool = False,
+                 kwallet_available: bool = False) -> None:
+
         super().__init__(parent)
         self._username_field:   Optional[QLineEdit] = None
         self._password_field:   Optional[QLineEdit] = None
@@ -267,21 +263,22 @@ class SambaPasswordDialog(QDialog):
         self.setWindowTitle("Samba Credentials")
         self.setMinimumSize(750, 350)
 
-        self._manager       = manager or SambaPasswordManager()
-        self._error_dialog  = QErrorMessage(self)
-        self._first_setup   = first_setup
-        self._kwallet_avail = kwallet_available
-        self._from_kwallet  = from_kwallet
+        self._manager         = manager or SambaPasswordManager()
+        self._error_dialog    = QErrorMessage(self)
+        self._first_setup     = first_setup
+        self._kwallet_avail   = kwallet_available
+        self._from_kwallet    = from_kwallet
+        self._has_credentials = has_credentials
 
-        self._build_ui(username, password, bool(password), from_kwallet)
+        self._build_ui(username, from_kwallet)
 
-    def _build_ui(self, username: str, password: Optional[str], has_credentials: bool, from_kwallet: bool) -> None:
+    def _build_ui(self, username: str, from_kwallet: bool) -> None:
         layout = QVBoxLayout(self)
         t      = current_theme()
 
-        if has_credentials:
+        if self._has_credentials:
             origin = "KWallet" if from_kwallet else "system keyring"
-            banner = QLabel(f"Credentials are already stored.\n(Retrieved from {origin})")
+            banner = QLabel(f"Samba credentials have already been defined.\n(Stored in {origin})")
             banner.setStyleSheet(f"color:{t['success']};font-weight:bold;")
             banner.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(banner)
@@ -290,8 +287,7 @@ class SambaPasswordDialog(QDialog):
 
         for label_text, attr, echo, prefill in (
             ("Username:", "_username_field", QLineEdit.EchoMode.Normal,   username),
-            ("Password:", "_password_field", QLineEdit.EchoMode.Password, password or ""),
-        ):
+            ("Password:", "_password_field", QLineEdit.EchoMode.Password, "")):
             lbl = QLabel(label_text)
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(lbl)
@@ -310,9 +306,7 @@ class SambaPasswordDialog(QDialog):
         show_pw_cb.setStyleSheet(f"color:{t['accent']};")
         show_pw_cb.toggled.connect(
             lambda checked: self._password_field.setEchoMode(
-                QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password
-            )
-        )
+                QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password))
         layout.addWidget(show_pw_cb)
 
         if self._first_setup and self._kwallet_avail:
@@ -326,18 +320,19 @@ class SambaPasswordDialog(QDialog):
         close_btn.clicked.connect(self.reject)
         btn_row.addWidget(close_btn)
 
-        if has_credentials and not from_kwallet:
+        if self._has_credentials and not from_kwallet:
             del_btn = QPushButton("Delete Credentials")
             del_btn.setStyleSheet(f"border:1px solid {t['error']};color:{t['error']};")
             del_btn.clicked.connect(self._delete_credentials)
             btn_row.addWidget(del_btn)
 
-        save_btn = QPushButton("Update Credentials" if has_credentials else "Save")
+        save_btn = QPushButton("Update Credentials" if self._has_credentials else "Save")
         save_btn.clicked.connect(self._save_credentials)
         save_btn.setDefault(True)
         btn_row.addWidget(save_btn)
 
         layout.addLayout(btn_row)
+        self._password_field.setFocus()
 
     def _save_credentials(self) -> None:
         username = self._username_field.text().strip()

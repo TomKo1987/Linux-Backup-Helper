@@ -68,7 +68,7 @@ def _ensure_dir(path: str) -> bool:
     return True
 
 
-_O_NOATIME = os.O_NOATIME
+_O_NOATIME = getattr(os, "O_NOATIME", 0)
 
 
 @lru_cache(maxsize=256)
@@ -114,14 +114,10 @@ class _SecurePw(Protocol):
 
 
 def _get_smb_credentials() -> tuple[str, "_SecurePw | None"]:
-    try:
-        from samba_credentials import SambaPasswordManager
-        from sudo_password import SecureString
-        u, p, _ = SambaPasswordManager().get_credentials()
-        return (u or ""), (SecureString(p) if p else None)
-    except Exception as exc:
-        logger.warning("SMB credentials unavailable: %s", exc)
-        return "", None
+    from samba_credentials import SambaPasswordManager
+    from sudo_password import SecureString
+    u, p, _ = SambaPasswordManager().get_credentials()
+    return (u or ""), (SecureString(p) if p else None)
 
 
 def _smb_cred_file(user: str, pw: "_SecurePw") -> "tuple[str, str] | None":
@@ -392,6 +388,7 @@ class _SmbClient:
             return self._argv + ["-N"], None, None
         result = _smb_cred_file(self._user, self._pw)
         if result is None:
+            logger.warning("SMB cred file unavailable for //%s/%s — falling back to guest", self.host, self.share)
             return self._argv + ["-N"], None, None
         tmp_dir, cred_path = result
         return self._argv + ["-A", cred_path], tmp_dir, cred_path
@@ -1587,7 +1584,8 @@ class _LogWidget(QWidget):
         self._html_prefix = (
             f"<style>body {{ font-family: monospace; font-size: {font_sz(-1)}px; color: {color}; }}"
             f"hr {{ background-color: {t['header_sep']}; margin: 4px 0; }}"
-            f".entry {{ margin-bottom: 4px; }}</style>"
+            f".entry-odd {{ margin-bottom: 4px; padding: 2px 4px; background-color: rgba(0, 0, 0, 0.15); }}"
+            f".entry-even {{ margin-bottom: 4px; padding: 2px 4px; background-color: rgba(255, 255, 255, 0.05); }}</style>"
         )
 
     def _pages(self) -> int:
@@ -1612,7 +1610,9 @@ class _LogWidget(QWidget):
             idx = start + i + 1
             safe = (item.replace("&", "&amp;").replace("<", "&lt;")
                     .replace(">", "&gt;").replace("\n", "<br>"))
-            parts.append(f'<div class="entry"><b>{idx:,}:</b> {safe}</div>')
+            row_class = "entry-even" if i % 2 == 0 else "entry-odd"
+            parts.append(f'<div class="{row_class}"><b>{idx:,}:</b> {safe}</div>')
+
             if i < len(chunk) - 1:
                 parts.append("<hr>")
 
@@ -1663,7 +1663,6 @@ class _LogWidget(QWidget):
             if len(self._search_cache) > 50:
                 self._search_cache.pop(next(iter(self._search_cache)))
             self._search_cache[needle] = self._filtered[:]
-
         self._page = 0
         self._render()
 

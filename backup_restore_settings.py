@@ -167,8 +167,6 @@ class _BaseCheckboxWindow(QDialog):
             if not self._entry_filter(e):
                 continue
             h = e.get("header", "Unknown")
-            if S.headers.get(h, {}).get("inactive") is False:
-                pass
             grouped.setdefault(h, []).append(e)
 
         t   = current_theme()
