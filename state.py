@@ -15,8 +15,6 @@ _LOG_FILE = _LOG_DIR / "backup_helper.log"
 _PROFILE_RE = re.compile(r"^[^\s._][\w\-. ]*$")
 
 RESTART_DIALOG: int = 2
-_COLS_NARROW, _COLS_WIDE = 2, 4
-
 _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
@@ -270,7 +268,7 @@ def _entry_tooltip_html(title, src_lines, dst_lines, bg, bg2, bg3, c_title, c_da
     return (
         f"<table style='border-collapse:collapse;width:100%;font-family:monospace;white-space:nowrap'>"
         f"<tr style='background-color:{bg};'><td style="
-        f"'font-size:{font_sz_fn(2)}px;color:{c_title};text-align:center;padding:5px;'>{safe_title}</td></tr>"
+        f"'font-size:{font_sz_fn()}px;color:{c_title};text-align:center;padding:5px;'>{safe_title}</td></tr>"
         f"<tr style='background-color:{bg2};'><td style="
         f"'font-size:{font_sz_fn(-1)}px;color:{c_data};padding:6px;'>Source:<br>{s_html}</td></tr>"
         f"<tr style='background-color:{bg3};'><td style="
@@ -365,7 +363,7 @@ def generate_tooltip() -> tuple[dict, dict, dict]:
                 logger.warning("Session detect failed: %s", e)
             _session_detected = True
 
-        session = _cached_session or None
+        session = _cached_session if _cached_session else None
         t       = current_theme()
 
         backup_tips = {

@@ -924,8 +924,7 @@ class SystemManagerLauncher:
             QMessageBox.information(
                 self.parent, "No Operations Configured",
                 "System Manager has no operations selected yet.\n\n"
-                "Please configure what should be executed under 'System Manager Operations' first.",
-            )
+                "Please configure what should be executed under 'System Manager Operations' first.")
             SystemManagerOptions(self.parent).exec()
             return
         if self.parent:
@@ -1062,7 +1061,7 @@ class SystemManagerLauncher:
 
     def _start_thread(self, pw: "SecureString | str") -> None:
         from system_manager import SystemManagerDialog, SystemManagerThread
-        self._sm_thread = SystemManagerThread(pw)
+        self._sm_thread = SystemManagerThread(pw, distro=self._distro)
         self._sm_dialog = SystemManagerDialog(self.parent)
         t, d = self._sm_thread, self._sm_dialog
         t.thread_started.connect(lambda: d.exec())

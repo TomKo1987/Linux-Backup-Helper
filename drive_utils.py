@@ -116,19 +116,20 @@ def is_mounted(opt: dict, mounts: Optional[list[tuple[str, str]]] = None) -> boo
 
     expected_paths = set(_mount_paths(name))
     mount_path = opt.get("mount_path", "").strip()
+    smb_prefixes: tuple = ()
+
+    if mount_path and is_smb(mount_path):
+        without_schema = re.sub(r"^(smb|cifs)://", "", mount_path).rstrip("/")
+        parts = without_schema.split("/", 1)
+        if len(parts) == 2:
+            host, share = parts
+            smb_prefixes = (f"//{host}/{share}".lower(), f"{host}:/{share}".lower())
 
     for dev, mnt in mounts:
         if mnt in expected_paths or (mount_path and mnt == mount_path):
             return True
-
-        if mount_path and is_smb(mount_path):
-            without_schema = re.sub(r"^(smb|cifs)://", "", mount_path).rstrip("/")
-            parts = without_schema.split("/", 1)
-            if len(parts) == 2:
-                host, share = parts
-                smb_prefixes = (f"//{host}/{share}", f"{host}:/{share}")
-                if dev.lower().startswith(tuple(p.lower() for p in smb_prefixes)):
-                    return True
+        if smb_prefixes and dev.lower().startswith(smb_prefixes):
+            return True
 
     return False
 

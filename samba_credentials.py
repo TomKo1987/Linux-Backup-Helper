@@ -117,7 +117,6 @@ class _VerifyPasswordDialog(QDialog):
         self._pw_input.setFocus()
 
     def closeEvent(self, event) -> None:
-        self._stored_pw.clear()
         self._pw_input.clear()
         super().closeEvent(event)
 
@@ -135,8 +134,7 @@ class SambaPasswordManager:
         try:
             result = subprocess.run(
                 ["kwallet-query"] + args,
-                input=input_data, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, timeout=_KWALLET_TIMEOUT, check=False)
+                input=input_data, capture_output=True, text=True, timeout=_KWALLET_TIMEOUT, check=False)
 
             return result.stdout if result.returncode == 0 else None
         except FileNotFoundError:
@@ -234,7 +232,6 @@ class SambaPasswordDialog(QDialog):
             secure_stored = SecureString(stored_pw)
             del stored_pw
             accepted = (_VerifyPasswordDialog(parent, username, secure_stored).exec()  == QDialog.DialogCode.Accepted)
-            secure_stored.clear()
             if not accepted:
                 return
             cls(parent, manager, username or "", from_kw, has_credentials=True).exec()
@@ -364,6 +361,6 @@ class SambaPasswordDialog(QDialog):
             self._error_dialog.showMessage(f"Failed to delete credentials:\n{exc}")
 
     def closeEvent(self, event) -> None:
-        if self._password_field:
+        if self._password_field is not None:
             self._password_field.clear()
         super().closeEvent(event)

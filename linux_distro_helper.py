@@ -11,20 +11,19 @@ _MIN_PARALLEL = 5
 _DISTROS_ARCH      = {"arch", "manjaro", "garuda", "endeavouros", "omarchy", "archman", "rebornos", "cachyos", "artix",
                        "arcolinux", "blendos", "crystal", "archcraft", "archbang", "archlabs"}
 
-_DISTROS_DEBIAN    = {"debian", "ubuntu", "pop", "popos", "mint", "linuxmint", "elementary", "lmde", "kali", "parrot", "zorin",
-                       "zorinos", "mxlinux", "mx", "antix", "raspbian", "peppermint", "deepin", "lite", "linuxlite", "tails",
-                       "siduction", "sparky", "sparkylinux", "bodhi", "bunsenlabs", "pureos", "devuan", "q4os", "refracta",
-                       "kubuntu", "xubuntu", "lubuntu", "ubuntu-mate", "ubuntu-budgie"}
+_DISTROS_DEBIAN    = {"debian", "ubuntu", "pop", "popos", "mint", "linuxmint", "elementary", "lmde", "kali", "parrot",
+                      "zorin", "zorinos", "mxlinux", "mx", "antix", "raspbian", "peppermint", "deepin", "lite", "q4os",
+                      "linuxlite", "tails", "siduction", "sparky", "sparkylinux", "bodhi", "bunsenlabs", "ubuntu-budgie",
+                      "devuan", "refracta", "kubuntu", "xubuntu", "lubuntu", "ubuntu-mate", "pureos"}
 
-_DISTROS_FEDORA    = {"fedora", "rhel", "centos", "rocky", "almalinux", "nobara", "ultramarine", "mageia", "openmandriva", "pclinuxos"}
+_DISTROS_FEDORA    = {"fedora", "rhel", "centos", "rocky", "almalinux", "nobara", "ultramarine", "mageia",
+                      "openmandriva", "pclinuxos"}
 
 _DISTROS_SUSE      = {"opensuse", "opensuse-leap", "opensuse-tumbleweed", "opensuse-slowroot", "suse", "sled", "sles"}
-_DISTROS_VOID      = {"void"}
+
 _DISTROS_GENTOO    = {"gentoo", "funtoo", "calculate", "sabayon"}
-_DISTROS_NIXOS     = {"nixos"}
-_DISTROS_ALPINE    = {"alpine", "postmarketos"}
+
 _DISTROS_SLACKWARE = {"slackware", "salix", "porteus", "slax"}
-_DISTROS_SOLUS     = {"solus"}
 
 
 _DISTRO_FAMILY_MAP: dict[str, str] = {
@@ -34,12 +33,12 @@ _DISTRO_FAMILY_MAP: dict[str, str] = {
         ("debian",    _DISTROS_DEBIAN),
         ("fedora",    _DISTROS_FEDORA),
         ("suse",      _DISTROS_SUSE),
-        ("void",      _DISTROS_VOID),
         ("gentoo",    _DISTROS_GENTOO),
-        ("nixos",     _DISTROS_NIXOS),
-        ("alpine",    _DISTROS_ALPINE),
         ("slackware", _DISTROS_SLACKWARE),
-        ("solus",     _DISTROS_SOLUS),
+        ("void",      {"void"}),
+        ("nixos",     {"nixos"}),
+        ("alpine",    {"alpine", "postmarketos"}),
+        ("solus",     {"solus"}),
     ]
     for distro_id in distro_set
 }
@@ -62,9 +61,10 @@ _SHELL_PKG_MAP: dict[str, str] = {
     "ngs":     "ngs",
 }
 
-SESSIONS = ["KDE", "GNOME", "XFCE", "Cinnamon", "MATE", "LXDE", "LXQt", "Budgie", "Deepin", "Openbox",
-            "i3", "Sway", "Hyprland", "bspwm", "dwm", "awesome", "qtile", "xmonad",
-            "Wayfire", "River", "niri", "COSMIC"]
+SESSIONS = ["KDE", "GNOME", "XFCE", "Cinnamon", "MATE", "LXDE", "LXQt", "Budgie", "Deepin", "Openbox", "i3", "Sway",
+            "Hyprland", "bspwm", "dwm", "awesome", "qtile", "xmonad", "Wayfire", "River", "niri", "COSMIC"]
+
+_SESSION_LOWER: dict[str, str] = {s.lower(): s for s in SESSIONS}
 
 _PKG_MGR_NAME: dict[str, str] = {
     "arch":      "pacman",
@@ -86,7 +86,8 @@ def _nixos_check(p: str) -> list[str]:
 
 
 def _slackware_check(p: str) -> list[str]:
-    return ["sh", "-c", f"test -n \"$(ls /var/log/packages/{shlex.quote(p)}-* 2>/dev/null)\""]
+    p_q = shlex.quote(p)
+    return ["sh", "-c", f"ls /var/log/packages/{p_q}-* >/dev/null 2>&1"]
 
 
 _PKG: dict[str, dict] = {
@@ -284,12 +285,10 @@ _WM_PROCS: dict[str, str] = {
 }
 
 
-def distro_family(distro_id: str) -> str:
-    return _DISTRO_FAMILY_MAP.get(distro_id, distro_id)
+def distro_family(distro_id: str) -> str: return _DISTRO_FAMILY_MAP.get(distro_id, distro_id)
 
 
-def _lookup(table: dict, family: str) -> list:
-    return table.get(family) or table.get(None, [])
+def _lookup(table: dict, family: str) -> list: return table.get(family) or table.get(None, [])
 
 
 class LinuxDistroHelper:
@@ -466,13 +465,13 @@ class LinuxDistroHelper:
             logger.error("kernel headers pkg: %s", exc)
         return self._kernel_pkg
 
+
+
     @staticmethod
     def detect_session() -> str | None:
-        session_lowercase: dict[str, str] = {s.lower(): s for s in SESSIONS}
-
         for var in ("XDG_CURRENT_DESKTOP", "XDG_SESSION_DESKTOP", "DESKTOP_SESSION"):
             for part in os.getenv(var, "").split(":"):
-                match = session_lowercase.get(part.strip().lower())
+                match = _SESSION_LOWER.get(part.strip().lower())
                 if match:
                     return match
 

@@ -9,8 +9,8 @@ from PyQt6.QtWidgets import (
 
 from samba_credentials import SambaPasswordDialog
 from dialogs import EntryDialog, HeaderSettingsDialog, MountsDialog, ProfilesDialog
+from state import S, _PROFILES_DIR, apply_replacements, block_set, save_profile, generate_tooltip
 from themes import THEMES, current_theme, apply_style, font_scale, register_style_listener, unregister_style_listener
-from state import S, _PROFILES_DIR, _COLS_NARROW, _COLS_WIDE, apply_replacements, block_set, save_profile, generate_tooltip
 
 
 def _copy_logic_tooltip() -> str:
@@ -47,6 +47,9 @@ def _copy_logic_tooltip() -> str:
         f"<span style='color:{t['warning']};'>Yellow</span> = Skipped, "
         f"<span style='color:{t['error']};'>Red</span> = Error."
     )
+
+
+_COLS_NARROW, _COLS_WIDE = 2, 4
 
 
 # noinspection PyUnresolvedReferences
@@ -158,7 +161,6 @@ class _BaseCheckboxWindow(QDialog):
         self._top_hbox.addWidget(self._col_btn)
 
     def _populate_checkboxes(self, grid: QGridLayout) -> int:
-        self.checkbox_dirs.clear()
         tips = self._tips()
         fs   = font_scale()
 
@@ -206,7 +208,7 @@ class _BaseCheckboxWindow(QDialog):
                 elif base_tip:
                     cb.setToolTip(base_tip)
 
-                cb.setStyleSheet(f"QCheckBox{{color:{cb_color};}} QToolTip{{color:{t['success']};}}")
+                cb.setStyleSheet(f"QCheckBox{{color:{cb_color};}}")
                 cb.stateChanged.connect(self._sync_select_all)
                 cb.setProperty("entry_data", e)
 
@@ -413,8 +415,7 @@ class SettingsWindow(_BaseCheckboxWindow):
             dlg  = EntryDialog(
                 self, current_entry,
                 stacked=self._entry_stacked,
-                _pairs=pairs if pairs_initialised else None,
-            )
+                _pairs=pairs if pairs_initialised else None)
             if window_title:
                 dlg.setWindowTitle(window_title)
             code = dlg.exec()

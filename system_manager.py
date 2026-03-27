@@ -159,10 +159,11 @@ class _Style:
 
 
 def _fmt_html(text: str, kind: str) -> str:
+    t = current_theme()
     style = _Style.style_str(kind)
     if kind == "operation":
         esc = _html.escape(apply_replacements(text))
-        return ("<hr style='border:none;margin:15px 30px;border-top:1px dashed rgba(111,255,245,0.3);'>"
+        return (f"<hr style='border:none;margin:15px 30px;border-top:1px dashed {t['header_sep']};'>"
                 f"<div style='padding:10px;border-radius:8px;margin:5px 0;'>"
                 f"<p style='{style}'>{esc}</p></div><br>")
 
@@ -470,7 +471,7 @@ class SystemManagerThread(QThread):
     passwordFailed = pyqtSignal()
     passwordSuccess = pyqtSignal()
 
-    def __init__(self, sudo_password) -> None:
+    def __init__(self, sudo_password, distro) -> None:
         super().__init__()
         from sudo_password import SecureString
         self._pw = sudo_password if isinstance(sudo_password, SecureString) else SecureString(sudo_password or "")
@@ -480,8 +481,7 @@ class SystemManagerThread(QThread):
         self._enabled_tasks: dict[str, tuple] = {}
 
         try:
-            from linux_distro_helper import LinuxDistroHelper
-            self.distro = LinuxDistroHelper()
+            self.distro = distro
             self._pkg_cache = _PackageCache(self.distro)
         except Exception as exc:
             logger.warning("distro init: %s", exc)
@@ -1081,7 +1081,8 @@ class SystemManagerThread(QThread):
             return True
         needs_shell = "|" in cmd or "&&" in cmd
         try:
-            r = self._run_cmd(cmd if needs_shell else shlex.split(cmd), shell=needs_shell, timeout=60)
+            tokens = ["sh", "-c", cmd] if needs_shell else shlex.split(cmd)
+            r = self._run_cmd(tokens, timeout=60)
             raw = r.stdout.strip() if r.stdout else ""
         except ValueError as exc:
             self.outputReceived.emit(f"Orphan search failed: {exc}", "error")
@@ -1092,8 +1093,9 @@ class SystemManagerThread(QThread):
             return True
         self.outputReceived.emit(f"Found orphaned packages: {', '.join(pkgs)}", "info")
         ok = self._ok(self._stream_cmd(shlex.split(self.distro.get_pkg_remove_cmd(" ".join(pkgs)))))
-        self.outputReceived.emit("Orphaned packages successfully removed" if ok else "Could not remove orphaned packages",
-                                 "success" if ok else "error")
+        self.outputReceived.emit(
+            "Orphaned packages successfully removed" if ok else "Could not remove orphaned packages",
+            "success" if ok else "error")
         return ok
 
     def _clean_cache(self) -> bool:
@@ -1103,7 +1105,8 @@ class SystemManagerThread(QThread):
         self.outputReceived.emit(f"Cleaning {pm_name} cache", "info")
         cmd = self.distro.get_clean_cache_cmd()
         if "&" in cmd or "|" in cmd:
-            result = self._stream_cmd(["sudo", "sh", "-c", cmd])
+            inner = re.sub(r"^\s*sudo\s+", "", cmd)
+            result = self._stream_cmd(["sudo", "-A", "sh", "-c", inner])
         else:
             result = self._stream_cmd(shlex.split(cmd))
         ok = self._ok(result)

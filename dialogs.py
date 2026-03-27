@@ -490,9 +490,6 @@ class EntryDialog(QDialog):
 
         vl.addWidget(_sep())
         bb     = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
-        ok_btn = bb.button(QDialogButtonBox.StandardButton.Ok)
-        if ok_btn:
-            ok_btn.setText("OK")
         bb.accepted.connect(dlg.accept)
         bb.rejected.connect(dlg.reject)
         vl.addWidget(bb)
@@ -528,7 +525,9 @@ class EntryDialog(QDialog):
         self._edit_pair(row)
 
     def _remove_selected(self) -> None:
-        row = max(self._src_list.currentRow(), self._dst_list.currentRow())
+        row = self._src_list.currentRow()
+        if row < 0:
+            row = self._dst_list.currentRow()
         if 0 <= row < len(self.pairs):
             self.pairs.pop(row)
             self._populate_lists()
@@ -969,7 +968,8 @@ class ProfilesDialog(QDialog):
         if QMessageBox.question(self, "Import Complete", f"'{name}' imported successfully.\nLoad it now?",
                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
 
-            if not self._activate_profile(name):QMessageBox.critical(self, "Error", f"Could not load profile '{name}'.")
+            if not self._activate_profile(name):
+                QMessageBox.critical(self, "Error", f"Could not load profile '{name}'.")
 
     def _import_archive(self, path: str) -> None:
         try:

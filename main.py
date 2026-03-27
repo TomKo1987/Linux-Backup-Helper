@@ -20,18 +20,16 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Backup Helper")
         self.setMinimumSize(425, 400)
+        self.sm_failed_attempts = 0
         self._quitting = False
 
-        self.menu_actions = [
-            ("💾 Create Backup", lambda: self._open(base_window, "Backup"), False),
-            ("📤 Restore Backup", lambda: self._open(base_window, "Restore"), False),
-            ("🖥 System Manager", lambda: __import__("system_manager_options").SystemManagerLauncher(self).launch(),
-             False),
-            ("💻 System Info", lambda: self._open(SysInfoDialog), True),
-            ("📋 View Logs", lambda: self._open(LogViewer), False),
-            ("⚙️ Settings", self._open_settings, False),
-            ("❌ Quit", self._exit, False),
-        ]
+        self.menu_actions = [("💾 Create Backup", lambda: self._open(base_window, "Backup"), False),
+                             ("📤 Restore Backup", lambda: self._open(base_window, "Restore"), False),
+                             ("🖥 System Manager", self._launch_system_manager, False),
+                             ("💻 System Info", lambda: self._open(SysInfoDialog), True),
+                             ("📋 View Logs", lambda: self._open(LogViewer), False),
+                             ("⚙️ Settings", self._open_settings, False),
+                             ("❌ Quit", self._exit, False)]
 
         self._build_ui()
         self._setup_tray()
@@ -83,6 +81,10 @@ class MainWindow(QMainWindow):
         self._open(base_window, "Settings", setup_fn=lambda d: d.changed.connect(apply_style))
         self._build_ui()
 
+    def _launch_system_manager(self) -> None:
+        from system_manager_options import SystemManagerLauncher
+        SystemManagerLauncher(self).launch()
+
     def _setup_tray(self) -> None:
         if not QSystemTrayIcon.isSystemTrayAvailable():
             return
@@ -104,8 +106,7 @@ class MainWindow(QMainWindow):
 
         self.tray.setContextMenu(menu)
         self.tray.activated.connect(
-            lambda r: self._show_and_raise() if r == QSystemTrayIcon.ActivationReason.DoubleClick else None
-        )
+            lambda r: self._show_and_raise() if r == QSystemTrayIcon.ActivationReason.DoubleClick else None)
         self.tray.show()
 
     def _show_and_raise(self) -> None:
@@ -135,15 +136,17 @@ class MainWindow(QMainWindow):
                 lines += [f"  • {_drive_name(o)}" for o in info_only]
 
             msg = "The following drives are still mounted:\n\n" + "\n".join(lines) + "\n\nUnmount before quitting?\n"
-            ans = QMessageBox.question(
-                self, "Quit — Drives Still Mounted", msg,
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel
-            )
+            ans = QMessageBox.question(self, "Quit — Drives Still Mounted", msg, QMessageBox.StandardButton.Yes |
+                                       QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel)
 
             if ans == QMessageBox.StandardButton.Cancel:
                 return
             if ans == QMessageBox.StandardButton.Yes:
-                failed = [f"• {_drive_name(o)}: {err}" for o in unmountable for ok, err in [unmount_drive(o)] if not ok]
+                failed = []
+                for o in unmountable:
+                    success, err = unmount_drive(o)
+                    if not success:
+                        failed.append(f"• {_drive_name(o)}: {err}")
                 if failed:
                     QMessageBox.warning(self, "Unmount Failed", "Could not unmount:\n\n" + "\n".join(failed))
         else:
@@ -153,8 +156,7 @@ class MainWindow(QMainWindow):
             else:
                 msg = "Really quit Backup Helper?"
 
-            ans = QMessageBox.question(self, "Quit", msg,
-                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            ans = QMessageBox.question(self, "Quit", msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
             if ans != QMessageBox.StandardButton.Yes:
                 return
 
@@ -207,10 +209,8 @@ def _first_run_wizard(parent) -> bool:
 
             dest = _PROFILES_DIR / f"{name}.json"
             if dest.exists():
-                ans = QMessageBox.warning(
-                    parent, "Overwrite", f"Profile '{name}' already exists. Overwrite?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-                )
+                ans = QMessageBox.warning(parent, "Overwrite", f"Profile '{name}' already exists. Overwrite?",
+                                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
                 if ans == QMessageBox.StandardButton.No:
                     continue
 
@@ -239,7 +239,6 @@ def main():
                              f"An unexpected error occurred:\n\n{exc_value}\n\nCheck the logs for details.")
 
     sys.excepthook = _excepthook
-
     has_profile = startup_load()
     win = MainWindow()
     apply_style()
