@@ -1,11 +1,19 @@
-from itertools import groupby
-from functools import lru_cache
-from dataclasses import dataclass
-from urllib.parse import urlparse
-from pathlib import PurePosixPath
-from typing import Protocol, Optional
+import concurrent.futures
+import html
+import os
+import queue
+import re
+import subprocess
+import tempfile
+import threading
+import time
 from collections import deque as _deque
-import os, subprocess, re, threading, concurrent.futures, stat, tempfile
+from dataclasses import dataclass
+from functools import lru_cache
+from itertools import groupby, islice
+from pathlib import PurePosixPath
+from typing import Optional, Protocol
+from urllib.parse import urlparse
 
 from PyQt6.QtCore import Qt, QElapsedTimer, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -14,21 +22,23 @@ from PyQt6.QtWidgets import (
 )
 
 from drive_utils import is_smb
-from themes import current_theme, font_sz
 from state import apply_replacements, logger
+from themes import current_theme, font_sz
 
-
-_CHUNK         = 16 * 1024 * 1024
-_IO_BUF        =  4 * 1024 * 1024
-_SCAN_WORKERS  = min(32, max(8, os.cpu_count() or 4))
-_COPY_WORKERS  = min(16, max(4, os.cpu_count() or 4))
-_SMB_WORKERS   = 10
-_SMB_PROBE_TO  = 5
-_SMB_BASE_TO   = 15
-_SMB_FILE_SECS = 3
-_SMB_LS_TO     = 15
-_SMB_CHUNK     = 250
-_FLUSH_THRESH  = 500
+_CHUNK          =  16 * 1024 * 1024
+_IO_BUF         =   4 * 1024 * 1024
+_SCAN_WORKERS   = min(32, max(8, os.cpu_count() or 4))
+_COPY_WORKERS   = min(16, max(4, os.cpu_count() or 4))
+_SMB_WORKERS    = 10
+_SMB_PROBE_TO   = 5
+_SMB_BASE_TO    = 15
+_SMB_FILE_SECS  = 3
+_SMB_LS_TO      = 15
+_SMB_CHUNK      = 200
+_FLUSH_THRESH   = 1500
+_LOCAL_BATCH    = 128
+_CLAIM_SIZE     = 16
+_SCAN_EMIT_SECS = 0.5
 
 _SKIP_RE = re.compile(
     r"(^\.?lock$|\.lock$|lockfile$|Singleton\w*$|cookies\.sqlite-wal$|\.lck$)", re.I
@@ -42,31 +52,32 @@ _SMB_LINE_RE = re.compile(
 _SMB_DOWN = frozenset((
     "HOST IS DOWN", "NT_STATUS_HOST_UNREACHABLE", "NT_STATUS_IO_TIMEOUT", "NT_STATUS_CONNECTION_REFUSED",
     "NT_STATUS_NETWORK_UNREACHABLE", "NT_STATUS_CONNECTION_RESET", "NT_STATUS_CONNECTION_DISCONNECTED",
-    "CONNECTION REFUSED", "NO ROUTE TO HOST", "NETWORK IS UNREACHABLE", "CONNECTION TIMED OUT", "TIMEOUT"))
-
+    "CONNECTION REFUSED", "NO ROUTE TO HOST", "NETWORK IS UNREACHABLE", "CONNECTION TIMED OUT", "TIMEOUT"
+))
 
 _CACHE_MISS = object()
-_DIRS_LOCK    = threading.Lock()
-_CREATED_DIRS: set[str] = set()
+
+_O_NOATIME = os.O_NOATIME
+_PID       = os.getpid()
+_tls       = threading.local()
+
+_smb_procs:      dict[int, "subprocess.Popen"] = {}
+_smb_procs_lock: threading.Lock                = threading.Lock()
 
 
 def _ensure_dir(path: str) -> bool:
     if not path:
         return True
-    with _DIRS_LOCK:
-        if path in _CREATED_DIRS:
-            return True
+    tls_seen: set = _tls.__dict__.setdefault("seen_dirs", set())
+    if path in tls_seen:
+        return True
     try:
         os.makedirs(path, exist_ok=True)
-    except OSError as e:
-        logger.error("mkdir %s: %s", path, e)
+    except OSError as exc:
+        logger.error("mkdir %s: %s", path, exc)
         return False
-    with _DIRS_LOCK:
-        _CREATED_DIRS.add(path)
+    tls_seen.add(path)
     return True
-
-
-_O_NOATIME = os.O_NOATIME
 
 
 @lru_cache(maxsize=256)
@@ -119,8 +130,9 @@ def _get_smb_credentials() -> tuple[str, "_SecurePw | None"]:
 
 
 def _smb_cred_file(user: str, pw: "_SecurePw") -> "tuple[str, str] | None":
+    tmp_dir: "str | None" = None
     try:
-        base = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else None
+        base    = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else None
         tmp_dir = tempfile.mkdtemp(prefix="smb_", dir=base)
         os.chmod(tmp_dir, 0o700)
         path = os.path.join(tmp_dir, "cred")
@@ -131,11 +143,17 @@ def _smb_cred_file(user: str, pw: "_SecurePw") -> "tuple[str, str] | None":
             os.fsync(fd)
         finally:
             os.close(fd)
-            for i in range(len(buf)): buf[i] = 0
+            for i in range(len(buf)):
+                buf[i] = 0
             del buf
         return tmp_dir, path
     except Exception as exc:
         logger.error("SMB cred file: %s", exc)
+        if tmp_dir:
+            try:
+                os.rmdir(tmp_dir)
+            except OSError:
+                pass
         return None
 
 
@@ -157,12 +175,10 @@ def _wipe_smb_cred(tmp_dir: str, path: str) -> None:
         pass
 
 
-def _is_up_to_date(dst: str, src_st: "os.stat_result") -> bool:
+def _is_up_to_date_local(dst: str, src_st: "os.stat_result") -> bool:
     try:
         d = os.stat(dst)
-        if d.st_size != src_st.st_size:
-            return False
-        return d.st_mtime_ns >= src_st.st_mtime_ns - 2_000_000_000
+        return d.st_size == src_st.st_size and d.st_mtime_ns >= src_st.st_mtime_ns - 2_000_000_000
     except OSError:
         return False
 
@@ -177,9 +193,10 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
             if n == 0:
                 break
             rem -= n
-    except (OSError, AttributeError):
+    except InterruptedError:
+        raise
+    except OSError:
         pass
-
     if rem > 0:
         try:
             os.lseek(rfd, total - rem, os.SEEK_SET)
@@ -189,16 +206,19 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
                 buf = os.read(rfd, min(rem, _IO_BUF))
                 if not buf:
                     break
-                rem -= os.write(wfd, buf)
+                written = os.write(wfd, buf)
+                rem -= written
+        except InterruptedError:
+            raise
         except OSError:
             pass
     return total - rem
 
 
 def _copy_file(src: str, dst: str, cancel: threading.Event) -> tuple[str, str, int]:
-    tmp     = f"{dst}.{os.getpid()}.{threading.get_ident()}.part"
+    tmp       = f"{dst}.{_PID}.{threading.get_ident()}.part"
     rfd = wfd = None
-    success = False
+    success   = False
     try:
         if cancel.is_set():
             return "skip", "", 0
@@ -206,92 +226,51 @@ def _copy_file(src: str, dst: str, cancel: threading.Event) -> tuple[str, str, i
             st = os.stat(src)
         except OSError:
             return "error", "Source unreadable", 0
-        if _is_up_to_date(dst, st):
+
+        if _is_up_to_date_local(dst, st):
             return "skip", "Up to date", st.st_size
+
         if not _ensure_dir(os.path.dirname(dst)):
             return "error", "Directory could not be created", 0
+
         try:
             rfd = os.open(src, os.O_RDONLY | _O_NOATIME)
         except (PermissionError, OSError):
             rfd = os.open(src, os.O_RDONLY)
+
         wfd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, st.st_mode & 0o777)
+
         if st.st_size > 0:
             try:
                 os.posix_fallocate(wfd, 0, st.st_size)
                 os.posix_fadvise(rfd, 0, st.st_size, os.POSIX_FADV_SEQUENTIAL)
-            except (OSError, AttributeError):
+            except OSError:
                 pass
+
         copied = _copy_loop(rfd, wfd, st.st_size, cancel)
+        if copied < st.st_size:
+            raise OSError(f"Incomplete copy: {copied}/{st.st_size} bytes written")
         os.fdatasync(wfd)
         os.utime(tmp, ns=(st.st_atime_ns, st.st_mtime_ns))
         os.replace(tmp, dst)
         success = True
         return "ok", dst, copied
+
     except InterruptedError:
         return "skip", "", 0
     except Exception as exc:
         logger.error("copy %s → %s: %s", src, dst, exc)
         return "error", str(exc), 0
     finally:
-        if rfd is not None: os.close(rfd)
-        if wfd is not None: os.close(wfd)
+        if rfd is not None:
+            os.close(rfd)
+        if wfd is not None:
+            os.close(wfd)
         if not success:
-            try: os.unlink(tmp)
-            except OSError: pass
-
-
-def _scan_local(scan_jobs, cancel, progress_cb=None) -> tuple[list, list, list]:
-    pairs: list   = []
-    skipped: list = []
-    errors: list  = []
-    lock    = threading.Lock()
-    counter = 0
-
-    def scan_one(src_root: str, dst_root: str, title: str = "") -> None:
-        nonlocal counter
-        local_pairs, local_skipped = [], []
-        try:
-            st = os.stat(src_root)
-        except OSError:
-            with lock:
-                errors.append((src_root, "Path does not exist", title))
-            return
-
-        if stat.S_ISREG(st.st_mode):
-            bucket = local_skipped if _SKIP_RE.search(os.path.basename(src_root)) else local_pairs
-            bucket.append((src_root, dst_root, title) if bucket is local_pairs else (src_root, "Skipped", title))
-
-        elif stat.S_ISDIR(st.st_mode):
-            stack: list[tuple[str, str]] = [(src_root, dst_root)]
-            while stack and not cancel.is_set():
-                cur_src, cur_dst = stack.pop()
-                try:
-                    with os.scandir(cur_src) as it:
-                        for e in it:
-                            if e.is_dir(follow_symlinks=False):
-                                stack.append((e.path, os.path.join(cur_dst, e.name)))
-                            elif e.is_file(follow_symlinks=False):
-                                if _SKIP_RE.search(e.name):
-                                    local_skipped.append((e.path, "Skipped", title))
-                                else:
-                                    local_pairs.append((e.path, os.path.join(cur_dst, e.name), title))
-                except PermissionError:
-                    pass
-
-        with lock:
-            pairs.extend(local_pairs)
-            skipped.extend(local_skipped)
-            counter += len(local_pairs) + len(local_skipped)
-            if progress_cb:
-                progress_cb(counter)
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=_SCAN_WORKERS) as pool:
-        futs = [pool.submit(scan_one, s, d, t) for s, d, t in scan_jobs]
-        for fut in concurrent.futures.as_completed(futs):
-            if cancel.is_set():
-                break
-            fut.result()
-    return pairs, skipped, errors
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
 
 @dataclass
@@ -303,9 +282,9 @@ class _SmbJob:
     share:       str
     remote_path: str
     remote_size: int = -1
-    title:       str = ""
+    title:       str  = ""
 
-    def up_to_date(self) -> bool:
+    def size_matches_local(self) -> bool:
         if self.kind != "smb_get" or self.remote_size < 0:
             return False
         try:
@@ -316,8 +295,9 @@ class _SmbJob:
 
 def _build_smb_get_cmds(jobs: list[_SmbJob]) -> str:
     lines = []
-    for rdir, group in groupby(sorted(jobs, key=lambda x: os.path.dirname(x.remote_path)),
-                               key=lambda x: os.path.dirname(x.remote_path)):
+    for rdir, group in groupby(
+            sorted(jobs, key=lambda x: os.path.dirname(x.remote_path)),
+            key=lambda x: os.path.dirname(x.remote_path)):
         lines.append(f'cd "/{_q(rdir)}"' if rdir else 'cd "/"')
         for j in group:
             lines.append(f'get "{_q(os.path.basename(j.remote_path))}" "{_q(j.dst_path)}"')
@@ -326,8 +306,9 @@ def _build_smb_get_cmds(jobs: list[_SmbJob]) -> str:
 
 
 def _build_smb_put_cmds(jobs: list[_SmbJob]) -> str:
-    rdirs = sorted({str(PurePosixPath(j.remote_path).parent) for j in jobs})
-    mkdir_lines, seen_dirs = [], set()
+    rdirs       = sorted({str(PurePosixPath(j.remote_path).parent) for j in jobs})
+    mkdir_lines = []
+    seen_dirs:  set = set()
     for rdir in rdirs:
         if not rdir or rdir == ".":
             continue
@@ -337,10 +318,11 @@ def _build_smb_put_cmds(jobs: list[_SmbJob]) -> str:
                 seen_dirs.add(ps)
                 mkdir_lines.append(f'mkdir "{_q(ps)}"')
 
-    transfer_lines, cur_local_dir, cur_rdir = [], None, None
+    transfer_lines = []
+    cur_local_dir = cur_rdir = None
     for j in sorted(jobs, key=lambda x: (os.path.dirname(x.remote_path), x.src_url)):
         local_dir = os.path.dirname(j.src_url)
-        rdir = os.path.dirname(j.remote_path).replace("\\", "/").strip("/")
+        rdir      = os.path.dirname(j.remote_path).replace("\\", "/").strip("/")
         if local_dir != cur_local_dir:
             transfer_lines.append(f'lcd "{_q(local_dir)}"')
             cur_local_dir = local_dir
@@ -362,20 +344,33 @@ class _SmbClient:
         self._argv  = (["smbclient", f"//{host}/{share}", "-N"] if guest else ["smbclient", f"//{host}/{share}"])
 
     def _run(self, argv: list[str], input_data: str, timeout: int) -> tuple[bool, str]:
+        tid = threading.get_ident()
         try:
-            r = subprocess.run(argv, input=input_data, text=True, capture_output=True, timeout=timeout, encoding="utf-8")
-            return r.returncode == 0, (r.stderr.strip() or f"exit {r.returncode}")
-        except subprocess.TimeoutExpired as e:
-            logger.warning("SMB timeout after %ds (//%s/%s)", timeout, self.host, self.share)
-            if e.stdout: logger.debug("SMB stdout: %.200s", e.stdout)
-            if e.stderr: logger.debug("SMB stderr: %.200s", e.stderr)
-            return False, "timeout"
+            proc = subprocess.Popen(
+                argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, text=True, encoding="utf-8",
+            )
+            with _smb_procs_lock:
+                _smb_procs[tid] = proc
+            try:
+                _out, err = proc.communicate(input=input_data, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+                logger.warning("SMB timeout after %ds (//%s/%s)", timeout, self.host, self.share)
+                return False, "timeout"
+            return proc.returncode == 0, (err.strip() or f"exit {proc.returncode}")
         except Exception as exc:
             logger.error("SMB run error: %s", exc)
             return False, str(exc)
+        finally:
+            with _smb_procs_lock:
+                _smb_procs.pop(tid, None)
 
     def _argv_with_creds(self) -> "tuple[list[str], str | None, str | None]":
-        if self._guest or not self._pw:
+        if self._guest:
+            return self._argv[:], None, None
+        if not self._pw:
             return self._argv + ["-N"], None, None
         result = _smb_cred_file(self._user, self._pw)
         if result is None:
@@ -411,17 +406,30 @@ class _SmbClient:
 
     def ls_index(self, base: str) -> "dict | None":
         base = base.replace("\\", "/").rstrip("/")
-        cmd = (f'recurse on\nprompt off\ncd "{_q(base)}"\nls\n' if base else "recurse on\nprompt off\nls\n")
+        cmd  = (f'recurse on\nprompt off\ncd "{_q(base)}"\nls\n' if base else "recurse on\nprompt off\nls\n")
         argv, tmp_dir, cred_path = self._argv_with_creds()
         index: dict = {}
+        tid = threading.get_ident()
         try:
-            r = subprocess.run(argv, input=cmd, text=True, capture_output=True, timeout=_SMB_LS_TO, encoding="utf-8")
-            if r.returncode != 0:
-                return None if _is_unreachable(r.stderr) else {}
+            proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
+            with _smb_procs_lock:
+                _smb_procs[tid] = proc
+            try:
+                stdout, stderr = proc.communicate(input=cmd, timeout=_SMB_LS_TO)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+                return None
+            finally:
+                with _smb_procs_lock:
+                    _smb_procs.pop(tid, None)
+            if proc.returncode != 0:
+                return None if _is_unreachable(stderr) else {}
             cur_dir = base
-            for line in r.stdout.splitlines():
+            for line in stdout.splitlines():
                 line = line.strip()
-                if not line: continue
+                if not line:
+                    continue
                 if line.startswith("\\"):
                     cur_dir = line.replace("\\", "/").strip("/")
                     continue
@@ -444,20 +452,21 @@ class _SmbScanner:
     _CACHE_MAX = 1000
 
     def __init__(self, user: str, pw: "_SecurePw | None", guest: bool, cancel: threading.Event, progress_cb=None) -> None:
-        self._user        = user
-        self._pw          = pw
-        self._guest       = guest
-        self._cancel      = cancel
-        self._progress_cb = progress_cb
-        self._ls_cache: dict = {}
-        self._cache_lock  = threading.Lock()
-        self._result_lock = threading.Lock()
-        self._counter     = 0
+        self._user         = user
+        self._pw           = pw
+        self._guest        = guest
+        self._cancel       = cancel
+        self._progress_cb  = progress_cb
+        self._ls_cache:    dict = {}
+        self._cache_lock   = threading.Lock()
+        self._result_lock  = threading.Lock()
+        self._counter_lock = threading.Lock()
+        self._counter      = 0
 
     def _client(self, host: str, share: str) -> _SmbClient: return _SmbClient(host, share, self._user, self._pw, self._guest)
 
     def _report(self, n: int) -> None:
-        with self._result_lock:
+        with self._counter_lock:
             self._counter += n
             cur = self._counter
         if self._progress_cb:
@@ -475,6 +484,7 @@ class _SmbScanner:
             title      = rest[0] if rest else ""
             src_is_smb = is_smb(src)
             host, share, rpath = _parse_smb(src if src_is_smb else dst)
+
             if src_is_smb:
                 key = (host, share, rpath, dst)
                 if key in seen_get:
@@ -493,7 +503,8 @@ class _SmbScanner:
             futs = [pool.submit(fn) for fn in tasks if not self._cancel.is_set()]
             for fut in concurrent.futures.as_completed(futs):
                 if self._cancel.is_set():
-                    for f in futs: f.cancel()
+                    for f in futs:
+                        f.cancel()
                     break
                 try:
                     fut.result()
@@ -501,6 +512,7 @@ class _SmbScanner:
                     logger.error("SMB scan error: %s", exc)
                     with self._result_lock:
                         errors.append(("smb scan error", str(exc)))
+
         return ([], []) if self._cancel.is_set() else (expanded, errors)
 
     def _cached_index(self, host: str, share: str, rpath: str) -> "dict | None":
@@ -518,10 +530,10 @@ class _SmbScanner:
         return idx
 
     def _do_get(self, host, share, rpath, dst, title, expanded, errors) -> None:
-        idx = self._cached_index(host, share, rpath)
+        idx     = self._cached_index(host, share, rpath)
         src_url = f"smb://{host}/{share}/{rpath}"
-        lexp: list = []
-        lerr: list = []
+        lexp:   list = []
+        lerr:   list = []
         if idx is None:
             lerr.append((src_url, "NT_STATUS_HOST_UNREACHABLE"))
         elif not idx:
@@ -547,7 +559,7 @@ class _SmbScanner:
         self._report(1)
 
     def _do_put_dir(self, src, host, share, rpath, title, expanded) -> None:
-        lexp: list = []
+        lexp:  list = []
         stack: list = [src]
         while stack:
             if self._cancel.is_set():
@@ -557,7 +569,7 @@ class _SmbScanner:
                     for e in it:
                         if e.is_dir(follow_symlinks=False):
                             stack.append(e.path)
-                        elif not _SKIP_RE.search(e.name):
+                        elif e.is_file(follow_symlinks=False) and not _SKIP_RE.search(e.name):
                             rel = os.path.relpath(e.path, src)
                             rp  = f"{rpath}/{rel}".replace(os.sep, "/").lstrip("/")
                             lexp.append(_SmbJob(e.path, "", "smb_put", host, share, rp, title=title))
@@ -580,7 +592,7 @@ class _ShareProcessor:
         self._ri_cache    = ri_cache
         self._ri_lock     = ri_lock
         self._unreachable = threading.Event()
-        self._url_title: dict[str, tuple[str, int]] = {}
+        self._url_title:  dict[str, tuple[str, int]] = {}
 
     @property
     def host(self) -> str:  return self._client.host
@@ -589,20 +601,21 @@ class _ShareProcessor:
     def share(self) -> str: return self._client.share
 
     def process(self, get_jobs: list, put_jobs: list) -> None:
-        if self._cancel.is_set(): return
+        if self._cancel.is_set():
+            return
 
-        sk_immediate = []
-        get_transfer = []
+        sk_immediate: list = []
+        get_transfer: list = []
 
         for j in get_jobs:
             full_url = f"smb://{self.host}/{self.share}/{j.remote_path}"
             self._url_title[full_url] = (j.title, j.remote_size)
-            if j.up_to_date():
+            if j.size_matches_local():
                 sk_immediate.append((full_url, "Up to date"))
             else:
                 get_transfer.append(j)
 
-        put_transfer = []
+        put_transfer: list = []
         if put_jobs:
             ri = self._remote_index(put_jobs)
             for j in put_jobs:
@@ -610,10 +623,8 @@ class _ShareProcessor:
                     local_sz = os.stat(j.src_url).st_size
                 except OSError:
                     local_sz = 0
-
                 self._url_title[j.src_url] = (j.title, local_sz)
-
-                key = j.remote_path.replace("\\", "/").lstrip("/")
+                key  = j.remote_path.replace("\\", "/").lstrip("/")
                 meta = ri.get(key)
                 if meta and local_sz == meta[0]:
                     sk_immediate.append((j.src_url, "Up to date"))
@@ -668,33 +679,30 @@ class _ShareProcessor:
         return merged
 
     def _transfer(self, jobs: list, build_fn) -> tuple[list, list]:
-        is_get = build_fn is _build_smb_get_cmds
+        is_get  = build_fn is _build_smb_get_cmds
         ok_list: list = []
         er_list: list = []
-        stack = [list(jobs)]
+        stack   = [list(jobs)]
 
         while stack:
             batch = stack.pop()
             if not batch or self._cancel.is_set():
                 break
-
             if self._unreachable.is_set():
-                reason = "NT_STATUS_HOST_UNREACHABLE"
-                er_list.extend(
-                    (f"smb://{self.host}/{self.share}/{j.remote_path}" if is_get else j.src_url, reason) for j in batch)
+                er_list.extend((f"smb://{self.host}/{self.share}/{j.remote_path}"
+                                if is_get else j.src_url, "NT_STATUS_HOST_UNREACHABLE") for j in batch)
                 continue
 
             ok, err = self._client.run(build_fn(batch), max(_SMB_BASE_TO, len(batch) * _SMB_FILE_SECS))
             if ok:
                 for j in batch:
-                    src = f"smb://{self.host}/{self.share}/{j.remote_path}" if is_get else j.src_url
-                    dst = j.dst_path if is_get else f"smb://{self.host}/{self.share}/{j.remote_path}"
+                    src = (f"smb://{self.host}/{self.share}/{j.remote_path}" if is_get else j.src_url)
+                    dst = (j.dst_path if is_get else f"smb://{self.host}/{self.share}/{j.remote_path}")
                     ok_list.append((src, dst))
             elif _is_unreachable(err):
                 self._unreachable.set()
-                reason = "NT_STATUS_HOST_UNREACHABLE"
-                er_list.extend(
-                    (f"smb://{self.host}/{self.share}/{j.remote_path}" if is_get else j.src_url, reason) for j in batch)
+                er_list.extend(     (f"smb://{self.host}/{self.share}/{j.remote_path}"
+                                     if is_get else j.src_url, "NT_STATUS_HOST_UNREACHABLE") for j in batch)
             elif len(batch) == 1:
                 src = (f"smb://{self.host}/{self.share}/{batch[0].remote_path}" if is_get else batch[0].src_url)
                 er_list.append((src, err))
@@ -709,21 +717,28 @@ class _ShareProcessor:
         def _meta(_url: str) -> tuple[str, int]:
             return self._url_title.get(_url, ("", 0))
 
-        ok_w, ok_titles = [], []
+        ok_w, batch_counts = [], {}
         for s, d in ok_c:
             title, sz = _meta(s)
             ok_w.append((s, d, sz))
-            ok_titles.append(title)
-        sk_w, sk_titles = [], []
+            if title:
+                batch_counts.setdefault(title, [0, 0, 0])[0] += 1
+
+        sk_w = []
         for s, r in sk_c:
             title, sz = _meta(s)
             sk_w.append((s, r, sz))
-            sk_titles.append(title)
+            if title:
+                batch_counts.setdefault(title, [0, 0, 0])[1] += 1
+
         er_w = [(s, e, 0) for s, e in er_c]
+        for s, _e, _ in er_w:
+            title = _meta(s)[0]
+            if title:
+                batch_counts.setdefault(title, [0, 0, 0])[2] += 1
+
         self._flusher.push(ok=ok_w, sk=sk_w, er=er_w)
-        for t in ok_titles: self._tracker.ok(t)
-        for t in sk_titles: self._tracker.skip(t)
-        for url, _, _ in er_w: self._tracker.err(_meta(url)[0])
+        self._tracker.batch_update(batch_counts)
 
     def _fail_batch(self, remaining: list, *, is_get: bool) -> None:
         er_c = [(f"smb://{self.host}/{self.share}/{j.remote_path}" if is_get else j.src_url,
@@ -739,21 +754,16 @@ class _EntryTracker:
         self._lock   = threading.Lock()
         self._counts: dict[str, list[int]] = {}
 
-    def _bump(self, title: str, idx: int, n: int = 1) -> None:
-        if title:
-            with self._lock:
-                self._counts.setdefault(title, [0, 0, 0])[idx] += n
-
-    def ok(self,   title: str, n: int = 1) -> None: self._bump(title, 0, n)
-    def err(self,  title: str, n: int = 1) -> None: self._bump(title, 1, n)
-    def skip(self, title: str, n: int = 1) -> None: self._bump(title, 2, n)
-
-    def merge_pre(self, pre: dict[str, list[int]]) -> None:
+    def batch_update(self, counts: dict) -> None:
+        if not counts:
+            return
         with self._lock:
-            for t, pc in pre.items():
-                ec = self._counts.setdefault(t, [0, 0, 0])
-                for i in range(3):
-                    ec[i] += pc[i]
+            for title, (ok, skip, err) in counts.items():
+                if title:
+                    c = self._counts.setdefault(title, [0, 0, 0])
+                    c[0] += ok
+                    c[1] += err
+                    c[2] += skip
 
     def emit_all(self, signal) -> None:
         with self._lock:
@@ -764,39 +774,44 @@ class _EntryTracker:
 
 
 class _Flusher:
-    __slots__ = ("_signal", "_total", "_lock", "_ok", "_sk", "_er", "done", "copied", "skipped", "errors")
+    __slots__ = ("_signal", "_total", "_lock", "_ok", "_sk", "_er", "done", "copied", "skipped", "errors", "_last_flush_t")
 
-    def __init__(self, signal, total: int, done: int = 0, copied: int = 0, skipped: int = 0, errors: int = 0) -> None:
+    def __init__(self, signal, total: int) -> None:
         self._signal = signal
         self._total  = total
         self._lock   = threading.Lock()
         self._ok: list = []
         self._sk: list = []
         self._er: list = []
-        self.done    = done
-        self.copied  = copied
-        self.skipped = skipped
-        self.errors  = errors
+        self.done    = 0
+        self.copied  = 0
+        self.skipped = 0
+        self.errors  = 0
+        self._last_flush_t = time.monotonic()
 
     def push(self, ok=(), sk=(), er=(), *, force: bool = False) -> None:
         with self._lock:
             if ok: self._ok.extend(ok)
             if sk: self._sk.extend(sk)
             if er: self._er.extend(er)
-            n = len(self._ok) + len(self._sk) + len(self._er)
-            if n == 0 or (not force and n < _FLUSH_THRESH):
+            n         = len(self._ok) + len(self._sk) + len(self._er)
+            now       = time.monotonic()
+            timed_out = (now - self._last_flush_t) >= 0.3
+            if n == 0 or (not force and n < _FLUSH_THRESH and not timed_out):
                 return
             payload_ok, self._ok = self._ok, []
             payload_sk, self._sk = self._sk, []
             payload_er, self._er = self._er, []
-            self.done    += n
-            self.copied  += len(payload_ok)
-            self.skipped += len(payload_sk)
-            self.errors  += len(payload_er)
-            done_snap = self.done
+            self.done           += n
+            self.copied         += len(payload_ok)
+            self.skipped        += len(payload_sk)
+            self.errors         += len(payload_er)
+            done_snap            = self.done
+            self._last_flush_t   = now
         self._signal.emit(payload_ok, payload_sk, payload_er, done_snap, self._total)
 
-    def flush(self) -> None: self.push(force=True)
+    def flush(self) -> None:
+        self.push(force=True)
 
 
 class CopyWorker(QThread):
@@ -819,8 +834,8 @@ class CopyWorker(QThread):
                 continue
             src_raw, dst_raw = t[0], t[1]
             title = str(t[2]) if len(t) > 2 else ""
-            srcs = [src_raw] if isinstance(src_raw, str) else src_raw
-            dsts = [dst_raw] if isinstance(dst_raw, str) else dst_raw
+            srcs  = [src_raw] if isinstance(src_raw, str) else src_raw
+            dsts  = [dst_raw] if isinstance(dst_raw, str) else dst_raw
             if not srcs or not dsts or len(srcs) != len(dsts):
                 continue
             for s, d in zip(srcs, dsts):
@@ -828,91 +843,215 @@ class CopyWorker(QThread):
                     result.append((os.path.expanduser(str(s)), os.path.expanduser(str(d)), title))
         return result
 
-    def cancel(self) -> None: self._cancel.set()
+    def cancel(self) -> None:
+        self._cancel.set()
+        with _smb_procs_lock:
+            for proc in list(_smb_procs.values()):
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
 
     def run(self) -> None:
         pw: "_SecurePw | None" = None
         try:
-            user: str  = ""
-            guest: bool = False
-
             smb_tasks   = [(s, d, t) for s, d, t in self.tasks if is_smb(s) or is_smb(d)]
             local_tasks = [(s, d, t) for s, d, t in self.tasks if not (is_smb(s) or is_smb(d))]
 
+            user = ""
             if smb_tasks:
                 user, pw = _get_smb_credentials()
 
             self.scan_progress.emit("Scanning", 0)
 
-            smb_pre_errors: list[tuple[str, str]] = []
-            if smb_tasks and not self._cancel.is_set():
-                unreachable, auth_failed, guest = self._probe_shares(smb_tasks, user, pw)
-                dead = unreachable | auth_failed
+            local_items:  list[tuple[str, str, str]] = []
+            smb_expanded: list[_SmbJob]              = []
+            smb_errors:   list[tuple[str, str]]      = []
+            _guest_box:   list[bool]                 = [False]
+
+            def _phase1_local() -> None:
+                nonlocal local_items
+                if local_tasks and not self._cancel.is_set():
+                    local_items = self._scan_local_all(local_tasks)
+
+            def _phase1_smb() -> None:
+                nonlocal smb_expanded, smb_errors
+                if not smb_tasks or self._cancel.is_set():
+                    return
+                ur, af, _guest = self._probe_shares(smb_tasks, user, pw)
+                _guest_box[0] = _guest
+                dead          = ur | af
+                alive_tasks   = smb_tasks
                 if dead:
-                    smb_tasks, smb_pre_errors = self._filter_dead_tasks(smb_tasks, dead, unreachable)
+                    alive_tasks, pre_err = self._filter_dead_tasks(smb_tasks, dead, ur)
+                    smb_errors.extend(pre_err)
+                if alive_tasks and not self._cancel.is_set():
+                    scanner = _SmbScanner(user, pw, _guest, self._cancel, lambda n: self.scan_progress.emit("Scanning SMB", n))
+                    exp, err = scanner.resolve(alive_tasks)
+                    smb_expanded.extend(exp)
+                    smb_errors.extend(err)
 
-            smb_expanded: list = []
-            smb_errors:   list = list(smb_pre_errors)
-            if smb_tasks and not self._cancel.is_set():
-                scanner = _SmbScanner(user, pw, guest, self._cancel, lambda n: self.scan_progress.emit("Scanning SMB", n))
-                exp, err = scanner.resolve(smb_tasks)
-                smb_expanded.extend(exp)
-                smb_errors.extend(err)
-
-            local_pairs:   list = []
-            local_skipped: list = []
-            local_errors:  list = []
-            if local_tasks and not self._cancel.is_set():
-                local_pairs, local_skipped, local_errors = _scan_local(
-                    local_tasks, self._cancel, lambda n: self.scan_progress.emit("Scanning Local", n))
-
-            total = (len(smb_expanded) + len(smb_errors) + len(local_pairs) + len(local_skipped) + len(local_errors))
-            self.scan_finished.emit(total)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                p1_futs = [pool.submit(_phase1_local), pool.submit(_phase1_smb)]
+                for fut in concurrent.futures.as_completed(p1_futs):
+                    if self._cancel.is_set():
+                        for f in p1_futs:
+                            f.cancel()
+                        break
+                    try:
+                        fut.result()
+                    except Exception as exc:
+                        logger.error("Phase-1 error: %s", exc, exc_info=True)
 
             if self._cancel.is_set():
                 self.finished_work.emit(0, 0, 0, True)
                 return
 
-            done = copied = skipped = errors = 0
+            guest = _guest_box[0]
+            total = len(local_items) + len(smb_expanded) + len(smb_errors)
+            self.batch_update.emit([], [], [], 0, total)
+            self.scan_finished.emit(total)
 
-            if smb_expanded or smb_errors:
-                done, copied, skipped, errors = self._run_smb(smb_expanded, smb_errors, user, pw, guest, done, total, self._cancel)
+            flusher = _Flusher(self.batch_update, total)
+            tracker = _EntryTracker()
 
-            pre_sk = [(p, r, 0) for p, r, _ in local_skipped]
-            pre_er = [(p, m, 0) for p, m, _ in local_errors]
-            if pre_sk or pre_er:
-                skipped += len(pre_sk)
-                errors  += len(pre_er)
-                done    += len(pre_sk) + len(pre_er)
-                self.batch_update.emit([], pre_sk, pre_er, done, total)
+            def _phase2_local() -> None:
+                if local_items and not self._cancel.is_set():
+                    self._copy_local_all(local_items, flusher, tracker)
 
-            pre_counts: dict[str, list[int]] = {}
-            for _, _, title in local_skipped:
-                if title: pre_counts.setdefault(title, [0, 0, 0])[2] += 1
-            for _, _, title in local_errors:
-                if title: pre_counts.setdefault(title, [0, 0, 0])[1] += 1
+            def _phase2_smb() -> None:
+                if (smb_expanded or smb_errors) and not self._cancel.is_set():
+                    self._copy_smb_all(smb_expanded, smb_errors, user, pw, guest, flusher, tracker)
 
-            if local_pairs and not self._cancel.is_set():
-                done, copied, skipped, errors = self._run_local(
-                    local_pairs, done, total, copied, skipped, errors, self._cancel, pre_counts)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                p2_futs = [pool.submit(_phase2_local), pool.submit(_phase2_smb)]
+                for fut in concurrent.futures.as_completed(p2_futs):
+                    if self._cancel.is_set():
+                        for f in p2_futs:
+                            f.cancel()
+                        break
+                    try:
+                        fut.result()
+                    except Exception as exc:
+                        logger.error("Phase-2 error: %s", exc, exc_info=True)
 
-            self.finished_work.emit(copied, skipped, errors, self._cancel.is_set())
+            flusher.flush()
+            tracker.emit_all(self.entry_status)
+            self.finished_work.emit(flusher.copied, flusher.skipped, flusher.errors, self._cancel.is_set())
 
         except Exception as exc:
-            logger.error("CopyWorker critical error: %s", exc, exc_info=True)
+            logger.error("CopyWorker critical: %s", exc, exc_info=True)
             self.finished_work.emit(0, 0, 0, False)
         finally:
             if pw is not None:
                 pw.clear()
-            with _DIRS_LOCK:
-                _CREATED_DIRS.clear()
+
+    def _scan_local_all(self, tasks: list) -> list:
+        cancel      = self._cancel
+        file_q      = queue.SimpleQueue()
+
+        work_q      = queue.Queue()
+        pend_lock   = threading.Lock()
+        pending     = [0]
+        all_done    = threading.Event()
+        total_found = [0]
+        last_emit_t = [0.0]
+
+        def _enqueue(item: tuple) -> None:
+            with pend_lock:
+                pending[0] += 1
+            work_q.put(item)
+
+        def _finish_one() -> None:
+            with pend_lock:
+                pending[0] -= 1
+                if pending[0] == 0:
+                    all_done.set()
+
+        for src, dst, title in tasks:
+            _enqueue((src, dst, title))
+
+        def _worker() -> None:
+            local_n = 0
+
+            while not cancel.is_set():
+                try:
+                    _src, _dst, _title = work_q.get(timeout=0.015)
+                except queue.Empty:
+                    if all_done.is_set():
+                        break
+                    continue
+
+                local_files: list = []
+
+                try:
+                    with os.scandir(_src) as it:
+                        for e in it:
+                            if cancel.is_set():
+                                break
+                            if e.is_dir(follow_symlinks=False):
+                                _enqueue((e.path, os.path.join(_dst, e.name), _title))
+                            elif (e.is_file(follow_symlinks=False)
+                                  and not _SKIP_RE.search(e.name)):
+                                local_files.append((e.path, os.path.join(_dst, e.name), _title))
+                except NotADirectoryError:
+                    if not _SKIP_RE.search(os.path.basename(_src)):
+                        local_files.append((_src, _dst, _title))
+                except PermissionError:
+                    pass
+                except OSError as _exc:
+                    logger.warning("scan %s: %s", _src, _exc)
+
+                if local_files:
+                    file_q.put(local_files)
+                    local_n += len(local_files)
+
+                    now = time.monotonic()
+                    should_emit = False
+                    with pend_lock:
+                        if now - last_emit_t[0] >= _SCAN_EMIT_SECS:
+                            total_found[0] += local_n
+                            cur = total_found[0]
+                            local_n = 0
+                            last_emit_t[0] = now
+                            should_emit = True
+                    if should_emit:
+                        self.scan_progress.emit("Scanning", cur)
+
+                _finish_one()
+
+            if local_n:
+                with pend_lock:
+                    total_found[0] += local_n
+
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=_SCAN_WORKERS) as pool:
+            futs = [pool.submit(_worker) for _ in range(_SCAN_WORKERS)]
+            for fut in concurrent.futures.as_completed(futs):
+                try:
+                    fut.result()
+                except Exception as exc:
+                    logger.error("scan worker: %s", exc)
+
+        self.scan_progress.emit("Scanning", total_found[0])
+
+        result: list = []
+        _get   = file_q.get_nowait
+        _Empty = queue.Empty
+        while True:
+            try:
+                result.extend(_get())
+            except _Empty:
+                break
+        return result
 
     def _probe_shares(self, smb_tasks, user, pw) -> tuple[set, set, bool]:
         unreachable: set[tuple[str, str]] = set()
         auth_failed: set[tuple[str, str]] = set()
-        guest  = False
+        guest = False
         seen:  set[tuple[str, str]] = set()
-        shares = []
+        shares: list = []
+
         for s, d, _ in smb_tasks:
             if self._cancel.is_set():
                 break
@@ -937,9 +1076,14 @@ class CopyWorker(QThread):
             futs = [pool.submit(probe_one, h, sh) for h, sh in shares]
             for fut in concurrent.futures.as_completed(futs):
                 if self._cancel.is_set():
-                    for f in futs: f.cancel()
+                    for f in futs:
+                        f.cancel()
                     break
-                fut.result()
+                try:
+                    fut.result()
+                except Exception as exc:
+                    logger.error("probe error: %s", exc)
+
         return unreachable, auth_failed, guest
 
     @staticmethod
@@ -955,100 +1099,135 @@ class CopyWorker(QThread):
                 alive.append((s, d, t))
         return alive, errors
 
-    def _run_smb(self, smb_expanded, smb_errors, user, pw, guest, done_in: int, total: int, cancel) -> tuple[int, int, int, int]:
+    def _copy_local_all(self, items: list, flusher: _Flusher, tracker: _EntryTracker) -> None:
+        cancel  = self._cancel
+        n_items = len(items)
+        if not n_items:
+            return
+
+        claim_lock = threading.Lock()
+        claim_idx  = [0]
+
+        def _claim() -> "tuple[int,int] | None":
+            with claim_lock:
+                start = claim_idx[0]
+                if start >= n_items:
+                    return None
+                end = min(start + _CLAIM_SIZE, n_items)
+                claim_idx[0] = end
+                return start, end
+
+        def _worker() -> None:
+            local_ok: list = []
+            local_sk: list = []
+            local_er: list = []
+            title_counts: dict = {}
+
+            def _flush_local() -> None:
+                if local_ok or local_sk or local_er:
+                    flusher.push(ok=local_ok, sk=local_sk, er=local_er)
+                    local_ok.clear(); local_sk.clear(); local_er.clear()
+                tracker.batch_update(title_counts)
+                title_counts.clear()
+
+            while not cancel.is_set():
+                claim = _claim()
+                if claim is None:
+                    break
+                start, end = claim
+
+                for i in range(start, end):
+                    if cancel.is_set():
+                        break
+                    src, dst, title = items[i]
+                    try:
+                        status, aux, sz = _copy_file(src, dst, cancel)
+                    except Exception as _exc:
+                        logger.error("copy %s: %s", src, _exc)
+                        status, aux, sz = "error", str(_exc), 0
+
+                    tc = title_counts.setdefault(title, [0, 0, 0])
+                    if status == "ok":
+                        local_ok.append((src, dst, sz))
+                        tc[0] += 1
+                    elif status == "skip":
+                        local_sk.append((src, aux or "Up to date", sz))
+                        tc[1] += 1
+                    else:
+                        local_er.append((src, aux, 0))
+                        tc[2] += 1
+
+                    if len(local_ok) + len(local_sk) + len(local_er) >= _LOCAL_BATCH:
+                        _flush_local()
+
+            _flush_local()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=_COPY_WORKERS) as pool:
+            futs = [pool.submit(_worker) for _ in range(_COPY_WORKERS)]
+            for fut in concurrent.futures.as_completed(futs):
+                if cancel.is_set():
+                    for f in futs:
+                        f.cancel()
+                    break
+                try:
+                    fut.result()
+                except Exception as exc:
+                    logger.error("copy worker: %s", exc)
+
+    def _copy_smb_all(self, smb_expanded: list, smb_errors: list, user: str, pw: "_SecurePw | None", guest: bool,
+                      flusher: _Flusher, tracker: _EntryTracker) -> None:
+
+        cancel = self._cancel
 
         fmt_errors = [(src, err, 0) for src, err in smb_errors]
-        done = done_in
         if fmt_errors:
-            done += len(fmt_errors)
-            self.batch_update.emit([], [], fmt_errors, done, total)
+            flusher.push(er=fmt_errors, force=True)
 
         if not smb_expanded or cancel.is_set():
-            return done, 0, 0, len(fmt_errors)
+            return
 
         share_groups: dict = {}
         for job in smb_expanded:
             grp = share_groups.setdefault((job.host, job.share), {"get": [], "put": []})
             grp["get" if job.kind == "smb_get" else "put"].append(job)
 
-        ri_cache, ri_lock = {}, threading.Lock()
-        flusher = _Flusher(self.batch_update, total, done=done, errors=len(fmt_errors))
-        tracker = _EntryTracker()
+        ri_cache: dict = {}
+        ri_lock        = threading.Lock()
 
         def run_share(host: str, share: str) -> None:
             try:
-                client = _SmbClient(host, share, user, pw, guest)
+                client    = _SmbClient(host, share, user, pw, guest)
                 processor = _ShareProcessor(client, cancel, flusher, tracker, ri_cache, ri_lock)
                 processor.process(share_groups[(host, share)]["get"], share_groups[(host, share)]["put"])
-            except Exception as e:
-                logger.error("SMB share error: %s", e)
+            except Exception as _exc:
+                logger.error("SMB share error //%s/%s: %s", host, share, _exc)
                 er_w = []
-                for _job in share_groups[(host, share)]["get"] + share_groups[(host, share)]["put"]:
-                    src = _job.src_url if _job.kind == "smb_put" else f"smb://{host}/{share}/{_job.remote_path}"
-                    er_w.append((src, f"Share processing crashed: {e}", 0))
+                for _job in (share_groups[(host, share)]["get"] + share_groups[(host, share)]["put"]):
+                    src = (_job.src_url if _job.kind == "smb_put" else f"smb://{host}/{share}/{_job.remote_path}")
+                    er_w.append((src, f"Share processing crashed: {_exc}", 0))
                 flusher.push(er=er_w)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=_SMB_WORKERS) as pool:
             futs = {pool.submit(run_share, h, sh): (h, sh) for h, sh in share_groups if not cancel.is_set()}
             for fut in concurrent.futures.as_completed(futs):
                 if cancel.is_set():
-                    for f in futs: f.cancel()
+                    for f in futs:
+                        f.cancel()
                     break
                 try:
                     fut.result()
                 except Exception as exc:
-                    logger.error("SMB share thread error: %s", exc)
-
-        flusher.flush()
-        tracker.emit_all(self.entry_status)
-        return flusher.done, flusher.copied, flusher.skipped, flusher.errors
-
-    def _run_local(self, pairs, done_in: int, total: int, copied_in: int, skipped_in: int, errors_in: int,
-                   cancel, pre_counts: dict | None = None) -> tuple[int, int, int, int]:
-
-        flusher = _Flusher(self.batch_update, total, done=done_in, copied=copied_in, skipped=skipped_in, errors=errors_in)
-        tracker = _EntryTracker()
-        if pre_counts:
-            tracker.merge_pre(pre_counts)
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=_COPY_WORKERS) as pool:
-            futures = {pool.submit(_copy_file, s, d, cancel): (s, d, t) for s, d, t in pairs}
-            for fut in concurrent.futures.as_completed(futures):
-                if cancel.is_set():
-                    for f in futures: f.cancel()
-                    break
-                src, dst, title = futures[fut]
-                try:
-                    status, aux, sz = fut.result()
-                    if status == "ok":
-                        flusher.push(ok=[(src, dst, sz)])
-                        tracker.ok(title)
-                    elif status == "skip":
-                        flusher.push(sk=[(src, aux or "Up to date", sz)])
-                        tracker.skip(title)
-                    else:
-                        flusher.push(er=[(src, aux, 0)])
-                        tracker.err(title)
-                except Exception as exc:
-                    flusher.push(er=[("Error", str(exc), 0)])
-                    tracker.err(title)
-
-        flusher.flush()
-        tracker.emit_all(self.entry_status)
-        return flusher.done, flusher.copied, flusher.skipped, flusher.errors
+                    logger.error("SMB share thread: %s", exc)
 
 
 @dataclass
 class _StatCard:
-    frame: QFrame
-    val_lbl: QLabel
+    frame:    QFrame
+    val_lbl:  QLabel
     size_lbl: QLabel
 
-    def set_val(self, text: str) -> None: self.val_lbl.setText(text)
-
+    def set_val(self,  text: str) -> None: self.val_lbl.setText(text)
     def set_size(self, text: str) -> None: self.size_lbl.setText(text)
-
-    def get_val(self) -> str: return self.val_lbl.text()
 
 
 def _lbl(text: str, style: str) -> QLabel:
@@ -1057,12 +1236,12 @@ def _lbl(text: str, style: str) -> QLabel:
     return w
 
 
-def _make_stat_card(color: str | None, title: str, val: str = "0",
+def _make_stat_card(color: "str | None", title: str, val: str = "0",
                     size_title: int = 0, size_val: int = 0, bold_val: bool = True) -> _StatCard:
 
-    t = current_theme()
+    t       = current_theme()
     s_title = size_title or font_sz(3)
-    s_val = size_val or font_sz(16)
+    s_val   = size_val   or font_sz(16)
 
     frame = QFrame()
     frame.setMinimumWidth(240)
@@ -1102,21 +1281,20 @@ def _make_stat_card(color: str | None, title: str, val: str = "0",
 
 
 class _SummaryWidget(QWidget):
-
     def __init__(self) -> None:
         super().__init__()
         self._t = current_theme()
         t = self._t
 
-        self._s_ok = f"color:{t['success']};"
-        self._s_skip = f"color:{t['warning']};"
-        self._s_err = f"color:{t['error']};"
-        self._s_dim = f"color:{t['text_dim']};"
+        self._s_ok    = f"color:{t['success']};"
+        self._s_skip  = f"color:{t['warning']};"
+        self._s_err   = f"color:{t['error']};"
+        self._s_dim   = f"color:{t['text_dim']};"
         self._s_title = f"color:{t['text']};"
         self._s_entry = _cached_mono_style(font_sz(-2), t["text"], extra="border:none; padding:2px 0px;")
 
-        self._entry_results: dict[str, list[int]] = {}
-        self._entry_row_labels: dict[str, QLabel] = {}
+        self._entry_results:    dict[str, list[int]] = {}
+        self._entry_row_labels: dict[str, QLabel]    = {}
         self._entry_grid_cols = 1
 
         lay = QVBoxLayout(self)
@@ -1125,8 +1303,7 @@ class _SummaryWidget(QWidget):
 
         self.header_card = QFrame()
         self.header_card.setObjectName("headerCard")
-        self.header_card.setStyleSheet(f"#headerCard{{background:{t['bg3']}; border-radius:10px; "
-                                       f"border-left:4px solid {t['accent']};}}")
+        self.header_card.setStyleSheet(f"#headerCard{{background:{t['bg3']}; border-radius:10px; border-left:4px solid {t['accent']};}}")
 
         hdr = QGridLayout(self.header_card)
         hdr.setContentsMargins(20, 15, 20, 15)
@@ -1154,9 +1331,9 @@ class _SummaryWidget(QWidget):
         for i in range(3):
             stats_lay.setColumnStretch(i, 1)
 
-        self.card_copied = _make_stat_card(t["success"], "⤵ Copied", "0")
-        self.card_skipped = _make_stat_card(t["warning"], "↷ Skipped", "0")
-        self.card_errors = _make_stat_card(t["error"], "✗ Errors", "0")
+        self.card_copied  = _make_stat_card(t["success"], "⤵ Copied",  "0")
+        self.card_skipped = _make_stat_card(t["warning"],  "↷ Skipped", "0")
+        self.card_errors  = _make_stat_card(t["error"],    "✗ Errors",  "0")
 
         for col, card in enumerate((self.card_copied, self.card_skipped, self.card_errors)):
             stats_lay.addWidget(card.frame, 0, col)
@@ -1193,8 +1370,8 @@ class _SummaryWidget(QWidget):
 
         kw = dict(size_title=font_sz(2), size_val=font_sz(10))
         self._card_elapsed = _make_stat_card(None, "⏲️ Elapsed", "--:--", **kw)
-        self._card_speed = _make_stat_card(None, "🚤 Speed", "---", **kw)
-        self._card_eta = _make_stat_card(None, "🏁 ETA", "--:--", **kw)
+        self._card_speed   = _make_stat_card(None, "🚤 Speed",   "---",   **kw)
+        self._card_eta     = _make_stat_card(None, "🏁 ETA",     "--:--", **kw)
 
         for card in (self._card_elapsed, self._card_speed, self._card_eta):
             metrics_lay.addWidget(card.frame)
@@ -1219,9 +1396,9 @@ class _SummaryWidget(QWidget):
         seg_row.setSpacing(0)
         seg_row.setContentsMargins(0, 0, 0, 0)
 
-        self._seg_copied = QFrame()
+        self._seg_copied  = QFrame()
         self._seg_skipped = QFrame()
-        self._seg_errors = QFrame()
+        self._seg_errors  = QFrame()
 
         self._seg_copied.setStyleSheet(f"background:{t['success']};")
         self._seg_skipped.setStyleSheet(f"background:{t['warning']};")
@@ -1283,23 +1460,23 @@ class _SummaryWidget(QWidget):
         self._entry_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         lay.addWidget(self._entry_card)
 
-    def set_status_html(self, html: str) -> None:
-        self._status_center_lbl.setText(html)
+    def set_status_html(self, _html: str) -> None:
+        self._status_center_lbl.setText(_html)
+
+    def update_progress_bar(self, done: int, total: int) -> None:
+        self._update_progress(done, total)
 
     def update_stats(self, operation: str, done: int, total: int, copied: int, skipped: int, errors: int, elapsed_s: int,
                      size_copied: int, size_skipped: int, finished: bool = False, cancelled: bool = False) -> None:
 
         self.op_lbl.setText(operation)
-
         self.card_copied.set_val(f"{copied:,}")
         self.card_copied.set_size(_format_unit(size_copied))
         self.card_skipped.set_val(f"{skipped:,}")
         self.card_skipped.set_size(_format_unit(size_skipped))
         self.card_errors.set_val(f"{errors:,}")
-
         size_str = _format_unit(size_copied + size_skipped)
         self.total_lbl.setText(f"{total:,} files / {size_str}" if total > 0 else "")
-
         self._update_progress(done, total, finished, cancelled)
         self._update_segments(copied, skipped, errors, finished=finished)
         self._update_timing(elapsed_s, done, total, finished, cancelled)
@@ -1318,10 +1495,10 @@ class _SummaryWidget(QWidget):
             self._prog_pct.setText("—")
             self._progress_bar.setFormat("Cancelled")
             return
-
         if total > 0:
             pct = int(done * 100 / total)
-            self._progress_bar.setRange(0, total)
+            if self._progress_bar.maximum() != total:
+                self._progress_bar.setRange(0, total)
             self._progress_bar.setValue(done)
             self._prog_pct.setText(f"{pct}%")
             self._progress_bar.setFormat(f"{pct}%  —  {done:,} / {total:,} files")
@@ -1332,33 +1509,28 @@ class _SummaryWidget(QWidget):
             self._progress_bar.setFormat("Scanning…")
 
     def _update_segments(self, copied: int, skipped: int, errors: int, finished: bool = False) -> None:
-        segs = (self._seg_copied, self._seg_skipped, self._seg_errors)
+        segs  = (self._seg_copied, self._seg_skipped, self._seg_errors)
         total = copied + skipped + errors
-
         if not finished or total == 0:
             for s in segs:
                 s.setFixedWidth(0)
             return
-
         avail = self._rate_card.width() - 40
         for seg, count in zip(segs, (copied, skipped, errors)):
             seg.setFixedWidth(max(0, int(avail * count / total)))
 
     def _update_timing(self, elapsed_s: int, done: int, total: int, finished: bool, cancelled: bool) -> None:
         mins, secs = divmod(elapsed_s, 60)
-        speed_str = "---"
-        eta_str = "--:--"
-
+        speed_str  = "---"
+        eta_str    = "--:--"
         if elapsed_s > 0 and done > 0:
-            rate = done / elapsed_s
-            speed_str = f"{rate:,.1f} files/s" if rate >= 1 else f"1 file/{1 / rate:.1f}s"
-
+            rate      = done / elapsed_s
+            speed_str = (f"{rate:,.1f} files/s" if rate >= 1 else f"1 file/{1 / rate:.1f}s")
             if not finished and total > done:
-                eta_s = int((total - done) / rate)
+                eta_s   = int((total - done) / rate)
                 eta_str = f"{eta_s // 60:02d}:{eta_s % 60:02d}"
             elif finished:
                 eta_str = "Cancelled" if cancelled else "Done"
-
         self._card_elapsed.set_val(f"{mins:02d}:{secs:02d}")
         self._card_speed.set_val(speed_str)
         self._card_eta.set_val(eta_str)
@@ -1367,44 +1539,33 @@ class _SummaryWidget(QWidget):
         new_cols = max(1, (self._entry_card.width() - 40) // 280)
         if new_cols == self._entry_grid_cols:
             return
-
         self._entry_grid_cols = new_cols
         grid = self._entry_grid
-
         for i in range(max(grid.columnCount(), new_cols + 1)):
             grid.setColumnStretch(i, 0)
-
         for i in range(new_cols):
             grid.setColumnStretch(i, 1)
 
     @staticmethod
     def _html_title(title: str) -> str:
-        return (title.replace("&", "&amp;")
-                .replace("<br>", "\x00").replace("<BR>", "\x00")
-                .replace("<br/>", "\x00").replace("<BR/>", "\x00")
-                .replace("<", "&lt;").replace(">", "&gt;")
-                .replace("\r\n", "<br>").replace("\x00", "<br>")
-                .replace("\r", "<br>").replace("\n", "<br>"))
+        return html.escape(title).replace("\r\n", "<br>").replace("\n", "<br>").replace("\r", "<br>")
 
     def _refresh_entry_labels(self) -> None:
         self._recalculate_grid()
-        cols = self._entry_grid_cols
-        labels = self._entry_row_labels
+        cols    = self._entry_grid_cols
+        labels  = self._entry_row_labels
         results = self._entry_results
         rebuild = False
 
         for title, (ok, err, skip) in results.items():
             parts = []
-            if ok:
-                parts.append(f"<span style='{self._s_ok}'>⤵ {ok:,}</span>")
-            if skip:
-                parts.append(f"<span style='{self._s_skip}'>↷ {skip:,}</span>")
-            if err:
-                parts.append(f"<span style='{self._s_err}'>✗ {err:,}</span>")
+            if ok:   parts.append(f"<span style='{self._s_ok}'>⤵ {ok:,}</span>")
+            if skip: parts.append(f"<span style='{self._s_skip}'>↷ {skip:,}</span>")
+            if err:  parts.append(f"<span style='{self._s_err}'>✗ {err:,}</span>")
 
-            suffix = "&nbsp; ".join(parts) if parts else f"<span style='{self._s_dim}'></span>"
+            suffix     = "&nbsp; ".join(parts) if parts else f"<span style='{self._s_dim}'></span>"
             safe_title = self._html_title(title)
-            html = f"<span style='{self._s_title}'>{safe_title}</span><br>{suffix}"
+            _html       = f"<span style='{self._s_title}'>{safe_title}</span><br>{suffix}"
 
             lbl = labels.get(title)
             if lbl is None:
@@ -1415,7 +1576,7 @@ class _SummaryWidget(QWidget):
                 labels[title] = lbl
                 rebuild = True
 
-            lbl.setText(html)
+            lbl.setText(_html)
 
         if not rebuild:
             return
@@ -1423,7 +1584,7 @@ class _SummaryWidget(QWidget):
         grid = self._entry_grid
         while grid.count():
             item = grid.takeAt(0)
-            w = item.widget()
+            w    = item.widget()
             if w:
                 w.hide()
 
@@ -1436,27 +1597,34 @@ class _SummaryWidget(QWidget):
 
 
 class _LogWidget(QWidget):
-    _PAGE = 500
+    _PAGE    = 500
+    _LOG_MAX = 150_000
+    _sorted_ready = pyqtSignal(list, list)
 
     def __init__(self, color: str) -> None:
         super().__init__()
         t = current_theme()
-        self._items: list[str] = []
+        self._items:    list[str] = []
+        self._items_lower: list[str] = []
         self._filtered: list[str] = []
-        self._page = 0
-        self._finalized = False
+        self._page          = 0
+        self._finalized     = False
+        self._truncated     = False
         self._last_rendered = ""
         self._search_cache: dict[str, list[str]] = {}
+        self._sorted_ready.connect(self._apply_sorted)
 
-        style_view = f"font-family:monospace; font-size:{font_sz(-1)}px; color:{color}; background:transparent; border:none;"
+        style_view   = (f"font-family:monospace; font-size:{font_sz(-1)}px; "
+                        f"color:{color}; background:transparent; border:none;")
         style_search = (f"QLineEdit {{ background:{t['bg3']}; border:1px solid {t['header_sep']}; "
                         f"border-radius:6px; padding:0 10px; color:{t['text']}; }}")
-        style_spin = (f"QSpinBox{{border:1px solid {t['header_sep']}; border-radius:4px; "
-                      f"padding:2px 5px; background:{t['bg3']}; color:{t['text']}; font-weight:bold}}"
-                      f"QSpinBox:focus{{border:1px solid {t['accent']}; background:{t['bg2']}}}")
-        style_muted = f"color:{t['muted']}; font-size:{font_sz()}px; margin-left:10px;"
-        style_btn = (f"QPushButton {{ background:{t['bg3']}; border:1px solid {t['header_sep']}; border-radius:4px; "
-                     f"padding:2px 8px; }} QPushButton:hover {{ background:{t['bg2']}; }}")
+        style_spin   = (f"QSpinBox{{border:1px solid {t['header_sep']}; border-radius:4px; "
+                        f"padding:2px 5px; background:{t['bg3']}; color:{t['text']}; font-weight:bold}}"
+                        f"QSpinBox:focus{{border:1px solid {t['accent']}; background:{t['bg2']}}}")
+        style_muted  = f"color:{t['muted']}; font-size:{font_sz()}px; margin-left:10px;"
+        style_btn    = (f"QPushButton {{ background:{t['bg3']}; border:1px solid {t['header_sep']}; "
+                        f"border-radius:4px; padding:2px 8px; }} "
+                        f"QPushButton:hover {{ background:{t['bg2']}; }}")
 
         self._search = QLineEdit()
         self._search.setPlaceholderText(" 🔍  Search…")
@@ -1470,12 +1638,12 @@ class _LogWidget(QWidget):
         self._view.setStyleSheet(style_view)
 
         self._first = QPushButton("««")
-        self._prev = QPushButton("‹ Prev")
-        self._next = QPushButton("Next ›")
-        self._last = QPushButton("»»")
+        self._prev  = QPushButton("‹ Prev")
+        self._next  = QPushButton("Next ›")
+        self._last  = QPushButton("»»")
 
-        for btn, cb in ((self._first, lambda: self._go(0)), (self._prev, lambda: self._go(self._page - 1)),
-                (self._next, lambda: self._go(self._page + 1)), (self._last, lambda: self._go(self._pages() - 1))):
+        for btn, cb in ((self._first, lambda: self._go(0)), (self._prev,  lambda: self._go(self._page - 1)),
+                        (self._next,  lambda: self._go(self._page + 1)), (self._last,  lambda: self._go(self._pages() - 1))):
             btn.clicked.connect(cb)
             btn.setMinimumHeight(28)
             btn.setStyleSheet(style_btn)
@@ -1488,7 +1656,7 @@ class _LogWidget(QWidget):
         self._spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._spin.editingFinished.connect(self._spin_changed)
 
-        self._page_lbl = QLabel("")
+        self._page_lbl  = QLabel("")
         self._page_lbl.setMinimumHeight(28)
 
         self._total_lbl = QLabel("")
@@ -1523,8 +1691,20 @@ class _LogWidget(QWidget):
 
         self._html_prefix = (f"<style>body {{font-family: monospace; font-size: {font_sz(-1)}px; color: {color}}}"
                              f"hr {{background-color: {t['header_sep']}}} "
-                             f".entry-odd {{padding: 2px; background-color: rgba(0, 0, 0, 0.15)}} "
+                             f".entry-odd  {{padding: 2px; background-color: rgba(0, 0, 0, 0.15)}} "
                              f".entry-even {{padding: 2px; background-color: rgba(255, 255, 255, 0.05)}}</style>")
+
+    @property
+    def is_truncated(self) -> bool:
+        return self._truncated
+
+    @property
+    def log_max(self) -> int:
+        return self._LOG_MAX
+
+    @property
+    def item_count(self) -> int:
+        return len(self._items)
 
     def _pages(self) -> int: return max(1, (len(self._filtered) + self._PAGE - 1) // self._PAGE)
 
@@ -1544,12 +1724,10 @@ class _LogWidget(QWidget):
         parts = [self._html_prefix]
 
         for i, item in enumerate(chunk):
-            idx = start + i + 1
-            safe = (item.replace("&", "&amp;").replace("<", "&lt;")
-                    .replace(">", "&gt;").replace("\n", "<br>"))
+            idx  = start + i + 1
+            safe = html.escape(item).replace("\n", "<br>")
             row_class = "entry-even" if i % 2 == 0 else "entry-odd"
             parts.append(f'<div class="{row_class}"><b>{idx:,}:</b> {safe}</div>')
-
             if i < len(chunk) - 1:
                 parts.append("<hr>")
 
@@ -1568,27 +1746,62 @@ class _LogWidget(QWidget):
         self._spin.blockSignals(False)
 
         can_back = self._page > 0
-        can_fwd = self._page < pages - 1
+        can_fwd  = self._page < pages - 1
         self._first.setEnabled(can_back)
         self._prev.setEnabled(can_back)
         self._next.setEnabled(can_fwd)
         self._last.setEnabled(can_fwd)
 
     def bulk_add(self, entries: list[str]) -> None:
-        if not entries:
+        if not entries or self._truncated:
             return
+        remaining = self._LOG_MAX - len(self._items)
+        if remaining <= 0:
+            self._truncated = True
+            return
+        if len(entries) > remaining:
+            entries = entries[:remaining]
+            self._truncated = True
         needle = self._search.text().lower().strip()
+        entries_lower = [e.lower() for e in entries]
         self._items.extend(entries)
+        self._items_lower.extend(entries_lower)
         if not self._finalized:
-            self._filtered.extend(e for e in entries if not needle or needle in e.lower())
+            if needle:
+                self._filtered.extend(e for e, el in zip(entries, entries_lower) if needle in el)
+            else:
+                self._filtered.extend(entries)
             self._search_cache.clear()
+        if self._truncated:
+            cap_msg = f"⚠ Log capped at {self._LOG_MAX:,} entries — use search to find specific files"
+            self._items.append(cap_msg)
+            self._items_lower.append(cap_msg.lower())
+            if not self._finalized:
+                self._filtered.append(cap_msg)
 
     def flush_final(self) -> None:
         self._finalized = True
-        self._items.sort(key=self._natural_sort_key)
-        needle = self._search.text().lower().strip()
-        self._filtered = [i for i in self._items if not needle or needle in i.lower()]
         self._page = 0
+        self._render()
+        pairs = list(zip(self._items, self._items_lower))
+        def _bg_sort() -> None:
+            pairs.sort(key=lambda p: self._natural_sort_key(p[0].split('\n', 1)[0]))
+            if pairs:
+                sorted_items, sorted_lower = zip(*pairs)
+            else:
+                sorted_items, sorted_lower = [], []
+            self._sorted_ready.emit(list(sorted_items), list(sorted_lower))
+        threading.Thread(target=_bg_sort, daemon=True).start()
+
+    def _apply_sorted(self, items: list, items_lower: list) -> None:
+        needle            = self._search.text().lower().strip()
+        self._items       = items
+        self._items_lower = items_lower
+        self._search_cache.clear()
+        if needle:
+            self._filtered = [i for i, il in zip(items, items_lower) if needle in il]
+        else:
+            self._filtered = items[:]
         self._render()
 
     def _on_search(self) -> None:
@@ -1596,7 +1809,10 @@ class _LogWidget(QWidget):
         if needle in self._search_cache:
             self._filtered = self._search_cache[needle][:]
         else:
-            self._filtered = [i for i in self._items if not needle or needle in i.lower()]
+            if needle:
+                self._filtered = [i for i, il in zip(self._items, self._items_lower) if needle in il]
+            else:
+                self._filtered = self._items[:]
             if len(self._search_cache) > 50:
                 self._search_cache.pop(next(iter(self._search_cache)))
             self._search_cache[needle] = self._filtered[:]
@@ -1613,7 +1829,7 @@ class CopyDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(operation)
         self._t = current_theme()
-        t = self._t
+        t       = self._t
 
         self.c_ok = t["success"]
         self.c_sk = t["warning"]
@@ -1622,14 +1838,14 @@ class CopyDialog(QDialog):
         self._status_fs = font_sz(8)
 
         screen = QApplication.primaryScreen()
-        geo = screen.availableGeometry() if screen else None
+        geo    = screen.availableGeometry() if screen else None
         if geo:
-            self.setMinimumSize(min(1900, int(geo.width() * 0.9)), min(925, int(geo.height() * 0.9)))
+            self.setMinimumSize(min(1900, int(geo.width()  * 0.9)), min(925,  int(geo.height() * 0.9)))
 
         self._operation = operation
-        self.worker = CopyWorker(tasks)
+        self.worker     = CopyWorker(tasks)
         self.copied = self.skipped = self.errors = 0
-        self._done = self._total = 0
+        self._done  = self._total = 0
         self._final_elapsed: Optional[int] = None
         self._pending_ok = _deque()
         self._pending_sk = _deque()
@@ -1643,9 +1859,9 @@ class CopyDialog(QDialog):
         sep.setFixedHeight(2)
         sep.setStyleSheet(f"background: {t['header_sep']}; border: none;")
 
-        self._w_copied = _LogWidget(self.c_ok)
+        self._w_copied  = _LogWidget(self.c_ok)
         self._w_skipped = _LogWidget(self.c_sk)
-        self._w_errors = _LogWidget(self.c_er)
+        self._w_errors  = _LogWidget(self.c_er)
 
         summary_page = QWidget()
         sl = QVBoxLayout(summary_page)
@@ -1692,19 +1908,16 @@ class CopyDialog(QDialog):
         self.worker.start()
         self._summary.update_stats(self._operation, 0, 0, 0, 0, 0, 0, 0, 0, False)
 
-    def _elapsed_s(self) -> int:
-        return self._final_elapsed if self._final_elapsed is not None else self.timer.elapsed() // 1000
+    def _elapsed_s(self) -> int: return self._final_elapsed if self._final_elapsed is not None else self.timer.elapsed() // 1000
 
-    def _status_badge(self, icon: str, label: str, color: str, border: Optional[str] = None) -> str:
+    def _status_badge(self, icon: str, label: str, color: str, border: "Optional[str]" = None) -> str:
         border = border or color
         return (f"<span style='display:inline-block; font-size:{self._status_fs}px; font-weight:bold; "
-                f"font-family:monospace; color:{color}; background:{self._t['bg2']}; "
-                f"border-left:5px solid {border}; border-radius:7px;padding:6px 18px;'>{icon}&thinsp;{label}</span>")
+                f"font-family:monospace; color:{color};background:{self._t['bg2']}; border-left:5px solid {border}; "
+                f"border-radius:7px;padding:6px 18px;'>{icon}&thinsp;{label}</span>")
 
     def _set_status_running(self) -> None:
-        self._summary.set_status_html(
-            self._status_badge("⏳", f"{self._operation} running…",
-                               self._t["cyan"], self._t["accent"]))
+        self._summary.set_status_html(self._status_badge("⏳", f"{self._operation} running…", self._t["cyan"], self._t["accent"]))
 
     def _set_status_scanning(self, phase: str, scanned: int) -> None:
         self._summary.set_status_html(self._status_badge("🔍", f"{phase}… ({scanned:,} found)", self._t["accent2"]))
@@ -1716,15 +1929,18 @@ class CopyDialog(QDialog):
 
     def _on_scan_finished(self, total: int) -> None:
         suffix = "file" if total == 1 else "files"
-        self._summary.set_status_html(self._status_badge("📂", f"Scan complete — {total:,} {suffix} found",
-                                                         self._t["accent"]))
+        self._summary.set_status_html(self._status_badge("📂", f"Scan complete — {total:,} {suffix} found", self._t["accent"]))
 
     def _drain_pending(self) -> int:
-        max_per = 250
+        max_per = 750
 
         def process_batch(pending, widget, fmt):
             if not pending:
                 return 0
+            if widget.is_truncated:
+                n = len(pending)
+                pending.clear()
+                return n
             n = min(max_per, len(pending))
             batch = [pending.popleft() for _ in range(n)]
             widget.bulk_add([fmt(*args) for args in batch])
@@ -1735,12 +1951,10 @@ class CopyDialog(QDialog):
                 process_batch(self._pending_er, self._w_errors, self._fmt_er))
 
     def _update_ui_tick(self) -> None:
-        elapsed = self._elapsed_s()
-
+        elapsed   = self._elapsed_s()
         processed = self._drain_pending()
         if processed:
             self._update_tab_labels()
-
         self._summary.update_stats(self._operation, self._done, self._total, self.copied, self.skipped, self.errors,
                                    elapsed, self._size_copied, self._size_skipped, finished=False)
 
@@ -1760,9 +1974,9 @@ class CopyDialog(QDialog):
 
     def _on_batch(self, ok, sk, er, done, total) -> None:
         self._done, self._total = done, total
-        self.copied += len(ok)
+        self.copied  += len(ok)
         self.skipped += len(sk)
-        self.errors += len(er)
+        self.errors  += len(er)
 
         for s, d, sz in ok:
             self._size_copied += sz
@@ -1773,6 +1987,8 @@ class CopyDialog(QDialog):
             self._pending_sk.append((s, r))
 
         self._pending_er.extend((s, m) for s, m, _sz in er)
+        if total > 0:
+            self._summary.update_progress_bar(done, total)
 
     def _on_done(self, c, s, e, cancelled) -> None:
         self._tick.stop()
@@ -1782,7 +1998,9 @@ class CopyDialog(QDialog):
                                         (self._w_copied, self._w_skipped, self._w_errors),
                                         (self._fmt_ok, self._fmt_sk, self._fmt_er)):
             if pending:
-                widget.bulk_add([fmt(*args) for args in pending])
+                cap = max(0, widget.log_max - widget.item_count)
+                if cap > 0:
+                    widget.bulk_add([fmt(*args) for args in islice(pending, cap)])
                 pending.clear()
 
         if not cancelled:
@@ -1790,7 +2008,7 @@ class CopyDialog(QDialog):
             self._done = self._total
 
         elapsed = self._final_elapsed
-        tstr = f"{elapsed // 60:02d}:{elapsed % 60:02d}"
+        tstr    = f"{elapsed // 60:02d}:{elapsed % 60:02d}"
 
         if cancelled:
             icon, label, col = "⏹", f"Cancelled after {tstr}", self.c_sk
@@ -1800,10 +2018,8 @@ class CopyDialog(QDialog):
             icon, label, col = "✓", f"Done — {tstr}", self.c_ok
 
         self._set_status_finished(icon, label, col)
-
         self._summary.update_stats(self._operation, self._done, self._total, self.copied, self.skipped, self.errors,
                                    elapsed, self._size_copied, self._size_skipped, finished=True, cancelled=cancelled)
-
         self._update_tab_labels()
 
         for w in (self._w_copied, self._w_skipped, self._w_errors):

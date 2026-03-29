@@ -1,16 +1,18 @@
 from typing import Type, Optional
 
-from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QMessageBox,
-    QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget, QPushButton, QScrollArea,
+    QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget, QScrollArea,
+    QApplication, QCheckBox, QComboBox, QDialog, QMessageBox, QPushButton
 )
 
+from dialogs import EntryDialog, HeaderSettingsDialog, MountsDialog, ProfilesDialog, _ok_cancel_buttons
 from samba_credentials import SambaPasswordDialog
-from dialogs import EntryDialog, HeaderSettingsDialog, MountsDialog, ProfilesDialog
 from state import S, _PROFILES_DIR, apply_replacements, block_set, save_profile, generate_tooltip
-from themes import THEMES, current_theme, apply_style, font_scale, register_style_listener, unregister_style_listener
+from themes import (
+    THEMES, current_theme, apply_style, font_scale, register_style_listener, unregister_style_listener, apply_tooltip
+)
 
 
 def _copy_logic_tooltip() -> str:
@@ -45,8 +47,7 @@ def _copy_logic_tooltip() -> str:
         "<b>Status Colors:</b><br>"
         f"- <span style='color:{t['success']};'>Green</span> = Success, "
         f"<span style='color:{t['warning']};'>Yellow</span> = Skipped, "
-        f"<span style='color:{t['error']};'>Red</span> = Error."
-    )
+        f"<span style='color:{t['error']};'>Red</span> = Error.")
 
 
 _COLS_NARROW, _COLS_WIDE = 2, 4
@@ -54,9 +55,9 @@ _COLS_NARROW, _COLS_WIDE = 2, 4
 
 # noinspection PyUnresolvedReferences
 class _BaseCheckboxWindow(QDialog):
-    changed = pyqtSignal()
     _window_title: str = ""
     _cols_key:     str = "backup_window_columns"
+    changed = pyqtSignal()
 
     def __init__(self, parent) -> None:
         super().__init__(parent)
@@ -89,8 +90,7 @@ class _BaseCheckboxWindow(QDialog):
         register_style_listener(self._refresh_styles)
 
     @staticmethod
-    def _entry_filter(entry: dict) -> bool:
-        return True
+    def _entry_filter(entry: dict) -> bool: return True
 
     def _refresh_styles(self) -> None:
         saved = {id(e): cb.isChecked() for cb, _s, _d, _t, e in self.checkbox_dirs if e is not None}
@@ -107,14 +107,11 @@ class _BaseCheckboxWindow(QDialog):
     def _src_dst(self, entry: dict) -> tuple[list, list]:
         return entry.get("source", []), entry.get("destination", [])
 
-    def _exclusion_note(self, entry: dict) -> str:
-        return ""
+    def _exclusion_note(self, entry: dict) -> str: return ""
 
-    def _add_action_buttons(self, grid: QGridLayout, row: int) -> None:
-        pass
+    def _add_action_buttons(self, grid: QGridLayout, row: int) -> None: pass
 
-    def _extra_top_widgets(self) -> list:
-        return []
+    def _extra_top_widgets(self) -> list: return []
 
     def _setup_ui(self) -> None:
         self.checkbox_dirs.clear()
@@ -134,10 +131,7 @@ class _BaseCheckboxWindow(QDialog):
             sg   = scr.availableGeometry()
             hint = content.sizeHint()
             top_h = self._top_wrap.sizeHint().height() + 20
-            self.resize(
-                min(hint.width() + 20, sg.width()),
-                min(hint.height() + top_h, sg.height()),
-            )
+            self.resize(min(hint.width() + 20, sg.width()), min(hint.height() + top_h, sg.height()))
 
     def _rebuild_top_controls(self) -> None:
         while self._top_hbox.count():
@@ -162,7 +156,7 @@ class _BaseCheckboxWindow(QDialog):
 
     def _populate_checkboxes(self, grid: QGridLayout) -> int:
         tips = self._tips()
-        fs   = font_scale()
+        fs = font_scale()
 
         grouped: dict[str, list] = {}
         for e in S.entries:
@@ -171,7 +165,7 @@ class _BaseCheckboxWindow(QDialog):
             h = e.get("header", "Unknown")
             grouped.setdefault(h, []).append(e)
 
-        t   = current_theme()
+        t = current_theme()
         row = 0
 
         for h in S.headers:
@@ -181,8 +175,8 @@ class _BaseCheckboxWindow(QDialog):
 
             hdr_data = S.headers[h]
             inactive = hdr_data.get("inactive", False)
-            color    = t["text_dim"] if inactive else hdr_data.get("color", "#ffffff")
-            label    = f"{h} (Inactive)" if inactive else h
+            color = t["text_dim"] if inactive else hdr_data.get("color", "#ffffff")
+            label = f"{h} (Inactive)" if inactive else h
 
             hdr_lbl = QLabel(label)
             hdr_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -192,21 +186,22 @@ class _BaseCheckboxWindow(QDialog):
 
             col = 0
             for e in sorted(entries, key=lambda x: x.get("title", "").lower()):
-                title     = e["title"]
+                title = e["title"]
                 excl_note = self._exclusion_note(e)
-                cb_color  = t["muted"] if excl_note else color
+                cb_color = t["muted"] if excl_note else color
 
                 cb = QCheckBox(title.replace("<br>", "\n").replace("&", "&&"))
-                cb.setToolTipDuration(600_000)
 
                 base_tip = tips.get(title, "")
+                tip_text = ""
                 if excl_note:
-                    warn = (f"<br><br><span style='color:{t['warning']};font-weight:bold;'>"
-                            f"⚠ {excl_note}</span>")
-                    cb.setToolTip((base_tip + warn) if base_tip else
-                                  f"<span style='color:{t['warning']};font-weight:bold;'>⚠ {excl_note}</span>")
+                    warn = f"<br><br><span style='color:{t['warning']};font-size:{fs['sm']}px; font-weight:bold;'> ⚠ {excl_note}</span>"
+                    tip_text = (
+                        base_tip + warn) if base_tip else f"<span style='color:{t['warning']};font-weight:bold;'> ⚠ {excl_note}</span>"
                 elif base_tip:
-                    cb.setToolTip(base_tip)
+                    tip_text = base_tip
+
+                apply_tooltip(cb, tip_text)
 
                 cb.setStyleSheet(f"QCheckBox{{color:{cb_color};}}")
                 cb.stateChanged.connect(self._sync_select_all)
@@ -347,24 +342,17 @@ class SettingsWindow(_BaseCheckboxWindow):
     _window_title = "Settings"
     _cols_key     = "settings_window_columns"
 
-    def _extra_top_widgets(self) -> list:
-        return [self._make_config_path_label()]
+    def _extra_top_widgets(self) -> list: return [self._make_config_path_label()]
 
     @staticmethod
     def _make_config_path_label() -> QLabel:
-        from themes import font_scale
-        t    = current_theme()
-        fs   = font_scale()
+        t = current_theme()
+        fs = font_scale()
         path = (str(_PROFILES_DIR / f"{S.profile_name}.json") if S.profile_name else str(_PROFILES_DIR))
-        lbl  = QLabel(
-            f" 󰔨  "
-            f"<span style='font-size:{fs['lg']}px;color:{t['accent2']};"
-            f"text-decoration:underline dotted;'>{apply_replacements(path)}</span>"
-        )
+        lbl = QLabel(f" 󰔨  <span style='font-size:{fs['lg']}px;color:{t['accent2']};"
+                     f"text-decoration:underline dotted;'>{apply_replacements(path)}</span>")
         lbl.setTextFormat(Qt.TextFormat.RichText)
-        lbl.setToolTip(_copy_logic_tooltip())
-        lbl.setToolTipDuration(600_000)
-        lbl.setCursor(Qt.CursorShape.WhatsThisCursor)
+        apply_tooltip(lbl, _copy_logic_tooltip())
         return lbl
 
     def _exclusion_note(self, entry: dict) -> str:
@@ -548,22 +536,17 @@ class _ThemeDialog(QDialog):
             layout.addWidget(cb)
             return cb
 
-        self._theme_cb = _combo("Select Theme:",     list(THEMES.keys()), S.ui.get("theme", "Tokyo Night"))
-        self._font_cb  = _combo("Select Font:",      ["(System Default)"] + sorted(QFontDatabase.families()),
-                                S.ui.get("font_family", "") or "(System Default)")
-        self._size_cb  = _combo("Select Font Size:", ["10","11","12","13","14","15","16","17","18","20","22","24"],
-                                str(S.ui.get("font_size", 14)))
+        self._theme_cb = _combo("Select Theme:", list(THEMES.keys()), S.ui.get("theme", "Tokyo Night"))
+        self._font_cb = _combo("Select Font:", ["(System Default)"] + sorted(QFontDatabase.families()),
+                               S.ui.get("font_family", "") or "(System Default)")
+        self._size_cb = _combo(
+            "Select Font Size:", ["10", "11", "12", "13", "14", "15", "16", "17", "18", "20", "22", "24"],
+            str(S.ui.get("font_size", 14)))
 
         prev_btn = QPushButton("Preview")
         prev_btn.clicked.connect(lambda: self._apply(save=False))
         layout.addWidget(prev_btn)
-
-        bb         = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
-        ok_btn     = bb.button(QDialogButtonBox.StandardButton.Ok)
-        cancel_btn = bb.button(QDialogButtonBox.StandardButton.Cancel)
-        if ok_btn:     ok_btn.clicked.connect(self._on_ok)
-        if cancel_btn: cancel_btn.clicked.connect(self._on_cancel)
-        layout.addWidget(bb)
+        layout.addWidget(_ok_cancel_buttons(self, self._on_ok, cancel_fn=self._on_cancel))
 
     def _apply(self, save: bool = False) -> None:
         chosen_font = self._font_cb.currentText()

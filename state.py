@@ -1,10 +1,15 @@
-from pathlib import Path
 import html as _html_mod
-from typing import Any, Optional
+import json
+import logging
+import os
+import pwd
+import re
+import threading
 from collections import defaultdict
 from dataclasses import dataclass, field
-import json, logging, os, pwd, re, threading
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
+from typing import Any, Optional
 
 _USER = pwd.getpwuid(os.getuid()).pw_name
 _HOME = Path.home()
@@ -44,11 +49,16 @@ def _make_logger(name: str) -> logging.Logger:
 
 logger = _make_logger("backup_helper")
 
-text_replacements: list[tuple[str, str]] = [
+_path_replacements: list[tuple[str, str]] = [
     (_HOME.as_posix(), "~"),
     (f"/run/media/{_USER}/", ""),
-    ("\x1b[1m", ""), ("\x1b[0m", ""),
 ]
+_ansi_replacements: list[tuple[str, str]] = [
+    ("\x1b[1m", ""),
+    ("\x1b[0m", ""),
+]
+text_replacements: list[tuple[str, str]] = _path_replacements + _ansi_replacements
+
 
 _tooltip_cache: Optional[tuple[dict, dict, dict]] = None
 
@@ -59,8 +69,11 @@ def invalidate_tooltip_cache() -> None:
 
 
 def apply_replacements(text: str) -> str:
-    for old, new in text_replacements:
+    for old, new in _path_replacements:
         if old:
+            text = text.replace(old, new)
+    if "\x1b" in text:
+        for old, new in _ansi_replacements:
             text = text.replace(old, new)
     return text
 
@@ -138,13 +151,7 @@ def _parse_entry(raw: dict) -> Optional[dict]:
     if not (header and title and source and dest):
         return None
     details = raw.get("details", {})
-    return {
-        "header":      header,
-        "title":       title,
-        "source":      source,
-        "destination": dest,
-        "details":     details if isinstance(details, dict) else {},
-    }
+    return {"header": header, "title": title, "source": source, "destination": dest, "details": details if isinstance(details, dict) else {}}
 
 
 def load_profile(path: Path) -> bool:
@@ -159,14 +166,8 @@ def _load_profile_from_data(path: Path, data: dict) -> bool:
     try:
         S.profile_name = path.stem
 
-        S.headers = {
-            k: {
-                "inactive": bool(v.get("inactive")),
-                "color":    v.get("header_color", "#ffffff")
-                if _valid_hex_color(v.get("header_color")) else "#ffffff",
-            }
-            for k, v in data.get("header", {}).items() if isinstance(v, dict)
-        }
+        S.headers = {k: {"inactive": bool(v.get("inactive")), "color": v.get("header_color", "#ffffff")
+        if _valid_hex_color(v.get("header_color")) else "#ffffff"} for k, v in data.get("header", {}).items() if isinstance(v, dict)}
 
         S.entries = [e for raw in data.get("entries", []) if (e := _parse_entry(raw)) is not None]
 
@@ -192,25 +193,18 @@ def save_profile(path: Optional[Path] = None) -> bool:
     if not path:
         return False
 
-    data = {
-        "is_default": True,
-        "mount_options": S.mount_options,
-        "header": {
-            k: {"inactive": v.get("inactive", False), "header_color": v.get("color", "#ffffff")}
-            for k, v in S.headers.items()
-        },
+    data = {"is_default": True, "mount_options": S.mount_options, "header": {k: {"inactive": v.get("inactive", False),
+                                                                                 "header_color": v.get("color", "#ffffff")}
+                                                                             for k, v in S.headers.items()},
         "system_manager_operations": S.system_manager_ops,
         "system_files":    S.system_files,
         "basic_packages":  S.basic_packages,
         "aur_packages":    S.aur_packages,
         "specific_packages": sorted(
-            S.specific_packages,
-            key=lambda x: str(x.get("package", "") if isinstance(x, dict) else x).lower(),
-        ),
+            S.specific_packages, key=lambda x: str(x.get("package", "") if isinstance(x, dict) else x).lower()),
         "ui_settings": S.ui,
         "user_shell":  S.user_shell,
-        "entries": sorted(S.entries, key=lambda e: (e.get("header", "").lower(), e.get("title", "").lower())),
-    }
+        "entries": sorted(S.entries, key=lambda e: (e.get("header", "").lower(), e.get("title", "").lower()))}
     try:
         _atomic_write(path, data)
         invalidate_tooltip_cache()
@@ -235,7 +229,6 @@ def startup_load() -> bool:
             parsed.append((p, json.loads(p.read_text(encoding="utf-8"))))
         except Exception as exc:
             logger.error("startup_load: %s", exc)
-
     default_path = default_data = None
     for p, data in parsed:
         if data.get("is_default"):
@@ -248,7 +241,6 @@ def startup_load() -> bool:
                 except OSError as exc:
                     logger.error("startup_load: could not clear duplicate in '%s': %s", p.stem, exc)
                 logger.warning("Cleared duplicate is_default flag in '%s'", p.stem)
-
     if default_path and default_data:
         return _load_profile_from_data(default_path, default_data)
     return any(_load_profile_from_data(p, data) for p, data in parsed)
@@ -260,58 +252,50 @@ _session_detected  = False
 
 
 def _entry_tooltip_html(title, src_lines, dst_lines, bg, bg2, bg3, c_title, c_data, font_sz_fn) -> str:
-    s_html, d_html = (
-        "<br/>".join(_html_mod.escape(apply_replacements(str(p))) for p in lines)
-        for lines in (src_lines, dst_lines)
-    )
+    s_html, d_html = ("<br/>".join(_html_mod.escape(apply_replacements(str(p))) for p in lines) for lines in (src_lines, dst_lines))
     safe_title = _html_mod.escape(title).replace("&lt;br&gt;", "<br/>")
-    return (
-        f"<table style='border-collapse:collapse;width:100%;font-family:monospace;white-space:nowrap'>"
-        f"<tr style='background-color:{bg};'><td style="
-        f"'font-size:{font_sz_fn()}px;color:{c_title};text-align:center;padding:5px;'>{safe_title}</td></tr>"
-        f"<tr style='background-color:{bg2};'><td style="
-        f"'font-size:{font_sz_fn(-1)}px;color:{c_data};padding:6px;'>Source:<br>{s_html}</td></tr>"
-        f"<tr style='background-color:{bg3};'><td style="
-        f"'font-size:{font_sz_fn(-1)}px;color:{c_data};padding:6px;'>Destination:<br>{d_html}</td></tr></table>"
-    )
+    label_style = f"color:{c_title}; font-weight:bold; border-bottom:1px solid {c_title}; margin-bottom:2px; display:inline-block;"
+    cell_padding = "padding:6px;"
+
+    return (f"<table style='width:100%; font-family:monospace; white-space:nowrap; border:1px solid {bg};'>"
+            f"<tr style='background-color:{bg};'>"
+            f"<td colspan='2' style='font-size:{font_sz_fn(-4)}px; color:{c_title}; text-align:center'>"
+            f"<b>{safe_title}</b></td></tr><tr>"
+            f"<td style='background-color:{bg2}; font-size:{font_sz_fn(-3)}px; color:{c_data}; line-height:1.4; "
+            f"{cell_padding} vertical-align:top; white-space:nowrap'>"
+            f"<span style='{label_style};'>Source:</span><br>{s_html}</td>"
+            f"<td style='background-color:{bg3}; font-size:{font_sz_fn(-3)}px; color:{c_data}; line-height:1.4; "
+            f"{cell_padding} vertical-align:top; border-right:1px solid {bg}; white-space:nowrap'>"
+            f"<span style='{label_style}'>Destination:</span><br>{d_html}</td>"
+            f"</tr></table>")
 
 
 def _sysfiles_tooltip_html(sys_files, t, font_sz_fn) -> str:
     cols   = 2 if len(sys_files) > 8 else 1
-    header = (
-        f"<tr><td colspan='{cols}' style='padding:4px 5px 2px;font-size:{font_sz_fn(-1)}px;"
-        f"font-weight:bold;color:{t['accent2']};border-bottom:1px solid {t['header_sep']}'>"
-        f"System Files ({len(sys_files)})</td></tr>"
-    )
-    cells = [
-        f"<td style='padding:4px 6px;border:1px solid {t['header_sep']};white-space:nowrap;vertical-align:top;'>"
-        f"<span style='color:{t['accent2']};font-weight:bold;'>{_html_mod.escape(Path(f.get('source', '')).name)}</span><br>"
-        f"<span style='font-size:{font_sz_fn(-3)}px;color:{t['success']};'>{_html_mod.escape(apply_replacements(f.get('source', '')))}<br>⤵<br>"
-        f"{_html_mod.escape(apply_replacements(f.get('destination', '')))}</span></td>"
-        for f in sys_files
-    ]
-    rows = [
-        f"<tr style='background-color:{t['bg2'] if (i // cols) % 2 == 0 else t['bg3']};'>{''.join(cells[i:i + cols])}</tr>"
-        for i in range(0, len(cells), cols)
-    ]
-    return f"<table style='border-collapse:collapse;font-family:monospace;font-size:{font_sz_fn(-2)}px;'>{header}{''.join(rows)}</table>"
+    header = (f"<tr><td colspan='{cols}' style='padding:4px 5px 2px;font-size:{font_sz_fn(-1)}px;"
+              f"font-weight:bold;color:{t['accent2']};border-bottom:1px solid {t['header_sep']}'>"
+              f"System Files ({len(sys_files)})</td></tr>")
+    cells = [f"<td style='padding:4px 6px;border:1px solid {t['header_sep']};white-space:nowrap;vertical-align:top;'>"
+             f"<span style='color:{t['accent2']};font-weight:bold;'>{_html_mod.escape(Path(f.get('source', '')).name)}</span><br>"
+             f"<span style='font-size:{font_sz_fn(-3)}px;color:{t['success']};'>{_html_mod.escape(apply_replacements(f.get('source', '')))}<br>⤵<br>"
+             f"{_html_mod.escape(apply_replacements(f.get('destination', '')))}</span></td>" for f in sys_files]
+
+    rows = [f"<tr style='background-color:{t['bg2'] if (i // cols) % 2 == 0 else t['bg3']};'>{''.join(cells[i:i + cols])}</tr>"
+            for i in range(0, len(cells), cols)]
+    return f"<table style='white-space:nowrap; font-family:monospace;font-size:{font_sz_fn(-2)}px;'>{header}{''.join(rows)}</table>"
 
 
 def _packages_tooltip_html(label, pkg_names, t, font_sz_fn) -> str:
     cols   = 8 if len(pkg_names) > 25 else 5
-    header = (
-        f"<tr><td colspan='{cols}' style="
-        f"'padding:4px 5px 2px;font-size:{font_sz_fn(-1)}px;font-weight:bold;color:{t['accent2']};"
-        f"border-bottom:1px solid {t['header_sep']};'>{label} ({len(pkg_names)})</td></tr>"
-    )
+    header = (f"<tr><td colspan='{cols}' style="
+              f"'padding:4px 5px 2px;font-size:{font_sz_fn(-1)}px;font-weight:bold;color:{t['accent2']};"
+              f"border-bottom:1px solid {t['header_sep']};'>{label} ({len(pkg_names)})</td></tr>")
     rows = []
     for i in range(0, len(pkg_names), cols):
-        cells = "".join(
-            f"<td style='padding:5px;border:1px solid {t['header_sep']};color:{t['success']};white-space:nowrap'>{p}</td>"
-            for p in pkg_names[i:i + cols]
-        )
+        cells = "".join(f"<td style='padding:5px;border:1px solid {t['header_sep']};color:{t['success']};white-space:nowrap'>{p}</td>"
+                        for p in pkg_names[i:i + cols])
         rows.append(f"<tr style='background-color:{t['bg2'] if (i // cols) % 2 == 0 else t['bg3']};'>{cells}</tr>")
-    return f"<table style='border-collapse:collapse;font-family:monospace;font-size:{font_sz_fn(-2)}px;'>{header}{''.join(rows)}</table>"
+    return f"<table style='white-space:nowrap; font-family:monospace;font-size:{font_sz_fn(-2)}px;'>{header}{''.join(rows)}</table>"
 
 
 def _specific_pkgs_tooltip_html(sp_active, session, t, font_sz_fn) -> str:
@@ -322,27 +306,20 @@ def _specific_pkgs_tooltip_html(sp_active, session, t, font_sz_fn) -> str:
     rows, cols, show_sess_hdr = [], 5, len(sp_groups) > 1
     for i, sess in enumerate(sorted(sp_groups)):
         if show_sess_hdr:
-            rows.append(
-                f"<tr style='background-color:{t['bg'] if i % 2 == 0 else t['bg2']};'><td colspan='{cols}' style="
-                f"'padding:3px 5px;font-size:{font_sz_fn(-2)}px;font-weight:bold;color:{t['accent2']};"
-                f"white-space:nowrap;border-bottom:1px solid {t['header_sep']};'>{_html_mod.escape(sess)}</td></tr>"
-            )
+            rows.append(f"<tr style='background-color:{t['bg'] if i % 2 == 0 else t['bg2']};'><td colspan='{cols}' style="
+                        f"'padding:3px 5px;font-size:{font_sz_fn(-2)}px;font-weight:bold;color:{t['accent2']};"
+                        f"white-space:nowrap;border-bottom:1px solid {t['header_sep']};'>{_html_mod.escape(sess)}</td></tr>")
+
         for j in range(0, len(sp_groups[sess]), cols):
-            cells = "".join(
-                f"<td style='padding:5px;border:1px solid {t['header_sep']};color:{t['success']};'>{p}</td>"
-                for p in sp_groups[sess][j:j + cols]
-            )
+            cells = "".join(f"<td style='padding:5px;border:1px solid {t['header_sep']};color:{t['success']};'>{p}</td>"
+                            for p in sp_groups[sess][j:j + cols])
             rows.append(f"<tr style='background-color:{t['bg2'] if (j // cols) % 2 == 0 else t['bg3']};'>{cells}</tr>")
 
-    header = (
-        f"<tr><td colspan='{cols}' style='padding:4px 5px 2px;font-size:{font_sz_fn(-2)}px;font-weight:bold;"
-        f"color:{t['accent2']};border-bottom:1px solid {t['header_sep']};'>Specific Packages "
-        f"for {_html_mod.escape(session or 'current session')} ({len(sp_active)})</td></tr>"
-    )
-    return (
-        f"<table style='border-collapse:collapse;font-family:monospace;font-size:{font_sz_fn(-2)}px;"
-        f"white-space:nowrap'>{header}{''.join(rows)}</table>"
-    )
+    header = (f"<tr><td colspan='{cols}' style='padding:4px 5px 2px;font-size:{font_sz_fn(-1)}px;font-weight:bold;"
+              f"color:{t['accent2']};border-bottom:1px solid {t['header_sep']};'>Specific Packages "
+              f"for {_html_mod.escape(session or 'current session')} ({len(sp_active)})</td></tr>")
+
+    return f"<table style='font-family:monospace;font-size:{font_sz_fn(-2)}px; white-space:nowrap'>{header}{''.join(rows)}</table>"
 
 
 def generate_tooltip() -> tuple[dict, dict, dict]:
@@ -366,49 +343,33 @@ def generate_tooltip() -> tuple[dict, dict, dict]:
         session = _cached_session if _cached_session else None
         t       = current_theme()
 
-        backup_tips = {
-            e["title"]: _entry_tooltip_html(
-                e["title"], e.get("source", []), e.get("destination", []),
-                t["bg"], t["bg2"], t["bg3"], t["accent2"], t["success"], font_sz,
-            )
-            for e in S.entries
-        }
-        restore_tips = {
-            e["title"]: _entry_tooltip_html(
-                e["title"], e.get("destination", []), e.get("source", []),
-                t["bg"], t["bg2"], t["bg3"], t["accent2"], t["success"], font_sz,
-            )
-            for e in S.entries
-        }
+        backup_tips = {e["title"]: _entry_tooltip_html(e["title"], e.get("source", []), e.get("destination", []),
+                                                       t["bg"], t["bg2"], t["bg3"], t["accent2"], t["success"], font_sz) for e in S.entries}
+
+        restore_tips = {e["title"]: _entry_tooltip_html(e["title"], e.get("destination", []), e.get("source", []),
+                                                        t["bg"], t["bg2"], t["bg3"], t["accent2"], t["success"], font_sz ) for e in S.entries}
         sm_tips: dict = {}
 
         active_sys_files = [f for f in (S.system_files or []) if isinstance(f, dict) and not f.get("disabled")]
         if active_sys_files:
             sm_tips["copy_system_files"] = _sysfiles_tooltip_html(active_sys_files, t, font_sz)
 
-        for key, pkgs, label in [
-            ("install_basic_packages", S.basic_packages, "Basic Packages"),
-            ("install_aur_packages",   S.aur_packages,   "AUR Packages"),
-        ]:
+        for key, pkgs, label in [("install_basic_packages", S.basic_packages, "Basic Packages"),
+                                 ("install_aur_packages", S.aur_packages, "AUR Packages")]:
             active_names = [_html_mod.escape(p["name"]) for p in pkgs if not p.get("disabled") and "name" in p]
             if active_names:
                 sm_tips[key] = _packages_tooltip_html(label, active_names, t, font_sz)
 
-        sp_active = [
-            p for p in S.specific_packages
-            if not p.get("disabled") and (not session or p.get("session") == session)
-        ]
+        sp_active = [p for p in S.specific_packages if not p.get("disabled") and (not session or p.get("session") == session)]
         if sp_active:
             sm_tips["install_specific_packages"] = _specific_pkgs_tooltip_html(sp_active, session, t, font_sz)
 
         if S.user_shell:
-            sm_tips["set_user_shell"] = (
-                f"<table style='border-collapse:collapse;font-family:monospace;'>"
-                f"<tr><td style='padding:4px 5px 2px;font-size:{font_sz(-1)}px;font-weight:bold;"
-                f"color:{t['accent2']};border-bottom:1px solid {t['header_sep']};'>Selected Shell</td></tr>"
-                f"<tr style='background-color:{t['bg2']};'><td style='padding:8px 6px;border:1px solid "
-                f"{t['header_sep']};color:{t['success']};'>{_html_mod.escape(S.user_shell)}</td></tr></table>"
-            )
+            sm_tips["set_user_shell"] = (f"<table style='white-space:nowrap; font-family:monospace;'>"
+                                         f"<tr><td style='padding:4px 5px 2px;font-size:{font_sz(-1)}px;font-weight:bold;"
+                                         f"color:{t['accent2']};border-bottom:1px solid {t['header_sep']};'>Selected Shell</td></tr>"
+                                         f"<tr style='background-color:{t['bg2']};'><td style='padding:8px 6px;border:1px solid "
+                                         f"{t['header_sep']};color:{t['success']};'>{_html_mod.escape(S.user_shell)}</td></tr></table>")
 
         _tooltip_cache = (backup_tips, restore_tips, sm_tips)
         return _tooltip_cache

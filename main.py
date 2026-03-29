@@ -1,18 +1,19 @@
-import sys, shutil
+import shutil
+import sys
 from pathlib import Path
 
-from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QMenu, QMessageBox, QPushButton, QSystemTrayIcon, QWidget,
     QApplication, QInputDialog, QMainWindow, QGridLayout, QFileDialog
 )
 
-from dialogs import LogViewer, SysInfoDialog
 from backup_restore_settings import base_window
-from themes import apply_style, register_style_listener, unregister_style_listener
+from dialogs import LogViewer, SysInfoDialog
 from drive_utils import get_mounts, is_mounted, unmount_drive, get_session_managed_mounts
 from state import S, _HOME, _PROFILES_DIR, _PROFILE_RE, RESTART_DIALOG, save_profile, logger, startup_load
+from themes import apply_style, register_style_listener, unregister_style_listener
 
 
 class MainWindow(QMainWindow):
@@ -40,7 +41,6 @@ class MainWindow(QMainWindow):
         layout = QGridLayout(central)
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(10)
-
         row = 0
         it = iter(self.menu_actions)
         for label, fn, pair in it:
@@ -54,10 +54,8 @@ class MainWindow(QMainWindow):
                     continue
                 except StopIteration:
                     pass
-
             layout.addWidget(btn1, row, 0, 1, 2)
             row += 1
-
         self.setCentralWidget(central)
 
     @staticmethod
@@ -88,22 +86,18 @@ class MainWindow(QMainWindow):
     def _setup_tray(self) -> None:
         if not QSystemTrayIcon.isSystemTrayAvailable():
             return
-
         icon = QApplication.style().standardIcon(QApplication.style().StandardPixmap.SP_DriveHDIcon)
         self.tray = QSystemTrayIcon(icon, self)
         self.tray.setToolTip("Backup Helper")
-
         menu = QMenu()
         show_act = QAction("🏠 Show Backup Helper", self)
         show_act.triggered.connect(self._show_and_raise)
         menu.addAction(show_act)
         menu.addSeparator()
-
         for label, fn, _ in self.menu_actions:
             act = QAction(label, self)
             act.triggered.connect(fn)
             menu.addAction(act)
-
         self.tray.setContextMenu(menu)
         self.tray.activated.connect(
             lambda r: self._show_and_raise() if r == QSystemTrayIcon.ActivationReason.DoubleClick else None)
@@ -117,28 +111,22 @@ class MainWindow(QMainWindow):
     def _exit(self) -> None:
         if self._quitting:
             return
-
         mount_out = get_mounts()
         all_mounted = [o for o in S.mount_options if is_mounted(o, mount_out)]
         known_ids = {id(x) for x in all_mounted}
         all_mounted.extend(o for o in get_session_managed_mounts() if id(o) not in known_ids)
-
         unmountable = [o for o in all_mounted if o.get("unmount_command")]
         info_only = [o for o in all_mounted if not o.get("unmount_command")]
-
         def _drive_name(o: dict) -> str:
             return o.get("drive_name", "?")
-
         if unmountable:
             lines = [f"  • {_drive_name(o)}" for o in unmountable]
             if info_only:
                 lines += ["", "These drives have no unmount command and will be left mounted:"]
                 lines += [f"  • {_drive_name(o)}" for o in info_only]
-
             msg = "The following drives are still mounted:\n\n" + "\n".join(lines) + "\n\nUnmount before quitting?\n"
             ans = QMessageBox.question(self, "Quit — Drives Still Mounted", msg, QMessageBox.StandardButton.Yes |
                                        QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel)
-
             if ans == QMessageBox.StandardButton.Cancel:
                 return
             if ans == QMessageBox.StandardButton.Yes:
@@ -155,24 +143,11 @@ class MainWindow(QMainWindow):
                 msg += "\n".join(f"  • {_drive_name(o)}" for o in info_only) + "\n\nQuit anyway?"
             else:
                 msg = "Really quit Backup Helper?"
-
             ans = QMessageBox.question(self, "Quit", msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
             if ans != QMessageBox.StandardButton.Yes:
                 return
-
-        self.hide()
-        if hasattr(self, "tray"):
-            self.tray.hide()
         self._quitting = True
         QApplication.quit()
-
-    def closeEvent(self, event) -> None:
-        if self._quitting:
-            unregister_style_listener(self._build_ui)
-            event.accept()
-        else:
-            event.ignore()
-            self._exit()
 
     def keyPressEvent(self, event) -> None:
         k = event.key()
@@ -185,6 +160,14 @@ class MainWindow(QMainWindow):
         else:
             super().keyPressEvent(event)
 
+    def closeEvent(self, event) -> None:
+        if self._quitting:
+            unregister_style_listener(self._build_ui)
+            event.accept()
+        else:
+            event.ignore()
+            self._exit()
+
 
 def _first_run_wizard(parent) -> bool:
     msg = QMessageBox(parent)
@@ -193,34 +176,29 @@ def _first_run_wizard(parent) -> bool:
     msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
     msg.button(QMessageBox.StandardButton.Yes).setText("Import profile")
     msg.button(QMessageBox.StandardButton.No).setText("Create empty profile")
-
     if msg.exec() == QMessageBox.StandardButton.Yes:
         path, _ = QFileDialog.getOpenFileName(parent, "Select profile", str(_HOME), "JSON (*.json)")
         while path:
             name, ok = QInputDialog.getText(parent, "Profile name", "Name:", text=Path(path).stem)
             if not ok:
                 break
-
             name = name.strip()
             if not name or not _PROFILE_RE.match(name):
                 QMessageBox.warning(parent, "Invalid profile name",
                                     "Name may only contain letters, digits, spaces, hyphens, underscores and dots.")
                 continue
-
             dest = _PROFILES_DIR / f"{name}.json"
             if dest.exists():
                 ans = QMessageBox.warning(parent, "Overwrite", f"Profile '{name}' already exists. Overwrite?",
                                           QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
                 if ans == QMessageBox.StandardButton.No:
                     continue
-
             try:
                 _PROFILES_DIR.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(path, dest)
                 return startup_load()
             except OSError as e:
                 QMessageBox.critical(parent, "Import Failed", f"Could not copy profile:\n{e}")
-
     S.profile_name, S.headers, S.entries = "Default", {}, []
     save_profile()
     return True
@@ -229,24 +207,19 @@ def _first_run_wizard(parent) -> bool:
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Backup Helper")
-
     def _excepthook(exc_type, exc_value, exc_tb):
         if issubclass(exc_type, KeyboardInterrupt):
             sys.__excepthook__(exc_type, exc_value, exc_tb)
             return
         logger.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_tb))
-        QMessageBox.critical(None, "Critical Error",
-                             f"An unexpected error occurred:\n\n{exc_value}\n\nCheck the logs for details.")
-
+        QMessageBox.critical(None, "Critical Error", f"Unexpected error:\n\n{exc_value}\n\nCheck logs for details.")
     sys.excepthook = _excepthook
     has_profile = startup_load()
     win = MainWindow()
     apply_style()
     win.show()
-
     if not has_profile:
         QTimer.singleShot(200, lambda: _first_run_wizard(win))
-
     sys.exit(app.exec())
 
 

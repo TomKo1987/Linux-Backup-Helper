@@ -45,8 +45,8 @@ THEMES: dict[str, dict[str, str]] = {
     "Gruvbox": {
         "bg": "#1d2021", "bg2": "#282828", "bg3": "#3c3836",
         "accent": "#fabd2f", "accent2": "#fe8019",
-        "highlight": "#1cbb73", "text": "#ebdbb2", "text_dim": "#bdae93",
-        "green": "#b8bb26", "red": "#fb4934", "cyan": "#83a598",
+        "highlight": "#12bbb0", "text": "#ebdbb2", "text_dim": "#bdae93",
+        "green": "#1abb65", "red": "#fb4934", "cyan": "#83a598",
         "header_sep": "#504945", "info": "#83a598", "muted": "#a89984",
         "success": "#7dd474", "warning": "#fae079", "error": "#f31d27",
         "pb_bg": "#5a5248", "pb_text": "#ffffff", "pb_chunk": "#95711c", "pb_chunk2": "#984c0f",
@@ -441,6 +441,28 @@ QFrame[frameShape="4"], QFrame[frameShape="5"] {{
 
 
 _style_cache: tuple = ()
+
+
+def apply_tooltip(widget, text: str) -> None:
+    if not text:
+        return
+    from PyQt6.QtCore import Qt
+    widget.setToolTip(text)
+    widget.setToolTipDuration(600_000)
+    widget.setCursor(Qt.CursorShape.WhatsThisCursor)
+
+
+def tri_state_legend_html() -> str:
+    t = current_theme()
+    c_act = t['green']
+    c_dis = t['highlight']
+    c_del = t['red']
+    return (f"<span style='color:{c_act};'>●</span> Active &nbsp;&nbsp; "
+            f"<span style='color:{c_dis};'>○</span> "
+            f"<span style='color:{t['muted']};text-decoration:line-through;'>Disabled</span> &nbsp;&nbsp; "
+            f"<span style='color:{c_del};'>○</span> "
+            f"<span style='color:{c_del};text-decoration:line-through;font-style:italic;'>Delete</span>")
+
 
 def get_style() -> str:
     global _style_cache

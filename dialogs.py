@@ -1,7 +1,13 @@
+import copy
+import json
+import os
+import shutil
+import subprocess
+import tarfile
+import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
-from datetime import datetime
-import copy, os, shutil, subprocess, threading, tarfile, json
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QTextCursor
@@ -11,11 +17,11 @@ from PyQt6.QtWidgets import (
     QCheckBox, QColorDialog, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QTextEdit,
 )
 
-from themes import current_theme, font_scale, font_sz
 from state import (
     _norm_paths, list_profiles, load_profile, save_profile, logger, State,
     S, _HOME, _LOG_FILE, _PROFILES_DIR, _PROFILE_RE, _atomic_write, apply_replacements,
 )
+from themes import current_theme, font_scale, font_sz, apply_tooltip
 
 
 def _sep() -> QWidget:
@@ -37,14 +43,14 @@ def _hdr_label(text: str, color: str = "", size: int | None = None) -> QLabel:
     return lbl
 
 
-def _ok_cancel_buttons(dialog: QDialog, ok_fn, ok_label: str = "Save", cancel_label: str = "Cancel") -> QDialogButtonBox:
+def _ok_cancel_buttons(dialog: QDialog, ok_fn, ok_label: str = "Save", cancel_label: str = "Cancel", cancel_fn=None) -> QDialogButtonBox:
     bb         = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
     ok_btn     = bb.button(QDialogButtonBox.StandardButton.Ok)
     cancel_btn = bb.button(QDialogButtonBox.StandardButton.Cancel)
     if ok_btn:     ok_btn.setText(ok_label)
     if cancel_btn: cancel_btn.setText(cancel_label)
     bb.accepted.connect(ok_fn)
-    bb.rejected.connect(dialog.reject)
+    bb.rejected.connect(cancel_fn if cancel_fn else dialog.reject)
     return bb
 
 
@@ -606,10 +612,8 @@ class MountDialog(QDialog):
         def _info_label(text: str, tooltip: str) -> QLabel:
             lbl = QLabel(text)
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setToolTip(tooltip)
-            lbl.setToolTipDuration(600_000)
-            lbl.setCursor(Qt.CursorShape.WhatsThisCursor)
             lbl.setStyleSheet(f"color:{t['accent2']};")
+            apply_tooltip(lbl, tooltip)
             return lbl
         self.name = _field("drive_name", "e.g. Backup 1")
         form.addRow(QLabel("Drive name:"))

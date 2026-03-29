@@ -1,19 +1,34 @@
+import atexit
+import gc
+import html as _html
+import os
+import pwd
+import queue
+import re
+import select
+import shlex
+import shutil
+import signal
+import subprocess
+import tempfile
+import threading
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
-from typing import Optional
 from types import SimpleNamespace
-import atexit, gc, html as _html, os, queue, re, select, shlex, shutil, signal
-import subprocess, tempfile, threading, time, urllib.error, urllib.request, pwd
+from typing import Optional
 
-from PyQt6.QtGui import QColor, QIcon, QTextCursor
 from PyQt6.QtCore import Qt, QElapsedTimer, QThread, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor, QIcon, QTextCursor
 from PyQt6.QtWidgets import (
     QDialog, QGraphicsDropShadowEffect, QHBoxLayout,
     QLabel, QListWidget, QListWidgetItem, QPushButton, QTextEdit, QVBoxLayout
 )
 
-from themes import current_theme, font_sz
 from linux_distro_helper import distro_family
 from state import S, _HOME, _USER, logger, apply_replacements
+from themes import current_theme, font_sz
 
 _cleanup_lock = threading.Lock()
 _pending_cleanup_dirs: list[str] = []
