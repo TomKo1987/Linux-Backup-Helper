@@ -254,18 +254,18 @@ _session_detected  = False
 def _entry_tooltip_html(title, src_lines, dst_lines, bg, bg2, bg3, c_title, c_data, font_sz_fn) -> str:
     s_html, d_html = ("<br/>".join(_html_mod.escape(apply_replacements(str(p))) for p in lines) for lines in (src_lines, dst_lines))
     safe_title = _html_mod.escape(title).replace("&lt;br&gt;", "<br/>")
-    label_style = f"color:{c_title}; font-weight:bold; border-bottom:1px solid {c_title}; margin-bottom:2px; display:inline-block;"
+    label_style = f"color:{c_title}; font-weight:bold; border:5px solid {c_title}; margin-bottom:5px; display:inline-block;"
     cell_padding = "padding:6px;"
 
-    return (f"<table style='width:100%; font-family:monospace; white-space:nowrap; border:1px solid {bg};'>"
-            f"<tr style='background-color:{bg};'>"
-            f"<td colspan='2' style='font-size:{font_sz_fn(-4)}px; color:{c_title}; text-align:center'>"
+    return (f"<table style='width: 100%; font-family: monospace; white-space: nowrap; border: 5px solid {bg};'>"
+            f"<tr style='background-color: {bg};'>"
+            f"<td colspan='2' style='font-size: {font_sz_fn(-2)}px; color: {c_title}; text-align: center'>"
             f"<b>{safe_title}</b></td></tr><tr>"
-            f"<td style='background-color:{bg2}; font-size:{font_sz_fn(-3)}px; color:{c_data}; line-height:1.4; "
-            f"{cell_padding} vertical-align:top; white-space:nowrap'>"
+            f"<td style='background-color: {bg2}; font-size: {font_sz_fn(-3)}px; color: {c_data}; line-height: 1.4; "
+            f"{cell_padding} vertical-align: top; white-space: nowrap'>"
             f"<span style='{label_style};'>Source:</span><br>{s_html}</td>"
-            f"<td style='background-color:{bg3}; font-size:{font_sz_fn(-3)}px; color:{c_data}; line-height:1.4; "
-            f"{cell_padding} vertical-align:top; border-right:1px solid {bg}; white-space:nowrap'>"
+            f"<td style='background-color: {bg3}; font-size: {font_sz_fn(-3)}px; color: {c_data}; line-height: 1.4; "
+            f"{cell_padding} vertical-align: top; white-space: nowrap'>"
             f"<span style='{label_style}'>Destination:</span><br>{d_html}</td>"
             f"</tr></table>")
 
