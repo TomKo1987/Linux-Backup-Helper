@@ -17,7 +17,7 @@ _CONFIG_DIR  = _HOME / ".config" / "Backup Helper"
 _PROFILES_DIR = _CONFIG_DIR / "profiles"
 _LOG_DIR  = _CONFIG_DIR / "logs"
 _LOG_FILE = _LOG_DIR / "backup_helper.log"
-_PROFILE_RE = re.compile(r"^[^\s._][\w\-. ]*$")
+_PROFILE_RE = re.compile(r"^[^\s._][\w\-. ]*\S$|^[^\s._]$")
 
 RESTART_DIALOG: int = 2
 _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -53,12 +53,6 @@ _path_replacements: list[tuple[str, str]] = [
     (_HOME.as_posix(), "~"),
     (f"/run/media/{_USER}/", ""),
 ]
-_ansi_replacements: list[tuple[str, str]] = [
-    ("\x1b[1m", ""),
-    ("\x1b[0m", ""),
-]
-text_replacements: list[tuple[str, str]] = _path_replacements + _ansi_replacements
-
 
 _tooltip_cache: Optional[tuple[dict, dict, dict]] = None
 
@@ -68,13 +62,14 @@ def invalidate_tooltip_cache() -> None:
     _tooltip_cache = None
 
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[mKHJA-Z]")
+
 def apply_replacements(text: str) -> str:
     for old, new in _path_replacements:
         if old:
             text = text.replace(old, new)
     if "\x1b" in text:
-        for old, new in _ansi_replacements:
-            text = text.replace(old, new)
+        text = _ANSI_RE.sub("", text)
     return text
 
 

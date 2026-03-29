@@ -83,8 +83,9 @@ def _scroll_dlg(parent, title: str, body: QWidget, on_save=None) -> tuple[QDialo
         width = min(max(sz.width() + 80, 950), sg.width() - 50)
         height = min(sz.height() + 200, int(sg.height() * 0.9))
         dlg.resize(width, height)
-    if bb.button(QDialogButtonBox.StandardButton.Cancel):
-        bb.button(QDialogButtonBox.StandardButton.Cancel).setFocus()
+    cancel_btn = bb.button(QDialogButtonBox.StandardButton.Cancel)
+    if cancel_btn:
+        cancel_btn.setFocus()
     return dlg, lay
 
 
@@ -349,13 +350,11 @@ class SystemManagerOptions(QDialog):
             checked = bool(state) and Qt.CheckState(state) != Qt.CheckState.Unchecked
             for _cb, _ in widgets:
                 _cb.blockSignals(True)
-            for _cb, _ in widgets:
                 if checked:
                     if _cb.isEnabled():
                         _cb.setChecked(True)
                 else:
                     _cb.setChecked(False)
-            for _cb, _ in widgets:
                 _cb.blockSignals(False)
             _sync_aur_dep()
 
@@ -404,16 +403,24 @@ class SystemManagerOptions(QDialog):
                               for __cb, f in checkboxes if __cb.checkState() != _STATE_DELETE]
             save_profile()
             _dlg.accept()
+
         dlg, lay = _scroll_dlg(self, "System Files", body, _save)
 
         def _set_ctx(widget, f_dict, d):
             widget.contextMenuEvent = lambda _e: self._edit_sysfile_entry(f_dict, d)
 
-        for cb, f in checkboxes: _set_ctx(cb, f, dlg)
+        for cb, f in checkboxes:
+            _set_ctx(cb, f, dlg)
 
         search = QLineEdit()
         search.setPlaceholderText("Filter files...")
-        search.textChanged.connect(lambda txt: [_cb.setVisible(txt.lower() in _cb.text().lower()) for _cb, _ in checkboxes])
+
+        def _apply_search(txt: str) -> None:
+            txt_lower = txt.lower()
+            for _cb, _ in checkboxes:
+                _cb.setVisible(txt_lower in _cb.text().lower())
+
+        search.textChanged.connect(_apply_search)
         btn_row = QHBoxLayout()
         add_btn = QPushButton("➕ Add System File")
         add_btn.clicked.connect(lambda: (dlg.close(), QTimer.singleShot(100, self._add_sysfile)))
@@ -425,6 +432,7 @@ class SystemManagerOptions(QDialog):
             b = QPushButton(lbl)
             b.clicked.connect(fn)
             io_row.addWidget(b)
+
         lay.insertWidget(1, search)
         lay.insertLayout(2, btn_row)
         lay.insertLayout(3, io_row)
@@ -602,22 +610,15 @@ class SystemManagerOptions(QDialog):
         def _save(_dlg):
             to_del = [pkg for _cb, pkg in zip(checkboxes, packages) if _cb.checkState() == _STATE_DELETE]
             if to_del:
-                names = []
-                for pkg in to_del:
-                    if isinstance(pkg, dict):
-                        if is_specific:
-                            names.append(f"{pkg.get('package', '')} [{pkg.get('session', '')}]")
-                        else:
-                            names.append(pkg.get("name", ""))
-                    else:
-                        names.append(str(pkg))
-                names_str = "\n  • ".join(names)
-                if (QMessageBox.question(_dlg, "Confirm Delete", f"Delete package(s)?\n\n  • {names_str}")
+                names = [(f"{pkg.get('package', '')} [{pkg.get('session', '')}]"
+                          if is_specific else pkg.get("name", "")) if isinstance(pkg, dict) else str(pkg) for pkg in to_del]
+                if (QMessageBox.question(_dlg, "Confirm Delete", f"Delete package(s)?\n\n  • " + "\n  • ".join(names))
                         != QMessageBox.StandardButton.Yes):
                     return
             updated = []
             for _cb, pkg in zip(checkboxes, packages):
-                if _cb.checkState() == _STATE_DELETE: continue
+                if _cb.checkState() == _STATE_DELETE:
+                    continue
                 d = pkg if isinstance(pkg, dict) else {"name": str(pkg)}
                 updated.append({**d, "disabled": _cb.checkState() == _STATE_DISABLED})
             setattr(S, pkg_type, updated)
@@ -629,8 +630,13 @@ class SystemManagerOptions(QDialog):
 
         search = QLineEdit()
         search.setPlaceholderText("Filter...")
-        search.textChanged.connect(lambda txt: [_cb.setVisible(txt.lower() in _cb.text().lower()) for _cb in checkboxes])
 
+        def _apply_search(txt: str) -> None:
+            txt_lower = txt.lower()
+            for _cb, _ in checkboxes:
+                _cb.setVisible(txt_lower in _cb.text().lower())
+
+        search.textChanged.connect(_apply_search)
         btn_add_row = QHBoxLayout()
         for lbl, fn in [("➕ Add", lambda: self._add_pkg(pkg_type)), ("➕➕ Batch Add", lambda: self._batch_add(pkg_type))]:
             b = QPushButton(lbl)
@@ -651,7 +657,8 @@ class SystemManagerOptions(QDialog):
         def _set_p_ctx(widget, p_data, d):
             widget.contextMenuEvent = lambda _e: self._edit_pkg_entry((widget, p_data), pkg_type, d)
 
-        for cb, p in zip(checkboxes, packages): _set_p_ctx(cb, p, dlg)
+        for cb, p in zip(checkboxes, packages):
+            _set_p_ctx(cb, p, dlg)
         dlg.exec()
 
     def _add_pkg(self, pkg_type: str) -> None:
@@ -729,13 +736,15 @@ class SystemManagerOptions(QDialog):
         te.setPlaceholderText("One package per line")
         lay.addWidget(te)
         lay.addWidget(_ok_cancel_buttons(dlg, dlg.accept))
+
         if dlg.exec() != QDialog.DialogCode.Accepted:
             QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
             return
+
         current = getattr(S, pkg_type, []) or []
-        names = [line.strip() for line in te.toPlainText().splitlines() if line.strip()
-                 and all(c.isalnum() or c in "-_.+" for c in line.strip())]
+        names = [line.strip() for line in te.toPlainText().splitlines() if line.strip() and all(c.isalnum() or c in "-_.+" for c in line.strip())]
         added, dupes = [], []
+
         if is_specific and sess_cb:
             sess = sess_cb.currentText()
             existing = {(p.get("package"), p.get("session")) for p in current if isinstance(p, dict)}
@@ -746,19 +755,20 @@ class SystemManagerOptions(QDialog):
                     current.append({"package": name, "session": sess, "disabled": False})
                     existing.add((name, sess))
                     added.append(name)
-            _sort_pkgs(current, True)
         else:
-            existing_set = {p.get("name") if isinstance(p, dict) else p for p in current}
+            existing = {p.get("name") if isinstance(p, dict) else p for p in current}
             for name in names:
-                if name in existing_set:
+                if name in existing:
                     dupes.append(name)
                 else:
                     current.append({"name": name, "disabled": False})
-                    existing_set.add(name)
+                    existing.add(name)
                     added.append(name)
-            _sort_pkgs(current, False)
+
+        _sort_pkgs(current, is_specific)
         setattr(S, pkg_type, current)
         save_profile()
+
         msg = f"Added {len(added)} package(s):\n\n" + "\n".join(f"  • {n}" for n in added)
         if dupes:
             msg += f"\n\nSkipped (duplicate): {len(dupes)}\n" + "\n".join(f"  • {n}" for n in dupes)
@@ -770,40 +780,55 @@ class SystemManagerOptions(QDialog):
         if not path:
             QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
             return
+
         lines = _read_import_file(self, path)
         if lines is None:
             QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
             return
-        is_specific = pkg_type == "specific_packages"
+
+        is_specific = (pkg_type == "specific_packages")
         current = getattr(S, pkg_type, []) or []
-        existing_s: set[tuple] = (
-            {(p["package"], p["session"]) for p in current if isinstance(p, dict)} if is_specific else set())
-        existing_n: set[str] = ({p["name"] if isinstance(p, dict) else p for p in current} if not is_specific else set())
+
+        existing: set
+
+        if is_specific:
+            existing = {(p.get("package"), p.get("session")) for p in current if isinstance(p, dict)}
+        else:
+            existing = {p.get("name") if isinstance(p, dict) else p for p in current}
+
         added = 0
+
         for raw in lines:
             line = raw.strip()
             if not line or line.startswith("#"):
                 continue
+
             parts = [p.strip().strip("\"'") for p in line.split(",")]
+            if not parts:
+                continue
+
             name = parts[0]
             if not all(c.isalnum() or c in "-_.+" for c in name):
                 continue
+
             if is_specific:
                 sess = parts[1] if len(parts) > 1 else (SESSIONS[0] if SESSIONS else "unknown")
-                if (name, sess) not in existing_s:
+                if (name, sess) not in existing:
                     current.append({"package": name, "session": sess, "disabled": False})
-                    existing_s.add((name, sess))
+                    existing.add((name, sess))
                     added += 1
             else:
-                if name not in existing_n:
+                if name not in existing:
                     current.append({"name": name, "disabled": False})
-                    existing_n.add(name)
+                    existing.add(name)
                     added += 1
+
         if added:
             _sort_pkgs(current, is_specific)
             setattr(S, pkg_type, current)
             save_profile()
             QMessageBox.information(self, "Import Complete", f"Successfully imported {added} packages.")
+
         QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
 
     def _export_pkgs(self, pkg_type: str) -> None:
@@ -877,16 +902,18 @@ class SystemManagerLauncher:
         ops_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         content_layout.addWidget(ops_lbl)
 
-        for i, key in enumerate(ops):
+        display_num = 0
+        for key in ops:
             if key not in op_text:
                 continue
+            display_num += 1
             tooltip = tips.get(key, "")
             has_tip = bool(tooltip)
             colour, decoration = style_op_label(has_tip)
             icon = "󰔨 " if has_tip else ""
             html = f"{icon}   <span style='font-size:{font_sz(2)}px;padding:5px; color:{colour};{decoration}'>{op_text[key]}</span>"
             row = QHBoxLayout()
-            num = QLabel(f"{i + 1}:")
+            num = QLabel(f"{display_num}:")
             num.setStyleSheet(style_label_mono(font_size=font_sz(2)))
             lbl = QLabel(html)
             lbl.setTextFormat(Qt.TextFormat.RichText)

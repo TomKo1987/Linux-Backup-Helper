@@ -199,6 +199,7 @@ def _first_run_wizard(parent) -> bool:
                 return startup_load()
             except OSError as e:
                 QMessageBox.critical(parent, "Import Failed", f"Could not copy profile:\n{e}")
+                break
     S.profile_name, S.headers, S.entries = "Default", {}, []
     save_profile()
     return True

@@ -7,7 +7,7 @@ from typing import Optional
 
 from PyQt6.QtWidgets import QMessageBox
 
-from state import logger, _USER
+from state import S, logger, _USER
 
 _DRIVE_NAME_RE = re.compile(r"^[\w\- .()@:]+$")
 
@@ -186,7 +186,6 @@ def _is_subpath(parent: str, child: str) -> bool:
 
 
 def check_drives_to_mount(paths: list[str]) -> list[dict]:
-    from state import S
     mounts = get_mounts()
     needed = []
 

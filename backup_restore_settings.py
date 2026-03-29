@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
 
 from dialogs import EntryDialog, HeaderSettingsDialog, MountsDialog, ProfilesDialog, _ok_cancel_buttons
 from samba_credentials import SambaPasswordDialog
-from state import S, _PROFILES_DIR, apply_replacements, block_set, save_profile, generate_tooltip
+from state import S, _PROFILES_DIR, RESTART_DIALOG, apply_replacements, block_set, save_profile, generate_tooltip
 from themes import (
     THEMES, current_theme, apply_style, font_scale, register_style_listener, unregister_style_listener, apply_tooltip
 )
@@ -400,17 +400,14 @@ class SettingsWindow(_BaseCheckboxWindow):
         pairs_initialised = False
 
         while True:
-            dlg  = EntryDialog(
-                self, current_entry,
-                stacked=self._entry_stacked,
-                _pairs=pairs if pairs_initialised else None)
+            dlg  = EntryDialog(self, current_entry, stacked=self._entry_stacked, _pairs=pairs if pairs_initialised else None)
             if window_title:
                 dlg.setWindowTitle(window_title)
             code = dlg.exec()
 
             if code == QDialog.DialogCode.Accepted:
                 return dlg.result
-            if code == 2:
+            if code == RESTART_DIALOG:
                 self._entry_stacked = dlg.stacked
                 pairs               = dlg.pairs
                 pairs_initialised   = True
@@ -420,12 +417,9 @@ class SettingsWindow(_BaseCheckboxWindow):
 
     def _new_entry(self) -> None:
         if not S.headers:
-            QMessageBox.information(
-                self, "No Headers Found",
-                "Before creating an entry you need at least one header.\n\n"
-                "Headers group your entries and can each have their own colour.\n"
-                "The Header Settings dialog will open now — click '🆕 New' to add one.",
-            )
+            QMessageBox.information(self, "No Headers Found", "Before creating an entry you need at least one header.\n\n"
+                                                              "Headers group your entries and can each have their own colour.\n"
+                                                              "The Header Settings dialog will open now — click '🆕 New' to add one.")
             dlg = HeaderSettingsDialog(self)
             if dlg.exec() != QDialog.DialogCode.Accepted or not S.headers:
                 return
@@ -518,11 +512,7 @@ class _ThemeDialog(QDialog):
         self.setWindowTitle("Theme and Font Settings")
         self.setMinimumSize(480, 380)
         self.setWindowModality(Qt.WindowModality.NonModal)
-        self._orig = (
-            S.ui.get("theme", "Tokyo Night"),
-            S.ui.get("font_family", ""),
-            S.ui.get("font_size", 14),
-        )
+        self._orig = (S.ui.get("theme", "Tokyo Night"), S.ui.get("font_family", ""), S.ui.get("font_size", 14))
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -539,9 +529,8 @@ class _ThemeDialog(QDialog):
         self._theme_cb = _combo("Select Theme:", list(THEMES.keys()), S.ui.get("theme", "Tokyo Night"))
         self._font_cb = _combo("Select Font:", ["(System Default)"] + sorted(QFontDatabase.families()),
                                S.ui.get("font_family", "") or "(System Default)")
-        self._size_cb = _combo(
-            "Select Font Size:", ["10", "11", "12", "13", "14", "15", "16", "17", "18", "20", "22", "24"],
-            str(S.ui.get("font_size", 14)))
+        self._size_cb = _combo("Select Font Size:", ["10", "11", "12", "13", "14", "15", "16", "17", "18", "20", "22", "24"],
+                               str(S.ui.get("font_size", 14)))
 
         prev_btn = QPushButton("Preview")
         prev_btn.clicked.connect(lambda: self._apply(save=False))
@@ -552,11 +541,7 @@ class _ThemeDialog(QDialog):
         chosen_font = self._font_cb.currentText()
         if chosen_font == "(System Default)":
             chosen_font = ""
-        S.ui.update(
-            theme=self._theme_cb.currentText(),
-            font_family=chosen_font,
-            font_size=int(self._size_cb.currentText()),
-        )
+        S.ui.update(theme=self._theme_cb.currentText(), font_family=chosen_font, font_size=int(self._size_cb.currentText()))
         apply_style()
         if save:
             save_profile()
@@ -564,11 +549,8 @@ class _ThemeDialog(QDialog):
     def _on_ok(self) -> None:
         self._apply(save=True)
         self.accept()
-        QMessageBox.information(
-            self.parent(), "Theme Saved",
-            f"Theme: {self._theme_cb.currentText()}, "
-            f"Font: {self._font_cb.currentText()} {self._size_cb.currentText()}px",
-        )
+        QMessageBox.information(self.parent(), "Theme Saved", f"Theme: {self._theme_cb.currentText()}, "  
+                                                              f"Font: {self._font_cb.currentText()} {self._size_cb.currentText()}px")
         self.changed.emit(2)
 
     def _on_cancel(self) -> None:
@@ -582,11 +564,7 @@ class _ThemeDialog(QDialog):
             super().keyPressEvent(event)
 
 
-_WINDOW_MAP: "dict[str, Type[_BaseCheckboxWindow]]" = {
-    "Backup":   BackupWindow,
-    "Restore":  RestoreWindow,
-    "Settings": SettingsWindow,
-}
+_WINDOW_MAP: "dict[str, Type[_BaseCheckboxWindow]]" = {"Backup": BackupWindow, "Restore": RestoreWindow, "Settings": SettingsWindow}
 
 
 def base_window(parent, mode: str = "Settings") -> "_BaseCheckboxWindow":

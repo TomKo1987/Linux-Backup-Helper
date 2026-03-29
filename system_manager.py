@@ -46,6 +46,7 @@ def _unregister_tmpdir(path: str) -> None:
         except ValueError:
             pass
 
+
 def _wipe_tmpdir(path: str) -> None:
     if not path:
         return
@@ -66,6 +67,7 @@ def _wipe_tmpdir(path: str) -> None:
     except Exception as exc:
         logger.warning("_wipe_tmpdir rmtree: %s", exc)
 
+
 def _emergency_cleanup() -> None:
     with _cleanup_lock:
         paths = list(_pending_cleanup_dirs)
@@ -73,8 +75,21 @@ def _emergency_cleanup() -> None:
     for p in paths:
         _wipe_tmpdir(p)
 
+
 atexit.register(_emergency_cleanup)
 _orig_sigterm = signal.getsignal(signal.SIGTERM)
+
+
+_signal_setup_done = False
+
+def _setup_signal_handlers() -> None:
+    global _orig_sigterm, _signal_setup_done
+    if _signal_setup_done:
+        return
+    _orig_sigterm = signal.getsignal(signal.SIGTERM)
+    signal.signal(signal.SIGTERM, _sigterm_handler)
+    _signal_setup_done = True
+
 
 def _sigterm_handler(signum, frame):
     logger.warning("SIGTERM — emergency cleanup")
@@ -84,7 +99,6 @@ def _sigterm_handler(signum, frame):
     else:
         raise SystemExit(0)
 
-signal.signal(signal.SIGTERM, _sigterm_handler)
 
 def _make_askpass(pw_secure) -> Optional[tuple[str, Path]]:
     try:
@@ -230,6 +244,7 @@ class SystemManagerDialog(QDialog):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        _setup_signal_handlers()
         self.setWindowTitle("System Manager")
         self._task_status: dict[str, str] = {}
         self._done = self._auth_failed = self._has_error = False
@@ -427,8 +442,6 @@ class SystemManagerDialog(QDialog):
     def _show_completion(self) -> None:
         if self._done or self._auth_failed:
             return
-        self._done = True
-        self._ticker.stop()
         t = current_theme()
         colour = t["warning" if self._has_error else "success"]
         icon = "⚠️" if self._has_error else "✅"
@@ -441,12 +454,14 @@ class SystemManagerDialog(QDialog):
                           f"border-radius:15px;border:1px solid rgba({r},{g},{b},0.3);'>"
                           f"<p style='color:{colour};font-size:{font_sz(6)}px;font-weight:bold;'>{icon} {summary}</p>"
                           f"<p style='color:{colour};font-size:{font_sz(4)}px;'>System Manager {msg}</p></div>")
-        self._close_btn.setEnabled(True)
-        self._close_btn.setFocus()
         bs = _Style.border_style()
         self._checklist_lbl.setText(f"{icon} {summary}")
         self._checklist_lbl.setStyleSheet(f"color:{colour};font-size:{font_sz(4)}px;font-weight:bold;padding:10px;"
                                           f"background-color:rgba({r},{g},{b},0.15);{bs}")
+        self._done = True
+        self._ticker.stop()
+        self._close_btn.setEnabled(True)
+        self._close_btn.setFocus()
 
     def _update_elapsed(self) -> None:
         try:
@@ -839,7 +854,9 @@ class SystemManagerThread(QThread):
 
         if not shutil.which("reflector"):
             self.outputReceived.emit("Installing reflector", "info")
-            self._stream_cmd(shlex.split(self.distro.get_pkg_install_cmd("reflector")))
+            if not self._ok(self._stream_cmd(shlex.split(self.distro.get_pkg_install_cmd("reflector")))):
+                self.outputReceived.emit("Failed to install reflector", "error")
+                return False
         else:
             self.outputReceived.emit("Package reflector already installed", "info")
 
@@ -984,8 +1001,7 @@ class SystemManagerThread(QThread):
         build_deps    = ("base-devel", "git", "go")
         missing_deps  = [p for p in build_deps if not self.distro.package_is_installed(p)]
         freshly_added = set(missing_deps)
-        if missing_deps and not self._ok(
-            self._stream_cmd(shlex.split(self.distro.get_pkg_install_cmd(" ".join(missing_deps))))):
+        if missing_deps and not self._ok(self._stream_cmd(shlex.split(self.distro.get_pkg_install_cmd(" ".join(missing_deps))))):
             return False
 
         yay_dir = _HOME / "yay"
@@ -1000,12 +1016,24 @@ class SystemManagerThread(QThread):
             return False
 
         to_remove = []
-        if "go" in freshly_added and self.distro.package_is_installed("go"):
-            to_remove.append("go")
+        if "go" in freshly_added:
+            if self.distro.package_is_installed("go"):
+                to_remove.append("go")
+                self._run_cmd(["go", "clean", "-modcache"], timeout=30)
+            go_config_dir = Path(_HOME) / ".config" / "go"
+            if go_config_dir.exists():
+                shutil.rmtree(go_config_dir, ignore_errors=True)
+            go_home_dir = Path(_HOME) / "go"
+            if go_home_dir.exists():
+                shutil.rmtree(go_home_dir, ignore_errors=True)
+
         if self.distro.package_is_installed("yay-debug"):
             to_remove.append("yay-debug")
+
         if to_remove:
-            self._stream_cmd(["sudo", "pacman", "-R", "--noconfirm"] + to_remove)
+            result = self._stream_cmd(["sudo", "pacman", "-R", "--noconfirm"] + to_remove)
+            if not self._ok(result):
+                logger.warning("_install_yay: cleanup of %s failed", to_remove)
 
         pkgs = sorted((f for f in yay_dir.iterdir() if f.name.endswith(".pkg.tar.zst")),
                       key=lambda f: (0 if "-debug-" not in f.name else 1, -f.stat().st_mtime))
@@ -1015,7 +1043,6 @@ class SystemManagerThread(QThread):
 
         ok = self._ok(self._stream_cmd(["sudo", "pacman", "-U", "--noconfirm", str(pkgs[0])]))
         shutil.rmtree(yay_dir, ignore_errors=True)
-        shutil.rmtree(Path(_HOME) / ".config" / "go", ignore_errors=True)
         if ok and self._pkg_cache:
             self._pkg_cache.mark_installed("yay")
         self._emit_result(ok, "yay successfully installed", "yay installation failed")
