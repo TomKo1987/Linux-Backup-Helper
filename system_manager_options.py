@@ -594,7 +594,8 @@ class SystemManagerOptions(QDialog):
             for idx, sess in enumerate(sorted(groups)):
                 hdr = QLabel(sess or "Unknown")
                 border = f"border-top:1px solid {t['header_sep']};" if idx > 0 else ""
-                hdr.setStyleSheet(f"font-size:{font_sz(-1)}px;font-weight:bold;color:{t['accent2']};padding:6px 2px 2px;{border}")
+                hdr.setStyleSheet(
+                    f"font-size:{font_sz(-1)}px;font-weight:bold;color:{t['accent2']};padding:6px 2px 2px;{border}")
                 grid.addWidget(hdr, row, 0, 1, cols)
                 row += 1
                 for j, (cb, _) in enumerate(groups[sess]):
@@ -633,7 +634,7 @@ class SystemManagerOptions(QDialog):
 
         def _apply_search(txt: str) -> None:
             txt_lower = txt.lower()
-            for _cb, _ in checkboxes:
+            for _cb in checkboxes:
                 _cb.setVisible(txt_lower in _cb.text().lower())
 
         search.textChanged.connect(_apply_search)
