@@ -1,4 +1,3 @@
-import gc
 from typing import Optional
 
 from PyQt6.QtCore import pyqtSignal, Qt
@@ -7,7 +6,7 @@ from PyQt6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox
 __all__ = ["SudoPasswordDialog", "SecureString"]
 
 _NOTE_NORMAL  = "Note: Only one authentication attempt will be made."
-_NOTE_WARNING = "⚠  Third attempt!\nYour password may be temporarily blocked if entered incorrectly again."
+_NOTE_WARNING = "⚠  Third attempt!<br>Your password may be temporarily blocked if entered incorrectly again."
 
 
 class SudoPasswordDialog(QDialog):
@@ -26,7 +25,7 @@ class SudoPasswordDialog(QDialog):
 
         intro = QLabel("Enter your sudo password to run System Manager.\nIt will be used for all privileged commands during this session.")
         intro.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        intro.setWordWrap(True)
+        intro.setWordWrap(False)
         layout.addWidget(intro)
 
         pw_row = QHBoxLayout()
@@ -38,6 +37,8 @@ class SudoPasswordDialog(QDialog):
         layout.addLayout(pw_row)
 
         self._note = QLabel(_NOTE_NORMAL)
+        self._note.setTextFormat(Qt.TextFormat.RichText)
+        self._note.setWordWrap(True)
         self._note.setStyleSheet(f"color:{t['muted']};font-style:italic;")
         self._note.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._note)
@@ -76,7 +77,7 @@ class SudoPasswordDialog(QDialog):
             self._note.setText(_NOTE_WARNING)
             self._note.setStyleSheet(f"color:{t['error']};font-style:italic;font-weight:bold;")
         else:
-            text = _NOTE_NORMAL + (f"\nFailed attempts: {count}" if count > 0 else "")
+            text = _NOTE_NORMAL + (f"<br>Failed attempts: {count}" if count > 0 else "")
             self._note.setText(text)
             self._note.setStyleSheet(f"color:{t['muted']};font-style:italic;")
 
@@ -87,8 +88,7 @@ class SudoPasswordDialog(QDialog):
 class SecureString:
     __slots__ = ("_buf",)
 
-    def __init__(self, value: Optional[str] = None) -> None:
-        self._buf = bytearray(value.encode("utf-8")) if value else bytearray()
+    def __init__(self, value: Optional[str] = None) -> None: self._buf = bytearray(value.encode("utf-8")) if value else bytearray()
 
     def get(self) -> str: return self._buf.decode("utf-8") if self._buf else ""
 
@@ -96,18 +96,12 @@ class SecureString:
 
     def clear(self) -> None:
         if self._buf:
-            mv = memoryview(self._buf)
-            for i in range(len(mv)):
-                mv[i] = 0
-            del mv
+            for i in range(len(self._buf)):
+                self._buf[i] = 0
             self._buf = bytearray()
-            gc.collect()
 
-    def __bool__(self) -> bool:
-        return len(self._buf) > 0
+    def __bool__(self) -> bool: return len(self._buf) > 0
 
-    def __len__(self) -> int:
-        return len(self._buf)
+    def __len__(self) -> int: return len(self._buf)
 
-    def __repr__(self) -> str:
-        return "SecureString(<secured>)"
+    def __repr__(self) -> str: return "SecureString(<secured>)"

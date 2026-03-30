@@ -3,6 +3,7 @@ import re
 import shlex
 import subprocess
 import time
+from functools import lru_cache
 from typing import Optional
 
 from PyQt6.QtWidgets import QMessageBox
@@ -11,7 +12,7 @@ from state import S, logger, _USER
 
 _DRIVE_NAME_RE = re.compile(r"^[\w\- .()@:]+$")
 
-_SHELL_INJECTION_SEQS = ("&&", "||", "$(", "${", ";", "|", "`", ">", "<", "\n", "\r", "\x00")
+_SHELL_INJECTION_SEQS = ("&&", "||", "$(", "${", ";", "|", "`", ">", "<", "\n")
 
 _ALLOWED_MOUNT_CMDS = frozenset({
     "mount", "umount", "mount.cifs", "udisksctl",
@@ -21,8 +22,7 @@ _ALLOWED_MOUNT_CMDS = frozenset({
 _session_managed_mounts: list[dict] = []
 
 
-def get_session_managed_mounts() -> list[dict]:
-    return _session_managed_mounts.copy()
+def get_session_managed_mounts() -> list[dict]: return _session_managed_mounts.copy()
 
 
 def _track_session_mount(drive: dict) -> None:
@@ -40,34 +40,28 @@ def _validate_cmd(cmd: str) -> tuple[bool, str, list[str]]:
         return False, "Empty command", []
     if any(seq in cmd for seq in _SHELL_INJECTION_SEQS):
         return False, "Dangerous characters in command", []
-
     try:
         tokens = shlex.split(cmd)
     except ValueError as e:
         return False, str(e), []
-
     if not tokens:
         return False, "No command tokens found", []
-
     base = os.path.basename(tokens[0])
     if base == "sudo" and len(tokens) > 1:
         base = os.path.basename(tokens[1])
-
     if base not in _ALLOWED_MOUNT_CMDS:
         return False, f"'{base}' is not an allowed command", []
-
     expanded = [os.path.expanduser(t) for t in tokens]
     for token in expanded:
         if ".." in token.split("/"):
             return False, f"Path traversal detected in token: {token!r}", []
-
     return True, "", expanded
 
 
-def _valid_drive_name(name: str) -> bool:
-    return bool(name and isinstance(name, str) and _DRIVE_NAME_RE.match(name) and len(name) <= 128)
+def _valid_drive_name(name: str) -> bool: return bool(name and isinstance(name, str) and _DRIVE_NAME_RE.match(name) and len(name) <= 128)
 
 
+@lru_cache(maxsize=64)
 def _mount_paths(name: str) -> tuple[str, ...]:
     if not _valid_drive_name(name):
         return ()
@@ -79,11 +73,9 @@ def _execute_drive_op(drive: dict, cmd_key: str, timeout: int) -> tuple[bool, st
     cmd = drive.get(cmd_key, "").strip()
     if not cmd:
         return False, f"No {cmd_key.replace('_', ' ')} configured for '{name}'."
-
     ok, reason, tokens = _validate_cmd(cmd)
     if not ok:
         return False, f"Drive '{name}': {reason}"
-
     try:
         result = subprocess.run(tokens, capture_output=True, text=True, timeout=timeout)
         if result.returncode == 0:
@@ -132,8 +124,10 @@ def is_mounted(opt: dict, mounts: Optional[list[tuple[str, str]]] = None) -> boo
     for dev, mnt in mounts:
         if mnt in expected_paths or (mount_path and mnt == mount_path):
             return True
-        if smb_prefixes and dev.lower().startswith(smb_prefixes):
-            return True
+        if smb_prefixes:
+            dev_clean = dev.lower().rstrip("/")
+            if any(dev_clean == p.rstrip("/") for p in smb_prefixes):
+                return True
 
     return False
 
@@ -143,11 +137,12 @@ def mount_drive(drive: dict) -> tuple[bool, str]:
     success, error_msg = _execute_drive_op(drive, "mount_command", 15)
     if success:
         time.sleep(0.3)
-        if not is_mounted(drive):
-            logger.warning("mount_drive: '%s' not visible after 0.3 s", name)
+        mounted_confirmed = is_mounted(drive)
+        if not mounted_confirmed:
+            logger.warning("mount_drive: '%s' mount command succeeded but drive not visible after 0.3 s", name)
         if has_managed_mount_path(drive):
             _track_session_mount(drive)
-        logger.info("Mounted '%s'", name)
+        logger.info("Mounted '%s' (confirmed=%s)", name, mounted_confirmed)
         return True, ""
     msg = f"Mount failed for '{name}': {error_msg}"
     logger.error("mount_drive: %s", msg)
@@ -157,44 +152,35 @@ def mount_drive(drive: dict) -> tuple[bool, str]:
 def unmount_drive(drive: dict) -> tuple[bool, str]:
     name = drive.get("drive_name", "?")
     success, error_msg = _execute_drive_op(drive, "unmount_command", 30)
-
     if success:
         _untrack_session_mount(drive)
         logger.info("Unmounted '%s'", name)
         return True, ""
-
     msg = f"Unmount failed for '{name}': {error_msg}"
     logger.error("unmount_drive: %s", msg)
     return False, msg
 
 
-def is_smb(path: str) -> bool:
-    return path.startswith(("smb://", "cifs://"))
+def is_smb(path: str) -> bool: return path.startswith(("smb://", "cifs://"))
 
 
-def _is_subpath(parent: str, child: str) -> bool:
-    return (child.rstrip("/") + "/").startswith(parent.rstrip("/") + "/")
+def _is_subpath(parent: str, child: str) -> bool: return (child.rstrip("/") + "/").startswith(parent.rstrip("/") + "/")
 
 
 def check_drives_to_mount(paths: list[str]) -> list[dict]:
     mounts = get_mounts()
     needed = []
-
     for opt in S.mount_options:
         if is_mounted(opt, mounts):
             continue
-
         name = opt.get("drive_name", "")
         mount_path = opt.get("mount_path", "").strip()
-
         candidates = [mount_path] if mount_path else _mount_paths(name) if _valid_drive_name(name) else []
-
         for candidate in candidates:
             if not candidate: continue
             if any(_is_subpath(candidate, p) for p in paths):
                 needed.append(opt)
                 break
-
     return needed
 
 
@@ -214,27 +200,20 @@ def mount_required_drives(drives: list[dict], parent=None) -> bool:
         else:
             msg = f"'{drive_name}' is required but not mounted.\n\nRun mount command now?"
 
-        answer = QMessageBox.question(
-            parent, "Drive Required", msg,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
+        answer = QMessageBox.question(parent, "Drive Required", msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
 
         if answer != QMessageBox.StandardButton.Yes:
             if is_managed:
                 logger.info("Skipping mount for managed drive '%s'", drive_name)
                 continue
-            QMessageBox.warning(
-                parent, "Operation Cancelled",
-                f"The required drive '{drive_name}' was not mounted.\n\nThe operation has been cancelled.",
-            )
+            QMessageBox.warning(parent, "Operation Cancelled",
+                                f"The required drive '{drive_name}' was not mounted.\n\nThe operation has been cancelled.")
             return False
 
         success, error_msg = mount_drive(opt)
         if not success:
-            QMessageBox.critical(
-                parent, "Mount Failed",
-                f"Could not mount '{drive_name}':\n\n{error_msg}\n\nThe operation has been cancelled.",
-            )
+            QMessageBox.critical(parent, "Mount Failed",
+                                 f"Could not mount '{drive_name}':\n\n{error_msg}\n\nThe operation has been cancelled.")
             return False
 
     return True

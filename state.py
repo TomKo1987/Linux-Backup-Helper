@@ -28,31 +28,24 @@ def _make_logger(name: str) -> logging.Logger:
     log = logging.getLogger(name)
     if log.handlers:
         return log
-
     log.setLevel(logging.INFO)
     fmt = logging.Formatter("%(asctime)s  %(levelname)-8s  %(name)s — %(message)s", "%Y-%m-%d %H:%M:%S")
-
     sh = logging.StreamHandler()
     sh.setFormatter(fmt)
     log.addHandler(sh)
-
     try:
         fh = RotatingFileHandler(_LOG_FILE, maxBytes=2 * 1024 * 1024, backupCount=5, encoding="utf-8")
         fh.setFormatter(fmt)
         log.addHandler(fh)
     except (OSError, PermissionError):
         log.warning("Could not create log file at %s", _LOG_FILE)
-
     log.propagate = False
     return log
 
 
 logger = _make_logger("backup_helper")
 
-_path_replacements: list[tuple[str, str]] = [
-    (_HOME.as_posix(), "~"),
-    (f"/run/media/{_USER}/", ""),
-]
+_path_replacements: tuple[tuple[str, str], ...] = ((_HOME.as_posix(), "~"), (f"/run/media/{_USER}/", ""))
 
 _tooltip_cache: Optional[tuple[dict, dict, dict]] = None
 
@@ -82,19 +75,18 @@ def block_set(cb, checked: bool) -> None:
 @dataclass
 class State:
     profile_name: str = ""
-    entries: list[dict] = field(default_factory=list)
-    headers: dict[str, dict] = field(default_factory=dict)
-    mount_options: list[dict] = field(default_factory=list)
+    entries: list[dict]           = field(default_factory=list)
+    headers: dict[str, dict]      = field(default_factory=dict)
+    mount_options: list[dict]     = field(default_factory=list)
     system_manager_ops: list[str] = field(default_factory=list)
-    system_files: list[dict] = field(default_factory=list)
-    basic_packages: list[dict] = field(default_factory=list)
-    aur_packages: list[dict] = field(default_factory=list)
+    system_files: list[dict]      = field(default_factory=list)
+    basic_packages: list[dict]    = field(default_factory=list)
+    aur_packages: list[dict]      = field(default_factory=list)
     specific_packages: list[dict] = field(default_factory=list)
     user_shell: str = "bash"
-    ui: dict = field(default_factory=lambda: {
-        "theme": "Tokyo Night", "font_family": "", "font_size": 14,
-        "backup_window_columns": 2, "restore_window_columns": 2, "settings_window_columns": 2,
-    })
+    ui: dict = field(
+        default_factory=lambda: {"theme": "Tokyo Night", "font_family": "", "font_size": 14,
+                                 "backup_window_columns": 2, "restore_window_columns": 2, "settings_window_columns": 2})
 
 
 S = State()
@@ -129,7 +121,10 @@ def _norm_paths(raw: Any) -> list[str]:
     for item in items:
         s = str(item).strip()
         if s:
-            result.extend(p for p in re.split(r" (?=/|smb://|cifs://)", s) if p.strip())
+            for p in re.split(r" (?=/|smb://|cifs://)", s):
+                p = p.strip()
+                if p:
+                    result.append(p)
     return result
 
 
@@ -166,13 +161,13 @@ def _load_profile_from_data(path: Path, data: dict) -> bool:
 
         S.entries = [e for raw in data.get("entries", []) if (e := _parse_entry(raw)) is not None]
 
-        S.mount_options        = [o for o in data.get("mount_options", []) if isinstance(o, dict)]
-        S.system_manager_ops   = data.get("system_manager_operations", [])
-        S.system_files         = data.get("system_files", [])
-        S.basic_packages       = _norm_pkgs(data.get("basic_packages", []))
-        S.aur_packages         = _norm_pkgs(data.get("aur_packages", []))
-        S.specific_packages    = data.get("specific_packages", [])
-        S.user_shell           = data.get("user_shell", "bash")
+        S.mount_options      = [o for o in data.get("mount_options", []) if isinstance(o, dict)]
+        S.system_manager_ops = data.get("system_manager_operations", [])
+        S.system_files       = data.get("system_files", [])
+        S.basic_packages     = _norm_pkgs(data.get("basic_packages", []))
+        S.aur_packages       = _norm_pkgs(data.get("aur_packages", []))
+        S.specific_packages  = data.get("specific_packages", [])
+        S.user_shell         = data.get("user_shell", "bash")
         S.ui.update(data.get("ui_settings", {}))
 
         invalidate_tooltip_cache()
@@ -238,8 +233,10 @@ def startup_load() -> bool:
                     logger.error("startup_load: could not clear duplicate in '%s': %s", p.stem, exc)
                 logger.warning("Cleared duplicate is_default flag in '%s'", p.stem)
     if default_path and default_data:
-        return _load_profile_from_data(default_path, default_data)
-    return any(_load_profile_from_data(p, data) for p, data in parsed)
+        if _load_profile_from_data(default_path, default_data):
+            return True
+        logger.warning("startup_load: default profile '%s' failed to load, trying others", default_path.stem)
+    return any(_load_profile_from_data(p, data) for p, data in parsed if p != default_path)
 
 
 _session_lock      = threading.Lock()
@@ -269,7 +266,7 @@ def _entry_tooltip_html(title, src_lines, dst_lines, bg, bg2, bg3, c_title, c_da
 def _sysfiles_tooltip_html(sys_files, t, font_sz_fn) -> str:
     cols   = 2 if len(sys_files) > 8 else 1
     header = (f"<tr><td colspan='{cols}' style='padding:4px 5px 2px;font-size:{font_sz_fn(-1)}px;"
-              f"font-weight:bold;color:{t['accent2']};border-bottom:1px solid {t['header_sep']}'>"
+              f"font-weight:bold;white-space:nowrap;color:{t['accent2']};border-bottom:1px solid {t['header_sep']}'>"
               f"System Files ({len(sys_files)})</td></tr>")
     cells = [f"<td style='padding:4px 6px;border:1px solid {t['header_sep']};white-space:nowrap;vertical-align:top;'>"
              f"<span style='color:{t['accent2']};font-weight:bold;'>{_html_mod.escape(Path(f.get('source', '')).name)}</span><br>"
@@ -343,7 +340,7 @@ def generate_tooltip() -> tuple[dict, dict, dict]:
                                                        t["bg"], t["bg2"], t["bg3"], t["accent2"], t["success"], font_sz) for e in S.entries}
 
         restore_tips = {e["title"]: _entry_tooltip_html(e["title"], e.get("destination", []), e.get("source", []),
-                                                        t["bg"], t["bg2"], t["bg3"], t["accent2"], t["success"], font_sz ) for e in S.entries}
+                                                        t["bg"], t["bg2"], t["bg3"], t["accent2"], t["success"], font_sz) for e in S.entries}
         sm_tips: dict = {}
 
         active_sys_files = [f for f in (S.system_files or []) if isinstance(f, dict) and not f.get("disabled")]

@@ -296,7 +296,6 @@ class SystemManagerOptions(QDialog):
         if sel in USER_SHELLS and sel != S.user_shell:
             S.user_shell = sel
             save_profile()
-            QMessageBox.information(self, "User Shell", f"Shell set to: {sel}")
 
     def _edit_ops(self) -> None:
         arch_only = {"update_mirrors", "install_yay", "install_aur_packages"}
@@ -345,7 +344,7 @@ class SystemManagerOptions(QDialog):
             _sync_sa()
 
         def _toggle_all(state=None):
-            checked = Qt.CheckState(state or 0) == Qt.CheckState.Checked
+            checked = Qt.CheckState(state if state is not None else 0) != Qt.CheckState.Unchecked
             for _cb, _ in widgets:
                 _cb.blockSignals(True)
                 if checked:
@@ -938,19 +937,20 @@ class SystemManagerLauncher:
         apply_tooltip(self._sudo_checkbox,
                       "<b>How your sudo password is used — and why it is safe:</b><br><br>"
                       "Your password is held <b>only in memory</b> as a mutable <code>bytearray</code> "
-                      "(<code>SecureString</code>) and is <b>never written to any file or filesystem</b> — "
+                      "(via <code>SecureString</code>) — it is <b>never written to any file</b>, "
                       "not even to a RAM-backed <code>tmpfs</code> such as <code>/dev/shm</code>.<br><br>"
-                      "<b>Authentication mechanism:</b><br>"
-                      "A single <code>sudo -S</code> call is made. <code>sudo -S</code> reads the password "
-                      "directly from <b>stdin</b>, which is connected to a kernel pipe. "
-                      "The password travels from Python's in-memory <code>bytearray</code> through the "
-                      "<b>kernel pipe buffer</b> to <code>sudo</code>'s stdin — it never touches a "
-                      "filesystem inode, a temp file, or an environment variable.<br><br>"
-                      "<b>Zeroing:</b><br>"
-                      "A separate <code>bytearray</code> copy is passed to the writer thread and "
-                      "<b>zeroed byte-by-byte inside the thread immediately after the pipe is flushed</b>. "
-                      "The original buffer in <code>SecureString</code> is also zeroed in the <code>finally</code> "
-                      "block. <code>gc.collect()</code> is called afterwards.<br><br>"
+                      "All privileged operations (package installs, service activation, file copies…) "
+                      "run through <code>subprocess.Popen</code> with a dedicated writer thread: "
+                      "a <code>bytearray</code> copy of the password is written to the "
+                      "<b>kernel pipe buffer</b> (stdin of <code>sudo -S</code>) and then "
+                      "<b>zeroed byte-by-byte inside that thread</b>, immediately after the pipe is flushed. "
+                      "The password never touches a file, an environment variable, or a command-line argument.<br><br>"
+                      "Simple status checks (e.g. <code>systemctl is-active</code>) that may also "
+                      "require sudo use <code>subprocess.run</code> with a transient <code>bytes</code> "
+                      "object — it cannot be actively zeroed, but exists only for the duration of the "
+                      "blocking call and is then garbage-collected.<br><br>"
+                      "The original <code>SecureString</code> buffer is zeroed in the <code>finally</code> "
+                      "block of the worker thread once all tasks are complete.<br><br>"
                       "<b>Credential cache:</b><br>"
                       "After the single successful authentication <code>sudo</code> stores a credential "
                       "timestamp (in <code>/run/sudo/ts/</code>). A background keepalive thread calls "

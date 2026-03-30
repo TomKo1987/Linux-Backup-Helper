@@ -14,7 +14,7 @@ from PyQt6.QtGui import QColor, QFont, QFontMetrics, QTextCursor
 from PyQt6.QtWidgets import (
     QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QWidget, QVBoxLayout,
     QListWidgetItem, QMessageBox, QPlainTextEdit, QPushButton, QSizePolicy, QSplitter,
-    QCheckBox, QColorDialog, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QTextEdit,
+    QCheckBox, QColorDialog, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QTextEdit, QApplication
 )
 
 from state import (
@@ -215,8 +215,6 @@ class EntryDialog(QDialog):
         return self._entry_snapshot
 
     def _compute_size(self) -> tuple[int, int]:
-        from PyQt6.QtGui import QFontMetrics, QFont
-        from PyQt6.QtWidgets import QApplication
         fm     = QFontMetrics(QFont("monospace", 15))
         max_px = max((fm.horizontalAdvance(p) for pair in self.pairs for p in pair), default=400)
         scr    = QApplication.primaryScreen()
@@ -699,11 +697,19 @@ class MountsDialog(_ListDialog):
 
     def _del(self) -> None:
         opt = self._selected_data()
-        if opt:
-            S.mount_options = [o for o in S.mount_options if o is not opt]
-            save_profile()
-            self.was_changed = True
-            self._refresh()
+        if not opt:
+            return
+        name = opt.get("drive_name", "?")
+        if QMessageBox.question(
+            self, "Remove Drive",
+            f"Really remove '{name}' from mount options?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        S.mount_options = [o for o in S.mount_options if o is not opt]
+        save_profile()
+        self.was_changed = True
+        self._refresh()
 
 
 class HeaderSettingsDialog(QDialog):
@@ -1148,5 +1154,6 @@ class SysInfoDialog(_TextViewDialog):
     def closeEvent(self, event) -> None:
         try:
             self.done_sig.disconnect()
-        except RuntimeError: pass
+        except (RuntimeError, TypeError):
+            pass
         super().closeEvent(event)

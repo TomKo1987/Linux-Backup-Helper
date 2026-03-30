@@ -3,16 +3,17 @@ import json
 import shutil
 import subprocess
 import threading
+from functools import lru_cache
 from typing import Optional
 
 import keyring
-import keyring.errors
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QCheckBox, QDialog, QErrorMessage, QHBoxLayout, QLabel,
     QLineEdit, QMessageBox, QPushButton, QVBoxLayout,
 )
 from keyring.backends import SecretService
+from keyring.errors import PasswordDeleteError, KeyringError
 
 from state import logger, _USER
 from sudo_password import SecureString
@@ -23,20 +24,15 @@ __all__ = ["SambaPasswordManager", "SambaPasswordDialog"]
 _KWALLET_TIMEOUT  = 2
 _KWALLET_WALLET   = "kdewallet"
 _KEYRING_SERVICE  = "backup-helper-samba"
+_KEYRING_USER_KEY = f"{_USER}__samba_username"
 
 _keyring_init_lock = threading.Lock()
 _keyring_ready     = False
 
-_kwallet_cmd: Optional[str] = None
-_kwallet_checked = False
 
-
+@lru_cache(maxsize=1)
 def _kwallet_available() -> bool:
-    global _kwallet_cmd, _kwallet_checked
-    if not _kwallet_checked:
-        _kwallet_cmd     = shutil.which("kwallet-query")
-        _kwallet_checked = True
-    return _kwallet_cmd is not None
+    return shutil.which("kwallet-query") is not None
 
 
 def _init_keyring() -> None:
@@ -100,7 +96,7 @@ class _VerifyPasswordDialog(QDialog):
         entered = self._pw_input.text()
         self._pw_input.clear()
 
-        matched = hmac.compare_digest(entered, self._stored_pw.get())
+        matched = hmac.compare_digest(entered.encode('utf-8'), self._stored_pw.get_bytes())
         del entered
 
         if matched:
@@ -121,6 +117,7 @@ class _VerifyPasswordDialog(QDialog):
 
     def closeEvent(self, event) -> None:
         self._pw_input.clear()
+        self._stored_pw.clear()
         super().closeEvent(event)
 
 
@@ -180,16 +177,21 @@ class SambaPasswordManager:
             raise RuntimeError("Failed to write credentials to KWallet")
         logger.info("Updated Samba credentials in KWallet entry: %s", entry)
 
-    def get_credentials(self) -> tuple[Optional[str], Optional[str], bool]:
+    def get_credentials(self) -> tuple[Optional[str], Optional[SecureString], bool]:
         username, password = self._read_from_kwallet()
         if password:
             logger.info("Retrieved Samba credentials from KWallet")
-            return username, password, True
+            secure = SecureString(password)
+            del password
+            return username, secure, True
         try:
-            pw = keyring.get_password(_KEYRING_SERVICE, _USER)
+            stored_user = keyring.get_password(_KEYRING_SERVICE, _KEYRING_USER_KEY) or _USER
+            pw = keyring.get_password(_KEYRING_SERVICE, stored_user)
             if pw:
                 logger.info("Retrieved Samba credentials from system keyring")
-                return _USER, pw, False
+                secure = SecureString(pw)
+                del pw
+                return stored_user, secure, False
         except Exception as exc:
             logger.exception("Failed to retrieve from system keyring: %s", exc)
         return None, None, False
@@ -205,15 +207,21 @@ class SambaPasswordManager:
             self._write_to_kwallet(entry, username, password)
         else:
             try:
-                keyring.set_password(_KEYRING_SERVICE, _USER, password)
-                logger.info("Saved Samba credentials to system keyring.")
+                keyring.set_password(_KEYRING_SERVICE, username, password)
+                keyring.set_password(_KEYRING_SERVICE, _KEYRING_USER_KEY, username)
+                logger.info("Saved Samba credentials to system keyring for user '%s'.", username)
             except Exception as exc:
                 logger.exception("Failed to save to system keyring: %s", exc)
+                raise
 
     @staticmethod
     def delete_credentials(username: str) -> bool:
         try:
             keyring.delete_password(_KEYRING_SERVICE, username)
+            try:
+                keyring.delete_password(_KEYRING_SERVICE, _KEYRING_USER_KEY)
+            except (PasswordDeleteError, KeyringError):
+                pass
             logger.info("Deleted Samba credentials for '%s' from system keyring.", username)
             return True
         except keyring.errors.PasswordDeleteError:
@@ -229,20 +237,17 @@ class SambaPasswordDialog(QDialog):
 
     @classmethod
     def open(cls, parent=None) -> None:
-        manager                       = SambaPasswordManager()
-        username, stored_pw, from_kw  = manager.get_credentials()
+        manager                      = SambaPasswordManager()
+        username, stored_pw, from_kw = manager.get_credentials()
         if stored_pw:
-            secure_stored = SecureString(stored_pw)
-            del stored_pw
-            accepted = (_VerifyPasswordDialog(parent, username, secure_stored).exec()  == QDialog.DialogCode.Accepted)
+            accepted = (_VerifyPasswordDialog(parent, username, stored_pw).exec() == QDialog.DialogCode.Accepted)
             if not accepted:
                 return
             cls(parent, manager, username or "", from_kw, has_credentials=True).exec()
         else:
             has_kw = _kwallet_available()
             msg = ("No Samba credentials are stored yet.\nWould you like to set up credentials now? "
-                   "You can choose to store them in KWallet or the system keyring."
-                   if has_kw else
+                   "You can choose to store them in KWallet or the system keyring." if has_kw else
                    "No Samba credentials are stored yet.\n\n"
                    "Would you like to store credentials in the system keyring?")
             ans = QMessageBox.question(
@@ -342,7 +347,6 @@ class SambaPasswordDialog(QDialog):
         self._password_field.setFocus()
 
     def _save_credentials(self) -> None:
-        from sudo_password import SecureString
         username = self._username_field.text().strip()
         pw_secure = SecureString(self._password_field.text())
         cf_secure = SecureString(self._confirm_password_field.text())
@@ -371,7 +375,6 @@ class SambaPasswordDialog(QDialog):
                 self._manager.save_credentials_to(username, pw_plain, target)
             else:
                 self._manager.save_credentials(username, pw_plain)
-
             QMessageBox.information(self, "Success", "Samba credentials successfully saved!")
             self.accept()
         except Exception as exc:

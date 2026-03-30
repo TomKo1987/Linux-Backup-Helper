@@ -18,7 +18,7 @@ from themes import (
 def _copy_logic_tooltip() -> str:
     t = current_theme()
     return (
-        "<b>How files are copied and when they are skipped</b><br><br>"
+        "<b>Copy &amp; Skip Logic</b><br><br>"
         "<b>Local File Logic:</b><br>"
         "- A file is <b>copied</b> if the destination is missing, the <b>size differs</b>, "
         "or the source is newer than the backup.<br>"
@@ -27,27 +27,33 @@ def _copy_logic_tooltip() -> str:
         "<b>Samba (SMB) Logic:</b><br>"
         "- To save bandwidth and avoid latency, the system only checks <b>existence and file size</b>.<br>"
         "- Remote paths <b>must</b> follow the pattern: <code>'smb://ip/path'</code>.<br>"
-        "- <b>Requirement:</b> <code>smbclient</code> must be installed on this machine.<br><br>"
-        "<b>Samba Credentials &amp; Keyring:</b><br>"
-        "- Passwords are <b>never stored in plain text</b>. The system uses a priority chain:<br>"
-        "  1. <b>KDE KWallet:</b> Looks for an entry named <code>'smb-[username]'</code> in the <code>'kdewallet'</code> folder.<br>"
-        "  2. <b>System Keyring:</b> Fallback to the standard OS keyring (via libsecret) using the service <code>'backup-helper-samba'</code>.<br>"
-        "  3. <b>Guest:</b> If no credentials are found, an anonymous connection is attempted.<br><br>"
-        "<b>Execution Security:</b><br>"
-        "- To prevent exposure in process lists, the password is <b>never passed as a command-line argument</b> "
-        "or environment variable.<br>"
-        "- Instead, it is written to a <b>temporary credential file</b> in a secure RAM-backed "
-        "location (<code>/dev/shm</code>) with <code>0600</code> permissions.<br>"
-        "- This file is <b>securely wiped</b> with <code>os.urandom</code> and deleted immediately "
-        "after the transfer starts.<br>"
-        "- Internal password buffers (SecureString) are <b>zeroed out in memory</b> after use.<br><br>"
+        "- <b>Local requirement:</b> <code>smbclient</code> must be installed on <b>this machine</b>.<br>"
+        "- <b>Remote requirement:</b> Samba must be configured on the <b>target system</b>; "
+        "Port 445 must be open.<br><br>"
         "<b>Always Skipped:</b><br>"
         "- System lock files are ignored: <code>.lock</code>, <code>.lck</code>, <code>lockfile</code>, "
         "<code>Singleton</code>, and <code>cookies.sqlite-wal</code>.<br><br>"
         "<b>Status Colors:</b><br>"
         f"- <span style='color:{t['success']};'>Green</span> = Success, "
         f"<span style='color:{t['warning']};'>Yellow</span> = Skipped, "
-        f"<span style='color:{t['error']};'>Red</span> = Error.")
+        f"<span style='color:{t['error']};'>Red</span> = Error.<br><br><br>"
+        "<b>Samba Credentials &amp; Keyring</b><br><br>"
+        "- Passwords are <b>never stored in plain text</b>. The system uses a priority chain:<br>"
+        "  1. <b>KDE KWallet:</b> Looks for <code>'smb-[username]'</code> in the <code>'kdewallet'</code> folder.<br>"
+        "  2. <b>System Keyring:</b> Fallback via <code>libsecret</code> (service: <code>'backup-helper-samba'</code>).<br>"
+        "  3. <b>Guest:</b> If no credentials exist, an anonymous connection is attempted.<br><br><br>"
+        "<b>Execution Security (Hardened with Guest Fallback)</b><br><br>"
+        "- <b>Zero Visibility:</b> Passwords are <b>never</b> passed via command-line arguments (<code>--password</code>) "
+        "to prevent exposure in process lists.<br>"
+        "- <b>RAM-Only Storage:</b> Credentials are written to a temporary file with <code>0600</code> permissions "
+        "<b>exclusively</b> in the RAM-backed location (<code>/dev/shm</code>).<br>"
+        "- <b>Guest Fallback:</b> If no credentials are found, or if <code>/dev/shm</code> is unavailable or unwritable, "
+        "the system automatically falls back to a <b>Guest connection</b> (anonymous access) instead of failing or leaking passwords.<br>"
+        "- <b>Secure Erasure:</b> The credential file is <b>overwritten with zeros</b> and deleted from RAM "
+        "immediately after the transfer starts.<br>"
+        "- <b>Memory Safety:</b> Internal password buffers (<code>SecureString</code>) are <b>manually zeroed out</b> "
+        "in memory after use."
+    )
 
 
 _COLS_NARROW, _COLS_WIDE = 2, 4
@@ -67,7 +73,6 @@ class _BaseCheckboxWindow(QDialog):
         self.cols = S.ui.get(self._cols_key, _COLS_NARROW)
         self._selectall:     QCheckBox   | None = None
         self._col_btn:       QPushButton | None = None
-        self._entry_stacked: bool = False
 
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(5, 5, 5, 5)
@@ -295,8 +300,8 @@ class _CopyMixin:
         CopyDialog(self, selected, self._op_label).exec()  # type: ignore[arg-type]
 
     def _add_action_buttons(self: "_BaseCheckboxWindow", grid: QGridLayout, row: int) -> None:
-        fs         = font_scale()
-        btn_style  = f"font-size:{fs['xl']}px;font-weight:bold;"
+        fs          = font_scale()
+        btn_style   = f"font-size:{fs['xl']}px;font-weight:bold;"
         close_style = f"font-size:{fs['xl']}px;"
 
         action_btn = QPushButton(self._op_label)  # type: ignore[attr-defined]
@@ -318,8 +323,7 @@ class BackupWindow(_CopyMixin, _BaseCheckboxWindow):
     _cols_key     = "backup_window_columns"
     _op_label     = "Create Backup"
 
-    def _entry_filter(self, entry: dict) -> bool:
-        return not entry.get("details", {}).get("no_backup", False)
+    def _entry_filter(self, entry: dict) -> bool: return not entry.get("details", {}).get("no_backup", False)
 
 
 class RestoreWindow(_CopyMixin, _BaseCheckboxWindow):
@@ -327,20 +331,22 @@ class RestoreWindow(_CopyMixin, _BaseCheckboxWindow):
     _cols_key     = "restore_window_columns"
     _op_label     = "Restore Backup"
 
-    def _entry_filter(self, entry: dict) -> bool:
-        return not entry.get("details", {}).get("no_restore", False)
+    def _entry_filter(self, entry: dict) -> bool: return not entry.get("details", {}).get("no_restore", False)
 
     def _tips(self) -> dict:
         _, restore_tips, _ = generate_tooltip()
         return restore_tips
 
-    def _src_dst(self, entry: dict) -> tuple[list, list]:
-        return entry.get("destination", []), entry.get("source", [])
+    def _src_dst(self, entry: dict) -> tuple[list, list]: return entry.get("destination", []), entry.get("source", [])
 
 
 class SettingsWindow(_BaseCheckboxWindow):
     _window_title = "Settings"
     _cols_key     = "settings_window_columns"
+
+    def __init__(self, parent) -> None:
+        super().__init__(parent)
+        self._entry_stacked: bool = False
 
     def _extra_top_widgets(self) -> list: return [self._make_config_path_label()]
 
@@ -458,17 +464,14 @@ class SettingsWindow(_BaseCheckboxWindow):
             self.done(2)
 
     def _del_entry(self) -> None:
-        to_delete = [entry for cb, src, dst, title, entry in self.checkbox_dirs
-                     if cb.isChecked() and entry is not None]
+        to_delete = [entry for cb, src, dst, title, entry in self.checkbox_dirs if cb.isChecked() and entry is not None]
         if not to_delete:
             QMessageBox.information(self, "Delete Entry", "Please check one or more entries to delete.")
             return
 
         names = ", ".join(e["title"].replace("<br>", " ") for e in to_delete)
-        if QMessageBox.question(
-            self, "Delete", f"Really delete: {names}?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        ) == QMessageBox.StandardButton.Yes:
+        if QMessageBox.question(self, "Delete", f"Really delete: {names}?",
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
             S.entries = [e for e in S.entries if e not in to_delete]
             save_profile()
             self.changed.emit()
@@ -547,11 +550,10 @@ class _ThemeDialog(QDialog):
 
     def _on_ok(self) -> None:
         self._apply(save=True)
-        parent = self.parent()
+        msg = f"Theme: {self._theme_cb.currentText()}, Font: {self._font_cb.currentText()} {self._size_cb.currentText()}px"
+        QMessageBox.information(self, "Theme Saved", msg)
         self.changed.emit(2)
         self.accept()
-        QMessageBox.information(parent, "Theme Saved", f"Theme: {self._theme_cb.currentText()}, "
-                                f"Font: {self._font_cb.currentText()} {self._size_cb.currentText()}px")
 
     def _on_cancel(self) -> None:
         orig_theme, orig_font, orig_size = self._orig

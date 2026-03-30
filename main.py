@@ -68,7 +68,7 @@ class MainWindow(QMainWindow):
     def _open(self, cls, *args, setup_fn=None) -> None:
         self.hide()
         while True:
-            dlg = cls(self, *args) if args else cls(self)
+            dlg = cls(self, *args)
             if setup_fn:
                 setup_fn(dlg)
             if dlg.exec() != RESTART_DIALOG:
@@ -99,8 +99,7 @@ class MainWindow(QMainWindow):
             act.triggered.connect(fn)
             menu.addAction(act)
         self.tray.setContextMenu(menu)
-        self.tray.activated.connect(
-            lambda r: self._show_and_raise() if r == QSystemTrayIcon.ActivationReason.DoubleClick else None)
+        self.tray.activated.connect(lambda r: self._show_and_raise() if r == QSystemTrayIcon.ActivationReason.DoubleClick else None)
         self.tray.show()
 
     def _show_and_raise(self) -> None:
