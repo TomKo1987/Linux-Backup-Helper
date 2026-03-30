@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QTextCursor
+from PyQt6.QtGui import QColor, QFont, QFontMetrics, QTextCursor
 from PyQt6.QtWidgets import (
     QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QWidget, QVBoxLayout,
     QListWidgetItem, QMessageBox, QPlainTextEdit, QPushButton, QSizePolicy, QSplitter,
@@ -435,9 +435,6 @@ class EntryDialog(QDialog):
             self._suppress_sync = False
 
     def _pair_dialog(self, src: str = "", dst: str = "", title: str = "Add Entry") -> Optional[tuple[str, str]]:
-        from PyQt6.QtGui import QFont, QFontMetrics
-        from PyQt6.QtWidgets import QApplication
-
         scr       = QApplication.primaryScreen()
         screen    = scr.availableGeometry() if scr else None
         dlg_w     = max(700, min((screen.width() - 80) if screen else 900, 1200))

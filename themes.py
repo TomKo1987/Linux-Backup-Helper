@@ -1,6 +1,7 @@
 import base64
 from functools import lru_cache
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
 from state import S, logger, invalidate_tooltip_cache
@@ -446,7 +447,6 @@ _style_cache: tuple = ()
 def apply_tooltip(widget, text: str) -> None:
     if not text:
         return
-    from PyQt6.QtCore import Qt
     widget.setToolTip(text)
     widget.setToolTipDuration(600_000)
     widget.setCursor(Qt.CursorShape.WhatsThisCursor)

@@ -88,7 +88,7 @@ def _execute_drive_op(drive: dict, cmd_key: str, timeout: int) -> tuple[bool, st
         result = subprocess.run(tokens, capture_output=True, text=True, timeout=timeout)
         if result.returncode == 0:
             return True, ""
-        return False, result.stderr.strip() or f"exit code {result.returncode}"
+        return False, result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
     except subprocess.TimeoutExpired:
         return False, f"Timed out after {timeout}s"
     except Exception as e:
@@ -141,21 +141,14 @@ def is_mounted(opt: dict, mounts: Optional[list[tuple[str, str]]] = None) -> boo
 def mount_drive(drive: dict) -> tuple[bool, str]:
     name = drive.get("drive_name", "?")
     success, error_msg = _execute_drive_op(drive, "mount_command", 15)
-
     if success:
-        deadline = time.monotonic() + 1.5
-        while time.monotonic() < deadline:
-            if is_mounted(drive):
-                break
-            time.sleep(0.5)
-        else:
-            logger.warning("mount_drive: '%s' still not visible after 1.5 s", name)
-
+        time.sleep(0.3)
+        if not is_mounted(drive):
+            logger.warning("mount_drive: '%s' not visible after 0.3 s", name)
         if has_managed_mount_path(drive):
             _track_session_mount(drive)
         logger.info("Mounted '%s'", name)
         return True, ""
-
     msg = f"Mount failed for '{name}': {error_msg}"
     logger.error("mount_drive: %s", msg)
     return False, msg
@@ -180,9 +173,7 @@ def is_smb(path: str) -> bool:
 
 
 def _is_subpath(parent: str, child: str) -> bool:
-    p = parent.rstrip("/") + "/"
-    c = child.rstrip("/") + "/"
-    return c.startswith(p)
+    return (child.rstrip("/") + "/").startswith(parent.rstrip("/") + "/")
 
 
 def check_drives_to_mount(paths: list[str]) -> list[dict]:

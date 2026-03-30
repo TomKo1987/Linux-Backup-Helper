@@ -24,10 +24,7 @@ class SudoPasswordDialog(QDialog):
         t      = current_theme()
         layout = QVBoxLayout(self)
 
-        intro = QLabel(
-            "Enter your sudo password to run System Manager.\n"
-            "It will be used for all privileged commands during this session."
-        )
+        intro = QLabel("Enter your sudo password to run System Manager.\nIt will be used for all privileged commands during this session.")
         intro.setAlignment(Qt.AlignmentFlag.AlignCenter)
         intro.setWordWrap(True)
         layout.addWidget(intro)
@@ -93,8 +90,9 @@ class SecureString:
     def __init__(self, value: Optional[str] = None) -> None:
         self._buf = bytearray(value.encode("utf-8")) if value else bytearray()
 
-    def get(self) -> str:
-        return self._buf.decode("utf-8") if self._buf else ""
+    def get(self) -> str: return self._buf.decode("utf-8") if self._buf else ""
+
+    def get_bytes(self) -> bytearray: return bytearray(self._buf)
 
     def clear(self) -> None:
         if self._buf:

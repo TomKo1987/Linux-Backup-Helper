@@ -48,6 +48,7 @@ _SKIP_RE = re.compile(
     r"(^\.?lock$|\.lock$|^lockfile$|Singleton\w*$|cookies\.sqlite-wal$|\.lck$)", re.I
 )
 
+
 def _scale_params(total: int) -> tuple[int, int, int]:
     if total >= 100_000: return 256, 2048, 20_000
     if total >=  50_000: return 128, 1024, 10_000
@@ -55,10 +56,12 @@ def _scale_params(total: int) -> tuple[int, int, int]:
     if total >=   2_000: return  32,  256,  2_500
     return _CLAIM_SIZE, _LOCAL_BATCH, _FLUSH_THRESH
 
+
 _SMB_LINE_RE = re.compile(
     r"^(.+?)\s+([ADRHNSV]*)\s*(?:\(.*?\)\s*)?(\d+)"
     r"\s+\w{3}\s+\w{3}\s+[\s\d]\d\s+[\d:]+\s*\d*$"
 )
+
 
 _SMB_DOWN = frozenset((
     "HOST IS DOWN", "NT_STATUS_HOST_UNREACHABLE", "NT_STATUS_IO_TIMEOUT", "NT_STATUS_CONNECTION_REFUSED",
@@ -66,12 +69,13 @@ _SMB_DOWN = frozenset((
     "CONNECTION REFUSED", "NO ROUTE TO HOST", "NETWORK IS UNREACHABLE", "CONNECTION TIMED OUT", "TIMEOUT"
 ))
 
-_CACHE_MISS = object()
 
+_CACHE_MISS = object()
 _O_NOATIME = os.O_NOATIME
 _PID       = os.getpid()
 _tls       = threading.local()
 _SHM_DIR: "str | None" = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else None
+
 
 def _thread_ident() -> int:
     try:
@@ -80,8 +84,10 @@ def _thread_ident() -> int:
         _tls.ident = threading.get_ident()
         return _tls.ident
 
+
 _smb_procs:      dict[int, "subprocess.Popen"] = {}
 _smb_procs_lock: threading.Lock                = threading.Lock()
+
 
 def _ensure_dir(path: str) -> bool:
     if not path:
@@ -97,12 +103,14 @@ def _ensure_dir(path: str) -> bool:
     tls_seen.add(path)
     return True
 
+
 @lru_cache(maxsize=256)
 def _cached_mono_style(size: int, color: str, bold: bool = False, extra: str = "") -> str:
     s = f"font-family:monospace;font-size:{size}px;color:{color};"
     if bold:
         s += "font-weight:bold;"
     return s + extra
+
 
 _SIZE_UNITS = ("B", "KB", "MB", "GB", "TB")
 def _format_unit(value: float, units: tuple = _SIZE_UNITS) -> str:
@@ -115,9 +123,11 @@ def _format_unit(value: float, units: tuple = _SIZE_UNITS) -> str:
         v /= 1024.0
     return f"{v:.2f} {units[-1]}"
 
+
 def _is_unreachable(err: str) -> bool:
     up = err.upper()
     return any(s in up for s in _SMB_DOWN)
+
 
 def _parse_smb(url: str) -> tuple[str, str, str]:
     p     = urlparse(url)
@@ -125,18 +135,22 @@ def _parse_smb(url: str) -> tuple[str, str, str]:
     parts = [x for x in p.path.split("/") if x]
     return host, (parts[0] if parts else ""), "/".join(parts[1:])
 
+
 def _q(s: str) -> str:
     return s.replace("\n", "").replace("\r", "").replace("\\", "/").replace('"', '\\"')
+
 
 class _SecurePw(Protocol):
     def get(self) -> str: ...
     def clear(self) -> None: ...
+
 
 def _get_smb_credentials() -> tuple[str, "_SecurePw | None"]:
     from samba_credentials import SambaPasswordManager
     from sudo_password import SecureString
     u, p, _ = SambaPasswordManager().get_credentials()
     return (u or ""), (SecureString(p) if p else None)
+
 
 def _smb_cred_file(user: str, pw: "_SecurePw") -> "tuple[str, str] | None":
     tmp_dir: "str | None" = None
@@ -159,10 +173,19 @@ def _smb_cred_file(user: str, pw: "_SecurePw") -> "tuple[str, str] | None":
         logger.error("SMB cred file: %s", exc)
         if tmp_dir:
             try:
+                cred = os.path.join(tmp_dir, "cred")
+                try:
+                    sz = os.path.getsize(cred)
+                    with open(cred, "r+b") as f:
+                        f.write(os.urandom(sz))
+                    os.unlink(cred)
+                except OSError:
+                    pass
                 os.rmdir(tmp_dir)
             except OSError:
                 pass
         return None
+
 
 def _wipe_smb_cred(tmp_dir: str, path: str) -> None:
     try:
@@ -2207,10 +2230,10 @@ class CopyDialog(QDialog):
         self.tabs.setTabText(3, f"✗ Errors ({self.errors:,})")
 
     @staticmethod
-    def _fmt_ok(s, d) -> str: return f"{apply_replacements(s)}\n Copied to ⤵\n{apply_replacements(d)}"
+    def _fmt_ok(s, d, _sz=0) -> str: return f"{apply_replacements(s)}\n Copied to ⤵\n{apply_replacements(d)}"
 
     @staticmethod
-    def _fmt_sk(p, r) -> str: return f"{apply_replacements(p)} ↷ {r}"
+    def _fmt_sk(p, r, _sz=0) -> str: return f"{apply_replacements(p)} ↷ {r}"
 
     @staticmethod
     def _fmt_er(p, m) -> str: return f"{apply_replacements(p)} ❌ {m}"

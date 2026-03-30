@@ -118,22 +118,22 @@ def _norm_pkgs(raw: list) -> list[dict]:
             return {"name": p, "disabled": False}
         return {**p, "disabled": p.get("disabled", False)}
 
-    return sorted(
-        (_normalise(p) for p in raw),
-        key=lambda x: x.get("name", x.get("package", "")).lower(),
-    )
+    return sorted((_normalise(p) for p in raw), key=lambda x: x.get("name", x.get("package", "")).lower())
 
 
 def _norm_paths(raw: Any) -> list[str]:
     if not raw:
         return []
-    raw_list = [raw] if isinstance(raw, str) else raw
-    return [p.strip() for item in raw_list if str(item).strip()
-            for p in re.split(r" (?=/|smb://|cifs://)", str(item).strip()) if p.strip()]
+    items = [raw] if isinstance(raw, str) else raw
+    result = []
+    for item in items:
+        s = str(item).strip()
+        if s:
+            result.extend(p for p in re.split(r" (?=/|smb://|cifs://)", s) if p.strip())
+    return result
 
 
-def _valid_hex_color(value: Any) -> bool:
-    return isinstance(value, str) and bool(_HEX_COLOR_RE.match(value))
+def _valid_hex_color(value: Any) -> bool: return isinstance(value, str) and bool(_HEX_COLOR_RE.match(value))
 
 
 def _parse_entry(raw: dict) -> Optional[dict]:
@@ -187,10 +187,11 @@ def save_profile(path: Optional[Path] = None) -> bool:
     path = path or (_PROFILES_DIR / f"{S.profile_name}.json" if S.profile_name else None)
     if not path:
         return False
-
-    data = {"is_default": True, "mount_options": S.mount_options, "header": {k: {"inactive": v.get("inactive", False),
-                                                                                 "header_color": v.get("color", "#ffffff")}
-                                                                             for k, v in S.headers.items()},
+    data = {
+        "is_default": True,
+        "mount_options": S.mount_options,
+        "header": {k: {"inactive": v.get("inactive", False), "header_color": v.get("color", "#ffffff")}
+                   for k, v in S.headers.items()},
         "system_manager_operations": S.system_manager_ops,
         "system_files":    S.system_files,
         "basic_packages":  S.basic_packages,
@@ -230,7 +231,7 @@ def startup_load() -> bool:
             if default_path is None:
                 default_path, default_data = p, data
             else:
-                data.pop("is_default")
+                data = {k: v for k, v in data.items() if k != "is_default"}
                 try:
                     _atomic_write(p, data)
                 except OSError as exc:

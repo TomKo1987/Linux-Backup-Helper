@@ -469,8 +469,6 @@ class LinuxDistroHelper:
             logger.error("kernel headers pkg: %s", exc)
         return self._kernel_pkg
 
-
-
     @staticmethod
     def detect_session() -> str | None:
         for var in ("XDG_CURRENT_DESKTOP", "XDG_SESSION_DESKTOP", "DESKTOP_SESSION"):

@@ -137,6 +137,7 @@ class MainWindow(QMainWindow):
                         failed.append(f"• {_drive_name(o)}: {err}")
                 if failed:
                     QMessageBox.warning(self, "Unmount Failed", "Could not unmount:\n\n" + "\n".join(failed))
+                    return
         else:
             if info_only:
                 msg = "The following drives are still mounted but have no unmount command:\n"

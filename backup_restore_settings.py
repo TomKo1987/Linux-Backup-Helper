@@ -379,22 +379,21 @@ class SettingsWindow(_BaseCheckboxWindow):
                 hb.addWidget(b)
             return hb
 
-        grid.addLayout(_hrow(_btn("System Manager Options", self._open_sm_options)),
-                       row, 0, 1, self.cols); row += 1
-        grid.addLayout(_hrow(_btn("New Entry",       self._new_entry),
-                             _btn("Edit Entry",      self._edit_entry),
-                             _btn("Delete Entry",    self._del_entry),
-                             _btn("Header Settings", self._header_settings)),
-                       row, 0, 1, self.cols); row += 1
-        grid.addLayout(_hrow(_btn("Mount Options",     self._manage_mounts),
-                             _btn("Samba Credentials", self._samba_credentials),
-                             _btn("Profile Manager",   self._manage_profiles)),
-                       row, 0, 1, self.cols); row += 1
-        grid.addWidget(_btn("Change Theme", self._change_theme), row, 0, 1, self.cols); row += 1
-        grid.addWidget(_btn("Close", self.close),                row, 0, 1, self.cols)
+        grid.addLayout(_hrow(_btn("System Manager Options", self._open_sm_options)), row, 0, 1, self.cols)
+        row += 1
+        grid.addLayout(_hrow(_btn("New Entry", self._new_entry), _btn("Edit Entry", self._edit_entry),
+                             _btn("Delete Entry", self._del_entry), _btn("Header Settings", self._header_settings)),
+                       row, 0, 1, self.cols)
+        row += 1
+        grid.addLayout(_hrow(
+            _btn("Mount Options", self._manage_mounts), _btn("Samba Credentials", self._samba_credentials),
+            _btn("Profile Manager", self._manage_profiles)), row, 0, 1, self.cols)
+        row += 1
+        grid.addWidget(_btn("Change Theme", self._change_theme), row, 0, 1, self.cols)
+        row += 1
+        grid.addWidget(_btn("Close", self.close), row, 0, 1, self.cols)
 
     def _run_entry_dialog(self, initial_entry: Optional[dict], window_title: Optional[str] = None) -> Optional[dict]:
-
         current_entry     = initial_entry
         pairs: list[list[str]] = []
         pairs_initialised = False
@@ -548,10 +547,11 @@ class _ThemeDialog(QDialog):
 
     def _on_ok(self) -> None:
         self._apply(save=True)
-        self.accept()
-        QMessageBox.information(self.parent(), "Theme Saved", f"Theme: {self._theme_cb.currentText()}, "  
-                                                              f"Font: {self._font_cb.currentText()} {self._size_cb.currentText()}px")
+        parent = self.parent()
         self.changed.emit(2)
+        self.accept()
+        QMessageBox.information(parent, "Theme Saved", f"Theme: {self._theme_cb.currentText()}, "
+                                f"Font: {self._font_cb.currentText()} {self._size_cb.currentText()}px")
 
     def _on_cancel(self) -> None:
         orig_theme, orig_font, orig_size = self._orig

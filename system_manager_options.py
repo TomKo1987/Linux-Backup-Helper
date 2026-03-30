@@ -22,6 +22,7 @@ from themes import (
 def _get_pkg_name(p: dict | str, is_specific: bool) -> str:
     return p.get("package" if is_specific else "name", "") if isinstance(p, dict) else str(p)
 
+
 def _sort_pkgs(pkg_list: list, is_specific: bool) -> None: pkg_list.sort(key=lambda x: _get_pkg_name(x, is_specific).lower())
 
 
@@ -235,11 +236,8 @@ class SystemManagerOptions(QDialog):
 
     def _build(self) -> None:
         lay      = QVBoxLayout(self)
-        yay_info = (
-            f"   |   AUR Helper: 'yay' {'detected' if self._yay_installed else 'not detected'}" if self._distro.has_aur else "")
-
-        info = QLabel(
-            f"Recognized Linux distribution: {self._distro.distro_pretty_name}   |   Session: {self._session}{yay_info}")
+        yay_info = (f" | AUR Helper: 'yay' {'detected' if self._yay_installed else 'not detected'}" if self._distro.has_aur else "")
+        info = QLabel(f"Recognized Linux distribution: {self._distro.distro_pretty_name} | Session: {self._session}{yay_info}")
         info.setStyleSheet(style_label_info_bold())
         info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(info)
@@ -256,8 +254,8 @@ class SystemManagerOptions(QDialog):
             f"'AUR Packages' provides access to the Arch User Repository. "
             f"Therefore 'yay' must and will be installed."
             f"\nThis feature is available only on Arch Linux based distributions.\n\n"
-            f"You can also define 'Specific Packages'. These packages will be installed only "
-            f"(using '{cmd}PACKAGE') if the corresponding session has been recognized.\n"
+            f"You can also define 'Specific Packages'. These packages will be installed only (using '{cmd}PACKAGE')\n"
+            f"if the corresponding session has been recognized.\n"
             f"Both full desktop environments and window managers such as 'Hyprland' and others are supported.")
         top_text.setWordWrap(True)
         top_text.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -347,7 +345,7 @@ class SystemManagerOptions(QDialog):
             _sync_sa()
 
         def _toggle_all(state=None):
-            checked = bool(state) and Qt.CheckState(state) != Qt.CheckState.Unchecked
+            checked = Qt.CheckState(state or 0) == Qt.CheckState.Checked
             for _cb, _ in widgets:
                 _cb.blockSignals(True)
                 if checked:
@@ -563,8 +561,8 @@ class SystemManagerOptions(QDialog):
         if not files:
             QMessageBox.information(self, "Export", "No system files to export.")
             return
-        path, _ = QFileDialog.getSaveFileName(self, "Export System Files", str(Path(_HOME) / "system_files.txt"),
-                                              "Text (*.txt);;CSV (*.csv);;All (*)")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export System Files", str(_HOME / "system_files.txt"), "Text (*.txt);;CSV (*.csv);;All (*)")
         if not path:
             return
         lines = ["# source,destination"] + [f"{f['source']},{f['destination']}" for f in files]
@@ -613,8 +611,8 @@ class SystemManagerOptions(QDialog):
             if to_del:
                 names = [(f"{pkg.get('package', '')} [{pkg.get('session', '')}]"
                           if is_specific else pkg.get("name", "")) if isinstance(pkg, dict) else str(pkg) for pkg in to_del]
-                if (QMessageBox.question(_dlg, "Confirm Delete", f"Delete package(s)?\n\n  • " + "\n  • ".join(names))
-                        != QMessageBox.StandardButton.Yes):
+                if (QMessageBox.question(
+                        _dlg, "Confirm Delete", f"Delete package(s)?\n\n  • " + "\n  • ".join(names)) != QMessageBox.StandardButton.Yes):
                     return
             updated = []
             for _cb, pkg in zip(checkboxes, packages):
@@ -837,7 +835,7 @@ class SystemManagerOptions(QDialog):
         if not packages:
             QMessageBox.information(self, "Export", "No packages to export.")
             return
-        path, _ = QFileDialog.getSaveFileName(self, "Export", str(Path(_HOME) / f"{pkg_type}.txt"), "Text (*.txt);;All (*)")
+        path, _ = QFileDialog.getSaveFileName(self, "Export", str(_HOME / f"{pkg_type}.txt"), "Text (*.txt);;All (*)")
         if not path:
             return
         is_specific = pkg_type == "specific_packages"
@@ -888,12 +886,11 @@ class SystemManagerLauncher:
         outer.setContentsMargins(0, 0, 0, 0)
         yay_info = ""
         if self._distro.has_aur:
-            yay_info = (
-                "   |   AUR Helper: 'yay' detected" if self._yay_installed else "   |   AUR Helper: 'yay' not detected")
+            yay_info = ("   |   AUR Helper: 'yay' detected" if self._yay_installed else "   |   AUR Helper: 'yay' not detected")
 
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
-        distro_lbl = QLabel(f"Recognized Linux distribution: {self._distro_name}    |   Session: {self._session}{yay_info}")
+        distro_lbl = QLabel(f"Recognized Linux distribution: {self._distro_name}   |   Session: {self._session}{yay_info}")
         distro_lbl.setStyleSheet(style_label_info(font_size=font_sz(6)))
         distro_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         content_layout.addWidget(distro_lbl)
@@ -941,24 +938,30 @@ class SystemManagerLauncher:
         apply_tooltip(self._sudo_checkbox,
                       "<b>How your sudo password is used — and why it is safe:</b><br><br>"
                       "Your password is held <b>only in memory</b> as a mutable <code>bytearray</code> "
-                      "(<code>SecureString</code>) and is <b>never written to disk in plain text</b>.<br><br>"
-                      "<b>Technical details:</b><br>"
-                      "A private temporary directory (<code>chmod 700</code>) is created. "
-                      "Inside it, the password file is opened with <code>O_CREAT | O_EXCL | O_WRONLY</code> "
-                      "and mode <code>0o600</code> — the file is <b>created with restricted permissions "
-                      "before any data is written</b>, so there is no window where it is world-readable.<br>"
-                      "The <code>SUDO_ASKPASS</code> environment variable points a minimal shell script "
-                      "to this file so <code>sudo -A</code> can read it non-interactively.<br>"
-                      "The in-memory password bytes are <b>zeroed immediately after writing</b> to disk.<br><br>"
+                      "(<code>SecureString</code>) and is <b>never written to any file or filesystem</b> — "
+                      "not even to a RAM-backed <code>tmpfs</code> such as <code>/dev/shm</code>.<br><br>"
+                      "<b>Authentication mechanism:</b><br>"
+                      "A single <code>sudo -S</code> call is made. <code>sudo -S</code> reads the password "
+                      "directly from <b>stdin</b>, which is connected to a kernel pipe. "
+                      "The password travels from Python's in-memory <code>bytearray</code> through the "
+                      "<b>kernel pipe buffer</b> to <code>sudo</code>'s stdin — it never touches a "
+                      "filesystem inode, a temp file, or an environment variable.<br><br>"
+                      "<b>Zeroing:</b><br>"
+                      "A separate <code>bytearray</code> copy is passed to the writer thread and "
+                      "<b>zeroed byte-by-byte inside the thread immediately after the pipe is flushed</b>. "
+                      "The original buffer in <code>SecureString</code> is also zeroed in the <code>finally</code> "
+                      "block. <code>gc.collect()</code> is called afterwards.<br><br>"
+                      "<b>Credential cache:</b><br>"
+                      "After the single successful authentication <code>sudo</code> stores a credential "
+                      "timestamp (in <code>/run/sudo/ts/</code>). A background keepalive thread calls "
+                      "<code>sudo -v</code> every 60 s so the cache never expires during a long session — "
+                      "no further password input or file I/O is ever required.<br><br>"
                       "<b>Cleanup:</b><br>"
-                      "When System Manager finishes, the password file is <b>overwritten with random bytes "
-                      "and then deleted</b>. The temporary directory is removed entirely afterwards.<br><br>"
-                      "<b>In memory:</b><br>"
-                      "The <code>SecureString</code> object's buffer is <b>zeroed with "
-                      "<code>memoryview</code></b> before the reference is released, "
-                      "minimising the time the password lingers in Python's garbage-collected heap.<br><br>"
+                      "When System Manager finishes, <code>sudo -k</code> is called to <b>immediately "
+                      "invalidate</b> the credential cache, and the <code>SecureString</code> buffer "
+                      "is zeroed.<br><br>"
                       "<i>Your password is never logged, never sent over the network, "
-                      "and never stored beyond this session.</i>")
+                      "never written to any file, and never stored beyond this session.</i>")
 
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Yes | QDialogButtonBox.StandardButton.No)  # type: ignore
         bb.accepted.connect(dialog.accept)
@@ -999,6 +1002,7 @@ class SystemManagerLauncher:
         t.passwordFailed.connect(lambda: self._on_fail(t, d))
         t.passwordSuccess.connect(self._on_ok)
         t.finished.connect(d.mark_done)
+        d.cancelRequested.connect(lambda: setattr(t, "terminated", True))
         t.start()
 
     def _show_sudo_dialog(self) -> None:

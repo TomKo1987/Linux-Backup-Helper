@@ -205,7 +205,7 @@ class SambaPasswordManager:
             self._write_to_kwallet(entry, username, password)
         else:
             try:
-                keyring.set_password(_KEYRING_SERVICE, username, password)
+                keyring.set_password(_KEYRING_SERVICE, _USER, password)
                 logger.info("Saved Samba credentials to system keyring.")
             except Exception as exc:
                 logger.exception("Failed to save to system keyring: %s", exc)
@@ -342,38 +342,42 @@ class SambaPasswordDialog(QDialog):
         self._password_field.setFocus()
 
     def _save_credentials(self) -> None:
+        from sudo_password import SecureString
         username = self._username_field.text().strip()
-        password = self._password_field.text()
-        confirm = self._confirm_password_field.text()
+        pw_secure = SecureString(self._password_field.text())
+        cf_secure = SecureString(self._confirm_password_field.text())
+        self._password_field.clear()
+        self._confirm_password_field.clear()
 
-        if not username or not password:
+        if not username or not pw_secure:
+            pw_secure.clear()
+            cf_secure.clear()
             QMessageBox.warning(self, "Input Error", "Username and password must not be empty.")
             return
 
-        if password != confirm:
+        if not hmac.compare_digest(pw_secure.get(), cf_secure.get()):
+            cf_secure.clear()
+            pw_secure.clear()
             QMessageBox.warning(self, "Input Error", "Passwords do not match. Please try again.")
-            self._password_field.clear()
-            self._confirm_password_field.clear()
             self._password_field.setFocus()
-            del password, confirm
             return
 
+        cf_secure.clear()
+        pw_plain = pw_secure.get()
+        pw_secure.clear()
         try:
             if self._first_setup and self._store_in_kwallet is not None:
                 target = "kwallet" if self._store_in_kwallet.isChecked() else "keyring"
-                self._manager.save_credentials_to(username, password, target)
+                self._manager.save_credentials_to(username, pw_plain, target)
             else:
-                self._manager.save_credentials(username, password)
+                self._manager.save_credentials(username, pw_plain)
 
-            self._password_field.clear()
-            self._confirm_password_field.clear()
             QMessageBox.information(self, "Success", "Samba credentials successfully saved!")
-
-            del password, confirm
             self.accept()
         except Exception as exc:
             self._error_dialog.showMessage(f"Failed to save credentials:\n{exc}")
-            del password, confirm
+        finally:
+            del pw_plain
 
     def _delete_credentials(self) -> None:
         username = self._username_field.text().strip()
