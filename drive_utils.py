@@ -136,10 +136,10 @@ def mount_drive(drive: dict) -> tuple[bool, str]:
     name = drive.get("drive_name", "?")
     success, error_msg = _execute_drive_op(drive, "mount_command", 15)
     if success:
-        time.sleep(0.3)
+        time.sleep(0.5)
         mounted_confirmed = is_mounted(drive)
         if not mounted_confirmed:
-            logger.warning("mount_drive: '%s' mount command succeeded but drive not visible after 0.3 s", name)
+            logger.warning("mount_drive: '%s' mount command succeeded but drive not visible after 0.5 s", name)
         if has_managed_mount_path(drive):
             _track_session_mount(drive)
         logger.info("Mounted '%s' (confirmed=%s)", name, mounted_confirmed)

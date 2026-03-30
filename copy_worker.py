@@ -226,7 +226,9 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
     except InterruptedError:
         raise
     except OSError as exc:
-        if exc.errno != errno.EXDEV:
+        if exc.errno == errno.EXDEV:
+            pass
+        else:
             logger.warning("copy_file_range failed, falling back to read/write: %s", exc)
     if rem > 0:
         try:
@@ -237,12 +239,7 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
                 buf = os.read(rfd, min(rem, _IO_BUF))
                 if not buf:
                     break
-                written = 0
-                while written < len(buf):
-                    n = os.write(wfd, buf[written:])
-                    if n == 0:
-                        raise OSError("Write failed: Disk full or broken pipe")
-                    written += n
+                written = os.write(wfd, buf)
                 rem -= written
         except InterruptedError:
             raise
@@ -252,9 +249,9 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
 
 
 def _copy_file(src: str, dst: str, cancel: threading.Event, src_st: "os.stat_result | None" = None) -> tuple[str, str, int]:
-    tmp     = f"{dst}.{_PID}.{threading.get_ident()}.part"
+    tmp = f"{dst}.{_PID}.{threading.get_ident()}.part"
     rfd = wfd = None
-    success = False
+    success   = False
     try:
         if cancel.is_set():
             return "skip", "", 0
@@ -298,11 +295,15 @@ def _copy_file(src: str, dst: str, cancel: threading.Event, src_st: "os.stat_res
         logger.error("copy %s → %s: %s", src, dst, exc)
         return "error", str(exc), 0
     finally:
-        if rfd is not None: os.close(rfd)
-        if wfd is not None: os.close(wfd)
+        if rfd is not None:
+            os.close(rfd)
+        if wfd is not None:
+            os.close(wfd)
         if not success:
-            try: os.unlink(tmp)
-            except OSError: pass
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
 
 @dataclass
