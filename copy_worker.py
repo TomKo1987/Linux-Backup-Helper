@@ -32,14 +32,24 @@ _WORKERS         = min(12, max(4, os.cpu_count() or 4))
 _SMB_WORKERS     = 10
 _SMB_TIMEOUT     = 10
 _SMB_FILE_SECS   = 3
-_SMB_CHUNK       = 1000
-_FLUSH_THRESH    = 1500
+_SMB_CHUNK       = 1_000
+_FLUSH_THRESH    = 2_500
 _FLUSH_INTERVAL  = 0.3
 _SCAN_EMIT_SECS  = 0.5
-_SCAN_PIPE_BATCH = 512
-_LOCAL_BATCH     = 512
-_CLAIM_SIZE      = 16
+_SCAN_PIPE_BATCH = 128
+_LOCAL_BATCH     = 256
+_CLAIM_SIZE      = 32
 _PIPE_MAXSIZE    = 1024
+
+
+def _scale_params(total: int) -> tuple[int, int, int, int, int]:
+    w = _WORKERS
+    if total >= 100_000: return 256, 2048, 20_000, 1024, w
+    if total >=  50_000: return 128, 1024, 10_000,  512, w
+    if total >=  10_000: return  64,  512,  5_000,  256, min(w, 8)
+    if total >=   2_000: return  32,  256,  2_500,  128, min(w, 6)
+    return _CLAIM_SIZE, _LOCAL_BATCH, _FLUSH_THRESH, _SCAN_PIPE_BATCH, min(w, 4)
+
 
 _NATURAL_SORT_RE = re.compile(r"(\d+)")
 
@@ -77,15 +87,6 @@ _smb_procs:      dict[int, subprocess.Popen] = {}
 _smb_procs_lock: threading.Lock              = threading.Lock()
 
 
-def _scale_params(total: int) -> tuple[int, int, int, int, int]:
-    w = _WORKERS
-    if total >= 100_000: return 256, 2048, 20_000, 1024, w
-    if total >=  50_000: return 128, 1024, 10_000,  512, w
-    if total >=  10_000: return  64,  512,  5_000,  256, min(w, 8)
-    if total >=   2_000: return  32,  256,  2_500,  128, min(w, 6)
-    return _CLAIM_SIZE, _LOCAL_BATCH, _FLUSH_THRESH, _SCAN_PIPE_BATCH, min(w, 4)
-
-
 def _ensure_dir(path: str) -> bool:
     if not path:
         return True
@@ -95,7 +96,7 @@ def _ensure_dir(path: str) -> bool:
     try:
         os.makedirs(path, exist_ok=True)
     except OSError as exc:
-        if exc.errno not in (errno.EEXIST,):
+        if exc.errno != errno.EEXIST:
             logger.error("mkdir %s: %s", path, exc)
             return False
     seen.add(path)
@@ -160,7 +161,7 @@ def _do_copy(entry, cancel: threading.Event, ok_l: list, sk_l: list, er_l: list,
     except Exception as exc:
         logger.error("copy %s: %s", src, exc)
         status, aux, sz = "error", str(exc), 0
-    c = tc.setdefault(title, [0, 0, 0])
+    c = tc.setdefault(title, [0, 0, 0]) if title else [0, 0, 0]
     if status == "ok":
         ok_l.append((src, dst, sz));                 c[0] += 1
     elif status == "skip":
@@ -1051,7 +1052,11 @@ class CopyWorker(QThread):
                             if e.is_dir(follow_symlinks=False):
                                 _enqueue((e.path, os.path.join(_dst, e.name), _title))
                             elif e.is_file(follow_symlinks=False) and not _SKIP_RE.search(e.name):
-                                local_files.append((e.path, os.path.join(_dst, e.name), _title, None))
+                                try:
+                                    st = e.stat(follow_symlinks=False)
+                                except OSError:
+                                    st = None
+                                local_files.append((e.path, os.path.join(_dst, e.name), _title, st))
                 except (PermissionError, FileNotFoundError, NotADirectoryError):
                     if not _SKIP_RE.search(os.path.basename(_src)):
                         local_files.append((_src, _dst, _title, None))
@@ -1138,6 +1143,7 @@ class CopyWorker(QThread):
                         break
                     continue
 
+                spb = copy_params[1]
                 try:
                     with os.scandir(_src) as it:
                         for e in it:
@@ -1146,14 +1152,16 @@ class CopyWorker(QThread):
                             if e.is_dir(follow_symlinks=False):
                                 _eq((e.path, os.path.join(_dst, e.name), _title))
                             elif e.is_file(follow_symlinks=False) and not _SKIP_RE.search(e.name):
-                                batch.append((e.path, os.path.join(_dst, e.name), _title, None))
+                                try:
+                                    entry_stat = e.stat(follow_symlinks=False)
+                                except OSError:
+                                    entry_stat = None
+                                batch.append((e.path, os.path.join(_dst, e.name), _title, entry_stat))
                                 local_n += 1
-                                with copy_params_lock:
-                                    spb = copy_params[1]
                                 if len(batch) >= spb:
                                     while not cancel.is_set():
                                         try:
-                                            pipe_q.put(batch, timeout=0.05)
+                                            pipe_q.put(batch, timeout=0.25)
                                             batch = []
                                             break
                                         except queue.Full:
@@ -1168,21 +1176,23 @@ class CopyWorker(QThread):
                     logger.warning("scan %s: %s", _src, exc)
 
                 now = time.monotonic()
-                emit_cur = -1
-                with pend_lock:
-                    if now - last_emit[0] >= _SCAN_EMIT_SECS:
-                        found[0] += local_n
-                        local_n = 0
-                        last_emit[0] = now
-                        emit_cur = found[0]
-                if emit_cur >= 0:
-                    self.scan_progress.emit("Scanning", emit_cur)
+                if now - last_emit[0] >= _SCAN_EMIT_SECS:
+                    emit_cur = -1
+                    with pend_lock:
+                        if now - last_emit[0] >= _SCAN_EMIT_SECS:
+                            found[0] += local_n
+                            local_n = 0
+                            last_emit[0] = now
+                            emit_cur = found[0]
+                    if emit_cur >= 0:
+                        self.scan_progress.emit("Scanning", emit_cur)
                 _dq()
 
             if batch and not cancel.is_set():
                 while not cancel.is_set():
                     try:
-                        pipe_q.put(batch, timeout=0.05)
+                        pipe_q.put(batch, timeout=0.25)
+                        batch = []
                         break
                     except queue.Full:
                         pass
@@ -1217,8 +1227,7 @@ class CopyWorker(QThread):
                     continue
                 if item is sentinel:
                     break
-                with copy_params_lock:
-                    lb = copy_params[0]
+                lb = copy_params[0]
                 for entry in item:
                     if cancel.is_set():
                         break
@@ -1461,6 +1470,7 @@ def _make_stat_card(color: "str | None", title: str, val: str = "0", size_title:
 class _SummaryWidget(QWidget):
     def __init__(self) -> None:
         super().__init__()
+        self._entry_refresh_pending = False
         self._t = current_theme()
         t = self._t
 
@@ -1657,6 +1667,12 @@ class _SummaryWidget(QWidget):
         ec[0] += ok
         ec[1] += err
         ec[2] += skip
+        if not self._entry_refresh_pending:
+            self._entry_refresh_pending = True
+            QTimer.singleShot(300, self._deferred_refresh_entry_labels)
+
+    def _deferred_refresh_entry_labels(self) -> None:
+        self._entry_refresh_pending = False
         self._refresh_entry_labels()
 
     def _update_progress(self, done: int, total: int, finished: bool = False, cancelled: bool = False) -> None:
@@ -1960,15 +1976,16 @@ class _LogWidget(QWidget):
         self._items       = items
         self._items_lower = items_lower
         self._search_cache.clear()
-        self._filtered    = ([i for i, il in zip(items, items_lower) if needle in il] if needle else items[:])
+        self._filtered    = ([i for i, il in zip(items, items_lower) if needle in il] if needle else items)
         self._render()
 
     def _on_search(self) -> None:
         needle = self._search.text().lower().strip()
         if needle in self._search_cache:
-            self._filtered = self._search_cache[needle][:]
+            self._filtered = self._search_cache[needle] if self._finalized else self._search_cache[needle][:]
         else:
-            self._filtered = ([i for i, il in zip(self._items, self._items_lower) if needle in il] if needle else self._items[:])
+            self._filtered = ([i for i, il in zip(self._items, self._items_lower) if needle in il]
+                              if needle else (self._items if self._finalized else self._items[:]))
             if len(self._search_cache) > 50:
                 self._search_cache.pop(next(iter(self._search_cache)))
             self._search_cache[needle] = self._filtered[:]
