@@ -2,6 +2,7 @@ import os
 import re
 import shlex
 import subprocess
+import threading
 import time
 from functools import lru_cache
 from typing import Optional
@@ -12,7 +13,7 @@ from state import S, logger, _USER
 
 _DRIVE_NAME_RE = re.compile(r"^[\w\- .()@:]+$")
 
-_SHELL_INJECTION_SEQS = ("&&", "||", "$(", "${", ";", "|", "`", ">", "<", "\n")
+_SHELL_INJECTION_SEQS = ("&&", "||", "$(", "${", ";", "|", "`", ">", "<", "\n", "\r", "\x00")
 
 _ALLOWED_MOUNT_CMDS = frozenset({
     "mount", "umount", "mount.cifs", "udisksctl",
@@ -20,19 +21,24 @@ _ALLOWED_MOUNT_CMDS = frozenset({
 })
 
 _session_managed_mounts: list[dict] = []
+_session_mounts_lock = threading.Lock()   # NEU
 
 
-def get_session_managed_mounts() -> list[dict]: return _session_managed_mounts.copy()
+def get_session_managed_mounts() -> list[dict]:
+    with _session_mounts_lock:             # NEU
+        return _session_managed_mounts.copy()
 
 
 def _track_session_mount(drive: dict) -> None:
-    if drive not in _session_managed_mounts:
-        _session_managed_mounts.append(drive)
+    with _session_mounts_lock:             # NEU
+        if drive not in _session_managed_mounts:
+            _session_managed_mounts.append(drive)
 
 
 def _untrack_session_mount(drive: dict) -> None:
-    if drive in _session_managed_mounts:
-        _session_managed_mounts.remove(drive)
+    with _session_mounts_lock:             # NEU
+        if drive in _session_managed_mounts:
+            _session_managed_mounts.remove(drive)
 
 
 def _validate_cmd(cmd: str) -> tuple[bool, str, list[str]]:
@@ -51,10 +57,10 @@ def _validate_cmd(cmd: str) -> tuple[bool, str, list[str]]:
         base = os.path.basename(tokens[1])
     if base not in _ALLOWED_MOUNT_CMDS:
         return False, f"'{base}' is not an allowed command", []
-    expanded = [os.path.expanduser(t) for t in tokens]
-    for token in expanded:
-        if ".." in token.split("/"):
-            return False, f"Path traversal detected in token: {token!r}", []
+    expanded = [os.path.expanduser(tok) for tok in tokens]
+    for tok in expanded:
+        if ".." in tok.split("/"):
+            return False, f"Path traversal detected in token: {tok!r}", []
     return True, "", expanded
 
 
@@ -136,12 +142,23 @@ def mount_drive(drive: dict) -> tuple[bool, str]:
     name = drive.get("drive_name", "?")
     success, error_msg = _execute_drive_op(drive, "mount_command", 15)
     if success:
-        time.sleep(0.5)
-        mounted_confirmed = is_mounted(drive)
+        mounted_confirmed = False
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            if is_mounted(drive):
+                mounted_confirmed = True
+                break
+            time.sleep(0.1)
         if not mounted_confirmed:
-            logger.warning("mount_drive: '%s' mount command succeeded but drive not visible after 0.5 s", name)
-        if has_managed_mount_path(drive):
+            if not has_managed_mount_path(drive):
+                msg = f"Mount command succeeded but '{name}' not visible in /proc/mounts after 0.5 s"
+                logger.error("mount_drive: %s", msg)
+                return False, msg
             _track_session_mount(drive)
+            logger.warning("mount_drive: '%s' not confirmed in /proc/mounts (managed mount path)", name)
+        else:
+            if has_managed_mount_path(drive):
+                _track_session_mount(drive)
         logger.info("Mounted '%s' (confirmed=%s)", name, mounted_confirmed)
         return True, ""
     msg = f"Mount failed for '{name}': {error_msg}"

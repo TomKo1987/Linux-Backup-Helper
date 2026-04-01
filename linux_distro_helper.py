@@ -292,8 +292,9 @@ _WM_PROCS: dict[str, str] = {
 def distro_family(distro_id: str) -> str: return _DISTRO_FAMILY_MAP.get(distro_id, distro_id)
 
 
-def _lookup(table: dict, family: str) -> list: return table.get(family) or table.get(None, [])
-
+def _lookup(table: dict, family: str) -> list:
+    result = table.get(family)
+    return result if result is not None else table.get(None, [])
 
 class LinuxDistroHelper:
 
@@ -381,11 +382,12 @@ class LinuxDistroHelper:
 
     def _parallel_check(self, packages: list[str]) -> list[str]:
         workers = min(4, len(packages))
+        adaptive_timeout = max(15, len(packages) * 2)
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-                futs    = {pool.submit(self.package_is_installed, p): p for p in packages}
+                futs = {pool.submit(self.package_is_installed, p): p for p in packages}
                 missing: list[str] = []
-                for fut in concurrent.futures.as_completed(futs, timeout=60):
+                for fut in concurrent.futures.as_completed(futs, timeout=adaptive_timeout):
                     pkg = futs[fut]
                     try:
                         if not fut.result():
@@ -476,22 +478,15 @@ class LinuxDistroHelper:
                 match = _SESSION_LOWER.get(part.strip().lower())
                 if match:
                     return match
-
         try:
-            running_procs: set[str] = set()
             with os.scandir("/proc") as it:
                 for entry in it:
-                    if not entry.name.isdigit():
-                        continue
+                    if not entry.name.isdigit(): continue
                     try:
                         comm = Path(f"/proc/{entry.name}/comm").read_text().strip().lower()
-                        if comm:
-                            running_procs.add(comm)
                     except OSError:
-                        pass
-            for proc_name, session in _WM_PROCS.items():
-                if proc_name in running_procs:
-                    return session
+                        continue
+                    if comm in _WM_PROCS: return _WM_PROCS[comm]
         except Exception as err:
             logger.error("Error detect_session: %s", err)
         return None

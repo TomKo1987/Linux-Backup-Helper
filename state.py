@@ -52,7 +52,8 @@ _tooltip_cache: Optional[tuple[dict, dict, dict]] = None
 
 def invalidate_tooltip_cache() -> None:
     global _tooltip_cache
-    _tooltip_cache = None
+    with _tooltip_lock:
+        _tooltip_cache = None
 
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[mKHJA-Z]")
@@ -104,13 +105,13 @@ def _atomic_write(path: Path, data: dict) -> None:
         raise
 
 
-def _norm_pkgs(raw: list) -> list[dict]:
-    def _normalise(p) -> dict:
-        if isinstance(p, str):
-            return {"name": p, "disabled": False}
-        return {**p, "disabled": p.get("disabled", False)}
+def _normalise_pkg(p) -> dict:
+    if isinstance(p, str):
+        return {"name": p, "disabled": False}
+    return {**p, "disabled": p.get("disabled", False)}
 
-    return sorted((_normalise(p) for p in raw), key=lambda x: x.get("name", x.get("package", "")).lower())
+def _norm_pkgs(raw: list) -> list[dict]:
+    return sorted((_normalise_pkg(p) for p in raw), key=lambda x: x.get("name", x.get("package", "")).lower())
 
 
 def _norm_paths(raw: Any) -> list[str]:
@@ -154,21 +155,33 @@ def load_profile(path: Path) -> bool:
 
 def _load_profile_from_data(path: Path, data: dict) -> bool:
     try:
-        S.profile_name = path.stem
+        new_name = path.stem
 
-        S.headers = {k: {"inactive": bool(v.get("inactive")), "color": v.get("header_color", "#ffffff")
+        new_headers = {k: {"inactive": bool(v.get("inactive")), "color": v.get("header_color", "#ffffff")
         if _valid_hex_color(v.get("header_color")) else "#ffffff"} for k, v in data.get("header", {}).items() if isinstance(v, dict)}
 
-        S.entries = [e for raw in data.get("entries", []) if (e := _parse_entry(raw)) is not None]
+        new_entries      = [e for raw in data.get("entries", []) if (e := _parse_entry(raw)) is not None]
+        new_mount        = [o for o in data.get("mount_options", []) if isinstance(o, dict)]
+        new_sm_ops       = data.get("system_manager_operations", [])
+        new_sys_files    = data.get("system_files", [])
+        new_basic        = _norm_pkgs(data.get("basic_packages", []))
+        new_aur          = _norm_pkgs(data.get("aur_packages", []))
+        new_specific     = data.get("specific_packages", [])
+        new_shell        = data.get("user_shell", "bash")
+        new_ui           = dict(S.ui)
+        new_ui.update(data.get("ui_settings", {}))
 
-        S.mount_options      = [o for o in data.get("mount_options", []) if isinstance(o, dict)]
-        S.system_manager_ops = data.get("system_manager_operations", [])
-        S.system_files       = data.get("system_files", [])
-        S.basic_packages     = _norm_pkgs(data.get("basic_packages", []))
-        S.aur_packages       = _norm_pkgs(data.get("aur_packages", []))
-        S.specific_packages  = data.get("specific_packages", [])
-        S.user_shell         = data.get("user_shell", "bash")
-        S.ui.update(data.get("ui_settings", {}))
+        S.profile_name       = new_name
+        S.headers            = new_headers
+        S.entries            = new_entries
+        S.mount_options      = new_mount
+        S.system_manager_ops = new_sm_ops
+        S.system_files       = new_sys_files
+        S.basic_packages     = new_basic
+        S.aur_packages       = new_aur
+        S.specific_packages  = new_specific
+        S.user_shell         = new_shell
+        S.ui                 = new_ui
 
         invalidate_tooltip_cache()
         logger.info("Loaded profile '%s'", S.profile_name)
@@ -240,6 +253,7 @@ def startup_load() -> bool:
 
 
 _session_lock      = threading.Lock()
+_tooltip_lock      = threading.Lock()
 _cached_session    = ""
 _session_detected  = False
 
@@ -247,7 +261,7 @@ _session_detected  = False
 def _entry_tooltip_html(title, src_lines, dst_lines, bg, bg2, bg3, c_title, c_data, font_sz_fn) -> str:
     s_html, d_html = ("<br/>".join(_html_mod.escape(apply_replacements(str(p))) for p in lines) for lines in (src_lines, dst_lines))
     safe_title = _html_mod.escape(title).replace("&lt;br&gt;", "<br/>")
-    label_style = f"color:{c_title}; font-weight:bold; border:5px solid {c_title}; margin-bottom:5px; display:inline-block;"
+    label_style = f"color:{c_title}; font-weight: bold; border: 5px solid {c_title}; margin-bottom: 5px;"
     cell_padding = "padding:6px;"
 
     return (f"<table style='width: 100%; font-family: monospace; white-space: nowrap; border: 5px solid {bg};'>"
@@ -268,10 +282,15 @@ def _sysfiles_tooltip_html(sys_files, t, font_sz_fn) -> str:
     header = (f"<tr><td colspan='{cols}' style='padding:4px 5px 2px;font-size:{font_sz_fn(-1)}px;"
               f"font-weight:bold;white-space:nowrap;color:{t['accent2']};border-bottom:1px solid {t['header_sep']}'>"
               f"System Files ({len(sys_files)})</td></tr>")
-    cells = [f"<td style='padding:4px 6px;border:1px solid {t['header_sep']};white-space:nowrap;vertical-align:top;'>"
-             f"<span style='color:{t['accent2']};font-weight:bold;'>{_html_mod.escape(Path(f.get('source', '')).name)}</span><br>"
-             f"<span style='font-size:{font_sz_fn(-3)}px;color:{t['success']};'>{_html_mod.escape(apply_replacements(f.get('source', '')))}<br>⤵<br>"
-             f"{_html_mod.escape(apply_replacements(f.get('destination', '')))}</span></td>" for f in sys_files]
+    cells = []
+    for f in sys_files:
+        src = f.get('source', '')
+        dst = f.get('destination', '')
+        cells.append(f"<td style='padding:4px 6px;border:1px solid {t['header_sep']};white-space:nowrap;vertical-align:top;'>"
+                     f"<span style='color:{t['accent2']};font-weight:bold;'>{_html_mod.escape(Path(src).name)}</span><br>"
+                     f"<span style='font-size:{font_sz_fn(-3)}px;color:{t['success']};'>"
+                     f"{_html_mod.escape(apply_replacements(src))}<br>⤵<br>"
+                     f"{_html_mod.escape(apply_replacements(dst))}</span></td>")
 
     rows = [f"<tr style='background-color:{t['bg2'] if (i // cols) % 2 == 0 else t['bg3']};'>{''.join(cells[i:i + cols])}</tr>"
             for i in range(0, len(cells), cols)]
@@ -320,49 +339,63 @@ def generate_tooltip() -> tuple[dict, dict, dict]:
     from themes import current_theme, font_sz
     from linux_distro_helper import LinuxDistroHelper
 
-    if _tooltip_cache is not None:
-        return _tooltip_cache
+    cached = _tooltip_cache
+    if cached is not None:
+        return cached
+
+    with _tooltip_lock:
+        cached = _tooltip_cache
+        if cached is not None:
+            return cached
+
+    _local_session = ""
+    with _session_lock:
+        already_detected = _session_detected
+    if not already_detected:
+        try:
+            _local_session = LinuxDistroHelper.detect_session() or ""
+        except Exception as e:
+            logger.warning("Session detect failed: %s", e)
 
     with _session_lock:
-        if _tooltip_cache is not None:
-            return _tooltip_cache
         if not _session_detected:
-            try:
-                _cached_session = LinuxDistroHelper().detect_session() or ""
-            except Exception as e:
-                logger.warning("Session detect failed: %s", e)
+            _cached_session   = _local_session
             _session_detected = True
-
         session = _cached_session if _cached_session else None
-        t       = current_theme()
 
-        backup_tips = {e["title"]: _entry_tooltip_html(e["title"], e.get("source", []), e.get("destination", []),
-                                                       t["bg"], t["bg2"], t["bg3"], t["accent2"], t["success"], font_sz) for e in S.entries}
+    t = current_theme()
+    backup_tips = {e["title"]: _entry_tooltip_html(e["title"], e.get("source", []), e.get("destination", []),
+                                                   t["bg"], t["bg2"], t["bg3"], t["accent2"], t["success"], font_sz) for e in S.entries}
+    restore_tips = {e["title"]: _entry_tooltip_html(e["title"], e.get("destination", []), e.get("source", []),
+                                                    t["bg"], t["bg2"], t["bg3"], t["accent2"], t["success"], font_sz) for e in S.entries}
+    sm_tips: dict = {}
 
-        restore_tips = {e["title"]: _entry_tooltip_html(e["title"], e.get("destination", []), e.get("source", []),
-                                                        t["bg"], t["bg2"], t["bg3"], t["accent2"], t["success"], font_sz) for e in S.entries}
-        sm_tips: dict = {}
+    active_sys_files = [f for f in (S.system_files or []) if isinstance(f, dict) and not f.get("disabled")]
+    if active_sys_files:
+        sm_tips["copy_system_files"] = _sysfiles_tooltip_html(active_sys_files, t, font_sz)
 
-        active_sys_files = [f for f in (S.system_files or []) if isinstance(f, dict) and not f.get("disabled")]
-        if active_sys_files:
-            sm_tips["copy_system_files"] = _sysfiles_tooltip_html(active_sys_files, t, font_sz)
+    for key, pkgs, label in [("install_basic_packages", S.basic_packages, "Basic Packages"),
+                             ("install_aur_packages", S.aur_packages, "AUR Packages")]:
+        active_names = [_html_mod.escape(p["name"]) for p in pkgs if not p.get("disabled") and "name" in p]
 
-        for key, pkgs, label in [("install_basic_packages", S.basic_packages, "Basic Packages"),
-                                 ("install_aur_packages", S.aur_packages, "AUR Packages")]:
-            active_names = [_html_mod.escape(p["name"]) for p in pkgs if not p.get("disabled") and "name" in p]
-            if active_names:
-                sm_tips[key] = _packages_tooltip_html(label, active_names, t, font_sz)
+        if active_names:
+            sm_tips[key] = _packages_tooltip_html(label, active_names, t, font_sz)
 
-        sp_active = [p for p in S.specific_packages if not p.get("disabled") and (not session or p.get("session") == session)]
-        if sp_active:
-            sm_tips["install_specific_packages"] = _specific_pkgs_tooltip_html(sp_active, session, t, font_sz)
+    sp_active = [p for p in S.specific_packages if not p.get("disabled") and (not session or p.get("session") == session)]
+    if sp_active:
+        sm_tips["install_specific_packages"] = _specific_pkgs_tooltip_html(sp_active, session, t, font_sz)
 
-        if S.user_shell:
-            sm_tips["set_user_shell"] = (f"<table style='white-space:nowrap; font-family:monospace;'>"
-                                         f"<tr><td style='padding:4px 5px 2px;font-size:{font_sz(-1)}px;font-weight:bold;"
-                                         f"color:{t['accent2']};border-bottom:1px solid {t['header_sep']};'>Selected Shell</td></tr>"
-                                         f"<tr style='background-color:{t['bg2']};'><td style='padding:8px 6px;border:1px solid "
-                                         f"{t['header_sep']};color:{t['success']};'>{_html_mod.escape(S.user_shell)}</td></tr></table>")
+    if S.user_shell:
+        sm_tips["set_user_shell"] = (f"<table style='white-space:nowrap; font-family:monospace;'>"
+                                     f"<tr><td style='padding:4px 5px 2px;font-size:{font_sz(-1)}px;font-weight:bold;"
+                                     f"color:{t['accent2']};border-bottom:1px solid {t['header_sep']};'>Selected Shell</td></tr>"
+                                     f"<tr style='background-color:{t['bg2']};'><td style='padding:8px 6px;border:1px solid "
+                                     f"{t['header_sep']};color:{t['success']};'>{_html_mod.escape(S.user_shell)}</td></tr></table>")
 
-        _tooltip_cache = (backup_tips, restore_tips, sm_tips)
-        return _tooltip_cache
+    result = (backup_tips, restore_tips, sm_tips)
+    with _tooltip_lock:
+        if _tooltip_cache is None:
+            _tooltip_cache = result
+        else:
+            result = _tooltip_cache
+    return result

@@ -95,8 +95,8 @@ class _BaseCheckboxWindow(QDialog):
         self._setup_ui()
         register_style_listener(self._refresh_styles)
 
-    @staticmethod
-    def _entry_filter(entry: dict) -> bool: return True
+    def _entry_filter(self, entry: dict) -> bool:
+        return True
 
     def _refresh_styles(self) -> None:
         saved = {id(e): cb.isChecked() for cb, _s, _d, _t, e in self.checkbox_dirs if e is not None}
@@ -211,7 +211,6 @@ class _BaseCheckboxWindow(QDialog):
 
                 cb.setStyleSheet(f"QCheckBox{{color:{cb_color};}}")
                 cb.stateChanged.connect(self._sync_select_all)
-                cb.setProperty("entry_data", e)
 
                 src, dst = self._src_dst(e)
                 self.checkbox_dirs.append((cb, src, dst, title, e))
@@ -245,7 +244,7 @@ class _BaseCheckboxWindow(QDialog):
         S.ui[self._cols_key] = self.cols
         save_profile()
         self.changed.emit()
-        self.done(2)
+        self.done(RESTART_DIALOG)
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -437,7 +436,7 @@ class SettingsWindow(_BaseCheckboxWindow):
             S.entries.append(result)
             save_profile()
             self.changed.emit()
-            self.done(2)
+            self.done(RESTART_DIALOG)
 
     def _edit_entry(self) -> None:
         checked = [(cb, entry) for cb, src, dst, title, entry in self.checkbox_dirs if cb.isChecked()]
@@ -462,7 +461,7 @@ class SettingsWindow(_BaseCheckboxWindow):
         if changed_any:
             save_profile()
             self.changed.emit()
-            self.done(2)
+            self.done(RESTART_DIALOG)
 
     def _del_entry(self) -> None:
         to_delete = [entry for cb, src, dst, title, entry in self.checkbox_dirs if cb.isChecked() and entry is not None]
@@ -473,17 +472,18 @@ class SettingsWindow(_BaseCheckboxWindow):
         names = ", ".join(e["title"].replace("<br>", " ") for e in to_delete)
         if QMessageBox.question(self, "Delete", f"Really delete: {names}?",
                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
-            S.entries = [e for e in S.entries if e not in to_delete]
+            ids_to_delete = {id(e) for e in to_delete}
+            S.entries = [e for e in S.entries if id(e) not in ids_to_delete]
             save_profile()
             self.changed.emit()
-            self.done(2)
+            self.done(RESTART_DIALOG)
 
     def _header_settings(self) -> None:
         dlg = HeaderSettingsDialog(self)
         if dlg.exec() == QDialog.DialogCode.Accepted and dlg.was_changed:
             save_profile()
             self.changed.emit()
-            self.done(2)
+            self.done(RESTART_DIALOG)
 
     def _manage_mounts(self)     -> None: MountsDialog(self).exec()
     def _samba_credentials(self) -> None: SambaPasswordDialog.open(self)
@@ -493,7 +493,7 @@ class SettingsWindow(_BaseCheckboxWindow):
         dlg.exec()
         if dlg.was_changed:
             self.changed.emit()
-            self.done(2)
+            self.done(RESTART_DIALOG)
 
     def _open_sm_options(self) -> None:
         from system_manager_options import SystemManagerOptions
@@ -553,7 +553,7 @@ class _ThemeDialog(QDialog):
         self._apply(save=True)
         msg = f"Theme: {self._theme_cb.currentText()}, Font: {self._font_cb.currentText()} {self._size_cb.currentText()}px"
         QMessageBox.information(self, "Theme Saved", msg)
-        self.changed.emit(2)
+        self.changed.emit(RESTART_DIALOG)
         self.accept()
 
     def _on_cancel(self) -> None:
@@ -563,7 +563,9 @@ class _ThemeDialog(QDialog):
         self.reject()
 
     def keyPressEvent(self, event) -> None:
-        if event.key() != Qt.Key.Key_Escape:
+        if event.key() == Qt.Key.Key_Escape:
+            self._on_cancel()
+        else:
             super().keyPressEvent(event)
 
 

@@ -101,6 +101,7 @@ class _VerifyPasswordDialog(QDialog):
 
         if matched:
             self._stored_pw.clear()
+            self._stored_pw = None
             self.accept()
             return
 
@@ -117,7 +118,9 @@ class _VerifyPasswordDialog(QDialog):
 
     def closeEvent(self, event) -> None:
         self._pw_input.clear()
-        self._stored_pw.clear()
+        if self._stored_pw is not None:
+            self._stored_pw.clear()
+            self._stored_pw = None
         super().closeEvent(event)
 
 
@@ -183,7 +186,7 @@ class SambaPasswordManager:
             logger.info("Retrieved Samba credentials from KWallet")
             secure = SecureString(password)
             del password
-            return username, secure, True
+            return (username or _USER), secure, True
         try:
             stored_user = keyring.get_password(_KEYRING_SERVICE, _KEYRING_USER_KEY) or _USER
             pw = keyring.get_password(_KEYRING_SERVICE, stored_user)
@@ -197,8 +200,7 @@ class SambaPasswordManager:
         return None, None, False
 
     def save_credentials(self, username: str, password: str) -> None:
-        entry  = self._find_kwallet_entry()
-        target = "kwallet" if entry else "keyring"
+        target = "kwallet" if self._find_kwallet_entry() else "keyring"
         self.save_credentials_to(username, password, target)
 
     def save_credentials_to(self, username: str, password: str, target: str) -> None:
@@ -224,7 +226,7 @@ class SambaPasswordManager:
                 pass
             logger.info("Deleted Samba credentials for '%s' from system keyring.", username)
             return True
-        except keyring.errors.PasswordDeleteError:
+        except PasswordDeleteError:
             logger.warning("Credentials for '%s' not found in keyring.", username)
             return False
         except Exception as exc:
@@ -359,7 +361,7 @@ class SambaPasswordDialog(QDialog):
             QMessageBox.warning(self, "Input Error", "Username and password must not be empty.")
             return
 
-        if not hmac.compare_digest(pw_secure.get(), cf_secure.get()):
+        if not hmac.compare_digest(pw_secure.get_bytes(), cf_secure.get_bytes()):
             cf_secure.clear()
             pw_secure.clear()
             QMessageBox.warning(self, "Input Error", "Passwords do not match. Please try again.")
@@ -367,20 +369,22 @@ class SambaPasswordDialog(QDialog):
             return
 
         cf_secure.clear()
-        pw_plain = pw_secure.get()
+        pw_buf = pw_secure.get_bytes()
         pw_secure.clear()
         try:
+            pw_str = pw_buf.decode("utf-8")
             if self._first_setup and self._store_in_kwallet is not None:
                 target = "kwallet" if self._store_in_kwallet.isChecked() else "keyring"
-                self._manager.save_credentials_to(username, pw_plain, target)
+                self._manager.save_credentials_to(username, pw_str, target)
             else:
-                self._manager.save_credentials(username, pw_plain)
+                self._manager.save_credentials(username, pw_str)
             QMessageBox.information(self, "Success", "Samba credentials successfully saved!")
             self.accept()
         except Exception as exc:
             self._error_dialog.showMessage(f"Failed to save credentials:\n{exc}")
         finally:
-            del pw_plain
+            for i in range(len(pw_buf)):
+                pw_buf[i] = 0
 
     def _delete_credentials(self) -> None:
         username = self._username_field.text().strip()

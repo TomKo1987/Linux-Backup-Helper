@@ -142,14 +142,16 @@ def _add_select_all_tri(layout, checkboxes: list[TriCheckBox], cols: int = 1) ->
         layout.addWidget(sa)
 
 
-def _build_op_text(distro: LinuxDistroHelper, session: Optional[str] = None) -> dict[str, str]:
+def _build_op_text(distro: LinuxDistroHelper, session: Optional[str] = None, has_yay: Optional[bool] = None) -> dict[str, str]:
     def pkglist(fn) -> str:
         try:
             pkgs = fn()
             return ", ".join(pkgs) if pkgs else "—"
         except (OSError, AttributeError):
             return "—"
-    has_yay     = distro.has_aur and distro.package_is_installed("yay")
+
+    if has_yay is None:
+        has_yay = distro.has_aur and distro.package_is_installed("yay")
     install_cmd = distro.get_pkg_install_cmd("…")
     if session is None:
         session = distro.detect_session() or "current session"
@@ -299,8 +301,8 @@ class SystemManagerOptions(QDialog):
 
     def _edit_ops(self) -> None:
         arch_only = {"update_mirrors", "install_yay", "install_aur_packages"}
-        op_text   = {k: v.replace("&", "&&").replace("<br>", "\n")
-                     for k, v in _build_op_text(self._distro, self._session).items()}
+        op_text = {k: v.replace("&&", "&")
+                   for k, v in _build_op_text(self._distro, self._session, has_yay=self._yay_installed).items()}
         widgets: list[tuple[QCheckBox, str]] = []
 
         body = QWidget()
@@ -610,8 +612,8 @@ class SystemManagerOptions(QDialog):
             if to_del:
                 names = [(f"{pkg.get('package', '')} [{pkg.get('session', '')}]"
                           if is_specific else pkg.get("name", "")) if isinstance(pkg, dict) else str(pkg) for pkg in to_del]
-                if (QMessageBox.question(
-                        _dlg, "Confirm Delete", f"Delete package(s)?\n\n  • " + "\n  • ".join(names)) != QMessageBox.StandardButton.Yes):
+                if (QMessageBox.question(_dlg, "Confirm Delete", f"Delete package(s)?\n\n  • " + "\n  • ".join(names),
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes):
                     return
             updated = []
             for _cb, pkg in zip(checkboxes, packages):
@@ -811,8 +813,9 @@ class SystemManagerOptions(QDialog):
 
             if is_specific:
                 sess = parts[1] if len(parts) > 1 else (SESSIONS[0] if SESSIONS else "unknown")
+                disabled = len(parts) > 2 and parts[2].strip().lower() == "disabled"  # NEU
                 if (name, sess) not in existing:
-                    current.append({"package": name, "session": sess, "disabled": False})
+                    current.append({"package": name, "session": sess, "disabled": disabled})
                     existing.add((name, sess))
                     added += 1
             else:
@@ -838,8 +841,8 @@ class SystemManagerOptions(QDialog):
         if not path:
             return
         is_specific = pkg_type == "specific_packages"
-        lines = [(f"{p.get('package','')},{p.get('session','')}"
-                  if is_specific else (p.get("name", "") if isinstance(p, dict) else str(p))) for p in packages]
+        lines = [(f"{p.get('package', '')},{p.get('session', '')}" + (",disabled" if p.get("disabled") else ""))
+        if is_specific else (p.get("name", "")) for p in packages]
         try:
             Path(path).write_text("\n".join(entry for entry in lines if entry) + "\n", encoding="utf-8")
             QMessageBox.information(self, "Exported", f"Exported to:\n{path}")
@@ -954,7 +957,7 @@ class SystemManagerLauncher:
                       "<b>Credential cache:</b><br>"
                       "After the single successful authentication <code>sudo</code> stores a credential "
                       "timestamp (in <code>/run/sudo/ts/</code>). A background keepalive thread calls "
-                      "<code>sudo -v</code> every 60 s so the cache never expires during a long session — "
+                      "<code>sudo -v</code> every 4 min so the cache never expires during a long session — "
                       "no further password input or file I/O is ever required.<br><br>"
                       "<b>Cleanup:</b><br>"
                       "When System Manager finishes, <code>sudo -k</code> is called to <b>immediately "

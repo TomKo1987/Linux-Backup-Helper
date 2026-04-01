@@ -1,4 +1,5 @@
 import base64
+import threading as _threading
 from functools import lru_cache
 
 from PyQt6.QtCore import Qt
@@ -130,18 +131,20 @@ DEFAULT_THEME = "Tokyo Night"
 _current_theme_name = DEFAULT_THEME
 
 _style_listeners: list = []
+_style_listeners_lock = _threading.Lock()
 
 
 def register_style_listener(fn) -> None:
-    if fn not in _style_listeners:
-        _style_listeners.append(fn)
-
+    with _style_listeners_lock:
+        if fn not in _style_listeners:
+            _style_listeners.append(fn)
 
 def unregister_style_listener(fn) -> None:
-    try:
-        _style_listeners.remove(fn)
-    except ValueError:
-        pass
+    with _style_listeners_lock:
+        try:
+            _style_listeners.remove(fn)
+        except ValueError:
+            pass
 
 
 def current_theme() -> dict[str, str]:
@@ -184,9 +187,10 @@ def _build_indeterminate_svg(colour: str) -> str:
     return base64.b64encode(svg.encode()).decode()
 
 
-def tri_styles() -> tuple[str, str, str]:
-    t   = current_theme()
-    b64 = _build_indeterminate_svg(t["highlight"])
+@lru_cache(maxsize=16)
+def _tri_styles_cached(theme_name: str, highlight: str) -> tuple[str, str, str]:
+    t   = THEMES.get(theme_name, THEMES[DEFAULT_THEME])
+    b64 = _build_indeterminate_svg(highlight)
 
     ind = ("QCheckBox::indicator{"
            "width:8px;height:8px;border-radius:4px;"
@@ -212,6 +216,11 @@ def tri_styles() -> tuple[str, str, str]:
               f"QCheckBox::indicator:indeterminate{{background:{t['bg3']};border:1px solid {t['red']};}}")
 
     return active, disabled, delete
+
+
+def tri_styles() -> tuple[str, str, str]:
+    t = current_theme()
+    return _tri_styles_cached(_current_theme_name, t["highlight"])
 
 
 def style_label_info(font_size: int = 0) -> str:
@@ -442,6 +451,7 @@ QFrame[frameShape="4"], QFrame[frameShape="5"] {{
 
 
 _style_cache: tuple = ()
+_style_cache_lock = _threading.Lock()
 
 
 def apply_tooltip(widget, text: str) -> None:
@@ -466,14 +476,16 @@ def tri_state_legend_html() -> str:
 
 def get_style() -> str:
     global _style_cache
-    font = S.ui.get("font_family", "") or ""
-    size = _base_font_size()
+    font  = S.ui.get("font_family", "") or ""
+    size  = _base_font_size()
     theme = current_theme()
-    key = (_current_theme_name, font, size)
-    if _style_cache and _style_cache[0] == key:
-        return _style_cache[1]
+    key   = (_current_theme_name, font, size)
+    with _style_cache_lock:
+        if _style_cache and _style_cache[0] == key:
+            return _style_cache[1]
     css = _build_stylesheet(theme, font, size)
-    _style_cache = (key, css)
+    with _style_cache_lock:
+        _style_cache = (key, css)
     return css
 
 
@@ -481,10 +493,19 @@ def apply_style() -> None:
     global _current_theme_name
     _current_theme_name = S.ui.get("theme", DEFAULT_THEME)
     invalidate_tooltip_cache()
+    _tri_styles_cached.cache_clear()
+    try:
+        from copy_worker import _invalidate_copy_worker_caches
+    except ImportError:
+        def _invalidate_copy_worker_caches():
+            pass
+    _invalidate_copy_worker_caches()
     app = QApplication.instance()
     if isinstance(app, QApplication):
         app.setStyleSheet(get_style())
-    for fn in list(_style_listeners):
+    with _style_listeners_lock:
+        listeners = list(_style_listeners)
+    for fn in listeners:
         try:
             fn()
         except Exception as e:

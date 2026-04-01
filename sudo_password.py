@@ -100,6 +100,12 @@ class SecureString:
                 self._buf[i] = 0
             self._buf = bytearray()
 
+    def __del__(self) -> None:
+        try:
+            self.clear()
+        except AttributeError:
+            pass
+
     def __bool__(self) -> bool: return len(self._buf) > 0
 
     def __len__(self) -> int: return len(self._buf)

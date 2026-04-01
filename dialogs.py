@@ -309,8 +309,8 @@ class EntryDialog(QDialog):
             f"(Replace 'user' with your actual username if using full paths)<br></td></tr>"
             f"<tr><td style='white-space:nowrap;padding-right:20px;vertical-align:top;'>Samba Shares:</td>"
             f"    <td>smb://192.168.0.53/share/data/</td></tr>"
-            f"</table><br><br></div>"
-        )
+            f"</table><br><br></div>")
+
         self._src_hint = QLabel(self._src_list)
         self._src_hint.setText(hint_html)
         self._src_hint.setTextFormat(Qt.TextFormat.RichText)
@@ -320,7 +320,6 @@ class EntryDialog(QDialog):
         self._src_hint.setWordWrap(True)
 
         orig_resize = self._src_list.resizeEvent
-
         def _src_resize(ev, _lw=self._src_list, _hl=self._src_hint):
             orig_resize(ev)
             _hl.setGeometry(_lw.rect())
@@ -908,7 +907,6 @@ class ProfilesDialog(QDialog):
         S.aur_packages        = fresh.aur_packages
         S.specific_packages   = fresh.specific_packages
         S.user_shell          = fresh.user_shell
-        S.ui                  = dict(fresh.ui)
         save_profile()
         self.was_changed = True
         self._refresh()
@@ -988,6 +986,9 @@ class ProfilesDialog(QDialog):
                 imported, skipped = [], []
                 for member in members:
                     stem = Path(member.name).stem
+                    if "/" in member.name.lstrip("/").rstrip(Path(member.name).name) or ".." in Path(member.name).parts:
+                        skipped.append(f"{stem}  (rejected: path traversal)")
+                        continue
                     if not _PROFILE_RE.match(stem):
                         skipped.append(f"{stem}  (invalid name)")
                         continue
@@ -1001,8 +1002,20 @@ class ProfilesDialog(QDialog):
                     if overwrite:
                         f = tar.extractfile(member)
                         if f:
-                            dest.write_bytes(f.read())
-                        imported.append(stem)
+                            _MAX = 1 * 1024 * 1024
+                            raw = f.read(_MAX + 1)
+                            if len(raw) > _MAX:
+                                skipped.append(f"{stem}  (file too large, max 1 MiB)")
+                                continue
+                            try:
+                                json.loads(raw)
+                            except json.JSONDecodeError as exc:
+                                skipped.append(f"{stem}  (invalid JSON: {exc})")
+                                continue
+                            dest.write_bytes(raw)
+                            imported.append(stem)
+                        else:
+                            skipped.append(f"{stem}  (extraction failed)")
                     else: skipped.append(f"{stem}  (skipped)")
         except Exception as exc:
             QMessageBox.critical(self, "Import Failed", str(exc))
@@ -1137,19 +1150,24 @@ class SysInfoDialog(_TextViewDialog):
 
     def _run(self) -> None:
         try:
-            r = subprocess.run(["inxi", "-SMCGAz", "--no-host", "--color", "0"],
-                               capture_output=True, text=True, timeout=15,
-                               env={**os.environ, "LANG": "C"}, check=False)
-            self.done_sig.emit(r.stdout.strip() or r.stderr.strip() or "No output received from inxi.")
+            r = subprocess.run(["inxi", "-SMCGAz", "--no-host", "--color", "0"], capture_output=True, text=True,
+                               timeout=15, env={**os.environ, "LANG": "C"}, check=False)
+            result = r.stdout.strip() or r.stderr.strip() or "No output received from inxi."
         except FileNotFoundError:
-            self.done_sig.emit("'inxi' is not installed.\n\n"
-                               "Installation:\n"
-                               "  Arch:     sudo pacman -S inxi\n"
-                               "  Debian:   sudo apt install inxi\n"
-                               "  Fedora:   sudo dnf install inxi\n"
-                               "  openSUSE: sudo zypper install inxi\n")
-        except subprocess.TimeoutExpired: self.done_sig.emit("System information request timed out.")
-        except Exception as exc: self.done_sig.emit(f"An unexpected error occurred: {exc}")
+            result = ("'inxi' is not installed.\n\n"
+                      "Installation:\n"
+                      "  Arch:     sudo pacman -S inxi\n"
+                      "  Debian:   sudo apt install inxi\n"
+                      "  Fedora:   sudo dnf install inxi\n"
+                      "  openSUSE: sudo zypper install inxi\n")
+        except subprocess.TimeoutExpired:
+            result = "System information request timed out."
+        except Exception as exc:
+            result = f"An unexpected error occurred: {exc}"
+        try:
+            self.done_sig.emit(result)
+        except RuntimeError:
+            pass
 
     def closeEvent(self, event) -> None:
         try:
