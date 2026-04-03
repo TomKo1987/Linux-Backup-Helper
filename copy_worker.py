@@ -193,7 +193,12 @@ def _smb_cred_file(user: str, pw: "_SecurePw") -> "tuple[str, str]":
         cred_path = os.path.join(tmp_dir, "cred")
         fd = os.open(cred_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, 'w') as f:
-            f.write(f"username = {user}\n")
+            if "\\" in user:
+                domain, plain_user = user.split("\\", 1)
+                f.write(f"username = {plain_user}\n")
+                f.write(f"domain = {domain}\n")
+            else:
+                f.write(f"username = {user}\n")
             f.write(f"password = {pw.get()}\n")
         return tmp_dir, cred_path
     except Exception as exc:
@@ -1978,7 +1983,10 @@ class _LogWidget(QWidget):
                 sorted_items, sorted_lower = zip(*pairs)
             else:
                 sorted_items, sorted_lower = [], []
-            self._sorted_ready.emit(list(sorted_items), list(sorted_lower))
+            try:
+                self._sorted_ready.emit(list(sorted_items), list(sorted_lower))
+            except RuntimeError:
+                pass
 
         threading.Thread(target=_bg_sort, daemon=True).start()
 
@@ -2157,7 +2165,8 @@ class CopyDialog(QDialog):
     def _fmt_er(p, m) -> str: return f"{apply_replacements(p)} ❌ {m}"
 
     def _on_batch(self, ok, sk, er, done, total) -> None:
-        self._done, self._total = done, total
+        self._done = max(self._done, done)
+        self._total = total
         self.copied  += len(ok)
         self.skipped += len(sk)
         self.errors  += len(er)

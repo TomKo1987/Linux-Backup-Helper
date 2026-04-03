@@ -457,10 +457,8 @@ class SystemManagerThread(QThread):
 
         input_data = None
         if self._pw and isinstance(cmd, list):
-            if cmd[:2] == ["sudo", "-S"] or cmd[:1] == ["yay"]:
+            if cmd[:2] == ["sudo", "-S"]:
                 input_data = _pw_bytes(self._pw)
-                if cmd[:1] == ["yay"] and "--sudoflags=-S" not in cmd:
-                    cmd.append("--sudoflags=-S")
 
         if not stream:
             try:
@@ -476,7 +474,7 @@ class SystemManagerThread(QThread):
 
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd, env=self._env(),
-                                    stdin=subprocess.PIPE if input_data else None)
+                                    stdin=subprocess.PIPE if input_data else subprocess.DEVNULL)
         except Exception as exc:
             if isinstance(input_data, bytearray): _zero(input_data)
             self.outputReceived.emit(f"Command launch error: {exc}", "error")
@@ -774,7 +772,7 @@ class SystemManagerThread(QThread):
         else:
             cmd_str = self.distro.get_update_system_cmd()
             cmd = ["sudo", "sh", "-c", cmd_str] if any(c in cmd_str for c in "&|") else cmd_str
-            ok = (self._exec(cmd, stream=True).returncode == 0)
+            ok = (self._exec(cmd, stream=True, timeout=None).returncode == 0)
         self._emit_result(ok, "System successfully updated", "System update failed")
         return ok
 
@@ -835,8 +833,8 @@ class SystemManagerThread(QThread):
     def _install_specific(self) -> str | bool:
         if not self.distro: return False
         if not (session := self.distro.detect_session()):
-            self.outputReceived.emit("Cannot determine desktop session", "warning")
-            return False
+            self.outputReceived.emit("Cannot determine desktop session — skipping specific packages", "warning")
+            return True
         self.outputReceived.emit(f"Detected session: {session}", "success")
 
         pkgs = [p["package"] for p in (S.specific_packages or []) if isinstance(p, dict) and p.get("session") == session
@@ -893,7 +891,7 @@ class SystemManagerThread(QThread):
         if not cmd:
             self.outputReceived.emit("Orphan removal not supported on this distribution", "info")
             return True
-        raw = self._exec(cmd, timeout=60).stdout.strip()
+        raw = self._exec(cmd, stream=False, timeout=60).stdout.strip()
         pkgs = self.distro.parse_orphan_output(raw) if raw else []
         if not pkgs:
             self.outputReceived.emit("No orphaned packages found", "success")

@@ -1003,8 +1003,9 @@ class ProfilesDialog(QDialog):
                     if overwrite:
                         f = tar.extractfile(member)
                         if f:
-                            _MAX = 1 * 1024 * 1024
-                            raw = f.read(_MAX + 1)
+                            with f:
+                                _MAX = 1 * 1024 * 1024
+                                raw = f.read(_MAX + 1)
                             if len(raw) > _MAX:
                                 skipped.append(f"{stem}  (file too large, max 1 MiB)")
                                 continue

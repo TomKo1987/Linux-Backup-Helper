@@ -95,9 +95,13 @@ class _VerifyPasswordDialog(QDialog):
     def _verify(self) -> None:
         entered = self._pw_input.text()
         self._pw_input.clear()
-
-        matched = hmac.compare_digest(entered.encode('utf-8'), self._stored_pw.get_bytes())
-        del entered
+        temp_buf = self._stored_pw.get_bytes()
+        try:
+            matched = hmac.compare_digest(entered.encode('utf-8'), temp_buf)
+        finally:
+            for i in range(len(temp_buf)):
+                temp_buf[i] = 0
+            del entered
 
         if matched:
             self._stored_pw.clear()
@@ -108,6 +112,7 @@ class _VerifyPasswordDialog(QDialog):
         self._attempts += 1
         if self._attempts >= self._MAX_ATTEMPTS:
             self._stored_pw.clear()
+            self._stored_pw = None
             QMessageBox.critical(self, "Access Denied", "Too many failed attempts.")
             self.reject()
             return

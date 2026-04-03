@@ -560,7 +560,7 @@ class _ThemeDialog(QDialog):
     def _on_cancel(self) -> None:
         orig_theme, orig_font, orig_size = self._orig
         S.ui.update(theme=orig_theme, font_family=orig_font, font_size=orig_size)
-        apply_style()  # ← fehlt
+        apply_style()
         self.reject()
 
     def keyPressEvent(self, event) -> None:

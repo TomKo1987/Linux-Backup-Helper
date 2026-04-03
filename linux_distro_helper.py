@@ -15,13 +15,12 @@ _MIN_PARALLEL = 5
 _DISTROS_ARCH = {"arch", "manjaro", "garuda", "endeavouros", "omarchy", "archman", "rebornos", "cachyos", "artix",
                  "arcolinux", "blendos", "crystal", "archcraft", "archbang", "archlabs"}
 
-_DISTROS_DEBIAN = {"debian", "ubuntu", "pop", "popos", "mint", "linuxmint", "elementary", "lmde", "kali", "parrot",
-                   "zorin", "zorinos", "mxlinux", "mx", "antix", "raspbian", "peppermint", "deepin", "lite", "q4os",
-                   "linuxlite", "tails", "siduction", "sparky", "sparkylinux", "bodhi", "bunsenlabs", "ubuntu-budgie",
-                   "devuan", "refracta", "kubuntu", "xubuntu", "lubuntu", "ubuntu-mate", "pureos"}
+_DISTROS_DEBIAN = {"debian", "ubuntu", "pop", "pop-os", "popos", "mint", "linuxmint", "elementary", "lmde", "kali",
+                   "parrot", "zorin", "zorinos", "mxlinux", "mx", "antix", "raspbian", "peppermint", "deepin", "lite",
+                   "q4os", "linuxlite", "tails", "siduction", "sparky", "sparkylinux", "bodhi", "bunsenlabs", "pureos",
+                   "ubuntu-budgie", "devuan", "refracta", "kubuntu", "xubuntu", "lubuntu", "ubuntu-mate"}
 
-_DISTROS_FEDORA = {"fedora", "rhel", "centos", "rocky", "almalinux", "nobara", "ultramarine", "mageia",
-                   "openmandriva", "pclinuxos"}
+_DISTROS_FEDORA = {"fedora", "rhel", "centos", "rocky", "almalinux", "nobara", "ultramarine", "mageia", "openmandriva"}
 
 _DISTROS_SUSE = {"opensuse", "opensuse-leap", "opensuse-tumbleweed", "opensuse-slowroot", "suse", "sled", "sles"}
 
@@ -319,7 +318,7 @@ class LinuxDistroHelper:
             d_id = os.uname().sysname.lower()
 
         resolved = d_id or "unknown"
-        if distro_family(resolved) == resolved and d_like:
+        if resolved not in _DISTRO_FAMILY_MAP and d_like:
             for candidate in d_like.split():
                 candidate = candidate.strip()
                 if distro_family(candidate) != candidate:
