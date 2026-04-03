@@ -180,7 +180,7 @@ def font_sz(delta: int = 0) -> int:
     return max(9, _base_font_size() + delta)
 
 
-@lru_cache(maxsize=32)
+@lru_cache(maxsize=16)
 def _build_indeterminate_svg(colour: str) -> str:
     svg = (f"<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14'>"
            f"<rect x='3' y='3' width='8' height='8' fill='{colour}' /></svg>")
@@ -476,16 +476,18 @@ def tri_state_legend_html() -> str:
 
 def get_style() -> str:
     global _style_cache
-    font  = S.ui.get("font_family", "") or ""
-    size  = _base_font_size()
-    theme = current_theme()
-    key   = (_current_theme_name, font, size)
+    font = S.ui.get("font_family", "") or ""
+    size = _base_font_size()
+    key  = (_current_theme_name, font, size)
+    cache = _style_cache
+    if cache and cache[0] == key:
+        return cache[1]
+    css = _build_stylesheet(current_theme(), font, size)
     with _style_cache_lock:
-        if _style_cache and _style_cache[0] == key:
-            return _style_cache[1]
-    css = _build_stylesheet(theme, font, size)
-    with _style_cache_lock:
-        _style_cache = (key, css)
+        if not _style_cache or _style_cache[0] != key:
+            _style_cache = (key, css)
+        else:
+            css = _style_cache[1]
     return css
 
 

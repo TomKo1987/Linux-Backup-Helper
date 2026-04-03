@@ -21,22 +21,27 @@ _ALLOWED_MOUNT_CMDS = frozenset({
 })
 
 _session_managed_mounts: list[dict] = []
-_session_mounts_lock = threading.Lock()   # NEU
+_session_mounts_lock = threading.Lock()
+
+_OCTAL_ESCAPE_RE = re.compile(r"\\(\d{3})")
+
+def _decode_octal(s: str) -> str:
+    return _OCTAL_ESCAPE_RE.sub(lambda m: chr(int(m.group(1), 8)), s)
 
 
 def get_session_managed_mounts() -> list[dict]:
-    with _session_mounts_lock:             # NEU
+    with _session_mounts_lock:
         return _session_managed_mounts.copy()
 
 
 def _track_session_mount(drive: dict) -> None:
-    with _session_mounts_lock:             # NEU
+    with _session_mounts_lock:
         if drive not in _session_managed_mounts:
             _session_managed_mounts.append(drive)
 
 
 def _untrack_session_mount(drive: dict) -> None:
-    with _session_mounts_lock:             # NEU
+    with _session_mounts_lock:
         if drive in _session_managed_mounts:
             _session_managed_mounts.remove(drive)
 
@@ -68,10 +73,10 @@ def _valid_drive_name(name: str) -> bool: return bool(name and isinstance(name, 
 
 
 @lru_cache(maxsize=64)
-def _mount_paths(name: str) -> tuple[str, ...]:
+def _mount_paths(name: str, user: str = _USER) -> tuple[str, ...]:
     if not _valid_drive_name(name):
         return ()
-    return f"/run/media/{_USER}/{name}", f"/media/{_USER}/{name}", f"/mnt/{name}"
+    return f"/run/media/{user}/{name}", f"/media/{user}/{name}", f"/mnt/{name}"
 
 
 def _execute_drive_op(drive: dict, cmd_key: str, timeout: int) -> tuple[bool, str]:
@@ -100,8 +105,8 @@ def get_mounts() -> list[tuple[str, str]]:
             for line in fh:
                 parts = line.split()
                 if len(parts) >= 2:
-                    dev = re.sub(r"\\(\d{3})", lambda m: chr(int(m.group(1), 8)), parts[0])
-                    mnt = re.sub(r"\\(\d{3})", lambda m: chr(int(m.group(1), 8)), parts[1])
+                    dev = _decode_octal(parts[0])
+                    mnt = _decode_octal(parts[1])
                     mounts.append((dev, mnt))
     except OSError as e:
         logger.warning("get_mounts: %s", e)
@@ -150,8 +155,10 @@ def mount_drive(drive: dict) -> tuple[bool, str]:
                 break
             time.sleep(0.1)
         if not mounted_confirmed:
+            mounted_confirmed = is_mounted(drive)
+        if not mounted_confirmed:
             if not has_managed_mount_path(drive):
-                msg = f"Mount command succeeded but '{name}' not visible in /proc/mounts after 0.5 s"
+                msg = f"Mount command succeeded but '{name}' not visible in /proc/mounts after 1 s"
                 logger.error("mount_drive: %s", msg)
                 return False, msg
             _track_session_mount(drive)

@@ -345,15 +345,13 @@ class SystemManagerOptions(QDialog):
                 yay_cb.setStyleSheet(style_checkbox_muted() if force else "")
             _sync_sa()
 
-        def _toggle_all(state=None):
-            checked = Qt.CheckState(state if state is not None else 0) != Qt.CheckState.Unchecked
+        def _toggle_all(state: int) -> None:
+            checked = Qt.CheckState(state) != Qt.CheckState.Unchecked
             for _cb, _ in widgets:
+                if not _cb.isEnabled():
+                    continue
                 _cb.blockSignals(True)
-                if checked:
-                    if _cb.isEnabled():
-                        _cb.setChecked(True)
-                else:
-                    _cb.setChecked(False)
+                _cb.setChecked(checked)
                 _cb.blockSignals(False)
             _sync_aur_dep()
 
@@ -566,7 +564,7 @@ class SystemManagerOptions(QDialog):
             self, "Export System Files", str(_HOME / "system_files.txt"), "Text (*.txt);;CSV (*.csv);;All (*)")
         if not path:
             return
-        lines = ["# source,destination"] + [f"{f['source']},{f['destination']}" for f in files]
+        lines = ["# source\tdestination"] + [f"{f['source']}\t{f['destination']}" for f in files]
         try:
             Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
             QMessageBox.information(self, "Exported", f"Exported {len(files)} entry/entries to:\n{path}")

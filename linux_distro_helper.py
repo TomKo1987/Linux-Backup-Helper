@@ -12,20 +12,20 @@ __all__ = ["LinuxDistroHelper", "distro_family", "USER_SHELLS", "SESSIONS"]
 
 _MIN_PARALLEL = 5
 
-_DISTROS_ARCH      = {"arch", "manjaro", "garuda", "endeavouros", "omarchy", "archman", "rebornos", "cachyos", "artix",
-                       "arcolinux", "blendos", "crystal", "archcraft", "archbang", "archlabs"}
+_DISTROS_ARCH = {"arch", "manjaro", "garuda", "endeavouros", "omarchy", "archman", "rebornos", "cachyos", "artix",
+                 "arcolinux", "blendos", "crystal", "archcraft", "archbang", "archlabs"}
 
-_DISTROS_DEBIAN    = {"debian", "ubuntu", "pop", "popos", "mint", "linuxmint", "elementary", "lmde", "kali", "parrot",
-                      "zorin", "zorinos", "mxlinux", "mx", "antix", "raspbian", "peppermint", "deepin", "lite", "q4os",
-                      "linuxlite", "tails", "siduction", "sparky", "sparkylinux", "bodhi", "bunsenlabs", "ubuntu-budgie",
-                      "devuan", "refracta", "kubuntu", "xubuntu", "lubuntu", "ubuntu-mate", "pureos"}
+_DISTROS_DEBIAN = {"debian", "ubuntu", "pop", "popos", "mint", "linuxmint", "elementary", "lmde", "kali", "parrot",
+                   "zorin", "zorinos", "mxlinux", "mx", "antix", "raspbian", "peppermint", "deepin", "lite", "q4os",
+                   "linuxlite", "tails", "siduction", "sparky", "sparkylinux", "bodhi", "bunsenlabs", "ubuntu-budgie",
+                   "devuan", "refracta", "kubuntu", "xubuntu", "lubuntu", "ubuntu-mate", "pureos"}
 
-_DISTROS_FEDORA    = {"fedora", "rhel", "centos", "rocky", "almalinux", "nobara", "ultramarine", "mageia",
-                      "openmandriva", "pclinuxos"}
+_DISTROS_FEDORA = {"fedora", "rhel", "centos", "rocky", "almalinux", "nobara", "ultramarine", "mageia",
+                   "openmandriva", "pclinuxos"}
 
-_DISTROS_SUSE      = {"opensuse", "opensuse-leap", "opensuse-tumbleweed", "opensuse-slowroot", "suse", "sled", "sles"}
+_DISTROS_SUSE = {"opensuse", "opensuse-leap", "opensuse-tumbleweed", "opensuse-slowroot", "suse", "sled", "sles"}
 
-_DISTROS_GENTOO    = {"gentoo", "funtoo", "calculate", "sabayon"}
+_DISTROS_GENTOO = {"gentoo", "funtoo", "calculate", "sabayon"}
 
 _DISTROS_SLACKWARE = {"slackware", "salix", "porteus", "slax"}
 
@@ -364,8 +364,7 @@ class LinuxDistroHelper:
         if not self._valid(pkg):
             return False
         try:
-            r = subprocess.run(self._check_fn(pkg.strip()),
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            r = subprocess.run(self._check_fn(pkg.strip()), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                timeout=10, check=False)
             return r.returncode == 0
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
@@ -383,22 +382,27 @@ class LinuxDistroHelper:
     def _parallel_check(self, packages: list[str]) -> list[str]:
         workers = min(4, len(packages))
         adaptive_timeout = max(15, len(packages) * 2)
+        results: dict[str, bool] = {pkg: False for pkg in packages}
+        done: set[str] = set()
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
                 futs = {pool.submit(self.package_is_installed, p): p for p in packages}
-                missing: list[str] = []
                 for fut in concurrent.futures.as_completed(futs, timeout=adaptive_timeout):
                     pkg = futs[fut]
+                    done.add(pkg)
                     try:
-                        if not fut.result():
-                            missing.append(pkg)
+                        results[pkg] = fut.result()
                     except Exception as exc:
                         logger.warning("parallel check '%s': %s", pkg, exc)
-                        missing.append(pkg)
-                return missing
+        except concurrent.futures.TimeoutError:
+            remaining = [p for p in packages if p not in done]
+            logger.warning("parallel check timed out; %d package(s) checked sequentially", len(remaining))
+            for p in remaining:
+                results[p] = self.package_is_installed(p)
         except Exception as exc:
             logger.error("parallel check failed: %s", exc)
             return [p for p in packages if not self.package_is_installed(p)]
+        return [pkg for pkg in packages if not results[pkg]]
 
     def get_pkg_install_cmd(self, package: str) -> str: return self._install.format(p=package)
     def get_pkg_remove_cmd(self,  package: str) -> str: return self._remove.format(p=package)

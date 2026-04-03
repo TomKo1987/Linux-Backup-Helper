@@ -112,7 +112,7 @@ class _PackageCache:
             if now - self._ts > self._TTL:
                 self._cache.clear()
                 self._ts = now
-            elif len(self._cache) > self._MAX:
+            elif len(self._cache) >= self._MAX:
                 self._cache = dict(list(self._cache.items())[self._MAX // 2:])
             if pkg in self._cache:
                 return self._cache[pkg]
@@ -628,6 +628,8 @@ class SystemManagerThread(QThread):
                     continue
             if all(c.isalnum() or c in "-_.+" for c in n):
                 items.append(n)
+            else:
+                logger.warning("_batch_install: skipping invalid package name %r", n)
 
         if not items:
             self.outputReceived.emit(f"No active {label}s configured", "info")
@@ -912,5 +914,6 @@ class SystemManagerThread(QThread):
             self.outputReceived.emit("Cleaning yay cache", "info")
             yay_ok = (self._exec(["yay", "-Scc", "--noconfirm"], stream=True).returncode == 0)
             self._emit_result(yay_ok, "yay cache successfully cleaned", "yay cache cleaning failed")
-            ok = ok and yay_ok
+            if not yay_ok:
+                logger.warning("_clean_cache: yay cache cleaning failed (non-critical)")
         return ok

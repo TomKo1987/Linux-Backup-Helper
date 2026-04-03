@@ -551,7 +551,8 @@ class _ThemeDialog(QDialog):
 
     def _on_ok(self) -> None:
         self._apply(save=True)
-        msg = f"Theme: {self._theme_cb.currentText()}, Font: {self._font_cb.currentText()} {self._size_cb.currentText()}px"
+        font_display = self._font_cb.currentText()
+        msg = f"Theme: {self._theme_cb.currentText()}, Font: {font_display}, Size: {self._size_cb.currentText()} px"
         QMessageBox.information(self, "Theme Saved", msg)
         self.changed.emit(RESTART_DIALOG)
         self.accept()
@@ -559,7 +560,7 @@ class _ThemeDialog(QDialog):
     def _on_cancel(self) -> None:
         orig_theme, orig_font, orig_size = self._orig
         S.ui.update(theme=orig_theme, font_family=orig_font, font_size=orig_size)
-        apply_style()
+        apply_style()  # ← fehlt
         self.reject()
 
     def keyPressEvent(self, event) -> None:

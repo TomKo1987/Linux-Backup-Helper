@@ -48,6 +48,10 @@ logger = _make_logger("backup_helper")
 _path_replacements: tuple[tuple[str, str], ...] = ((_HOME.as_posix(), "~"), (f"/run/media/{_USER}/", ""))
 
 _tooltip_cache: Optional[tuple[dict, dict, dict]] = None
+_tooltip_lock     = threading.Lock()
+_session_lock     = threading.Lock()
+_cached_session   = ""
+_session_detected = False
 
 
 def invalidate_tooltip_cache() -> None:
@@ -160,16 +164,27 @@ def _load_profile_from_data(path: Path, data: dict) -> bool:
         new_headers = {k: {"inactive": bool(v.get("inactive")), "color": v.get("header_color", "#ffffff")
         if _valid_hex_color(v.get("header_color")) else "#ffffff"} for k, v in data.get("header", {}).items() if isinstance(v, dict)}
 
-        new_entries      = [e for raw in data.get("entries", []) if (e := _parse_entry(raw)) is not None]
-        new_mount        = [o for o in data.get("mount_options", []) if isinstance(o, dict)]
-        new_sm_ops       = data.get("system_manager_operations", [])
-        new_sys_files    = data.get("system_files", [])
-        new_basic        = _norm_pkgs(data.get("basic_packages", []))
-        new_aur          = _norm_pkgs(data.get("aur_packages", []))
-        new_specific     = data.get("specific_packages", [])
-        new_shell        = data.get("user_shell", "bash")
-        new_ui           = dict(S.ui)
-        new_ui.update(data.get("ui_settings", {}))
+        new_entries = [e for raw in data.get("entries", []) if (e := _parse_entry(raw)) is not None]
+        new_mount   = [o for o in data.get("mount_options", []) if isinstance(o, dict)]
+        def _as_list(key: str) -> list:
+            v = data.get(key)
+            return v if isinstance(v, list) else []
+        new_sm_ops    = _as_list("system_manager_operations")
+        new_sys_files = _as_list("system_files")
+        new_basic     = _norm_pkgs(_as_list("basic_packages"))
+        new_aur       = _norm_pkgs(_as_list("aur_packages"))
+        new_specific  = _as_list("specific_packages")
+        raw_shell     = data.get("user_shell", "bash")
+        new_shell     = raw_shell if isinstance(raw_shell, str) and raw_shell.strip() else "bash"
+        new_ui = dict(S.ui)
+        raw_ui = data.get("ui_settings", {})
+        if isinstance(raw_ui, dict):
+            if "font_size" in raw_ui:
+                try:
+                    raw_ui = {**raw_ui, "font_size": max(8, min(48, int(raw_ui["font_size"])))}
+                except (ValueError, TypeError):
+                    raw_ui = {k: v for k, v in raw_ui.items() if k != "font_size"}
+            new_ui.update(raw_ui)
 
         S.profile_name       = new_name
         S.headers            = new_headers
@@ -250,12 +265,6 @@ def startup_load() -> bool:
             return True
         logger.warning("startup_load: default profile '%s' failed to load, trying others", default_path.stem)
     return any(_load_profile_from_data(p, data) for p, data in parsed if p != default_path)
-
-
-_session_lock      = threading.Lock()
-_tooltip_lock      = threading.Lock()
-_cached_session    = ""
-_session_detected  = False
 
 
 def _entry_tooltip_html(title, src_lines, dst_lines, bg, bg2, bg3, c_title, c_data, font_sz_fn) -> str:

@@ -986,7 +986,8 @@ class ProfilesDialog(QDialog):
                 imported, skipped = [], []
                 for member in members:
                     stem = Path(member.name).stem
-                    if "/" in member.name.lstrip("/").rstrip(Path(member.name).name) or ".." in Path(member.name).parts:
+                    p = Path(member.name)
+                    if p.parent != Path(".") or ".." in p.parts:
                         skipped.append(f"{stem}  (rejected: path traversal)")
                         continue
                     if not _PROFILE_RE.match(stem):
@@ -1089,8 +1090,7 @@ class ProfilesDialog(QDialog):
             else:
                 QMessageBox.warning(self, "Export", f"Profile file for '{name}' not found.")
                 return
-        path, _ = QFileDialog.getSaveFileName(self, "Export profile",
-                                              str(_HOME / f"{name}.json"), "JSON (*.json)")
+        path, _ = QFileDialog.getSaveFileName(self, "Export profile", str(_HOME / f"{name}.json"), "JSON (*.json)")
         if path:
             shutil.copy2(src, path)
             QMessageBox.information(self, "Exported", f"Profile '{name}' exported to:\n{path}")

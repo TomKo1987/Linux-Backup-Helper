@@ -215,6 +215,9 @@ def _wipe_smb_cred(tmp_dir: str, path: str) -> None:
             os.fsync(fd)
         finally:
             os.close(fd)
+    except OSError:
+        pass
+    try:
         os.unlink(path)
     except OSError:
         pass
@@ -246,7 +249,7 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
         raise
     except OSError as exc:
         if exc.errno != errno.EXDEV:
-            logger.warning(f"copy_file_range failed: {exc}")
+            logger.warning("copy_file_range failed: %s", exc)
     if rem > 0:
         offset = total - rem
         try:
@@ -261,7 +264,7 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
         except InterruptedError:
             raise
         except OSError as exc:
-            logger.debug(f"sendfile fallback failed or not supported: {exc}")
+            logger.debug("sendfile fallback failed or not supported: %s", exc)
     if rem > 0:
         try:
             os.lseek(rfd, total - rem, os.SEEK_SET)
@@ -601,11 +604,16 @@ class _SmbScanner:
         elif not idx:
             pass
         else:
-            prefix = rpath.rstrip("/") + "/"
+            prefix = rpath.rstrip("/") + "/" if rpath else None
             for path, (sz,) in idx.items():
                 if self._cancel.is_set():
                     break
-                rel = (os.path.relpath(path, rpath) if path.startswith(prefix) else os.path.basename(path))
+                if not rpath:
+                    rel = path
+                elif prefix and path.startswith(prefix):
+                    rel = os.path.relpath(path, rpath)
+                else:
+                    rel = os.path.basename(path)
                 lexp.append(_SmbJob(src_url, str(os.path.join(dst, rel)), "smb_get", host, share, path, sz, title))
         with self._result_lock:
             expanded.extend(lexp)
@@ -1066,15 +1074,16 @@ class CopyWorker(QThread):
                 if local_files:
                     file_q.put(local_files)
                     local_n += len(local_files)
-                    now = time.monotonic()
                     should_emit = False
-                    with pend_lock:
-                        if now - last_emit_t[0] >= _SCAN_EMIT_SECS:
-                            total_found[0] += local_n
-                            cur = total_found[0]
-                            local_n = 0
-                            last_emit_t[0] = now
-                            should_emit = True
+                    if time.monotonic() - last_emit_t[0] >= _SCAN_EMIT_SECS:
+                        with pend_lock:
+                            now = time.monotonic()
+                            if now - last_emit_t[0] >= _SCAN_EMIT_SECS:
+                                total_found[0] += local_n
+                                cur = total_found[0]
+                                local_n = 0
+                                last_emit_t[0] = now
+                                should_emit = True
                     if should_emit:
                         self.scan_progress.emit("Scanning", cur)
 
@@ -1143,7 +1152,8 @@ class CopyWorker(QThread):
                         break
                     continue
 
-                spb = copy_params[1]
+                with copy_params_lock:
+                    spb = copy_params[1]
                 try:
                     with os.scandir(_src) as it:
                         for e in it:
@@ -1175,10 +1185,10 @@ class CopyWorker(QThread):
                 except OSError as exc:
                     logger.warning("scan %s: %s", _src, exc)
 
-                now = time.monotonic()
-                if now - last_emit[0] >= _SCAN_EMIT_SECS:
+                if time.monotonic() - last_emit[0] >= _SCAN_EMIT_SECS:
                     emit_cur = -1
                     with pend_lock:
+                        now = time.monotonic()
                         if now - last_emit[0] >= _SCAN_EMIT_SECS:
                             found[0] += local_n
                             local_n = 0
@@ -1227,7 +1237,8 @@ class CopyWorker(QThread):
                     continue
                 if item is sentinel:
                     break
-                lb = copy_params[0]
+                with copy_params_lock:
+                    lb = copy_params[0]
                 for entry in item:
                     if cancel.is_set():
                         break
