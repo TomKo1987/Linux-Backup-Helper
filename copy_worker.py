@@ -55,13 +55,13 @@ _NATURAL_SORT_RE = re.compile(r"(\d+)")
 
 _SKIP_RE = re.compile(
     r"("
-    r"^\.?lock$|\.lock$|^lockfile$|\.lck$|\.parentlock$|Singleton\w*$|"
-    r"^[Cc]ache.*$|/[Cc]ache/|/Net[Ww]ork\s[Cc]ache/|/startupCache/|/jumpListCache/|"
-    r"\.sqlite-wal$|\.sqlite-shm$|\.journal$|[-_]journal$|\.db-wal$|\.db-shm$|"
-    r"/storage/default/|/idb/|/WebStorage/|Session\sStorage$|Local\sStorage/|leveldb/|\.ldb$|\.log$|"
-    r"^[Tt]emp.*$|\.tmp$|\.bak$|\.baklz4$|recovery\.jsonlz4$|recovery\.baklz4$|sessionstore-backups/|"
-    r"Thumbs\.db$|\.DS_Store$|\.quota$|\.user64$|\.healthcheck$|\.active-update$|"
-    r"GPUCache/|ShaderCache/|blob_storage/"
+    r"^/?\.?lock/?$|\.lock/?$|^/?lockfile/?$|\.lck/?$|\.parentlock/?$|^/?Singleton\w*/?$|"
+    r"^/?cache/?$|^/?Network\sCache/?$|^/?startupCache/?$|^/?jumpListCache/?$|"
+    r"\.sqlite-wal/?$|\.sqlite-shm/?$|\.journal/?$|[-_]journal/?$|\.db-wal/?$|\.db-shm/?$|"
+    r"^/?idb/?$|^/?WebStorage/?$|^/?Session\sStorage/?$|^/?Local\sStorage/?$|^/?leveldb/?$|\.ldb/?$|"
+    r"^/?temp/?$|^/?tmp/?$|\.tmp/?$|\.bak/?$|\.baklz4/?$|^/?recovery\.jsonlz4/?$|^/?recovery\.baklz4/?$|^/?sessionstore-backups/?$|"
+    r"^/?Thumbs\.db/?$|^/?\.DS_Store/?$|^/?\.quota/?$|^/?\.user64/?$|^/?\.healthcheck/?$|^/?\.active-update/?$|"
+    r"^/?GPUCache/?$|^/?ShaderCache/?$|^/?blob_storage/?$"
     r")",
     re.I
 )
@@ -425,8 +425,10 @@ class _SmbClient:
 
     def _spawn(self, argv: list[str], input_data: str, timeout: int, wipe_fn=None) -> "tuple[subprocess.Popen | None, str, str]":
         tid = threading.get_ident()
+        env = dict(os.environ, LC_ALL="C", LANG="C")
         try:
-            proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
+            proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    text=True, encoding="utf-8", env=env)
             with _smb_procs_lock:
                 _smb_procs[tid] = proc
             try:
@@ -1063,16 +1065,18 @@ class CopyWorker(QThread):
                             if cancel.is_set():
                                 break
                             if e.is_dir(follow_symlinks=False):
-                                _enqueue((e.path, os.path.join(_dst, e.name), _title))
+                                if not _SKIP_RE.search("/" + e.name + "/"):
+                                    _enqueue((e.path, os.path.join(_dst, e.name), _title))
                             elif e.is_file(follow_symlinks=False) and not _SKIP_RE.search(e.name):
                                 try:
                                     st = e.stat(follow_symlinks=False)
                                 except OSError:
                                     st = None
                                 local_files.append((e.path, os.path.join(_dst, e.name), _title, st))
-                except (PermissionError, FileNotFoundError, NotADirectoryError):
-                    if not _SKIP_RE.search(os.path.basename(_src)):
-                        local_files.append((_src, _dst, _title, None))
+                except NotADirectoryError:
+                    local_files.append((_src, _dst, _title, None))
+                except (PermissionError, FileNotFoundError):
+                    pass
                 except OSError as exc:
                     logger.warning("scan %s: %s", _src, exc)
 
@@ -1165,7 +1169,8 @@ class CopyWorker(QThread):
                             if cancel.is_set():
                                 break
                             if e.is_dir(follow_symlinks=False):
-                                _eq((e.path, os.path.join(_dst, e.name), _title))
+                                if not _SKIP_RE.search("/" + e.name + "/"):
+                                    _eq((e.path, os.path.join(_dst, e.name), _title))
                             elif e.is_file(follow_symlinks=False) and not _SKIP_RE.search(e.name):
                                 try:
                                     entry_stat = e.stat(follow_symlinks=False)
@@ -1183,10 +1188,11 @@ class CopyWorker(QThread):
                                             pass
                                     else:
                                         batch = []
-                except (PermissionError, FileNotFoundError, NotADirectoryError):
-                    if not _SKIP_RE.search(os.path.basename(_src)):
-                        batch.append((_src, _dst, _title, None))
-                        local_n += 1
+                except NotADirectoryError:
+                    batch.append((_src, _dst, _title, None))
+                    local_n += 1
+                except (PermissionError, FileNotFoundError):
+                    pass
                 except OSError as exc:
                     logger.warning("scan %s: %s", _src, exc)
 
