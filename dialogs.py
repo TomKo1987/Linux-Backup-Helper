@@ -702,8 +702,7 @@ class MountsDialog(_ListDialog):
         if QMessageBox.question(
             self, "Remove Drive",
             f"Really remove '{name}' from mount options?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        ) != QMessageBox.StandardButton.Yes:
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
         S.mount_options = [o for o in S.mount_options if o is not opt]
         save_profile()
@@ -907,7 +906,9 @@ class ProfilesDialog(QDialog):
         S.aur_packages        = fresh.aur_packages
         S.specific_packages   = fresh.specific_packages
         S.user_shell          = fresh.user_shell
-        save_profile()
+        if not save_profile():
+            QMessageBox.critical(self, "Fehler", f"Profil '{name}' konnte nicht gespeichert werden.")
+            return
         self.was_changed = True
         self._refresh()
         QMessageBox.information(self, "Profile Created", f"Blank profile '{name}' created and is now active.\n\n"
@@ -1112,7 +1113,10 @@ class LogViewer(_TextViewDialog):
         tl.addStretch(1)
         tl.addWidget(QLabel(apply_replacements(str(_LOG_FILE))))
         layout = self.layout()
-        if isinstance(layout, QVBoxLayout): layout.insertWidget(0, top)
+        if isinstance(layout, QVBoxLayout):
+            layout.insertWidget(0, top)
+        else:
+            logger.error("LogViewer: Unerwarteter Layout-Typ %s", type(layout))
         self._load()
 
     def _load(self) -> None:

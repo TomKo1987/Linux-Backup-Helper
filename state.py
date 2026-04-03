@@ -356,6 +356,7 @@ def generate_tooltip() -> tuple[dict, dict, dict]:
         cached = _tooltip_cache
         if cached is not None:
             return cached
+        _generation_at_start = id(_tooltip_cache)
 
     _local_session = ""
     with _session_lock:

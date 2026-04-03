@@ -61,7 +61,7 @@ _SKIP_RE = re.compile(
     r"^/?idb/?$|^/?WebStorage/?$|^/?Session\sStorage/?$|^/?Local\sStorage/?$|^/?leveldb/?$|\.ldb/?$|"
     r"^/?temp/?$|^/?tmp/?$|\.tmp/?$|\.bak/?$|\.baklz4/?$|^/?recovery\.jsonlz4/?$|^/?recovery\.baklz4/?$|^/?sessionstore-backups/?$|"
     r"^/?Thumbs\.db/?$|^/?\.DS_Store/?$|^/?\.quota/?$|^/?\.user64/?$|^/?\.healthcheck/?$|^/?\.active-update/?$|"
-    r"^/?GPUCache/?$|^/?ShaderCache/?$|^/?blob_storage/?$"
+    r"^/?GPUCache/?$|^/?ShaderCache/?$|^/?blob_storage/?$|^/?prefs\.js/?$"
     r")",
     re.I
 )
@@ -324,9 +324,11 @@ def _copy_file(src: str, dst: str, cancel: threading.Event, src_st: "os.stat_res
         copied = _copy_loop(rfd, wfd, st.st_size, cancel)
         if copied < st.st_size:
             raise OSError(f"Incomplete copy: {copied}/{st.st_size} bytes written")
-        os.fdatasync(wfd)
-        os.close(wfd)
-        wfd = None
+        try:
+            os.fdatasync(wfd)
+        finally:
+            os.close(wfd)
+            wfd = None
 
         try:
             os.posix_fadvise(rfd, 0, st.st_size, os.POSIX_FADV_DONTNEED)
@@ -609,7 +611,8 @@ class _SmbScanner:
         if idx is None:
             lerr.append((src_url, "NT_STATUS_HOST_UNREACHABLE"))
         elif not idx:
-            pass
+            if rpath:
+                logger.warning("SMB ls_index returned empty for %s — possible permission error or empty directory", src_url)
         else:
             prefix = rpath.rstrip("/") + "/" if rpath else None
             for path, (sz,) in idx.items():
@@ -1084,6 +1087,7 @@ class CopyWorker(QThread):
                     file_q.put(local_files)
                     local_n += len(local_files)
                     should_emit = False
+                    cur = 0
                     if time.monotonic() - last_emit_t[0] >= _SCAN_EMIT_SECS:
                         with pend_lock:
                             now = time.monotonic()

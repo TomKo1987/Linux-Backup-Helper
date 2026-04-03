@@ -32,7 +32,7 @@ def _copy_logic_tooltip() -> str:
         "Port must be open (default Port = 445).<br><br>"
         "<b>Always Skipped (Exact Name Matches):</b><br>"
         "- <b>Locks &amp; Handles:</b> <code>.lock</code>, <code>.lck</code>, <code>.parentlock</code>, <code>Singleton</code><br>"
-        "- <b>Browser Trash:</b> <code>Cache/</code>, <code>GPUCache/</code>, <code>ShaderCache/</code>, <code>blob_storage/</code><br>"
+        "- <b>Browser Trash &amp; Config:</b> <code>Cache/</code>, <code>GPUCache/</code>, <code>ShaderCache/</code>, <code>blob_storage/</code>, <code>prefs.js</code><br>"
         "- <b>Active DB States:</b> <code>.sqlite-wal/-shm</code>, <code>.db-wal/-shm</code>, <code>journal</code>, <code>.ldb</code><br>"
         "- <b>Web Storage:</b> <code>idb/</code> (IndexedDB), <code>Session Storage</code>, <code>Local Storage</code>, <code>leveldb/</code><br>"
         "- <b>System &amp; Temp:</b> <code>Thumbs.db</code>, <code>.DS_Store</code>, <code>temp</code>, <code>tmp</code>, <code>.bak</code>, <code>.tmp</code><br>"

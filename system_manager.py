@@ -62,8 +62,8 @@ class _Style:
         color = current_theme().get(ck, current_theme()["text"])
         return f"font-family:{font};font-size:{size}px;color:{color};padding:5px;line-height:{lh};word-break:break-word;"
 
-    @classmethod
-    def border_style(cls) -> str:
+    @staticmethod
+    def border_style() -> str:
         p = current_theme()["accent"]
         return (f"border-radius:8px;border-right:1px solid {p};border-top:1px solid {p};"
                 f"border-bottom:1px solid {p};border-left:4px solid {p};")
@@ -377,9 +377,16 @@ class SystemManagerThread(QThread):
             self._keepalive.start()
             if not self.terminated: self._run_all_tasks()
         except Exception as exc:
-            self.outputReceived.emit(f"Critical error: {exc}", "error")
+            try:
+                self.outputReceived.emit(f"Critical error: {exc}", "error")
+            except RuntimeError:
+                logger.error("SystemManagerThread: dialog gone during error emit: %s", exc)
         finally:
-            self._cleanup(); self.outputReceived.emit("", "finish")
+            self._cleanup()
+            try:
+                self.outputReceived.emit("", "finish")
+            except RuntimeError:
+                pass
 
     def _cleanup(self) -> None:
         self._stop_keepalive.set()
@@ -576,10 +583,15 @@ class SystemManagerThread(QThread):
         finally:
             _zero(pw_buf)
             if proc and proc.returncode is None:
-                try: proc.kill()
-                except OSError: pass
-            self.outputReceived.emit("Sudo access successfully verified" if ok else "Authentication failed: Invalid Password",
-                                     "success" if ok else "error")
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+            try:
+                self.outputReceived.emit("Sudo access successfully verified" if ok else "Authentication failed: Invalid Password",
+                                         "success" if ok else "error")
+            except RuntimeError:
+                pass
         return ok
 
     def _install_pkg(self, name: str, label: str = "Package") -> bool:

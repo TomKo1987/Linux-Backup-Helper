@@ -378,11 +378,14 @@ class SambaPasswordDialog(QDialog):
         pw_secure.clear()
         try:
             pw_str = pw_buf.decode("utf-8")
-            if self._first_setup and self._store_in_kwallet is not None:
-                target = "kwallet" if self._store_in_kwallet.isChecked() else "keyring"
-                self._manager.save_credentials_to(username, pw_str, target)
-            else:
-                self._manager.save_credentials(username, pw_str)
+            try:
+                if self._first_setup and self._store_in_kwallet is not None:
+                    target = "kwallet" if self._store_in_kwallet.isChecked() else "keyring"
+                    self._manager.save_credentials_to(username, pw_str, target)
+                else:
+                    self._manager.save_credentials(username, pw_str)
+            finally:
+                del pw_str
             QMessageBox.information(self, "Success", "Samba credentials successfully saved!")
             self.accept()
         except Exception as exc:

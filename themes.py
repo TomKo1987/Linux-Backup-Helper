@@ -501,6 +501,11 @@ def apply_style() -> None:
     except ImportError:
         def _invalidate_copy_worker_caches():
             pass
+    except Exception as e:
+        logger.warning("apply_style: copy_worker not available: %s", e)
+
+        def _invalidate_copy_worker_caches():
+            pass
     _invalidate_copy_worker_caches()
     app = QApplication.instance()
     if isinstance(app, QApplication):

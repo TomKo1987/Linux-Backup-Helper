@@ -817,8 +817,9 @@ class SystemManagerOptions(QDialog):
                     existing.add((name, sess))
                     added += 1
             else:
+                disabled = len(parts) > 1 and parts[1].strip().lower() == "disabled"
                 if name not in existing:
-                    current.append({"name": name, "disabled": False})
+                    current.append({"name": name, "disabled": disabled})
                     existing.add(name)
                     added += 1
 
@@ -839,8 +840,10 @@ class SystemManagerOptions(QDialog):
         if not path:
             return
         is_specific = pkg_type == "specific_packages"
-        lines = [(f"{p.get('package', '')},{p.get('session', '')}" + (",disabled" if p.get("disabled") else ""))
-        if is_specific else (p.get("name", "")) for p in packages]
+        lines = [(f"{p.get('package', '')},{p.get('session', '')}" + (",disabled"
+                                                                      if p.get("disabled") else ""))
+                 if is_specific else (p.get("name", "") + (",disabled" if p.get("disabled") else ""))
+                 for p in packages if isinstance(p, dict)]
         try:
             Path(path).write_text("\n".join(entry for entry in lines if entry) + "\n", encoding="utf-8")
             QMessageBox.information(self, "Exported", f"Exported to:\n{path}")
@@ -1002,7 +1005,7 @@ class SystemManagerLauncher:
         t.taskStatusChanged.connect(d.on_task_status)
         t.passwordFailed.connect(lambda: self._on_fail(t, d))
         t.passwordSuccess.connect(self._on_ok)
-        t.finished.connect(d.mark_done)
+        t.finished.connect(lambda: d.mark_done())
         d.cancelRequested.connect(lambda: setattr(t, "terminated", True))
         t.start()
 

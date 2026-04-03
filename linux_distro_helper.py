@@ -316,6 +316,8 @@ class LinuxDistroHelper:
         except Exception as exc:
             logger.error("/etc/os-release: %s", exc)
             d_id = os.uname().sysname.lower()
+            d_name = d_id
+            d_pretty = d_id
 
         resolved = d_id or "unknown"
         if resolved not in _DISTRO_FAMILY_MAP and d_like:
