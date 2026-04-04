@@ -123,6 +123,7 @@ class MainWindow(QMainWindow):
             if info_only:
                 lines += ["", "These drives have no unmount command and will be left mounted:"]
                 lines += [f"  • {_drive_name(o)}" for o in info_only]
+                lines += [f"  • {_drive_name(o)}" for o in info_only]
             msg = "The following drives are still mounted:\n\n" + "\n".join(lines) + "\n\nUnmount before quitting?\n"
             ans = QMessageBox.question(self, "Quit — Drives Still Mounted", msg, QMessageBox.StandardButton.Yes |
                                        QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel)
