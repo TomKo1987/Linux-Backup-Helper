@@ -57,14 +57,13 @@ class SudoPasswordDialog(QDialog):
         self._pw_input.setFocus()
 
     def _on_authenticate(self) -> None:
-        raw_password = self._pw_input.text()
-        if not raw_password.strip():
+        secure_pw = SecureString(self._pw_input.text())
+        self._pw_input.clear()
+        if not secure_pw:
+            secure_pw.clear()
             QMessageBox.warning(self, "Empty Password", "Please enter your sudo password or click Close.")
             self._pw_input.setFocus()
             return
-
-        secure_pw = SecureString(raw_password)
-        self._pw_input.clear()
         self.sudo_password_entered.emit(secure_pw)
         self.accept()
 

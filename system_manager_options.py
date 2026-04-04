@@ -170,7 +170,7 @@ def _build_op_text(distro: LinuxDistroHelper, session: Optional[str] = None, has
         "enable_flatpak_integration": f"Enable Flatpak integration (Install '{pkglist(distro.get_flatpak_packages)}' and add Flathub remote)",
         "enable_printer_support": f"Initialise printer support<br>(Install '{pkglist(distro.get_printer_packages)}'. Enable & start 'cups.service')",
         "enable_ssh_service": f"Initialise SSH server (Install '{pkglist(distro.get_ssh_packages)}'. Enable & start '{distro.get_ssh_service_name()}.service')",
-        "enable_samba_network_filesharing": f"Initialise Samba (network file-sharing). (Install '{pkglist(distro.get_samba_packages)}'. Enable & start 'smb.service')",
+        "enable_samba_network_filesharing": f"Initialise Samba (network file-sharing). (Install '{pkglist(distro.get_samba_packages)}'. Enable & start '{distro.get_samba_service_name()}.service')",
         "enable_bluetooth_service": f"Initialise Bluetooth (Install '{pkglist(distro.get_bluetooth_packages)}'. Enable & start 'bluetooth.service')",
         "enable_atd_service": f"Initialise atd (Install '{pkglist(distro.get_at_packages)}'. Enable & start 'atd.service')",
         "enable_cronie_service": f"Initialise {cron_svc} (Install '{pkglist(distro.get_cron_packages)}'. Enable & start '{cron_svc}.service')",
@@ -353,6 +353,10 @@ class SystemManagerOptions(QDialog):
                 _cb.blockSignals(True)
                 _cb.setChecked(checked)
                 _cb.blockSignals(False)
+            if yay_cb is not None and self._distro.supports_aur():
+                yay_cb.blockSignals(True)
+                yay_cb.setChecked(checked)
+                yay_cb.blockSignals(False)
             _sync_aur_dep()
 
         sa.stateChanged.connect(_toggle_all)
@@ -361,7 +365,7 @@ class SystemManagerOptions(QDialog):
         _sync_aur_dep()
 
         def _save(dlg):
-            S.system_manager_ops = [k for cb_, k in widgets if cb_.isChecked()]
+            S.system_manager_ops = [k for cb_, k in widgets if cb_.isEnabled() and cb_.isChecked()]
             save_profile()
             QMessageBox.information(self, "Saved", "Operations saved.")
             dlg.accept()
@@ -949,10 +953,9 @@ class SystemManagerLauncher:
                       "<b>kernel pipe buffer</b> (stdin of <code>sudo -S</code>) and then "
                       "<b>zeroed byte-by-byte inside that thread</b>, immediately after the pipe is flushed. "
                       "The password never touches a file, an environment variable, or a command-line argument.<br><br>"
-                      "Simple status checks (e.g. <code>systemctl is-active</code>) that may also "
-                      "require sudo use <code>subprocess.run</code> with a transient <code>bytes</code> "
-                      "object — it cannot be actively zeroed, but exists only for the duration of the "
-                      "blocking call and is then garbage-collected.<br><br>"
+                       "Simple status checks … use <code>subprocess.run</code> — the original <code>bytearray</code> "
+                      "is zeroed immediately after the call. The subprocess-internal pipe buffer copy cannot be "
+                      "actively zeroed, but exists only for the duration of the blocking call.<br><br>"
                       "The original <code>SecureString</code> buffer is zeroed in the <code>finally</code> "
                       "block of the worker thread once all tasks are complete.<br><br>"
                       "<b>Credential cache:</b><br>"

@@ -25,6 +25,11 @@ _session_mounts_lock = threading.Lock()
 
 _OCTAL_ESCAPE_RE = re.compile(r"\\(\d{3})")
 
+
+def invalidate_mount_cache() -> None:
+    _mount_paths.cache_clear()
+
+
 def _decode_octal(s: str) -> str:
     return _OCTAL_ESCAPE_RE.sub(lambda m: chr(int(m.group(1), 8)), s)
 

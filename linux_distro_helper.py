@@ -295,6 +295,7 @@ def _lookup(table: dict, family: str) -> list:
     result = table.get(family)
     return result if result is not None else table.get(None, [])
 
+
 class LinuxDistroHelper:
 
     def __init__(self) -> None:
@@ -323,7 +324,7 @@ class LinuxDistroHelper:
         if resolved not in _DISTRO_FAMILY_MAP and d_like:
             for candidate in d_like.split():
                 candidate = candidate.strip()
-                if distro_family(candidate) != candidate:
+                if candidate in _DISTRO_FAMILY_MAP:
                     logger.debug("distro '%s' unknown; resolved via ID_LIKE '%s'", d_id, candidate)
                     resolved = candidate
                     break
@@ -525,5 +526,5 @@ class LinuxDistroHelper:
     @staticmethod
     def get_snap_packages()     -> list: return ["snapd"]
     @staticmethod
-    def flatpak_add_flathub()   -> str:
-        return "flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo"
+    def flatpak_add_flathub() -> str:
+        return "sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo"

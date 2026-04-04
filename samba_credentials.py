@@ -12,7 +12,6 @@ from PyQt6.QtWidgets import (
     QCheckBox, QDialog, QErrorMessage, QHBoxLayout, QLabel,
     QLineEdit, QMessageBox, QPushButton, QVBoxLayout,
 )
-from keyring.backends import SecretService
 from keyring.errors import PasswordDeleteError, KeyringError
 
 from state import logger, _USER
@@ -43,6 +42,7 @@ def _init_keyring() -> None:
         if _keyring_ready:
             return
         try:
+            from keyring.backends import SecretService
             keyring.set_keyring(SecretService.Keyring())
         except Exception as exc:
             logger.debug("Could not set SecretService keyring backend: %s", exc)
@@ -57,7 +57,7 @@ class _VerifyPasswordDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Samba — Verify Password")
         self.setMinimumWidth(550)
-        self._stored_pw = stored_pw
+        self._stored_pw: Optional[SecureString] = stored_pw
         self._attempts  = 0
 
         t      = current_theme()
@@ -93,15 +93,18 @@ class _VerifyPasswordDialog(QDialog):
         self._pw_input.setFocus()
 
     def _verify(self) -> None:
-        entered = self._pw_input.text()
+        entered_secure = SecureString(self._pw_input.text())
         self._pw_input.clear()
         temp_buf = self._stored_pw.get_bytes()
+        entered_buf = entered_secure.get_bytes()
         try:
-            matched = hmac.compare_digest(entered.encode('utf-8'), temp_buf)
+            matched = hmac.compare_digest(entered_buf, temp_buf)
         finally:
+            for i in range(len(entered_buf)):
+                entered_buf[i] = 0
             for i in range(len(temp_buf)):
                 temp_buf[i] = 0
-            del entered
+            entered_secure.clear()
 
         if matched:
             self._stored_pw.clear()

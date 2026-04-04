@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QObject, QEvent
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QTextCursor
 from PyQt6.QtWidgets import (
     QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QWidget, QVBoxLayout,
@@ -35,10 +35,8 @@ def _sep() -> QWidget:
 def _hdr_label(text: str, color: str = "", size: int | None = None) -> QLabel:
     lbl = QLabel(text)
     sz  = size if size is not None else font_sz(3)
-    lbl.setStyleSheet(
-        f"font-size:{sz}px;font-weight:bold;"
-        f"color:{color or current_theme()['accent']};padding:4px 0;"
-    )
+    lbl.setStyleSheet(f"font-size:{sz}px;font-weight:bold;"
+                      f"color:{color or current_theme()['accent']};padding:4px 0;")
     lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
     return lbl
 
@@ -188,12 +186,22 @@ class _TextViewDialog(QDialog):
         layout.addWidget(bot)
 
 
+class _HintResizer(QObject):
+    def __init__(self, watched, hint_label):
+        super().__init__(watched)
+        self._hint = hint_label
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.Resize:
+            self._hint.setGeometry(obj.rect())
+        return False
+
+
 # noinspection PyUnresolvedReferences
 class EntryDialog(QDialog):
     _COL_CLEAR = QColor(0, 0, 0, 0)
 
-    def __init__(self, parent, entry: Optional[dict], *, stacked: bool = False,
-                 _pairs: Optional[list[list[str]]] = None):
+    def __init__(self, parent, entry: Optional[dict], *, stacked: bool = False, _pairs: Optional[list[list[str]]] = None):
         super().__init__(parent)
         self.result: dict           = {}
         self.pairs: list[list[str]] = list(_pairs) if _pairs is not None else []
@@ -319,12 +327,8 @@ class EntryDialog(QDialog):
         self._src_hint.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._src_hint.setWordWrap(True)
 
-        orig_resize = self._src_list.resizeEvent
-        def _src_resize(ev, _lw=self._src_list, _hl=self._src_hint):
-            orig_resize(ev)
-            _hl.setGeometry(_lw.rect())
-
-        self._src_list.resizeEvent = _src_resize
+        self._hint_resizer = _HintResizer(self._src_list, self._src_hint)
+        self._src_list.installEventFilter(self._hint_resizer)
         self._populate_lists()
 
         self._src_list.currentRowChanged.connect(lambda r: self._on_selection(self._src_list, self._dst_list, r))
@@ -833,7 +837,7 @@ class ProfilesDialog(QDialog):
         self.item_list = QListWidget()
         self.item_list.itemDoubleClicked.connect(self._load)
         layout.addWidget(self.item_list, 1)
-        layout.addLayout(_btn_row([("▶ Load", self._load), ("🆕 New",      self._new),
+        layout.addLayout(_btn_row([("▶ Load", self._load), ("🆕 New", self._new),
                                    ("⎘ Duplicate", self._copy), ("✕ Delete", self._del)]))
         layout.addLayout(_btn_row([("⬆ Import", self._import), ("⬇ Export", self._export)]))
         layout.addWidget(_sep())
@@ -896,6 +900,15 @@ class ProfilesDialog(QDialog):
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
         fresh = State()
+        old_name = S.profile_name
+        if old_name:
+            old_path = _PROFILES_DIR / f"{old_name}.json"
+            try:
+                data = json.loads(old_path.read_text(encoding="utf-8"))
+                if data.pop("is_default", None):
+                    _atomic_write(old_path, data)
+            except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
+                logger.warning("_new: could not clear is_default from '%s': %s", old_path.name, exc)
         S.profile_name        = name
         S.entries             = fresh.entries
         S.headers             = fresh.headers
@@ -907,7 +920,7 @@ class ProfilesDialog(QDialog):
         S.specific_packages   = fresh.specific_packages
         S.user_shell          = fresh.user_shell
         if not save_profile():
-            QMessageBox.critical(self, "Fehler", f"Profil '{name}' konnte nicht gespeichert werden.")
+            QMessageBox.critical(self, "Error", f"Could not save profile '{name}'.")
             return
         self.was_changed = True
         self._refresh()
@@ -954,9 +967,8 @@ class ProfilesDialog(QDialog):
             except Exception as exc: QMessageBox.critical(self, "Error", f"Could not delete profile: {exc}")
 
     def _import(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Import profile(s)", str(_HOME),
-            "Profile files (*.json *.tar.gz *.tgz);;JSON (*.json);;Archive (*.tar.gz *.tgz)")
+        path, _ = QFileDialog.getOpenFileName(self, "Import profile(s)", str(_HOME),
+                                              "Profile files (*.json *.tar.gz *.tgz);;JSON (*.json);;Archive (*.tar.gz *.tgz)")
         if not path: return
         _PROFILES_DIR.mkdir(parents=True, exist_ok=True)
         if path.endswith((".tar.gz", ".tgz")):
@@ -965,9 +977,8 @@ class ProfilesDialog(QDialog):
         name = _ask_profile_name("Import Profile", Path(path).stem, self)
         if not name: return
         dest = _PROFILES_DIR / f"{name}.json"
-        if dest.exists() and QMessageBox.question(
-                self, "Overwrite?", f"Profile '{name}' already exists. Overwrite it?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+        if dest.exists() and QMessageBox.question(self, "Overwrite?", f"Profile '{name}' already exists. Overwrite it?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
         shutil.copy2(path, dest)
         self._refresh()
@@ -988,11 +999,14 @@ class ProfilesDialog(QDialog):
                 for member in members:
                     stem = Path(member.name).stem
                     p = Path(member.name)
-                    if p.parent != Path(".") or ".." in p.parts:
-                        skipped.append(f"{stem}  (rejected: path traversal)")
+                    if ".." in p.parts:
+                        skipped.append(f"{stem} (rejected: path traversal)")
+                        continue
+                    if p.parent != Path("."):
+                        skipped.append(f"{stem} (skipped: file is in a subdirectory)")
                         continue
                     if not _PROFILE_RE.match(stem):
-                        skipped.append(f"{stem}  (invalid name)")
+                        skipped.append(f"{stem} (invalid name)")
                         continue
                     dest      = _PROFILES_DIR / f"{stem}.json"
                     overwrite = True
@@ -1008,18 +1022,18 @@ class ProfilesDialog(QDialog):
                                 _MAX = 1 * 1024 * 1024
                                 raw = f.read(_MAX + 1)
                             if len(raw) > _MAX:
-                                skipped.append(f"{stem}  (file too large, max 1 MiB)")
+                                skipped.append(f"{stem} (file too large, max 1 MiB)")
                                 continue
                             try:
                                 json.loads(raw)
                             except json.JSONDecodeError as exc:
-                                skipped.append(f"{stem}  (invalid JSON: {exc})")
+                                skipped.append(f"{stem} (invalid JSON: {exc})")
                                 continue
                             dest.write_bytes(raw)
                             imported.append(stem)
                         else:
-                            skipped.append(f"{stem}  (extraction failed)")
-                    else: skipped.append(f"{stem}  (skipped)")
+                            skipped.append(f"{stem} (extraction failed)")
+                    else: skipped.append(f"{stem} (skipped)")
         except Exception as exc:
             QMessageBox.critical(self, "Import Failed", str(exc))
             return
@@ -1116,7 +1130,7 @@ class LogViewer(_TextViewDialog):
         if isinstance(layout, QVBoxLayout):
             layout.insertWidget(0, top)
         else:
-            logger.error("LogViewer: Unerwarteter Layout-Typ %s", type(layout))
+            logger.error("LogViewer: unexpected layout type %s", type(layout))
         self._load()
 
     def _load(self) -> None:

@@ -30,7 +30,7 @@ def _copy_logic_tooltip() -> str:
         "- <b>Local requirement:</b> <code>smbclient</code> must be installed on <b>this machine</b>.<br>"
         "- <b>Remote requirement:</b> Samba must be configured on the <b>target system</b>; "
         "Port must be open (default Port = 445).<br><br>"
-        "<b>Always Skipped (Exact Name Matches):</b><br>"
+        "<b>Always Skipped (Name/Pattern Matches):</b><br>"
         "- <b>Locks &amp; Handles:</b> <code>.lock</code>, <code>.lck</code>, <code>.parentlock</code>, <code>Singleton</code><br>"
         "- <b>Browser Trash &amp; Config:</b> <code>Cache/</code>, <code>GPUCache/</code>, <code>ShaderCache/</code>, <code>blob_storage/</code>, <code>prefs.js</code><br>"
         "- <b>Active DB States:</b> <code>.sqlite-wal/-shm</code>, <code>.db-wal/-shm</code>, <code>journal</code>, <code>.ldb</code><br>"
@@ -49,7 +49,7 @@ def _copy_logic_tooltip() -> str:
         "<b>Execution Security (Hardened)</b><br><br>"
         "- <b>Zero Visibility:</b> Passwords are <b>never</b> passed via command-line arguments to prevent exposure in process lists.<br>"
         "- <b>RAM-Only Storage:</b> Credentials are stored in <code>/dev/shm</code> (RAM disk). If <code>/dev/shm</code> is unavailable, "
-        "the operation aborts to prevent disk-leaks.<br>"
+        "no credential file is created and the connection falls back to an anonymous (guest) attempt.<br>"
         "- <b>Race-Condition Protection:</b> The credential file remains active for the <b>exact duration</b> of the transfer "
         "and is deleted immediately after the process ends.<br>"
         "- <b>Secure Erasure:</b> Before deletion, the credential file is <b>overwritten with zeros</b> (Wipe) and synced.<br>"
@@ -346,8 +346,8 @@ class SettingsWindow(_BaseCheckboxWindow):
     _cols_key     = "settings_window_columns"
 
     def __init__(self, parent) -> None:
-        super().__init__(parent)
         self._entry_stacked: bool = False
+        super().__init__(parent)
 
     def _extra_top_widgets(self) -> list: return [self._make_config_path_label()]
 
@@ -427,7 +427,10 @@ class SettingsWindow(_BaseCheckboxWindow):
                                                               "Headers group your entries and can each have their own colour.\n"
                                                               "The Header Settings dialog will open now — click '🆕 New' to add one.")
             dlg = HeaderSettingsDialog(self)
-            if dlg.exec() != QDialog.DialogCode.Accepted or not S.headers:
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            if not S.headers:
+                QMessageBox.warning(self, "No Headers", "Please add at least one header before creating an entry.")
                 return
             save_profile()
             self.changed.emit()
@@ -533,8 +536,11 @@ class _ThemeDialog(QDialog):
         self._theme_cb = _combo("Select Theme:", list(THEMES.keys()), S.ui.get("theme", "Tokyo Night"))
         self._font_cb = _combo("Select Font:", ["(System Default)"] + sorted(QFontDatabase.families()),
                                S.ui.get("font_family", "") or "(System Default)")
-        self._size_cb = _combo("Select Font Size:", ["10", "11", "12", "13", "14", "15", "16", "17", "18", "20", "22", "24"],
-                               str(S.ui.get("font_size", 14)))
+        current_size = str(S.ui.get("font_size", 14))
+        size_options = ["10", "11", "12", "13", "14", "15", "16", "17", "18", "20", "22", "24"]
+        if current_size not in size_options:
+            size_options = sorted(size_options + [current_size], key=int)
+        self._size_cb = _combo("Select Font Size:", size_options, current_size)
 
         prev_btn = QPushButton("Preview")
         prev_btn.clicked.connect(lambda: self._apply(save=False))

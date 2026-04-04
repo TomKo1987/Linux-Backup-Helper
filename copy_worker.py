@@ -92,13 +92,14 @@ def _ensure_dir(path: str) -> bool:
         return True
     seen: set = _tls.__dict__.setdefault("seen_dirs", set())
     if path in seen:
-        return True
+        if os.path.isdir(path):
+            return True
+        seen.discard(path)
     try:
         os.makedirs(path, exist_ok=True)
     except OSError as exc:
-        if exc.errno != errno.EEXIST:
-            logger.error("mkdir %s: %s", path, exc)
-            return False
+        logger.error("mkdir %s: %s", path, exc)
+        return False
     seen.add(path)
     return True
 
@@ -184,15 +185,19 @@ def _get_smb_credentials() -> tuple[str, "_SecurePw | None"]:
 
 def _smb_cred_file(user: str, pw: "_SecurePw") -> "tuple[str, str]":
     if _SHM_DIR is None:
-        logger.error(
-            "SMB cred file: /dev/shm is not available. Process aborted to prevent password leaks to the hard drive.")
-        raise RuntimeError("/dev/shm is not available or cannot be written to.")
+        raise RuntimeError("/dev/shm unavailable — caller must check before calling")
     tmp_dir = None
     try:
         tmp_dir = tempfile.mkdtemp(prefix="smb_", dir=_SHM_DIR)
         cred_path = os.path.join(tmp_dir, "cred")
         fd = os.open(cred_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, 'w') as f:
+        try:
+            f_obj = os.fdopen(fd, 'w')
+            fd = -1
+        except BaseException:
+            os.close(fd)
+            raise
+        with f_obj as f:
             if "\\" in user:
                 domain, plain_user = user.split("\\", 1)
                 f.write(f"username = {plain_user}\n")
@@ -280,7 +285,12 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
                 buf = os.read(rfd, min(rem, _IO_BUF))
                 if not buf:
                     break
-                os.write(wfd, buf)
+                written = 0
+                while written < len(buf):
+                    n = os.write(wfd, buf[written:])
+                    if n == 0:
+                        raise OSError("os.write returned 0")
+                    written += n
                 rem -= len(buf)
         except InterruptedError:
             raise
@@ -512,6 +522,7 @@ class _SmbClient:
         ok, err = _SmbClient(self.host, self.share, "", None, guest=True).run("exit\n", _SMB_TIMEOUT)
         if ok:
             return "guest"
+
         if _is_unreachable(err):
             logger.warning("SMB unreachable //%s/%s: %s", self.host, self.share, err)
             return "timeout"
@@ -648,7 +659,8 @@ class _SmbScanner:
                 with os.scandir(stack.pop()) as it:
                     for e in it:
                         if e.is_dir(follow_symlinks=False):
-                            stack.append(e.path)
+                            if not _SKIP_RE.search("/" + e.name + "/"):
+                                stack.append(e.path)
                         elif e.is_file(follow_symlinks=False) and not _SKIP_RE.search(e.name):
                             rel = os.path.relpath(e.path, src)
                             rp  = f"{rpath}/{rel}".replace(os.sep, "/").lstrip("/")
@@ -1086,18 +1098,16 @@ class CopyWorker(QThread):
                 if local_files:
                     file_q.put(local_files)
                     local_n += len(local_files)
-                    should_emit = False
-                    cur = 0
-                    if time.monotonic() - last_emit_t[0] >= _SCAN_EMIT_SECS:
-                        with pend_lock:
-                            now = time.monotonic()
-                            if now - last_emit_t[0] >= _SCAN_EMIT_SECS:
-                                total_found[0] += local_n
-                                cur = total_found[0]
-                                local_n = 0
-                                last_emit_t[0] = now
-                                should_emit = True
-                    if should_emit:
+                    with pend_lock:
+                        now = time.monotonic()
+                        if now - last_emit_t[0] >= _SCAN_EMIT_SECS:
+                            total_found[0] += local_n
+                            local_n = 0
+                            last_emit_t[0] = now
+                            cur = total_found[0]
+                        else:
+                            cur = -1
+                    if cur >= 0:
                         self.scan_progress.emit("Scanning", cur)
 
                 _finish_one()
@@ -1772,8 +1782,8 @@ class _SummaryWidget(QWidget):
             if skip: parts.append(f"<span style='{self._s_skip}'>↷ {skip:,}</span>")
             if err:  parts.append(f"<span style='{self._s_err}'>✗ {err:,}</span>")
 
-            suffix     = "&nbsp; ".join(parts) if parts else f"<span style='{self._s_dim}'></span>"
-            _html      = f"<span style='{self._s_title}'>{title}</span><br>{suffix}"
+            suffix = "&nbsp; ".join(parts) if parts else f"<span style='{self._s_dim}'></span>"
+            _html  = f"<span style='{self._s_title}'>{title}</span><br>{suffix}"
 
             lbl = labels.get(title)
             if lbl is None:

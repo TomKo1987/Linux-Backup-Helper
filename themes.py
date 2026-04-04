@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import QApplication
 
 from state import S, logger, invalidate_tooltip_cache
 
+
 THEMES: dict[str, dict[str, str]] = {
     "Ayu Dark": {
         "bg": "#0b0e14", "bg2": "#13161d", "bg3": "#1c2028",
@@ -498,14 +499,10 @@ def apply_style() -> None:
     _tri_styles_cached.cache_clear()
     try:
         from copy_worker import _invalidate_copy_worker_caches
-    except ImportError:
-        def _invalidate_copy_worker_caches():
-            pass
     except Exception as e:
-        logger.warning("apply_style: copy_worker not available: %s", e)
-
-        def _invalidate_copy_worker_caches():
-            pass
+        if not isinstance(e, ImportError):
+            logger.warning("apply_style: could not import _invalidate_copy_worker_caches: %s", e)
+        _invalidate_copy_worker_caches = lambda: None
     _invalidate_copy_worker_caches()
     app = QApplication.instance()
     if isinstance(app, QApplication):

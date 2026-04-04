@@ -61,6 +61,8 @@ def invalidate_tooltip_cache() -> None:
 
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[mKHJA-Z]")
+_NORM_PATHS_RE = re.compile(r" (?=/|smb://|cifs://)")
+
 
 def apply_replacements(text: str) -> str:
     for old, new in _path_replacements:
@@ -126,7 +128,7 @@ def _norm_paths(raw: Any) -> list[str]:
     for item in items:
         s = str(item).strip()
         if s:
-            for p in re.split(r" (?=/|smb://|cifs://)", s):
+            for p in _NORM_PATHS_RE.split(s):
                 p = p.strip()
                 if p:
                     result.append(p)
@@ -227,7 +229,8 @@ def save_profile(path: Optional[Path] = None) -> bool:
     try:
         _atomic_write(path, data)
         invalidate_tooltip_cache()
-        logger.info("Saved profile '%s'", path.stem)
+        from drive_utils import invalidate_mount_cache
+        invalidate_mount_cache()
         return True
     except Exception as exc:
         logger.error("save_profile failed: %s", exc)
@@ -292,9 +295,9 @@ def _sysfiles_tooltip_html(sys_files, t, font_sz_fn) -> str:
               f"font-weight:bold;white-space:nowrap;color:{t['accent2']};border-bottom:1px solid {t['header_sep']}'>"
               f"System Files ({len(sys_files)})</td></tr>")
     cells = []
-    for f in sys_files:
-        src = f.get('source', '')
-        dst = f.get('destination', '')
+    for sf in sys_files:
+        src = sf.get('source', '')
+        dst = sf.get('destination', '')
         cells.append(f"<td style='padding:4px 6px;border:1px solid {t['header_sep']};white-space:nowrap;vertical-align:top;'>"
                      f"<span style='color:{t['accent2']};font-weight:bold;'>{_html_mod.escape(Path(src).name)}</span><br>"
                      f"<span style='font-size:{font_sz_fn(-3)}px;color:{t['success']};'>"
@@ -348,15 +351,10 @@ def generate_tooltip() -> tuple[dict, dict, dict]:
     from themes import current_theme, font_sz
     from linux_distro_helper import LinuxDistroHelper
 
-    cached = _tooltip_cache
-    if cached is not None:
-        return cached
-
     with _tooltip_lock:
         cached = _tooltip_cache
         if cached is not None:
             return cached
-        _generation_at_start = id(_tooltip_cache)
 
     _local_session = ""
     with _session_lock:

@@ -3,6 +3,7 @@ import os
 import pwd
 import queue
 import re
+import secrets
 import shlex
 import shutil
 import subprocess
@@ -94,7 +95,7 @@ class _SudoKeepalive(threading.Thread):
                 if r.returncode != 0 and self._pw:
                     buf = _pw_bytes(self._pw)
                     try:
-                        subprocess.run(["sudo", "-S", "-v"], input=bytes(buf), capture_output=True, timeout=10)
+                        subprocess.run(["sudo", "-S", "-v"], input=buf, capture_output=True, timeout=10)
                     finally:
                         _zero(buf)
             except Exception as exc:
@@ -305,12 +306,12 @@ class SystemManagerDialog(QDialog):
         icon, summary = ("⚠️", "Completed with issues") if err else ("✅", "Successfully Completed")
         co = QColor(colour)
         r, g, b = co.red(), co.green(), co.blue()
+        outcome = "completed with warnings/errors" if err else "successfully completed all operations"  # NEU
         self._append_html(f"<hr style='border:none;margin:25px 50px;border-top:2px solid {colour};'>"
                           f"<div style='text-align:center;padding:20px;margin:15px 30px;border-radius:15px;"
                           f"border:1px solid rgba({r},{g},{b},0.3);'><p style='color:{colour};font-size:{font_sz(6)}px;"
                           f"font-weight:bold;'>{icon} {summary}</p><p style='color:{colour};font-size:{font_sz(4)}px;"
-                          f"'>System Manager {'completed with warnings/errors' 
-                          if err else 'successfully completed all operations'}<br></p></div>")
+                          f"'>System Manager {outcome}<br></p></div>")
         self._checklist_lbl.setText(f"{icon} {summary}")
         self._checklist_lbl.setStyleSheet(f"color:{colour};font-size:{font_sz(4)}px;font-weight:bold;padding:10px;"
                                           f"background-color:rgba({r},{g},{b},0.15);{_Style.border_style()}")
@@ -448,19 +449,15 @@ class SystemManagerThread(QThread):
             return ["sudo", "-S"] + cmd[1:]
         return cmd
 
-    def _exec(self, cmd: list[str] | str, stream: bool = False,
-              timeout: Optional[int] = 15, cwd: Optional[str] = None) -> SimpleNamespace:
+    def _exec(self, cmd: list[str] | str, stream: bool = False, timeout: Optional[int] = 15, cwd: Optional[str] = None) -> SimpleNamespace:
+
         if self.terminated:
             return SimpleNamespace(returncode=1, stdout="", stderr="")
 
         if isinstance(cmd, str):
-            if stream or cmd.startswith("sudo"):
-                cmd = self._inject(shlex.split(cmd))
-            else:
-                cmd = shlex.split(cmd)
+            cmd = self._inject(shlex.split(cmd))
         elif isinstance(cmd, list):
-            cmd = list(cmd)
-            cmd = self._inject(cmd)
+            cmd = self._inject(list(cmd))
 
         input_data = None
         if self._pw and isinstance(cmd, list):
@@ -495,10 +492,12 @@ class SystemManagerThread(QThread):
                     pass
                 finally:
                     try:
-                        proc.stdin and proc.stdin.close()
+                        if proc.stdin:
+                            proc.stdin.close()
                     except OSError:
                         pass
-                    if isinstance(input_data, bytearray): _zero(input_data)
+                    if isinstance(input_data, bytearray):
+                        _zero(input_data)
             threading.Thread(target=_write_stdin, daemon=True).start()
         out_q = queue.Queue()
 
@@ -518,7 +517,9 @@ class SystemManagerThread(QThread):
             try:
                 item = out_q.get(timeout=0.1)
             except queue.Empty:
-                if self.terminated: proc.terminate(); break
+                if self.terminated:
+                    proc.terminate()
+                    break
                 continue
             if item is None:
                 sentinels += 1
@@ -527,27 +528,33 @@ class SystemManagerThread(QThread):
                 if "[sudo]" in text: text = re.sub(r"\[sudo].*?:\s*", "", text)
                 self.outputReceived.emit(text, "error" if is_err and not _INFO_RE.search(text) else "subprocess")
 
+        _wait_timeout = timeout
         try:
-            rc = proc.wait(timeout=5) if proc.poll() is None else proc.returncode
+            rc = proc.wait(timeout=_wait_timeout) if proc.poll() is None else proc.returncode
         except subprocess.TimeoutExpired:
             proc.kill()
             rc = proc.wait()
-        t1.join(1); t2.join(1)
+        t1.join(3); t2.join(3)
         return SimpleNamespace(returncode=rc if rc is not None else 1)
 
     def _emit_result(self, ok: bool, msg_ok: str, msg_err: str): self.outputReceived.emit(msg_ok if ok else msg_err, "success" if ok else "error")
 
     def _verify_sudo(self) -> bool:
         self.outputReceived.emit("Verifying sudo access…", "operation")
-        subprocess.run(["sudo", "-k"], capture_output=True, timeout=5)
-        token = "SUDO_VERIFY_4a8f2b"
+        try:
+            subprocess.run(["sudo", "-k"], capture_output=True, timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            pass
+        token = secrets.token_hex(16)
         pw_buf = _pw_bytes(self._pw)
         ok, proc = False, None
         try:
             proc = subprocess.Popen(["sudo", "-S", "sh", "-c", f"printf '%s\\n' {shlex.quote(token)}"], env=self._env(),
                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            try: proc.stdin.write(bytes(pw_buf)); proc.stdin.flush(); proc.stdin.close()
-            except OSError: pass
+            try:
+                proc.stdin.write(pw_buf); proc.stdin.flush(); proc.stdin.close()
+            except OSError:
+                pass
 
             chunks: list[bytes] = []
             def _read_out() -> None:
@@ -909,7 +916,12 @@ class SystemManagerThread(QThread):
             self.outputReceived.emit("No orphaned packages found", "success")
             return True
         self.outputReceived.emit(f"Found orphaned packages: {', '.join(pkgs)}", "info")
-        ok = (self._exec(self.distro.get_pkg_remove_cmd(" ".join(pkgs)), stream=True).returncode == 0)
+        fam = self.distro.family()
+        if fam == "nixos":
+            cmd = f"nix-env -e {' '.join(pkgs)}"
+        else:
+            cmd = self.distro.get_pkg_remove_cmd(" ".join(pkgs))
+        ok = (self._exec(cmd, stream=True).returncode == 0)
         self._emit_result(ok, "Orphaned packages successfully removed", "Could not remove orphaned packages")
         return ok
 
