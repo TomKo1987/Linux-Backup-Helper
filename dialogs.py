@@ -13,7 +13,7 @@ from PyQt6.QtCore import Qt, pyqtSignal, QObject, QEvent
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QTextCursor
 from PyQt6.QtWidgets import (
     QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QWidget, QVBoxLayout,
-    QListWidgetItem, QMessageBox, QPlainTextEdit, QPushButton, QSplitter,
+    QListWidgetItem, QMessageBox, QPlainTextEdit, QPushButton, QSplitter, QSizePolicy,
     QCheckBox, QColorDialog, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QTextEdit, QApplication
 )
 
@@ -22,7 +22,7 @@ from state import (
     S, _HOME, _LOG_FILE, _PROFILES_DIR, _PROFILE_RE, _atomic_write, apply_replacements,
 )
 from themes import current_theme, font_scale, font_sz, apply_tooltip
-from ui_utils import sep, hdr_label, ok_cancel_buttons, btn_row, browse_buttons, do_browse, ask_text, ask_profile_name
+from ui_utils import sep, hdr_label, ok_cancel_buttons, btn_row, browse_buttons, ask_text, ask_profile_name
 
 
 
