@@ -134,11 +134,15 @@ _current_theme_name = DEFAULT_THEME
 _style_listeners: list = []
 _style_listeners_lock = _threading.Lock()
 
+_cache_invalidation_hooks: list = []
+_cache_hooks_lock = _threading.Lock()
+
 
 def register_style_listener(fn) -> None:
     with _style_listeners_lock:
         if fn not in _style_listeners:
             _style_listeners.append(fn)
+
 
 def unregister_style_listener(fn) -> None:
     with _style_listeners_lock:
@@ -146,6 +150,12 @@ def unregister_style_listener(fn) -> None:
             _style_listeners.remove(fn)
         except ValueError:
             pass
+
+
+def register_cache_invalidation_hook(fn) -> None:
+    with _cache_hooks_lock:
+        if fn not in _cache_invalidation_hooks:
+            _cache_invalidation_hooks.append(fn)
 
 
 def current_theme() -> dict[str, str]:
@@ -497,13 +507,15 @@ def apply_style() -> None:
     _current_theme_name = S.ui.get("theme", DEFAULT_THEME)
     invalidate_tooltip_cache()
     _tri_styles_cached.cache_clear()
-    try:
-        from copy_worker import _invalidate_copy_worker_caches
-    except Exception as e:
-        if not isinstance(e, ImportError):
-            logger.warning("apply_style: could not import _invalidate_copy_worker_caches: %s", e)
-        _invalidate_copy_worker_caches = lambda: None
-    _invalidate_copy_worker_caches()
+
+    with _cache_hooks_lock:
+        hooks = list(_cache_invalidation_hooks)
+    for fn in hooks:
+        try:
+            fn()
+        except Exception as e:
+            logger.warning("apply_style: cache hook %s raised: %s", fn, e)
+
     app = QApplication.instance()
     if isinstance(app, QApplication):
         app.setStyleSheet(get_style())

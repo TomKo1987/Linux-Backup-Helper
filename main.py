@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QApplication, QInputDialog, QMainWindow, QGridLayout, QFileDialog
 )
 
-from backup_restore_settings import base_window
+from windows import base_window
 from dialogs import LogViewer, SysInfoDialog
 from drive_utils import get_mounts, is_mounted, unmount_drive, get_session_managed_mounts
 from state import S, _HOME, _PROFILES_DIR, _PROFILE_RE, RESTART_DIALOG, save_profile, logger, startup_load

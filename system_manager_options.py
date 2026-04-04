@@ -7,12 +7,13 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea, QSizePolicy,
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QTextEdit,
-    QFileDialog, QFormLayout, QFrame, QGridLayout, QHBoxLayout, QVBoxLayout, QWidget,
+    QFileDialog, QFormLayout, QGridLayout, QHBoxLayout, QVBoxLayout, QWidget,
 )
 
-from dialogs import _ask_text, _do_browse, _ok_cancel_buttons
+from ui_utils import ask_text, ok_cancel_buttons, sep, browse_field
 from linux_distro_helper import LinuxDistroHelper, SESSIONS, USER_SHELLS
-from state import S, _HOME, apply_replacements, generate_tooltip, save_profile
+from state import S, _HOME, apply_replacements, save_profile
+from tooltips import generate_tooltip
 from themes import (
     style_label_info, style_label_info_bold, style_label_mono, style_op_label, tri_styles, apply_tooltip,
     current_theme, font_sz, style_checkbox_muted, style_checkbox_select_all, style_sudo_checkbox, tri_state_legend_html
@@ -57,12 +58,6 @@ def _make_tri_cb(text: str, disabled: bool, tooltip: str = "") -> TriCheckBox:
     return cb
 
 
-def _hsep() -> QFrame:
-    sep = QFrame()
-    sep.setFrameShape(QFrame.Shape.HLine)
-    sep.setStyleSheet(f"color:{current_theme()['header_sep']};margin:4px 0;")
-    return sep
-
 
 def _scroll_dlg(parent, title: str, body: QWidget, on_save=None) -> tuple[QDialog, QVBoxLayout]:
     dlg = QDialog(parent)
@@ -74,7 +69,7 @@ def _scroll_dlg(parent, title: str, body: QWidget, on_save=None) -> tuple[QDialo
     sa.setFocusPolicy(Qt.FocusPolicy.NoFocus)
     sa.setWidget(body)
     lay.addWidget(sa)
-    bb = _ok_cancel_buttons(dlg, lambda: on_save(dlg) if on_save else dlg.accept(), cancel_label="Close")
+    bb = ok_cancel_buttons(dlg, lambda: on_save(dlg) if on_save else dlg.accept(), cancel_label="Close")
     lay.addWidget(bb)
     body.adjustSize()
     sz = body.sizeHint()
@@ -89,20 +84,6 @@ def _scroll_dlg(parent, title: str, body: QWidget, on_save=None) -> tuple[QDialo
         cancel_btn.setFocus()
     return dlg, lay
 
-
-def _browse_field(parent: QWidget, editor: QLineEdit, btn_height: int = 36) -> QWidget:
-    row  = QWidget()
-    hlay = QHBoxLayout(row)
-    hlay.setContentsMargins(0, 0, 0, 0)
-    hlay.setSpacing(6)
-    hlay.addWidget(editor)
-    for lbl, mode in [("📄 File", "file"), ("📁 Directory", "dir")]:
-        b = QPushButton(lbl)
-        b.setMinimumHeight(btn_height)
-        b.setMinimumWidth(70)
-        b.clicked.connect(lambda _c=False, _e=editor, _m=mode: _do_browse(parent, _e, _m))
-        hlay.addWidget(b)
-    return row
 
 
 def _pkg_checkboxes(packages: list, is_specific: bool) -> list[TriCheckBox]:
@@ -135,10 +116,10 @@ def _add_select_all_tri(layout, checkboxes: list[TriCheckBox], cols: int = 1) ->
     sa.stateChanged.connect(_toggle)
     if isinstance(layout, QGridLayout):
         row = layout.rowCount()
-        layout.addWidget(_hsep(), row, 0, 1, cols)
+        layout.addWidget(sep(), row, 0, 1, cols)
         layout.addWidget(sa, row + 1, 0, 1, cols)
     else:
-        layout.addWidget(_hsep())
+        layout.addWidget(sep())
         layout.addWidget(sa)
 
 
@@ -210,7 +191,7 @@ def _pkg_form_dialog(parent, title: str, *, prefill_name: str = "",
         sess_cb.setMinimumHeight(36)
         form.addRow("Session:", sess_cb)
     lay.addLayout(form)
-    lay.addWidget(_ok_cancel_buttons(dlg, dlg.accept))
+    lay.addWidget(ok_cancel_buttons(dlg, dlg.accept))
 
     if dlg.exec() != QDialog.DialogCode.Accepted:
         return None
@@ -500,9 +481,9 @@ class SystemManagerOptions(QDialog):
             ed.setMinimumHeight(36)
         for label, ed in [("Source:", src_ed), ("Destination:", dst_ed)]:
             lay.addWidget(QLabel(label))
-            lay.addWidget(_browse_field(dlg, ed))
+            lay.addWidget(browse_field(dlg, ed))
         lay.addStretch()
-        lay.addWidget(_ok_cancel_buttons(dlg, dlg.accept))
+        lay.addWidget(ok_cancel_buttons(dlg, dlg.accept))
         if dlg.exec() == QDialog.DialogCode.Accepted:
             src, dst = src_ed.text().strip(), dst_ed.text().strip()
             if src and dst:
@@ -682,7 +663,7 @@ class SystemManagerOptions(QDialog):
                 QMessageBox.information(self, "Added", f"Added:\n\n  • {name} [{sess}]")
         else:
             label    = pkg_type.replace("_", " ").title().rstrip("s")
-            name, ok = _ask_text(self, f"Add {label}", "Package name:")
+            name, ok = ask_text(self, f"Add {label}", "Package name:")
             if ok and name.strip():
                 name    = name.strip()
                 current = getattr(S, pkg_type, []) or []
@@ -737,7 +718,7 @@ class SystemManagerOptions(QDialog):
         te = QTextEdit()
         te.setPlaceholderText("One package per line")
         lay.addWidget(te)
-        lay.addWidget(_ok_cancel_buttons(dlg, dlg.accept))
+        lay.addWidget(ok_cancel_buttons(dlg, dlg.accept))
 
         if dlg.exec() != QDialog.DialogCode.Accepted:
             QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
@@ -815,7 +796,7 @@ class SystemManagerOptions(QDialog):
 
             if is_specific:
                 sess = parts[1] if len(parts) > 1 else (SESSIONS[0] if SESSIONS else "unknown")
-                disabled = len(parts) > 2 and parts[2].strip().lower() == "disabled"  # NEU
+                disabled = len(parts) > 2 and parts[2].strip().lower() == "disabled"
                 if (name, sess) not in existing:
                     current.append({"package": name, "session": sess, "disabled": disabled})
                     existing.add((name, sess))

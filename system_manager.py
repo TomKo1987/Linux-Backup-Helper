@@ -306,7 +306,7 @@ class SystemManagerDialog(QDialog):
         icon, summary = ("⚠️", "Completed with issues") if err else ("✅", "Successfully Completed")
         co = QColor(colour)
         r, g, b = co.red(), co.green(), co.blue()
-        outcome = "completed with warnings/errors" if err else "successfully completed all operations"  # NEU
+        outcome = "completed with warnings/errors" if err else "successfully completed all operations"
         self._append_html(f"<hr style='border:none;margin:25px 50px;border-top:2px solid {colour};'>"
                           f"<div style='text-align:center;padding:20px;margin:15px 30px;border-radius:15px;"
                           f"border:1px solid rgba({r},{g},{b},0.3);'><p style='color:{colour};font-size:{font_sz(6)}px;"

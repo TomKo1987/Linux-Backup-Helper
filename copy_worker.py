@@ -115,6 +115,10 @@ def _cached_mono_style(size: int, color: str, bold: bool = False, extra: str = "
 def _invalidate_copy_worker_caches() -> None:
     _cached_mono_style.cache_clear()
 
+from themes import register_cache_invalidation_hook as _reg_cache_hook
+_reg_cache_hook(_invalidate_copy_worker_caches)
+del _reg_cache_hook
+
 
 _SIZE_UNITS = ("B", "KB", "MB", "GB", "TB")
 def _format_unit(value: float, units: tuple = _SIZE_UNITS) -> str:

@@ -13,7 +13,7 @@ from PyQt6.QtCore import Qt, pyqtSignal, QObject, QEvent
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QTextCursor
 from PyQt6.QtWidgets import (
     QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QWidget, QVBoxLayout,
-    QListWidgetItem, QMessageBox, QPlainTextEdit, QPushButton, QSizePolicy, QSplitter,
+    QListWidgetItem, QMessageBox, QPlainTextEdit, QPushButton, QSplitter,
     QCheckBox, QColorDialog, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QTextEdit, QApplication
 )
 
@@ -22,108 +22,9 @@ from state import (
     S, _HOME, _LOG_FILE, _PROFILES_DIR, _PROFILE_RE, _atomic_write, apply_replacements,
 )
 from themes import current_theme, font_scale, font_sz, apply_tooltip
+from ui_utils import sep, hdr_label, ok_cancel_buttons, btn_row, browse_buttons, do_browse, ask_text, ask_profile_name
 
 
-def _sep() -> QWidget:
-    w = QWidget()
-    w.setFixedHeight(1)
-    w.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-    w.setStyleSheet(f"background:{current_theme()['header_sep']};")
-    return w
-
-
-def _hdr_label(text: str, color: str = "", size: int | None = None) -> QLabel:
-    lbl = QLabel(text)
-    sz  = size if size is not None else font_sz(3)
-    lbl.setStyleSheet(f"font-size:{sz}px;font-weight:bold;"
-                      f"color:{color or current_theme()['accent']};padding:4px 0;")
-    lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    return lbl
-
-
-def _ok_cancel_buttons(dialog: QDialog, ok_fn, ok_label: str = "Save", cancel_label: str = "Cancel", cancel_fn=None) -> QDialogButtonBox:
-    bb         = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
-    ok_btn     = bb.button(QDialogButtonBox.StandardButton.Ok)
-    cancel_btn = bb.button(QDialogButtonBox.StandardButton.Cancel)
-    if ok_btn:     ok_btn.setText(ok_label)
-    if cancel_btn: cancel_btn.setText(cancel_label)
-    bb.accepted.connect(ok_fn)
-    bb.rejected.connect(cancel_fn if cancel_fn else dialog.reject)
-    return bb
-
-
-def _btn_row(buttons: list[tuple[str, object]]) -> QHBoxLayout:
-    row = QHBoxLayout()
-    for label, fn in buttons:
-        b = QPushButton(label)
-        b.clicked.connect(fn)
-        row.addWidget(b)
-    return row
-
-
-def _browse_buttons(parent: QWidget, editor, home: Path = _HOME) -> QHBoxLayout:
-    row = QHBoxLayout()
-    row.setContentsMargins(0, 0, 0, 0)
-    row.addStretch()
-    for label, mode in [("📄 File", "file"), ("📁 Directory", "dir")]:
-        b = QPushButton(label)
-        b.setFixedHeight(28)
-        b.clicked.connect(lambda _c=False, _m=mode: _do_browse(parent, editor, _m, home))
-        row.addWidget(b)
-    return row
-
-
-def _do_browse(parent: QWidget, editor, mode: str, home: Path = _HOME) -> None:
-    path = (QFileDialog.getExistingDirectory(parent, "Select directory", str(home))
-            if mode == "dir"
-            else QFileDialog.getOpenFileName(parent, "Select file", str(home))[0])
-    if not path:
-        return
-    if hasattr(editor, "setPlainText"):
-        editor.setPlainText(path)
-        cur = editor.textCursor()
-        cur.movePosition(QTextCursor.MoveOperation.End)
-        editor.setTextCursor(cur)
-    else:
-        editor.setText(path)
-
-
-def _ask_text(parent, title: str, label: str, default: str = "", min_width: int = 440) -> tuple[str, bool]:
-    dlg = QDialog(parent)
-    dlg.setWindowTitle(title)
-    dlg.setMinimumWidth(min_width)
-    layout = QVBoxLayout(dlg)
-    layout.setSpacing(10)
-    layout.setContentsMargins(16, 16, 16, 16)
-    layout.addWidget(QLabel(label))
-    edit = QLineEdit(default)
-    edit.selectAll()
-    layout.addWidget(edit)
-    bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
-    bb.accepted.connect(dlg.accept)
-    bb.rejected.connect(dlg.reject)
-    layout.addWidget(bb)
-    edit.setFocus()
-    accepted = dlg.exec() == QDialog.DialogCode.Accepted
-    return edit.text(), accepted
-
-
-def _ask_profile_name(title: str, default: str, parent: Optional[QWidget] = None) -> Optional[str]:
-    while True:
-        name, ok = _ask_text(parent, title, "Profile name:", default=default)
-        if not ok:
-            return None
-        name = name.strip()
-        if not name:
-            QMessageBox.warning(parent, "Invalid Name", "Name must not be empty.")
-            continue
-        if not _PROFILE_RE.match(name):
-            QMessageBox.warning(
-                parent, "Invalid Name",
-                "Only letters, digits, spaces, hyphens, underscores and dots are allowed.",
-            )
-            continue
-        return name
 
 
 class _ListDialog(QDialog):
@@ -135,12 +36,12 @@ class _ListDialog(QDialog):
         self.setMinimumSize(*size)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(_hdr_label(hdr_text))
-        layout.addWidget(_sep())
+        layout.addWidget(hdr_label(hdr_text))
+        layout.addWidget(sep())
         self.item_list = QListWidget()
         layout.addWidget(self.item_list, 1)
-        layout.addLayout(_btn_row([(lbl, getattr(self, fn)) for lbl, fn in btn_specs]))
-        layout.addWidget(_sep())
+        layout.addLayout(btn_row([(lbl, getattr(self, fn)) for lbl, fn in btn_specs]))
+        layout.addWidget(sep())
         close_btn = QPushButton(close_label)
         close_btn.clicked.connect(self.accept)
         layout.addWidget(close_btn)
@@ -260,7 +161,7 @@ class EntryDialog(QDialog):
         root.setContentsMargins(12, 12, 12, 12)
 
         title_row  = QHBoxLayout()
-        title_row.addWidget(_hdr_label("Edit Entry" if e else "New Entry"))
+        title_row.addWidget(hdr_label("Edit Entry" if e else "New Entry"))
         title_row.addStretch()
         layout_btn = QPushButton("Side-by-Side View" if self.stacked else "Stacked View")
         layout_btn.setFixedHeight(28)
@@ -268,7 +169,7 @@ class EntryDialog(QDialog):
         layout_btn.clicked.connect(self._toggle_layout)
         title_row.addWidget(layout_btn)
         root.addLayout(title_row)
-        root.addWidget(_sep())
+        root.addWidget(sep())
 
         form = QFormLayout()
         form.setSpacing(6)
@@ -289,7 +190,7 @@ class EntryDialog(QDialog):
         form.addRow("Header:", self.hdr)
         form.addRow("Title:",  self.title_edit)
         root.addLayout(form)
-        root.addWidget(_sep())
+        root.addWidget(sep())
 
         lw_style = (f"QListWidget {{ font-family:monospace;font-size:{fs['xl']}px; }}"
                     f"QListWidget::item {{ padding:6px 6px; }}")
@@ -355,7 +256,7 @@ class EntryDialog(QDialog):
         self._splitter.setSizes([10000, 10000])
         root.addWidget(self._splitter, 1)
 
-        root.addWidget(_sep())
+        root.addWidget(sep())
         tb = QHBoxLayout()
         tb.setSpacing(6)
         for label, tip, fn in [
@@ -379,7 +280,7 @@ class EntryDialog(QDialog):
         tb.addWidget(self._expand_paths_cb)
         root.addLayout(tb)
 
-        root.addWidget(_sep())
+        root.addWidget(sep())
         flags = QHBoxLayout()
         self.no_backup  = QCheckBox("Exclude from backup")
         self.no_restore = QCheckBox("Exclude from restore")
@@ -391,8 +292,8 @@ class EntryDialog(QDialog):
         flags.addStretch()
         root.addLayout(flags)
 
-        root.addWidget(_sep())
-        root.addWidget(_ok_cancel_buttons(self, self._accept))
+        root.addWidget(sep())
+        root.addWidget(ok_cancel_buttons(self, self._accept))
 
     def _populate_lists(self) -> None:
         self._src_list.clear()
@@ -486,13 +387,13 @@ class EntryDialog(QDialog):
             vl.addWidget(QLabel(label))
             ed = _make_editor(prefill, placeholder)
             vl.addWidget(ed)
-            vl.addLayout(_browse_buttons(dlg, ed))
+            vl.addLayout(browse_buttons(dlg, ed))
             return ed
 
         src_ed = _path_row("Source path:",      src, "Enter path or use '📄 File' or '📁 Directory'")
         dst_ed = _path_row("Destination path:", dst, "Enter path or use '📄 File' or '📁 Directory'")
 
-        vl.addWidget(_sep())
+        vl.addWidget(sep())
         bb     = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
         bb.accepted.connect(dlg.accept)
         bb.rejected.connect(dlg.reject)
@@ -596,8 +497,8 @@ class MountDialog(QDialog):
         t   = current_theme()
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
-        layout.addWidget(_hdr_label("Configure Drive"))
-        layout.addWidget(_sep())
+        layout.addWidget(hdr_label("Configure Drive"))
+        layout.addWidget(sep())
         form = QFormLayout()
         form.setSpacing(15)
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
@@ -646,8 +547,8 @@ class MountDialog(QDialog):
         form.addRow(self.unmnt)
         layout.addLayout(form)
         layout.addStretch()
-        layout.addWidget(_sep())
-        layout.addWidget(_ok_cancel_buttons(self, self._accept))
+        layout.addWidget(sep())
+        layout.addWidget(ok_cancel_buttons(self, self._accept))
 
     def _accept(self) -> None:
         if not self.name.text().strip():
@@ -724,14 +625,14 @@ class HeaderSettingsDialog(QDialog):
         self.setWindowTitle("Header Settings")
         self.setMinimumSize(750, 500)
         layout = QVBoxLayout(self)
-        layout.addWidget(_hdr_label("Headers"))
-        layout.addWidget(_sep())
+        layout.addWidget(hdr_label("Headers"))
+        layout.addWidget(sep())
         self.item_list = QListWidget()
         layout.addWidget(self.item_list, 1)
-        layout.addLayout(_btn_row([("🆕 New", self._new), ("🎨 Color", self._color), ("⏸ Toggle active", self._toggle),
+        layout.addLayout(btn_row([("🆕 New", self._new), ("🎨 Color", self._color), ("⏸ Toggle active", self._toggle),
                                    ("✕ Delete", self._delete), ("↑ Up", self._move_up), ("↓ Down", self._move_down)]))
-        layout.addWidget(_sep())
-        layout.addWidget(_ok_cancel_buttons(self, self.accept, "Save && Close"))
+        layout.addWidget(sep())
+        layout.addWidget(ok_cancel_buttons(self, self.accept, "Save && Close"))
         self._refresh()
 
     def reject(self) -> None:
@@ -757,7 +658,7 @@ class HeaderSettingsDialog(QDialog):
         return item.data(Qt.ItemDataRole.UserRole) if item else None
 
     def _new(self) -> None:
-        name, ok = _ask_text(self, "New Header", "Header name:")
+        name, ok = ask_text(self, "New Header", "Header name:")
         if not ok or not name.strip():
             return
         name = name.strip()
@@ -828,8 +729,8 @@ class ProfilesDialog(QDialog):
         self.was_changed: bool = False
         t      = current_theme()
         layout = QVBoxLayout(self)
-        layout.addWidget(_hdr_label("Profile Manager"))
-        layout.addWidget(_sep())
+        layout.addWidget(hdr_label("Profile Manager"))
+        layout.addWidget(sep())
         self._active_lbl = QLabel()
         self._active_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._active_lbl.setStyleSheet(f"color:{t['accent']};font-weight:bold;padding:4px;")
@@ -837,10 +738,10 @@ class ProfilesDialog(QDialog):
         self.item_list = QListWidget()
         self.item_list.itemDoubleClicked.connect(self._load)
         layout.addWidget(self.item_list, 1)
-        layout.addLayout(_btn_row([("▶ Load", self._load), ("🆕 New", self._new),
+        layout.addLayout(btn_row([("▶ Load", self._load), ("🆕 New", self._new),
                                    ("⎘ Duplicate", self._copy), ("✕ Delete", self._del)]))
-        layout.addLayout(_btn_row([("⬆ Import", self._import), ("⬇ Export", self._export)]))
-        layout.addWidget(_sep())
+        layout.addLayout(btn_row([("⬆ Import", self._import), ("⬇ Export", self._export)]))
+        layout.addWidget(sep())
         close_btn = QPushButton("✕ Close")
         close_btn.clicked.connect(self.accept)
         layout.addWidget(close_btn)
@@ -892,7 +793,7 @@ class ProfilesDialog(QDialog):
         else: QMessageBox.critical(self, "Error", f"Could not load profile '{name}'.")
 
     def _new(self) -> None:
-        name = _ask_profile_name("New Profile", "", self)
+        name = ask_profile_name("New Profile", "", self)
         if not name: return
         dest = _PROFILES_DIR / f"{name}.json"
         if dest.exists() and QMessageBox.question(
@@ -932,7 +833,7 @@ class ProfilesDialog(QDialog):
         if not src_name:
             QMessageBox.information(self, "Duplicate", "No profile selected.")
             return
-        name = _ask_profile_name("Duplicate Profile", f"{src_name} copy", self)
+        name = ask_profile_name("Duplicate Profile", f"{src_name} copy", self)
         if not name: return
         src_path = _PROFILES_DIR / f"{src_name}.json"
         if not src_path.exists() and src_name == S.profile_name:
@@ -974,7 +875,7 @@ class ProfilesDialog(QDialog):
         if path.endswith((".tar.gz", ".tgz")):
             self._import_archive(path)
             return
-        name = _ask_profile_name("Import Profile", Path(path).stem, self)
+        name = ask_profile_name("Import Profile", Path(path).stem, self)
         if not name: return
         dest = _PROFILES_DIR / f"{name}.json"
         if dest.exists() and QMessageBox.question(self, "Overwrite?", f"Profile '{name}' already exists. Overwrite it?",
@@ -1123,7 +1024,7 @@ class LogViewer(_TextViewDialog):
         tl  = QHBoxLayout(top)
         tl.setContentsMargins(14, 8, 14, 8)
         tl.addStretch()
-        tl.addWidget(_hdr_label("📋 Log File"))
+        tl.addWidget(hdr_label("📋 Log File"))
         tl.addStretch(1)
         tl.addWidget(QLabel(apply_replacements(str(_LOG_FILE))))
         layout = self.layout()
