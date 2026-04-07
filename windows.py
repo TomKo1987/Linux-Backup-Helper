@@ -10,11 +10,11 @@ from PyQt6.QtWidgets import (
 from dialogs import EntryDialog, HeaderSettingsDialog, MountsDialog, ProfilesDialog
 from samba_credentials import SambaPasswordDialog
 from state import S, _PROFILES_DIR, RESTART_DIALOG, apply_replacements, save_profile
-from tooltips import generate_tooltip
-from ui_utils import block_set, ok_cancel_buttons
 from themes import (
     THEMES, current_theme, apply_style, font_scale, register_style_listener, unregister_style_listener, apply_tooltip
 )
+from tooltips import generate_tooltip
+from ui_utils import block_set, ok_cancel_buttons
 
 
 def _copy_logic_tooltip() -> str:
@@ -547,7 +547,7 @@ class _ThemeDialog(QDialog):
         prev_btn = QPushButton("Preview")
         prev_btn.clicked.connect(lambda: self._apply(save=False))
         layout.addWidget(prev_btn)
-        layout.addWidget(ok_cancel_buttons(self, self._on_ok, cancel_fn=self._on_cancel))
+        layout.addWidget(ok_cancel_buttons(self, self._on_ok, cancel_fn=self.reject))
 
     def _apply(self, save: bool = False) -> None:
         chosen_font = self._font_cb.currentText()
@@ -566,15 +566,15 @@ class _ThemeDialog(QDialog):
         self.changed.emit(RESTART_DIALOG)
         self.accept()
 
-    def _on_cancel(self) -> None:
+    def reject(self) -> None:
         orig_theme, orig_font, orig_size = self._orig
         S.ui.update(theme=orig_theme, font_family=orig_font, font_size=orig_size)
         apply_style()
-        self.reject()
+        super().reject()
 
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_Escape:
-            self._on_cancel()
+            self.reject()
         else:
             super().keyPressEvent(event)
 

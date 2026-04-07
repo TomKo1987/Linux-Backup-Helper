@@ -26,10 +26,6 @@ _session_mounts_lock = threading.Lock()
 _OCTAL_ESCAPE_RE = re.compile(r"\\(\d{3})")
 
 
-def invalidate_mount_cache() -> None:
-    _mount_paths.cache_clear()
-
-
 def _decode_octal(s: str) -> str:
     return _OCTAL_ESCAPE_RE.sub(lambda m: chr(int(m.group(1), 8)), s)
 
@@ -161,15 +157,16 @@ def mount_drive(drive: dict) -> tuple[bool, str]:
             time.sleep(0.1)
         if not mounted_confirmed:
             mounted_confirmed = is_mounted(drive)
+        is_managed = has_managed_mount_path(drive)
         if not mounted_confirmed:
-            if not has_managed_mount_path(drive):
+            if not is_managed:
                 msg = f"Mount command succeeded but '{name}' not visible in /proc/mounts after 1 s"
                 logger.error("mount_drive: %s", msg)
                 return False, msg
             _track_session_mount(drive)
             logger.warning("mount_drive: '%s' not confirmed in /proc/mounts (managed mount path)", name)
         else:
-            if has_managed_mount_path(drive):
+            if is_managed:
                 _track_session_mount(drive)
         logger.info("Mounted '%s' (confirmed=%s)", name, mounted_confirmed)
         return True, ""

@@ -9,11 +9,11 @@ from PyQt6.QtWidgets import (
     QApplication, QInputDialog, QMainWindow, QGridLayout, QFileDialog
 )
 
-from windows import base_window
 from dialogs import LogViewer, SysInfoDialog
 from drive_utils import get_mounts, is_mounted, unmount_drive, get_session_managed_mounts
 from state import S, _HOME, _PROFILES_DIR, _PROFILE_RE, RESTART_DIALOG, save_profile, logger, startup_load
 from themes import apply_style, register_style_listener, unregister_style_listener
+from windows import base_window
 
 
 class MainWindow(QMainWindow):
@@ -122,7 +122,6 @@ class MainWindow(QMainWindow):
             lines = [f"  • {_drive_name(o)}" for o in unmountable]
             if info_only:
                 lines += ["", "These drives have no unmount command and will be left mounted:"]
-                lines += [f"  • {_drive_name(o)}" for o in info_only]
                 lines += [f"  • {_drive_name(o)}" for o in info_only]
             msg = "The following drives are still mounted:\n\n" + "\n".join(lines) + "\n\nUnmount before quitting?\n"
             ans = QMessageBox.question(self, "Quit — Drives Still Mounted", msg, QMessageBox.StandardButton.Yes |

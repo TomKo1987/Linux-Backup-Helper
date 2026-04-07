@@ -69,7 +69,8 @@ def apply_replacements(text: str) -> str:
 _invalidate_hooks: list = []
 
 def register_invalidate_hook(hook) -> None:
-    _invalidate_hooks.append(hook)
+    if hook not in _invalidate_hooks:
+        _invalidate_hooks.append(hook)
 
 def invalidate_tooltip_cache() -> None:
     for hook in _invalidate_hooks:
@@ -91,16 +92,9 @@ class State:
     aur_packages:        list[dict]      = field(default_factory=list)
     specific_packages:   list[dict]      = field(default_factory=list)
     user_shell:          str             = "bash"
-    ui: dict = field(
-        default_factory=lambda: {
-            "theme": "Tokyo Night",
-            "font_family": "",
-            "font_size": 14,
-            "backup_window_columns": 2,
-            "restore_window_columns": 2,
-            "settings_window_columns": 2,
-        }
-    )
+    ui: dict = field(default_factory=lambda: {"theme": "Tokyo Night", "font_family": "", "font_size": 14,
+                                              "backup_window_columns": 2, "restore_window_columns": 2,
+                                              "settings_window_columns": 2})
 
 
 S = State()
@@ -275,8 +269,6 @@ def save_profile(path: Optional[Path] = None) -> bool:
     try:
         _atomic_write(path, data)
         invalidate_tooltip_cache()
-        from drive_utils import invalidate_mount_cache
-        invalidate_mount_cache()
         return True
     except Exception as exc:
         logger.error("save_profile failed: %s", exc)

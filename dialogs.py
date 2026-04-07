@@ -25,8 +25,6 @@ from themes import current_theme, font_scale, font_sz, apply_tooltip
 from ui_utils import sep, hdr_label, ok_cancel_buttons, btn_row, browse_buttons, ask_text, ask_profile_name
 
 
-
-
 class _ListDialog(QDialog):
 
     def __init__(self, parent, title: str, size: tuple[int, int], hdr_text: str,
@@ -810,16 +808,17 @@ class ProfilesDialog(QDialog):
                     _atomic_write(old_path, data)
             except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
                 logger.warning("_new: could not clear is_default from '%s': %s", old_path.name, exc)
-        S.profile_name        = name
-        S.entries             = fresh.entries
-        S.headers             = fresh.headers
-        S.mount_options       = fresh.mount_options
-        S.system_manager_ops  = fresh.system_manager_ops
-        S.system_files        = fresh.system_files
-        S.basic_packages      = fresh.basic_packages
-        S.aur_packages        = fresh.aur_packages
-        S.specific_packages   = fresh.specific_packages
-        S.user_shell          = fresh.user_shell
+        S.profile_name       = name
+        S.entries            = fresh.entries
+        S.headers            = fresh.headers
+        S.mount_options      = fresh.mount_options
+        S.system_manager_ops = fresh.system_manager_ops
+        S.system_files       = fresh.system_files
+        S.basic_packages     = fresh.basic_packages
+        S.aur_packages       = fresh.aur_packages
+        S.specific_packages  = fresh.specific_packages
+        S.user_shell         = fresh.user_shell
+        S.ui                 = fresh.ui
         if not save_profile():
             QMessageBox.critical(self, "Error", f"Could not save profile '{name}'.")
             return
@@ -897,6 +896,7 @@ class ProfilesDialog(QDialog):
                     QMessageBox.warning(self, "Import", "The archive contains no .json profile files.")
                     return
                 imported, skipped = [], []
+                _MAX = 1024 * 1024
                 for member in members:
                     stem = Path(member.name).stem
                     p = Path(member.name)
@@ -920,7 +920,6 @@ class ProfilesDialog(QDialog):
                         f = tar.extractfile(member)
                         if f:
                             with f:
-                                _MAX = 1 * 1024 * 1024
                                 raw = f.read(_MAX + 1)
                             if len(raw) > _MAX:
                                 skipped.append(f"{stem} (file too large, max 1 MiB)")
@@ -1003,7 +1002,6 @@ class ProfilesDialog(QDialog):
         if not src.exists():
             if name == S.profile_name:
                 save_profile()
-                self.was_changed = True
             else:
                 QMessageBox.warning(self, "Export", f"Profile file for '{name}' not found.")
                 return

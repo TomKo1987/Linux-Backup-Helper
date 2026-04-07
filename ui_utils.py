@@ -1,8 +1,8 @@
 from pathlib import Path
 from typing import Optional
 
-from PyQt6.QtGui import QTextCursor
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QTextCursor
 from PyQt6.QtWidgets import (
     QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
     QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
@@ -30,24 +30,14 @@ def hdr_label(text: str, color: str = "", size: Optional[int] = None) -> QLabel:
     from themes import current_theme, font_sz
     lbl = QLabel(text)
     sz  = size if size is not None else font_sz(3)
-    lbl.setStyleSheet(
-        f"font-size:{sz}px;font-weight:bold;"
-        f"color:{color or current_theme()['accent']};padding:4px 0;"
-    )
+    lbl.setStyleSheet(f"font-size:{sz}px;font-weight:bold;"
+                      f"color:{color or current_theme()['accent']};padding:4px 0;")
     lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
     return lbl
 
 
-def ok_cancel_buttons(
-    dialog: QDialog,
-    ok_fn,
-    ok_label: str = "Save",
-    cancel_label: str = "Cancel",
-    cancel_fn=None,
-) -> QDialogButtonBox:
-    bb = QDialogButtonBox(
-        QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel # type: ignore
-    )
+def ok_cancel_buttons(dialog: QDialog, ok_fn, ok_label: str = "Save", cancel_label: str = "Cancel", cancel_fn=None) -> QDialogButtonBox:
+    bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel) # type: ignore
     ok_btn     = bb.button(QDialogButtonBox.StandardButton.Ok)
     cancel_btn = bb.button(QDialogButtonBox.StandardButton.Cancel)
     if ok_btn:
@@ -69,11 +59,8 @@ def btn_row(buttons: list[tuple[str, object]]) -> QHBoxLayout:
 
 
 def do_browse(parent: QWidget, editor, mode: str, home: Path = _HOME) -> None:
-    path = (
-        QFileDialog.getExistingDirectory(parent, "Select directory", str(home))
-        if mode == "dir"
-        else QFileDialog.getOpenFileName(parent, "Select file", str(home))[0]
-    )
+    path = (QFileDialog.getExistingDirectory(parent, "Select directory", str(home))
+            if mode == "dir" else QFileDialog.getOpenFileName(parent, "Select file", str(home))[0])
     if not path:
         return
     if hasattr(editor, "setPlainText"):
@@ -97,9 +84,7 @@ def browse_buttons(parent: QWidget, editor, home: Path = _HOME) -> QHBoxLayout:
     return row
 
 
-def browse_field(
-    parent: QWidget, editor: QLineEdit, btn_height: int = 36
-) -> QWidget:
+def browse_field(parent: QWidget, editor: QLineEdit, btn_height: int = 36) -> QWidget:
     row  = QWidget()
     hlay = QHBoxLayout(row)
     hlay.setContentsMargins(0, 0, 0, 0)
@@ -109,20 +94,12 @@ def browse_field(
         b = QPushButton(lbl)
         b.setMinimumHeight(btn_height)
         b.setMinimumWidth(70)
-        b.clicked.connect(
-            lambda _c=False, _e=editor, _m=mode: do_browse(parent, _e, _m)
-        )
+        b.clicked.connect(lambda _c=False, _e=editor, _m=mode: do_browse(parent, _e, _m))
         hlay.addWidget(b)
     return row
 
 
-def ask_text(
-    parent,
-    title: str,
-    label: str,
-    default: str = "",
-    min_width: int = 440,
-) -> tuple[str, bool]:
+def ask_text(parent, title: str, label: str, default: str = "", min_width: int = 440) -> tuple[str, bool]:
     dlg = QDialog(parent)
     dlg.setWindowTitle(title)
     dlg.setMinimumWidth(min_width)
@@ -133,9 +110,7 @@ def ask_text(
     edit = QLineEdit(default)
     edit.selectAll()
     layout.addWidget(edit)
-    bb = QDialogButtonBox(
-        QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel # type: ignore
-    )
+    bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel) # type: ignore
     bb.accepted.connect(dlg.accept)
     bb.rejected.connect(dlg.reject)
     layout.addWidget(bb)
@@ -144,9 +119,7 @@ def ask_text(
     return edit.text(), accepted
 
 
-def ask_profile_name(
-    title: str, default: str, parent=None
-) -> Optional[str]:
+def ask_profile_name(title: str, default: str, parent=None) -> Optional[str]:
     while True:
         name, ok = ask_text(parent, title, "Profile name:", default=default)
         if not ok:
@@ -156,10 +129,7 @@ def ask_profile_name(
             QMessageBox.warning(parent, "Invalid Name", "Name must not be empty.")
             continue
         if not _PROFILE_RE.match(name):
-            QMessageBox.warning(
-                parent,
-                "Invalid Name",
-                "Only letters, digits, spaces, hyphens, underscores and dots are allowed.",
-            )
+            QMessageBox.warning(parent, "Invalid Name",
+                                "Only letters, digits, spaces, hyphens, underscores and dots are allowed.")
             continue
         return name

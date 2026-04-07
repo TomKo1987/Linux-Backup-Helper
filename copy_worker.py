@@ -26,6 +26,7 @@ from drive_utils import is_smb
 from state import apply_replacements, logger
 from themes import current_theme, font_sz
 
+
 _CHUNK           = 32 * 1024 * 1024
 _IO_BUF          =  8 * 1024 * 1024
 _WORKERS         = min(12, max(4, os.cpu_count() or 4))
@@ -50,8 +51,6 @@ def _scale_params(total: int) -> tuple[int, int, int, int, int]:
     if total >=   2_000: return  32,  256,  2_500,  128, min(w, 6)
     return _CLAIM_SIZE, _LOCAL_BATCH, _FLUSH_THRESH, _SCAN_PIPE_BATCH, min(w, 4)
 
-
-_NATURAL_SORT_RE = re.compile(r"(\d+)")
 
 _SKIP_RE = re.compile(
     r"("
@@ -83,8 +82,8 @@ _PID        = os.getpid()
 _tls        = threading.local()
 _SHM_DIR: str | None = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else None
 
-_smb_procs:      dict[int, subprocess.Popen] = {}
-_smb_procs_lock: threading.Lock              = threading.Lock()
+_smb_procs: dict[int, subprocess.Popen] = {}
+_smb_procs_lock: threading.Lock = threading.Lock()
 
 
 def _ensure_dir(path: str) -> bool:
@@ -112,8 +111,7 @@ def _cached_mono_style(size: int, color: str, bold: bool = False, extra: str = "
     return s + extra
 
 
-def _invalidate_copy_worker_caches() -> None:
-    _cached_mono_style.cache_clear()
+def _invalidate_copy_worker_caches() -> None: _cached_mono_style.cache_clear()
 
 from themes import register_cache_invalidation_hook as _reg_cache_hook
 _reg_cache_hook(_invalidate_copy_worker_caches)
@@ -166,13 +164,15 @@ def _do_copy(entry, cancel: threading.Event, ok_l: list, sk_l: list, er_l: list,
     except Exception as exc:
         logger.error("copy %s: %s", src, exc)
         status, aux, sz = "error", str(exc), 0
-    c = tc.setdefault(title, [0, 0, 0]) if title else [0, 0, 0]
     if status == "ok":
-        ok_l.append((src, dst, sz));                 c[0] += 1
+        ok_l.append((src, dst, sz))
+        if title: tc.setdefault(title, [0, 0, 0])[0] += 1
     elif status == "skip":
-        sk_l.append((src, aux or "Up to date", sz)); c[1] += 1
+        sk_l.append((src, aux or "Up to date", sz))
+        if title: tc.setdefault(title, [0, 0, 0])[1] += 1
     else:
-        er_l.append((src, aux, 0));                  c[2] += 1
+        er_l.append((src, aux, 0))
+        if title: tc.setdefault(title, [0, 0, 0])[2] += 1
 
 
 class _SecurePw(Protocol):
@@ -611,7 +611,7 @@ class _SmbScanner:
         idx = self._client(host, share).ls_index(rpath)
         with self._cache_lock:
             if ck not in self._ls_cache:
-                while len(self._ls_cache) >= self._CACHE_MAX:
+                if len(self._ls_cache) >= self._CACHE_MAX:
                     del self._ls_cache[next(iter(self._ls_cache))]
                 self._ls_cache[ck] = idx
             else:
@@ -956,8 +956,9 @@ class CopyWorker(QThread):
     def run(self) -> None:
         pw: "_SecurePw | None" = None
         try:
-            smb_tasks = [(s, d, t) for s, d, t in self.tasks if is_smb(s) or is_smb(d)]
-            local_tasks = [(s, d, t) for s, d, t in self.tasks if not (is_smb(s) or is_smb(d))]
+            smb_tasks, local_tasks = [], []
+            for s, d, t in self.tasks:
+                (smb_tasks if is_smb(s) or is_smb(d) else local_tasks).append((s, d, t))
             user = ""
             if smb_tasks:
                 user, pw = _get_smb_credentials()
@@ -1098,23 +1099,22 @@ class CopyWorker(QThread):
                     pass
                 except OSError as exc:
                     logger.warning("scan %s: %s", _src, exc)
-
-                if local_files:
-                    file_q.put(local_files)
-                    local_n += len(local_files)
-                    with pend_lock:
-                        now = time.monotonic()
-                        if now - last_emit_t[0] >= _SCAN_EMIT_SECS:
-                            total_found[0] += local_n
-                            local_n = 0
-                            last_emit_t[0] = now
-                            cur = total_found[0]
-                        else:
-                            cur = -1
-                    if cur >= 0:
-                        self.scan_progress.emit("Scanning", cur)
-
-                _finish_one()
+                finally:
+                    if local_files:
+                        file_q.put(local_files)
+                        local_n += len(local_files)
+                        with pend_lock:
+                            now = time.monotonic()
+                            if now - last_emit_t[0] >= _SCAN_EMIT_SECS:
+                                total_found[0] += local_n
+                                local_n = 0
+                                last_emit_t[0] = now
+                                cur = total_found[0]
+                            else:
+                                cur = -1
+                        if cur >= 0:
+                            self.scan_progress.emit("Scanning", cur)
+                    _finish_one()
 
             if local_n:
                 with pend_lock:
@@ -1213,19 +1213,19 @@ class CopyWorker(QThread):
                     pass
                 except OSError as exc:
                     logger.warning("scan %s: %s", _src, exc)
-
-                if time.monotonic() - last_emit[0] >= _SCAN_EMIT_SECS:
+                finally:
                     emit_cur = -1
-                    with pend_lock:
-                        now = time.monotonic()
-                        if now - last_emit[0] >= _SCAN_EMIT_SECS:
-                            found[0] += local_n
-                            local_n = 0
-                            last_emit[0] = now
-                            emit_cur = found[0]
-                    if emit_cur >= 0:
-                        self.scan_progress.emit("Scanning", emit_cur)
-                _dq()
+                    if time.monotonic() - last_emit[0] >= _SCAN_EMIT_SECS:
+                        with pend_lock:
+                            now = time.monotonic()
+                            if now - last_emit[0] >= _SCAN_EMIT_SECS:
+                                found[0] += local_n
+                                local_n = 0
+                                last_emit[0] = now
+                                emit_cur = found[0]
+                        if emit_cur >= 0:
+                            self.scan_progress.emit("Scanning", emit_cur)
+                    _dq()
 
             if batch and not cancel.is_set():
                 while not cancel.is_set():
@@ -1283,7 +1283,7 @@ class CopyWorker(QThread):
                     _run_futures(futs, cancel, "scan worker")
                 total = found[0]
                 self.scan_progress.emit("Scanning", total)
-                cs, lb, ft, spb, _cw = _scale_params(total)
+                _, lb, ft, spb, _ = _scale_params(total)
                 with copy_params_lock:
                     copy_params[0] = lb
                     copy_params[1] = spb
@@ -1459,12 +1459,6 @@ class _StatCard:
     def set_size(self, text: str) -> None: self.size_lbl.setText(text)
 
 
-def _lbl(text: str, style: str) -> QLabel:
-    w = QLabel(text)
-    w.setStyleSheet(style)
-    return w
-
-
 def _make_stat_card(color: "str | None", title: str, val: str = "0", size_title: int = 0, size_val: int = 0, bold_val: bool = True) -> _StatCard:
     t       = current_theme()
     s_title = size_title or font_sz(3)
@@ -1575,7 +1569,9 @@ class _SummaryWidget(QWidget):
         prog_lay.setSpacing(8)
 
         prog_hdr = QHBoxLayout()
-        prog_hdr.addWidget(_lbl("Progress", _cached_mono_style(font_sz(2), t["text_dim"], extra="border:none;")))
+        _w = QLabel("Progress")
+        _w.setStyleSheet(_cached_mono_style(font_sz(2), t["text_dim"], extra="border:none;"))
+        prog_hdr.addWidget(_w)
         prog_hdr.addStretch()
 
         self._prog_pct = QLabel("0%")
@@ -1612,7 +1608,7 @@ class _SummaryWidget(QWidget):
         rate_lay.setContentsMargins(20, 14, 20, 14)
         rate_lay.setSpacing(8)
 
-        bd_lbl = _lbl("File breakdown", _cached_mono_style(font_sz(2), t["text_dim"], extra="border:none;"))
+        bd_lbl = self._lbl("File breakdown", _cached_mono_style(font_sz(2), t["text_dim"], extra="border:none;"))
         bd_lbl.setMinimumHeight(22)
         rate_lay.addWidget(bd_lbl)
 
@@ -1657,7 +1653,7 @@ class _SummaryWidget(QWidget):
         entry_lay = QVBoxLayout(self._entry_card)
         entry_lay.setContentsMargins(15, 10, 15, 10)
         entry_lay.setSpacing(5)
-        entry_lay.addWidget(_lbl("Entries processed", _cached_mono_style(font_sz(2), t["text_dim"], extra="border:none;")))
+        entry_lay.addWidget(self._lbl("Entries processed", _cached_mono_style(font_sz(2), t["text_dim"], extra="border:none;")))
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -1683,6 +1679,12 @@ class _SummaryWidget(QWidget):
         lay.addWidget(self._rate_card)
         self._entry_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         lay.addWidget(self._entry_card)
+
+    @staticmethod
+    def _lbl(text: str, style: str) -> QLabel:
+        w = QLabel(text)
+        w.setStyleSheet(style)
+        return w
 
     def set_status_html(self, _html: str) -> None: self._status_center_lbl.setText(_html)
 
@@ -1820,6 +1822,7 @@ class _SummaryWidget(QWidget):
 class _LogWidget(QWidget):
     _PAGE    = 500
     _LOG_MAX = 150_000
+    _NATURAL_SORT_RE = re.compile(r"(\d+)")
     _sorted_ready = pyqtSignal(list, list)
 
     def __init__(self, color: str) -> None:
@@ -2036,7 +2039,8 @@ class _LogWidget(QWidget):
         self._render()
 
     @staticmethod
-    def _natural_sort_key(s: str) -> list: return [int(t) if t.isdigit() else t.lower() for t in _NATURAL_SORT_RE.split(s)]
+    def _natural_sort_key(s: str) -> list:
+        return [int(t) if t.isdigit() else t.lower() for t in _LogWidget._NATURAL_SORT_RE.split(s)]
 
 
 class CopyDialog(QDialog):
@@ -2180,10 +2184,10 @@ class CopyDialog(QDialog):
         self.tabs.setTabText(3, f"✗ Errors ({self.errors:,})")
 
     @staticmethod
-    def _fmt_ok(s, d, _sz=0) -> str: return f"{apply_replacements(s)}\n Copied to ⤵\n{apply_replacements(d)}"
+    def _fmt_ok(s, d) -> str: return f"{apply_replacements(s)}\n Copied to ⤵\n{apply_replacements(d)}"
 
     @staticmethod
-    def _fmt_sk(p, r, _sz=0) -> str: return f"{apply_replacements(p)} ↷ {r}"
+    def _fmt_sk(p, r) -> str: return f"{apply_replacements(p)} ↷ {r}"
 
     @staticmethod
     def _fmt_er(p, m) -> str: return f"{apply_replacements(p)} ❌ {m}"

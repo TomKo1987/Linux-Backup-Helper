@@ -20,13 +20,6 @@ from themes import (
 )
 
 
-def _get_pkg_name(p: dict | str, is_specific: bool) -> str:
-    return p.get("package" if is_specific else "name", "") if isinstance(p, dict) else str(p)
-
-
-def _sort_pkgs(pkg_list: list, is_specific: bool) -> None: pkg_list.sort(key=lambda x: _get_pkg_name(x, is_specific).lower())
-
-
 _STATE_ACTIVE   = Qt.CheckState.Checked
 _STATE_DISABLED = Qt.CheckState.PartiallyChecked
 _STATE_DELETE   = Qt.CheckState.Unchecked
@@ -58,7 +51,6 @@ def _make_tri_cb(text: str, disabled: bool, tooltip: str = "") -> TriCheckBox:
     return cb
 
 
-
 def _scroll_dlg(parent, title: str, body: QWidget, on_save=None) -> tuple[QDialog, QVBoxLayout]:
     dlg = QDialog(parent)
     dlg.setWindowTitle(title)
@@ -83,7 +75,6 @@ def _scroll_dlg(parent, title: str, body: QWidget, on_save=None) -> tuple[QDialo
     if cancel_btn:
         cancel_btn.setFocus()
     return dlg, lay
-
 
 
 def _pkg_checkboxes(packages: list, is_specific: bool) -> list[TriCheckBox]:
@@ -208,12 +199,12 @@ def _pkg_form_dialog(parent, title: str, *, prefill_name: str = "",
 
 class SystemManagerOptions(QDialog):
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, distro: LinuxDistroHelper | None = None):
         super().__init__(parent)
         self.setWindowTitle("System Manager Options")
         self.setMinimumSize(1200, 680)
-        self._distro        = LinuxDistroHelper()
-        self._session       = self._distro.detect_session()
+        self._distro = distro or LinuxDistroHelper()
+        self._session = self._distro.detect_session()
         self._yay_installed = self._distro.has_aur and self._distro.package_is_installed("yay")
         self._build()
 
@@ -273,6 +264,14 @@ class SystemManagerOptions(QDialog):
         close = QPushButton("Close")
         close.clicked.connect(self.close)
         lay.addWidget(close)
+
+    @staticmethod
+    def _get_pkg_name(p: dict | str, is_specific: bool) -> str:
+        return p.get("package" if is_specific else "name", "") if isinstance(p, dict) else str(p)
+
+    @staticmethod
+    def _sort_pkgs(pkg_list: list, is_specific: bool) -> None:
+        pkg_list.sort(key=lambda x: SystemManagerOptions._get_pkg_name(x, is_specific).lower())
 
     def _save_shell(self) -> None:
         sel = self._shell_cb.currentText()
@@ -693,7 +692,7 @@ class SystemManagerOptions(QDialog):
         else:
             p["name"] = name
         pkg_list = getattr(S, pkg_type, [])
-        _sort_pkgs(pkg_list, is_specific)
+        self._sort_pkgs(pkg_list, is_specific)
         save_profile()
         parent_dlg.accept()
         QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
@@ -748,7 +747,7 @@ class SystemManagerOptions(QDialog):
                     existing.add(name)
                     added.append(name)
 
-        _sort_pkgs(current, is_specific)
+        self._sort_pkgs(current, is_specific)
         setattr(S, pkg_type, current)
         save_profile()
 
@@ -809,7 +808,7 @@ class SystemManagerOptions(QDialog):
                     added += 1
 
         if added:
-            _sort_pkgs(current, is_specific)
+            self._sort_pkgs(current, is_specific)
             setattr(S, pkg_type, current)
             save_profile()
             QMessageBox.information(self, "Import Complete", f"Successfully imported {added} packages.")
@@ -846,6 +845,7 @@ class SystemManagerLauncher:
         self._session        = self._distro.detect_session()
         self._yay_installed  = self._distro.has_aur and self._distro.package_is_installed("yay")
         self._sudo_checkbox: QCheckBox | None = None
+        self._op_text: dict[str, str] | None = None
         self._sm_thread = None
         self._sm_dialog = None
 
@@ -854,7 +854,7 @@ class SystemManagerLauncher:
             QMessageBox.information(self.parent, "No Operations Configured",
                                     "System Manager has no operations selected yet.\n\n"
                                     "Please configure what should be executed under 'System Manager Operations' first.")
-            SystemManagerOptions(self.parent).exec()
+            SystemManagerOptions(self.parent, distro=self._distro).exec()
             return
         if self.parent:
             self.parent.hide()
@@ -866,7 +866,9 @@ class SystemManagerLauncher:
 
     def _confirm_and_start(self) -> None:
         ops = S.system_manager_ops
-        op_text = {k: v.replace("&&", "&") for k, v in _build_op_text(self._distro, self._session).items()}
+        if self._op_text is None:
+            self._op_text = {k: v.replace("&&", "&") for k, v in _build_op_text(self._distro, self._session).items()}
+        op_text = self._op_text
         _, _, tips = generate_tooltip()
         dialog = QDialog(self.parent)
         dialog.setWindowTitle("System Manager")
@@ -875,7 +877,6 @@ class SystemManagerLauncher:
         yay_info = ""
         if self._distro.has_aur:
             yay_info = ("   |   AUR Helper: 'yay' detected" if self._yay_installed else "   |   AUR Helper: 'yay' not detected")
-
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
         distro_lbl = QLabel(f"Recognized Linux distribution: {self._distro_name}   |   Session: {self._session}{yay_info}")

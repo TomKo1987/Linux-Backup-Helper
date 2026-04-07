@@ -7,7 +7,6 @@ from PyQt6.QtWidgets import QApplication
 
 from state import S, logger, invalidate_tooltip_cache
 
-
 THEMES: dict[str, dict[str, str]] = {
     "Ayu Dark": {
         "bg": "#0b0e14", "bg2": "#13161d", "bg3": "#1c2028",
@@ -199,9 +198,9 @@ def _build_indeterminate_svg(colour: str) -> str:
 
 
 @lru_cache(maxsize=16)
-def _tri_styles_cached(theme_name: str, highlight: str) -> tuple[str, str, str]:
+def _tri_styles_cached(theme_name: str) -> tuple[str, str, str]:
     t   = THEMES.get(theme_name, THEMES[DEFAULT_THEME])
-    b64 = _build_indeterminate_svg(highlight)
+    b64 = _build_indeterminate_svg(t["highlight"])
 
     ind = ("QCheckBox::indicator{"
            "width:8px;height:8px;border-radius:4px;"
@@ -230,8 +229,7 @@ def _tri_styles_cached(theme_name: str, highlight: str) -> tuple[str, str, str]:
 
 
 def tri_styles() -> tuple[str, str, str]:
-    t = current_theme()
-    return _tri_styles_cached(_current_theme_name, t["highlight"])
+    return _tri_styles_cached(_current_theme_name)
 
 
 def style_label_info(font_size: int = 0) -> str:
@@ -473,16 +471,18 @@ def apply_tooltip(widget, text: str) -> None:
     widget.setCursor(Qt.CursorShape.WhatsThisCursor)
 
 
-def tri_state_legend_html() -> str:
-    t = current_theme()
-    c_act = t['green']
-    c_dis = t['highlight']
-    c_del = t['red']
-    return (f"<span style='color:{c_act};'>●</span> Active &nbsp;&nbsp; "
-            f"<span style='color:{c_dis};'>○</span> "
+@lru_cache(maxsize=16)
+def _tri_legend_cached(theme_name: str) -> str:
+    t = THEMES.get(theme_name, THEMES[DEFAULT_THEME])
+    return (f"<span style='color:{t['green']};'>●</span> Active &nbsp;&nbsp; "
+            f"<span style='color:{t['highlight']};'>○</span> "
             f"<span style='color:{t['muted']};text-decoration:line-through;'>Disabled</span> &nbsp;&nbsp; "
-            f"<span style='color:{c_del};'>○</span> "
-            f"<span style='color:{c_del};text-decoration:line-through;font-style:italic;'>Delete</span>")
+            f"<span style='color:{t['red']};'>○</span> "
+            f"<span style='color:{t['red']};text-decoration:line-through;font-style:italic;'>Delete</span>")
+
+
+def tri_state_legend_html() -> str:
+    return _tri_legend_cached(_current_theme_name)
 
 
 def get_style() -> str:
@@ -507,7 +507,7 @@ def apply_style() -> None:
     _current_theme_name = S.ui.get("theme", DEFAULT_THEME)
     invalidate_tooltip_cache()
     _tri_styles_cached.cache_clear()
-
+    _tri_legend_cached.cache_clear()
     with _cache_hooks_lock:
         hooks = list(_cache_invalidation_hooks)
     for fn in hooks:
@@ -515,7 +515,6 @@ def apply_style() -> None:
             fn()
         except Exception as e:
             logger.warning("apply_style: cache hook %s raised: %s", fn, e)
-
     app = QApplication.instance()
     if isinstance(app, QApplication):
         app.setStyleSheet(get_style())

@@ -22,7 +22,6 @@ from PyQt6.QtWidgets import (
     QLabel, QListWidget, QListWidgetItem, QPushButton, QTextEdit, QVBoxLayout
 )
 
-from linux_distro_helper import distro_family
 from state import S, _HOME, _USER, logger, apply_replacements
 from themes import current_theme, font_sz
 
@@ -354,6 +353,7 @@ class SystemManagerThread(QThread):
         self._stop_keepalive = threading.Event()
         self._keepalive: Optional[_SudoKeepalive] = None
         self._enabled_tasks: dict[str, tuple] = {}
+        self._env_snapshot: dict = os.environ.copy()
         try:
             self.distro, self._pkg_cache = distro, _PackageCache(distro)
         except Exception as exc:
@@ -440,8 +440,7 @@ class SystemManagerThread(QThread):
             if status == _Status.ERROR:
                 self.outputReceived.emit(f"Aborting remaining tasks due to failure in '{task_id}'.", "error"); break
 
-    @staticmethod
-    def _env() -> dict: return dict(os.environ)
+    def _env(self) -> dict: return self._env_snapshot
 
     @staticmethod
     def _inject(cmd: list[str]) -> list[str]:
@@ -528,9 +527,8 @@ class SystemManagerThread(QThread):
                 if "[sudo]" in text: text = re.sub(r"\[sudo].*?:\s*", "", text)
                 self.outputReceived.emit(text, "error" if is_err and not _INFO_RE.search(text) else "subprocess")
 
-        _wait_timeout = timeout
         try:
-            rc = proc.wait(timeout=_wait_timeout) if proc.poll() is None else proc.returncode
+            rc = proc.wait(timeout=timeout) if proc.poll() is None else proc.returncode
         except subprocess.TimeoutExpired:
             proc.kill()
             rc = proc.wait()
@@ -724,7 +722,7 @@ class SystemManagerThread(QThread):
 
     def _update_mirrors(self) -> bool:
         if not self.distro: return False
-        if distro_family(self.distro.distro_id) != "arch":
+        if self.distro.family() != "arch":
             self.outputReceived.emit("Mirror update is only supported on Arch Linux", "info")
             return True
 

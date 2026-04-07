@@ -177,6 +177,7 @@ class SambaPasswordManager:
             data = json.loads(raw)
             return data.get("login"), data.get("password")
         except json.JSONDecodeError:
+            logger.warning("KWallet entry is not JSON — treating raw value as password (legacy format)")
             return _USER, raw
 
     def _write_to_kwallet(self, entry: str, username: str, password: str) -> None:
@@ -224,8 +225,8 @@ class SambaPasswordManager:
                 logger.exception("Failed to save to system keyring: %s", exc)
                 raise
 
-    @staticmethod
-    def delete_credentials(username: str) -> bool:
+    def delete_credentials(self, username: str) -> bool:
+        self._cached_kwallet_entry = None
         try:
             keyring.delete_password(_KEYRING_SERVICE, username)
             try:
