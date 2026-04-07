@@ -26,7 +26,6 @@ from drive_utils import is_smb
 from state import apply_replacements, logger
 from themes import current_theme, font_sz
 
-
 _CHUNK           = 32 * 1024 * 1024
 _IO_BUF          =  8 * 1024 * 1024
 _WORKERS         = min(12, max(4, os.cpu_count() or 4))

@@ -22,7 +22,7 @@ from state import (
     S, _HOME, _LOG_FILE, _PROFILES_DIR, _PROFILE_RE, _atomic_write, apply_replacements,
 )
 from themes import current_theme, font_scale, font_sz, apply_tooltip
-from ui_utils import sep, hdr_label, ok_cancel_buttons, btn_row, browse_buttons, ask_text, ask_profile_name
+from ui_utils import sep, hdr_label, ok_cancel_buttons, btn_row, ask_text, ask_profile_name, browse_field
 
 
 class _ListDialog(QDialog):
@@ -385,7 +385,7 @@ class EntryDialog(QDialog):
             vl.addWidget(QLabel(label))
             ed = _make_editor(prefill, placeholder)
             vl.addWidget(ed)
-            vl.addLayout(browse_buttons(dlg, ed))
+            vl.addWidget(browse_field(dlg, ed))
             return ed
 
         src_ed = _path_row("Source path:",      src, "Enter path or use '📄 File' or '📁 Directory'")
@@ -421,16 +421,15 @@ class EntryDialog(QDialog):
         self._populate_lists()
         self._src_list.setCurrentRow(row)
 
-    def _edit_selected(self) -> None:
+    def _get_active_row(self) -> int:
         row = self._src_list.currentRow()
-        if row < 0:
-            row = self._dst_list.currentRow()
-        self._edit_pair(row)
+        return self._dst_list.currentRow() if row < 0 else row
+
+    def _edit_selected(self) -> None:
+        self._edit_pair(self._get_active_row())
 
     def _remove_selected(self) -> None:
-        row = self._src_list.currentRow()
-        if row < 0:
-            row = self._dst_list.currentRow()
+        row = self._get_active_row()
         if 0 <= row < len(self.pairs):
             self.pairs.pop(row)
             self._populate_lists()
@@ -439,14 +438,14 @@ class EntryDialog(QDialog):
                 self._src_list.setCurrentRow(new_row)
 
     def _move_up(self) -> None:
-        row = self._src_list.currentRow()
+        row = self._get_active_row()
         if row > 0:
             self.pairs[row - 1], self.pairs[row] = self.pairs[row], self.pairs[row - 1]
             self._populate_lists()
             self._src_list.setCurrentRow(row - 1)
 
     def _move_down(self) -> None:
-        row = self._src_list.currentRow()
+        row = self._get_active_row()
         if 0 <= row < len(self.pairs) - 1:
             self.pairs[row], self.pairs[row + 1] = self.pairs[row + 1], self.pairs[row]
             self._populate_lists()

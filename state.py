@@ -26,17 +26,12 @@ def _make_logger(name: str) -> logging.Logger:
     if log.handlers:
         return log
     log.setLevel(logging.INFO)
-    fmt = logging.Formatter(
-        "%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
-        "%Y-%m-%d %H:%M:%S",
-    )
+    fmt = logging.Formatter("%(asctime)s  %(levelname)-8s  %(name)s — %(message)s", "%Y-%m-%d %H:%M:%S")
     sh = logging.StreamHandler()
     sh.setFormatter(fmt)
     log.addHandler(sh)
     try:
-        fh = RotatingFileHandler(
-            _LOG_FILE, maxBytes=2 * 1024 * 1024, backupCount=5, encoding="utf-8"
-        )
+        fh = RotatingFileHandler(_LOG_FILE, maxBytes=2 * 1024 * 1024, backupCount=5, encoding="utf-8")
         fh.setFormatter(fmt)
         log.addHandler(fh)
     except (OSError, PermissionError):
@@ -48,10 +43,8 @@ def _make_logger(name: str) -> logging.Logger:
 logger = _make_logger("backup_helper")
 
 
-_path_replacements: tuple[tuple[str, str], ...] = (
-    (_HOME.as_posix(), "~"),
-    (f"/run/media/{_USER}/", ""),
-)
+_path_replacements: tuple[tuple[str, str], ...] = ((_HOME.as_posix(), "~"), (f"/run/media/{_USER}/", ""))
+
 
 _ANSI_RE       = re.compile(r"\x1b\[[0-9;]*[mKHJA-Z]")
 _NORM_PATHS_RE = re.compile(r" (?=/|smb://|cifs://)")
@@ -119,10 +112,7 @@ def _normalise_pkg(p) -> dict:
 
 
 def _norm_pkgs(raw: list) -> list[dict]:
-    return sorted(
-        (_normalise_pkg(p) for p in raw),
-        key=lambda x: x.get("name", x.get("package", "")).lower(),
-    )
+    return sorted((_normalise_pkg(p) for p in raw), key=lambda x: x.get("name", x.get("package", "")).lower())
 
 
 def _norm_paths(raw: Any) -> list[str]:
@@ -140,8 +130,7 @@ def _norm_paths(raw: Any) -> list[str]:
     return result
 
 
-def _valid_hex_color(value: Any) -> bool:
-    return isinstance(value, str) and bool(_HEX_COLOR_RE.match(value))
+def _valid_hex_color(value: Any) -> bool: return isinstance(value, str) and bool(_HEX_COLOR_RE.match(value))
 
 
 def _parse_entry(raw: dict) -> Optional[dict]:
@@ -154,13 +143,7 @@ def _parse_entry(raw: dict) -> Optional[dict]:
     if not (header and title and source and dest):
         return None
     details = raw.get("details", {})
-    return {
-        "header": header,
-        "title":  title,
-        "source": source,
-        "destination": dest,
-        "details": details if isinstance(details, dict) else {},
-    }
+    return {"header": header, "title":  title, "source": source, "destination": dest, "details": details if isinstance(details, dict) else {}}
 
 
 def load_profile(path: Path) -> bool:
@@ -175,23 +158,11 @@ def _load_profile_from_data(path: Path, data: dict) -> bool:
     try:
         new_name = path.stem
 
-        new_headers = {
-            k: {
-                "inactive": bool(v.get("inactive")),
-                "color": (
-                    v.get("header_color", "#ffffff")
-                    if _valid_hex_color(v.get("header_color"))
-                    else "#ffffff"
-                ),
-            }
-            for k, v in data.get("header", {}).items()
-            if isinstance(v, dict)
-        }
+        new_headers = {k: {"inactive": bool(v.get("inactive")), "color": (v.get("header_color", "#ffffff")
+        if _valid_hex_color(v.get("header_color")) else "#ffffff")} for k, v in data.get("header", {}).items()
+                       if isinstance(v, dict)}
 
-        new_entries = [
-            e for raw in data.get("entries", [])
-            if (e := _parse_entry(raw)) is not None
-        ]
+        new_entries = [e for raw in data.get("entries", []) if (e := _parse_entry(raw)) is not None]
         new_mount = [o for o in data.get("mount_options", []) if isinstance(o, dict)]
 
         def _as_list(key: str) -> list:
@@ -237,35 +208,22 @@ def _load_profile_from_data(path: Path, data: dict) -> bool:
 
 
 def save_profile(path: Optional[Path] = None) -> bool:
-    path = path or (
-        _PROFILES_DIR / f"{S.profile_name}.json" if S.profile_name else None
-    )
+    path = path or (_PROFILES_DIR / f"{S.profile_name}.json" if S.profile_name else None)
     if not path:
         return False
-    data = {
-        "is_default": True,
-        "mount_options": S.mount_options,
-        "header": {
-            k: {"inactive": v.get("inactive", False), "header_color": v.get("color", "#ffffff")}
-            for k, v in S.headers.items()
-        },
-        "system_manager_operations": S.system_manager_ops,
-        "system_files":     S.system_files,
-        "basic_packages":   S.basic_packages,
-        "aur_packages":     S.aur_packages,
-        "specific_packages": sorted(
-            S.specific_packages,
-            key=lambda x: str(
-                x.get("package", "") if isinstance(x, dict) else x
-            ).lower(),
-        ),
-        "ui_settings": S.ui,
-        "user_shell":  S.user_shell,
-        "entries": sorted(
-            S.entries,
-            key=lambda e: (e.get("header", "").lower(), e.get("title", "").lower()),
-        ),
-    }
+    data = {"is_default": True,
+            "mount_options": S.mount_options,
+            "header": {k: {"inactive": v.get("inactive", False), "header_color": v.get("color", "#ffffff")}
+                       for k, v in S.headers.items()},
+            "system_manager_operations": S.system_manager_ops,
+            "system_files":   S.system_files,
+            "basic_packages": S.basic_packages,
+            "aur_packages":   S.aur_packages,
+            "specific_packages": sorted(
+                S.specific_packages, key=lambda x: str(x.get("package", "") if isinstance(x, dict) else x).lower()),
+            "ui_settings": S.ui,
+            "user_shell":  S.user_shell,
+            "entries": sorted(S.entries, key=lambda e: (e.get("header", "").lower(), e.get("title", "").lower()))}
     try:
         _atomic_write(path, data)
         invalidate_tooltip_cache()
@@ -300,16 +258,11 @@ def startup_load() -> bool:
                 try:
                     _atomic_write(p, data)
                 except OSError as exc:
-                    logger.error(
-                        "startup_load: could not clear duplicate in '%s': %s", p.stem, exc
-                    )
+                    logger.error("startup_load: could not clear duplicate in '%s': %s", p.stem, exc)
                 logger.warning("Cleared duplicate is_default flag in '%s'", p.stem)
 
     if default_path and default_data:
         if _load_profile_from_data(default_path, default_data):
             return True
-        logger.warning(
-            "startup_load: default profile '%s' failed to load, trying others",
-            default_path.stem,
-        )
+        logger.warning("startup_load: default profile '%s' failed to load, trying others", default_path.stem)
     return any(_load_profile_from_data(p, data) for p, data in parsed if p != default_path)

@@ -14,7 +14,7 @@ from themes import (
     THEMES, current_theme, apply_style, font_scale, register_style_listener, unregister_style_listener, apply_tooltip
 )
 from tooltips import generate_tooltip
-from ui_utils import block_set, ok_cancel_buttons
+from ui_utils import block_set, ok_cancel_buttons, btn_row
 
 
 def _copy_logic_tooltip() -> str:
@@ -377,30 +377,31 @@ class SettingsWindow(_BaseCheckboxWindow):
         return ""
 
     def _add_action_buttons(self, grid: QGridLayout, row: int) -> None:
-        def _btn(label: str, fn) -> QPushButton:
-            b = QPushButton(label)
-            b.clicked.connect(fn)
-            return b
+        grid.addLayout(btn_row([("System Manager Options", self._open_sm_options)]), row, 0, 1, self.cols)
+        row += 1
 
-        def _hrow(*btns) -> QHBoxLayout:
-            hb = QHBoxLayout()
-            for b in btns:
-                hb.addWidget(b)
-            return hb
+        grid.addLayout(btn_row([
+            ("New Entry", self._new_entry),
+            ("Edit Entry", self._edit_entry),
+            ("Delete Entry", self._del_entry),
+            ("Header Settings", self._header_settings)
+        ]), row, 0, 1, self.cols)
+        row += 1
 
-        grid.addLayout(_hrow(_btn("System Manager Options", self._open_sm_options)), row, 0, 1, self.cols)
+        grid.addLayout(btn_row([
+            ("Mount Options", self._manage_mounts),
+            ("Samba Credentials", self._samba_credentials),
+            ("Profile Manager", self._manage_profiles)
+        ]), row, 0, 1, self.cols)
         row += 1
-        grid.addLayout(_hrow(_btn("New Entry", self._new_entry), _btn("Edit Entry", self._edit_entry),
-                             _btn("Delete Entry", self._del_entry), _btn("Header Settings", self._header_settings)),
-                       row, 0, 1, self.cols)
+
+        theme_btn = QPushButton("Change Theme")
+        theme_btn.clicked.connect(self._change_theme)
+        grid.addWidget(theme_btn, row, 0, 1, self.cols)
         row += 1
-        grid.addLayout(_hrow(
-            _btn("Mount Options", self._manage_mounts), _btn("Samba Credentials", self._samba_credentials),
-            _btn("Profile Manager", self._manage_profiles)), row, 0, 1, self.cols)
-        row += 1
-        grid.addWidget(_btn("Change Theme", self._change_theme), row, 0, 1, self.cols)
-        row += 1
-        grid.addWidget(_btn("Close", self.close), row, 0, 1, self.cols)
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.close)
+        grid.addWidget(close_btn, row + 1, 0, 1, self.cols)
 
     def _run_entry_dialog(self, initial_entry: Optional[dict], window_title: Optional[str] = None) -> Optional[dict]:
         current_entry     = initial_entry

@@ -539,22 +539,6 @@ class SystemManagerOptions(QDialog):
         QMessageBox.information(self, "Import Complete", "\n".join(parts_msg))
         QTimer.singleShot(0, self._edit_sysfiles)
 
-    def _export_sysfiles(self) -> None:
-        files = [f for f in (S.system_files or []) if isinstance(f, dict) and f.get("source") and f.get("destination")]
-        if not files:
-            QMessageBox.information(self, "Export", "No system files to export.")
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Export System Files", str(_HOME / "system_files.txt"), "Text (*.txt);;CSV (*.csv);;All (*)")
-        if not path:
-            return
-        lines = ["# source\tdestination"] + [f"{f['source']}\t{f['destination']}" for f in files]
-        try:
-            Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
-            QMessageBox.information(self, "Exported", f"Exported {len(files)} entry/entries to:\n{path}")
-        except OSError as exc:
-            QMessageBox.critical(self, "Export Error", str(exc))
-
     def _edit_pkgs(self, pkg_type: str) -> None:
         is_specific = pkg_type == "specific_packages"
         packages = getattr(S, pkg_type, []) or []
@@ -704,6 +688,7 @@ class SystemManagerOptions(QDialog):
         dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
         dlg.setMinimumSize(700, 500)
         lay = QVBoxLayout(dlg)
+
         sess_cb: Optional[QComboBox] = None
         if is_specific:
             row = QHBoxLayout()
@@ -714,6 +699,7 @@ class SystemManagerOptions(QDialog):
             row.addWidget(sess_cb)
             row.addStretch()
             lay.addLayout(row)
+
         te = QTextEdit()
         te.setPlaceholderText("One package per line")
         lay.addWidget(te)
@@ -724,7 +710,9 @@ class SystemManagerOptions(QDialog):
             return
 
         current = getattr(S, pkg_type, []) or []
-        names = [line.strip() for line in te.toPlainText().splitlines() if line.strip() and all(c.isalnum() or c in "-_.+" for c in line.strip())]
+        names = [line.strip() for line in te.toPlainText().splitlines()
+                 if line.strip() and all(c.isalnum() or c in "-_.+" for c in line.strip())]
+
         added, dupes = [], []
 
         if is_specific and sess_cb:
@@ -738,7 +726,7 @@ class SystemManagerOptions(QDialog):
                     existing.add((name, sess))
                     added.append(name)
         else:
-            existing = {p.get("name") if isinstance(p, dict) else p for p in current}
+            existing = {p.get("name") if isinstance(p, dict) else str(p) for p in current}
             for name in names:
                 if name in existing:
                     dupes.append(name)
@@ -815,24 +803,39 @@ class SystemManagerOptions(QDialog):
 
         QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
 
-    def _export_pkgs(self, pkg_type: str) -> None:
-        packages = getattr(S, pkg_type, []) or []
-        if not packages:
-            QMessageBox.information(self, "Export", "No packages to export.")
+    def _export_data(self, title: str, default_filename: str, items: list, fmt_fn, header: str = "") -> None:
+        if not items:
+            QMessageBox.information(self, "Export", f"No {title.lower()} to export.")
             return
-        path, _ = QFileDialog.getSaveFileName(self, "Export", str(_HOME / f"{pkg_type}.txt"), "Text (*.txt);;All (*)")
+        path, _ = QFileDialog.getSaveFileName(
+            self, f"Export {title}", str(_HOME / default_filename), "Text (*.txt);;CSV (*.csv);;All (*)")
         if not path:
             return
-        is_specific = pkg_type == "specific_packages"
-        lines = [(f"{p.get('package', '')},{p.get('session', '')}" + (",disabled"
-                                                                      if p.get("disabled") else ""))
-                 if is_specific else (p.get("name", "") + (",disabled" if p.get("disabled") else ""))
-                 for p in packages if isinstance(p, dict)]
+
+        lines = [header] if header else []
+        lines.extend(fmt_fn(item) for item in items if item)
+
         try:
-            Path(path).write_text("\n".join(entry for entry in lines if entry) + "\n", encoding="utf-8")
-            QMessageBox.information(self, "Exported", f"Exported to:\n{path}")
+            Path(path).write_text("\n".join(ln for ln in lines if ln) + "\n", encoding="utf-8")
+            QMessageBox.information(self, "Exported", f"Exported {len(items)} entry/entries to:\n{path}")
         except OSError as exc:
             QMessageBox.critical(self, "Export Error", str(exc))
+
+    def _export_sysfiles(self) -> None:
+        files = [f for f in (S.system_files or []) if isinstance(f, dict) and f.get("source") and f.get("destination")]
+        self._export_data("System Files", "system_files.txt", files,
+                          lambda f: f"{f['source']}\t{f['destination']}", header="# source\tdestination")
+
+    def _export_pkgs(self, pkg_type: str) -> None:
+        packages = getattr(S, pkg_type, []) or []
+        is_specific = pkg_type == "specific_packages"
+
+        def _fmt(p):
+            if not isinstance(p, dict): return ""
+            base = f"{p.get('package', '')},{p.get('session', '')}" if is_specific else p.get("name", "")
+            return base + (",disabled" if p.get("disabled") else "")
+
+        self._export_data("Packages", f"{pkg_type}.txt", packages, _fmt)
 
 
 class SystemManagerLauncher:

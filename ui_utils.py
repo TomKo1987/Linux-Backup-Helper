@@ -6,7 +6,7 @@ from PyQt6.QtGui import QTextCursor
 from PyQt6.QtWidgets import (
     QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
     QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
-    QVBoxLayout, QWidget,
+    QVBoxLayout, QWidget, QPlainTextEdit
 )
 
 from state import _HOME, _PROFILE_RE
@@ -72,19 +72,7 @@ def do_browse(parent: QWidget, editor, mode: str, home: Path = _HOME) -> None:
         editor.setText(path)
 
 
-def browse_buttons(parent: QWidget, editor, home: Path = _HOME) -> QHBoxLayout:
-    row = QHBoxLayout()
-    row.setContentsMargins(0, 0, 0, 0)
-    row.addStretch()
-    for label, mode in [("📄 File", "file"), ("📁 Directory", "dir")]:
-        b = QPushButton(label)
-        b.setFixedHeight(28)
-        b.clicked.connect(lambda _c=False, _m=mode: do_browse(parent, editor, _m, home))
-        row.addWidget(b)
-    return row
-
-
-def browse_field(parent: QWidget, editor: QLineEdit, btn_height: int = 36) -> QWidget:
+def browse_field(parent: QWidget, editor: QLineEdit | QPlainTextEdit, btn_height: int = 36) -> QWidget:
     row  = QWidget()
     hlay = QHBoxLayout(row)
     hlay.setContentsMargins(0, 0, 0, 0)
