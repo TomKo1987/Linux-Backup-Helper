@@ -34,7 +34,7 @@ The idea behind this project is to automatically configure a newly installed Lin
 - The file matches certain protection/lock patterns (e.g. `Singleton`, `lockfile`, `cookies.sqlite-wal`, …).
 - The source file does not exist or cannot be accessed.
 
-Skipped files are shown in the **Skipped** tab with a reason such as *"Up to date"* or *"Protected/locked file"*.
+Skipped files are shown in the **Skipped** tab with the reason *"Up to date"*.
 
 **Errors:**  
 If an error occurs during copying (permission denied, network issues, etc.) the file is not copied and the error is shown in the **Errors** tab.
