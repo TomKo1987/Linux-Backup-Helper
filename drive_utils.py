@@ -26,6 +26,28 @@ _session_mounts_lock = threading.Lock()
 _OCTAL_ESCAPE_RE = re.compile(r"\\(\d{3})")
 
 
+_mounts_cache: tuple[float, list] = (0.0, [])
+
+
+def get_mounts(max_age: float = 0.5) -> list[tuple[str, str]]:
+    global _mounts_cache
+    now = time.monotonic()
+    if now - _mounts_cache[0] < max_age:
+        return _mounts_cache[1]
+    mounts: list[tuple[str, str]] = []
+    try:
+        with open("/proc/mounts", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                parts = line.split()
+                if len(parts) >= 2:
+                    mounts.append((_decode_octal(parts[0]), _decode_octal(parts[1])))
+    except OSError as e:
+        logger.warning("get_mounts: %s", e)
+        return _mounts_cache[1]
+    _mounts_cache = (now, mounts)
+    return mounts
+
+
 def _decode_octal(s: str) -> str:
     return _OCTAL_ESCAPE_RE.sub(lambda m: chr(int(m.group(1), 8)), s)
 
@@ -74,10 +96,10 @@ def _valid_drive_name(name: str) -> bool: return bool(name and isinstance(name, 
 
 
 @lru_cache(maxsize=64)
-def _mount_paths(name: str, user: str = _USER) -> tuple[str, ...]:
+def _mount_paths(name: str) -> tuple[str, ...]:
     if not _valid_drive_name(name):
         return ()
-    return f"/run/media/{user}/{name}", f"/media/{user}/{name}", f"/mnt/{name}"
+    return f"/run/media/{_USER}/{name}", f"/media/{_USER}/{name}", f"/mnt/{name}"
 
 
 def _execute_drive_op(drive: dict, cmd_key: str, timeout: int) -> tuple[bool, str]:
@@ -99,21 +121,6 @@ def _execute_drive_op(drive: dict, cmd_key: str, timeout: int) -> tuple[bool, st
         return False, str(e)
 
 
-def get_mounts() -> list[tuple[str, str]]:
-    mounts = []
-    try:
-        with open("/proc/mounts", encoding="utf-8", errors="replace") as fh:
-            for line in fh:
-                parts = line.split()
-                if len(parts) >= 2:
-                    dev = _decode_octal(parts[0])
-                    mnt = _decode_octal(parts[1])
-                    mounts.append((dev, mnt))
-    except OSError as e:
-        logger.warning("get_mounts: %s", e)
-    return mounts
-
-
 def is_mounted(opt: dict, mounts: Optional[list[tuple[str, str]]] = None) -> bool:
     name = opt.get("drive_name", "")
     if not _valid_drive_name(name):
@@ -133,7 +140,7 @@ def is_mounted(opt: dict, mounts: Optional[list[tuple[str, str]]] = None) -> boo
             host, share = parts
             smb_prefixes = (f"//{host}/{share}".lower(),)
 
-    for dev, mnt in mounts:
+    for dev, mnt in (mounts or []):
         if mnt in expected_paths or (mount_path and mnt == mount_path):
             return True
         if smb_prefixes:
@@ -151,7 +158,7 @@ def mount_drive(drive: dict) -> tuple[bool, str]:
         mounted_confirmed = False
         deadline = time.monotonic() + 1.0
         while time.monotonic() < deadline:
-            if is_mounted(drive):
+            if is_mounted(drive, mounts=get_mounts(max_age=0.0)):
                 mounted_confirmed = True
                 break
             time.sleep(0.1)
@@ -221,8 +228,8 @@ def mount_required_drives(drives: list[dict], parent=None) -> bool:
         is_managed = has_managed_mount_path(opt)
 
         if is_managed:
-            msg = (f"'{drive_name}' is required but cannot be detected automatically "
-                   f"(external mount path).\n\nRun mount command now?")
+            msg = (f"'{drive_name}' is required, but cannot be automatically detected due to an external mount path."
+                   f"\n\nRun mount command now?")
         else:
             msg = f"'{drive_name}' is required but not mounted.\n\nRun mount command now?"
 

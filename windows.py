@@ -65,8 +65,7 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
                 block_set(cb, saved[id(e)])
         self._sync_select_all()
 
-    def _tips(self) -> dict:
-        return backup_tooltips()
+    def _tips(self) -> dict: return backup_tooltips()
 
     def _src_dst(self, entry: dict) -> tuple[list, list]:
         return entry.get("source", []), entry.get("destination", [])
@@ -213,6 +212,10 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
                 block_set(self._selectall, False)
                 self._selectall.setFocus()
 
+    def done(self, result: int) -> None:
+        self.closeEvent(None)
+        super().done(result)
+
     def closeEvent(self, event) -> None:
         unregister_style_listener(self._refresh_styles)
         for cb, *_ in self.checkbox_dirs:
@@ -220,7 +223,8 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
                 cb.stateChanged.disconnect()
             except (TypeError, RuntimeError):
                 pass
-        super().closeEvent(event)
+        if event is not None:
+            super().closeEvent(event)
 
     def keyPressEvent(self, event) -> None:
         k = event.key()
@@ -277,20 +281,22 @@ class BackupWindow(_CopyMixin, _BaseCheckboxWindow):
     _cols_key     = "backup_window_columns"
     _op_label     = "Create Backup"
 
-    def _entry_filter(self, entry: dict) -> bool: return not entry.get("details", {}).get("no_backup", False)
+    def _entry_filter(self, entry: dict) -> bool:
+        return not entry.get("details", {}).get("no_backup", False)
 
 
 class RestoreWindow(_CopyMixin, _BaseCheckboxWindow):
     _window_title = "Restore Backup"
-    _cols_key     = "restore_window_columns"
-    _op_label     = "Restore Backup"
+    _cols_key = "restore_window_columns"
+    _op_label = "Restore Backup"
 
-    def _entry_filter(self, entry: dict) -> bool: return not entry.get("details", {}).get("no_restore", False)
+    def _entry_filter(self, entry: dict) -> bool:
+        return not entry.get("details", {}).get("no_restore", False)
 
-    def _tips(self) -> dict:
-        return restore_tooltips()
+    def _tips(self) -> dict: return restore_tooltips()
 
-    def _src_dst(self, entry: dict) -> tuple[list, list]: return entry.get("destination", []), entry.get("source", [])
+    def _src_dst(self, entry: dict) -> tuple[list, list]:
+        return entry.get("destination", []), entry.get("source", [])
 
 
 class SettingsWindow(_BaseCheckboxWindow):
@@ -330,19 +336,13 @@ class SettingsWindow(_BaseCheckboxWindow):
         grid.addLayout(btn_row([("System Manager Options", self._open_sm_options)]), row, 0, 1, self.cols)
         row += 1
 
-        grid.addLayout(btn_row([
-            ("New Entry", self._new_entry),
-            ("Edit Entry", self._edit_entry),
-            ("Delete Entry", self._del_entry),
-            ("Header Settings", self._header_settings)
-        ]), row, 0, 1, self.cols)
+        grid.addLayout(btn_row([("New Entry", self._new_entry), ("Edit Entry", self._edit_entry),
+                                ("Delete Entry", self._del_entry), ("Header Settings", self._header_settings)]),
+                       row, 0, 1, self.cols)
         row += 1
 
-        grid.addLayout(btn_row([
-            ("Mount Options", self._manage_mounts),
-            ("Samba Credentials", self._samba_credentials),
-            ("Profile Manager", self._manage_profiles)
-        ]), row, 0, 1, self.cols)
+        grid.addLayout(btn_row([("Mount Options", self._manage_mounts), ("Samba Credentials", self._samba_credentials),
+                                ("Profile Manager", self._manage_profiles)]), row, 0, 1, self.cols)
         row += 1
 
         theme_btn = QPushButton("Change Theme")
@@ -351,7 +351,7 @@ class SettingsWindow(_BaseCheckboxWindow):
         row += 1
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.close)
-        grid.addWidget(close_btn, row + 1, 0, 1, self.cols)
+        grid.addWidget(close_btn, row, 0, 1, self.cols)
 
     def _run_entry_dialog(self, initial_entry: Optional[dict], window_title: Optional[str] = None) -> Optional[dict]:
         current_entry     = initial_entry
@@ -359,7 +359,8 @@ class SettingsWindow(_BaseCheckboxWindow):
         pairs_initialised = False
 
         while True:
-            dlg  = EntryDialog(self, current_entry, stacked=self._entry_stacked, _pairs=pairs if pairs_initialised else None)
+            dlg  = EntryDialog(
+                self, current_entry, stacked=self._entry_stacked, _pairs=pairs if pairs_initialised else None)
             if window_title:
                 dlg.setWindowTitle(window_title)
             code = dlg.exec()
@@ -376,14 +377,16 @@ class SettingsWindow(_BaseCheckboxWindow):
 
     def _new_entry(self) -> None:
         if not S.headers:
-            QMessageBox.information(self, "No Headers Found", "Before creating an entry you need at least one header.\n\n"
-                                                              "Headers group your entries and can each have their own colour.\n"
-                                                              "The Header Settings dialog will open now — click '🆕 New' to add one.")
+            QMessageBox.information(
+                self, "No Headers Found", "Before creating an entry you need at least one header.\n\n"
+                                          "Headers group your entries and can each have their own colour.\n"
+                                          "The Header Settings dialog will open now — click '🆕 New' to add one.")
             dlg = HeaderSettingsDialog(self)
             if dlg.exec() != QDialog.DialogCode.Accepted:
                 return
             if not S.headers:
-                QMessageBox.warning(self, "No Headers", "Please add at least one header before creating an entry.")
+                QMessageBox.warning(
+                    self, "No Headers", "Please add at least one header before creating an entry.")
                 return
             save_profile()
             self.changed.emit()
@@ -425,10 +428,10 @@ class SettingsWindow(_BaseCheckboxWindow):
         if not to_delete:
             QMessageBox.information(self, "Delete Entry", "Please check one or more entries to delete.")
             return
-
-        names = ", ".join(e["title"].replace("<br>", " ") for e in to_delete)
-        if QMessageBox.question(self, "Delete", f"Really delete: {names}?",
-                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+        names = ", ".join(e["title"].replace("<br>", " ") for e in to_delete if e)
+        if (QMessageBox.question(self, "Delete", f"Really delete: {names}?",
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) ==
+                QMessageBox.StandardButton.Yes):
             ids_to_delete = {id(e) for e in to_delete}
             S.entries = [e for e in S.entries if id(e) not in ids_to_delete]
             save_profile()
@@ -504,7 +507,8 @@ class _ThemeDialog(_StandardKeysMixin, QDialog):
         chosen_font = self._font_cb.currentText()
         if chosen_font == "(System Default)":
             chosen_font = ""
-        S.ui.update(theme=self._theme_cb.currentText(), font_family=chosen_font, font_size=int(self._size_cb.currentText()))
+        S.ui.update(
+            theme=self._theme_cb.currentText(), font_family=chosen_font, font_size=int(self._size_cb.currentText()))
         apply_style()
         if save:
             save_profile()
@@ -524,7 +528,8 @@ class _ThemeDialog(_StandardKeysMixin, QDialog):
         super().reject()
 
 
-_WINDOW_MAP: "dict[str, Type[_BaseCheckboxWindow]]" = {"Backup": BackupWindow, "Restore": RestoreWindow, "Settings": SettingsWindow}
+_WINDOW_MAP: "dict[str, Type[_BaseCheckboxWindow]]" = {
+    "Backup": BackupWindow, "Restore": RestoreWindow, "Settings": SettingsWindow}
 
 
 def base_window(parent, mode: str = "Settings") -> "_BaseCheckboxWindow":

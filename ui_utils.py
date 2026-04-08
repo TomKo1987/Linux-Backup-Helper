@@ -130,7 +130,7 @@ def ask_profile_name(title: str, default: str, parent=None) -> Optional[str]:
 
 
 class _StandardKeysMixin(_MixinBase):
-    def keyPressEvent(self, event) -> None:  # noqa: N802
+    def keyPressEvent(self, event) -> None:
         k = event.key()
         if k in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
             widget = self.focusWidget()

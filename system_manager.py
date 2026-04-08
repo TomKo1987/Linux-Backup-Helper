@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QLabel, QListWidget, QListWidgetItem, QPushButton, QTextEdit, QVBoxLayout
 )
 
+from linux_distro_helper import LinuxDistroHelper, _PKG_RE as _BATCH_PKG_RE
 from state import S, _HOME, _USER, logger, apply_replacements
 from themes import current_theme, font_sz
 from ui_utils import _StandardKeysMixin
@@ -45,19 +46,14 @@ _INFO_RE = re.compile(
 class _Status: PENDING, IN_PROGRESS, SUCCESS, WARNING, ERROR = ("pending", "in_progress", "success", "warning", "error")
 
 
-_FONT_MONO = "DejaVu Sans Mono, Fira Code, monospace"
-_FONT_SANS = "Hack, Fira Mono, monospace"
+_FONT_MONO = "DejaVu Sans Mono, Noto Sans Mono"
+_FONT_SANS = "Hack, Noto Serif, monospace"
 
 
 class _Style:
-    KIND_CFG: dict[str, tuple] = {
-        "operation": (_FONT_MONO, 16, 1.2, "info"),
-        "info":      (_FONT_MONO, 15, 1.0, "success"),
-        "subprocess":(_FONT_SANS, 13, 0.6, "text"),
-        "success":   (_FONT_MONO, 15, 1.0, "success"),
-        "warning":   (_FONT_MONO, 15, 1.0, "warning"),
-        "error":     (_FONT_MONO, 15, 1.0, "error"),
-    }
+    KIND_CFG: dict[str, tuple] = {"operation": (_FONT_MONO, 16, 1.2, "info"), "info": (_FONT_MONO, 15, 1.0, "success"),
+                                  "subprocess":(_FONT_SANS, 13, 0.6, "text"), "success": (_FONT_MONO, 15, 1.0, "success"),
+                                  "warning": (_FONT_MONO, 15, 1.0, "warning"), "error": (_FONT_MONO, 15, 1.0, "error")}
 
     STATUS_CFG: dict[str, tuple] = {_Status.SUCCESS: ("success", "dialog-ok-apply"), _Status.ERROR: ("error", "dialog-error"),
                                     _Status.WARNING: ("warning", "dialog-warning"),  _Status.IN_PROGRESS: ("info", "media-playback-start")}
@@ -112,25 +108,28 @@ class _SudoKeepalive(threading.Thread):
 class _PackageCache:
     _TTL, _MAX = 600, 1000
 
-    def __init__(self, distro) -> None: self._distro, self._cache, self._ts, self._lock = distro, {}, 0.0, threading.Lock()
+    def __init__(self, distro) -> None:
+        self._distro = distro
+        self._cache: dict[str, tuple[bool, float]] = {}
+        self._lock = threading.Lock()
 
     def is_installed(self, pkg: str) -> bool:
         now = time.monotonic()
         with self._lock:
-            if now - self._ts > self._TTL:
-                self._cache.clear()
-                self._ts = now
-            elif len(self._cache) >= self._MAX:
-                del self._cache[next(iter(self._cache))]
-            if pkg in self._cache:
-                return self._cache[pkg]
+            entry = self._cache.get(pkg)
+            if entry is not None and now - entry[1] < self._TTL:
+                return entry[0]
         result = self._distro.package_is_installed(pkg)
         with self._lock:
-            self._cache.setdefault(pkg, result)
+            if len(self._cache) >= self._MAX:
+                oldest = min(self._cache, key=lambda k: self._cache[k][1])
+                del self._cache[oldest]
+            self._cache[pkg] = (result, time.monotonic())
         return result
 
     def mark_installed(self, pkg: str) -> None:
-        with self._lock: self._cache[pkg] = True
+        with self._lock:
+            self._cache[pkg] = (True, time.monotonic())
 
 
 class SystemManagerDialog(_StandardKeysMixin, QDialog):
@@ -353,7 +352,7 @@ class SystemManagerThread(QThread):
     passwordFailed = pyqtSignal()
     passwordSuccess = pyqtSignal()
 
-    def __init__(self, sudo_password, distro) -> None:
+    def __init__(self, sudo_password, distro: Optional[LinuxDistroHelper] = None) -> None:
         super().__init__()
         from sudo_password import SecureString
         self._pw = sudo_password if isinstance(sudo_password, SecureString) else SecureString(sudo_password or "")
@@ -362,6 +361,8 @@ class SystemManagerThread(QThread):
         self._keepalive: Optional[_SudoKeepalive] = None
         self._enabled_tasks: dict[str, tuple] = {}
         self._env_snapshot: dict = os.environ.copy()
+        self.distro: Optional[LinuxDistroHelper] = None
+        self._pkg_cache: Optional[_PackageCache] = None
         try:
             self.distro, self._pkg_cache = distro, _PackageCache(distro)
         except Exception as exc:
@@ -372,7 +373,11 @@ class SystemManagerThread(QThread):
     def terminated(self) -> bool: return self._stop.is_set()
 
     @terminated.setter
-    def terminated(self, v: bool) -> None: self._stop.set() if v else self._stop.clear()
+    def terminated(self, v: bool) -> None:
+        if v:
+            self._stop.set()
+        else:
+            self._stop.clear()
 
     def run(self) -> None:
         self.thread_started.emit()
@@ -383,6 +388,7 @@ class SystemManagerThread(QThread):
             self.passwordSuccess.emit()
             self._stop_keepalive.clear()
             self._keepalive = _SudoKeepalive(self._stop_keepalive, self._pw)
+            assert self._keepalive is not None
             self._keepalive.start()
             if not self.terminated: self._run_all_tasks()
         except Exception as exc:
@@ -448,8 +454,6 @@ class SystemManagerThread(QThread):
             if status == _Status.ERROR:
                 self.outputReceived.emit(f"Aborting remaining tasks due to failure in '{task_id}'.", "error"); break
 
-    def _env(self) -> dict: return self._env_snapshot
-
     @staticmethod
     def _inject(cmd: list[str]) -> list[str]:
         if cmd and cmd[0] == "sudo" and not (len(cmd) > 1 and cmd[1] == "-S"):
@@ -458,8 +462,7 @@ class SystemManagerThread(QThread):
 
     def _exec(self, cmd: list[str] | str, stream: bool = False, timeout: Optional[int] = 15, cwd: Optional[str] = None) -> SimpleNamespace:
 
-        if self.terminated:
-            return SimpleNamespace(returncode=1, stdout="", stderr="")
+        if self.terminated: return SimpleNamespace(returncode=1, stdout="", stderr="")
 
         if isinstance(cmd, str):
             cmd = self._inject(shlex.split(cmd))
@@ -467,13 +470,15 @@ class SystemManagerThread(QThread):
             cmd = self._inject(list(cmd))
 
         input_data = None
+        _stdin_thread = None
         if self._pw and isinstance(cmd, list):
             if cmd[:2] == ["sudo", "-S"]:
                 input_data = _pw_bytes(self._pw)
 
         if not stream:
             try:
-                r = subprocess.run(cmd, input=input_data, capture_output=True, env=self._env(), timeout=timeout)
+                r = subprocess.run(cmd, input=bytes(input_data) if input_data else None,
+                                   capture_output=True, env=self._env_snapshot, timeout=timeout, cwd=cwd)
                 return SimpleNamespace(returncode=r.returncode, stdout=r.stdout.decode("utf-8", "replace"),
                                        stderr=r.stderr.decode("utf-8", "replace"))
             except subprocess.TimeoutExpired:
@@ -484,7 +489,7 @@ class SystemManagerThread(QThread):
                 if isinstance(input_data, bytearray): _zero(input_data)
 
         try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd, env=self._env(),
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd, env=self._env_snapshot,
                                     stdin=subprocess.PIPE if input_data else subprocess.DEVNULL)
         except Exception as exc:
             if isinstance(input_data, bytearray): _zero(input_data)
@@ -494,7 +499,9 @@ class SystemManagerThread(QThread):
         if input_data:
             def _write_stdin() -> None:
                 try:
-                    if proc.stdin: proc.stdin.write(input_data); proc.stdin.flush()
+                    if proc.stdin is not None and input_data is not None:
+                        proc.stdin.write(bytes(input_data))
+                        proc.stdin.flush()
                 except OSError:
                     pass
                 finally:
@@ -505,7 +512,9 @@ class SystemManagerThread(QThread):
                         pass
                     if isinstance(input_data, bytearray):
                         _zero(input_data)
-            threading.Thread(target=_write_stdin, daemon=True).start()
+
+            _stdin_thread = threading.Thread(target=_write_stdin, daemon=True)
+            _stdin_thread.start()
         out_q = queue.Queue()
 
         def _reader(_stream, _is_err):
@@ -541,6 +550,8 @@ class SystemManagerThread(QThread):
             proc.kill()
             rc = proc.wait()
         t1.join(3); t2.join(3)
+        if _stdin_thread:
+            _stdin_thread.join(2)
         return SimpleNamespace(returncode=rc if rc is not None else 1)
 
     def _emit_result(self, ok: bool, msg_ok: str, msg_err: str): self.outputReceived.emit(msg_ok if ok else msg_err, "success" if ok else "error")
@@ -555,21 +566,31 @@ class SystemManagerThread(QThread):
         pw_buf = _pw_bytes(self._pw)
         ok, proc = False, None
         try:
-            proc = subprocess.Popen(["sudo", "-S", "sh", "-c", f"printf '%s\\n' {shlex.quote(token)}"], env=self._env(),
-                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            proc = subprocess.Popen(["sudo", "-S", "sh", "-c", f"printf '%s\\n' {shlex.quote(token)}"],
+                                    env=self._env_snapshot, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             try:
-                proc.stdin.write(pw_buf); proc.stdin.flush(); proc.stdin.close()
+                if proc.stdin:
+                    proc.stdin.write(pw_buf)
+                    proc.stdin.flush()
+                    proc.stdin.close()
             except OSError:
                 pass
 
+            assert proc is not None
             chunks: list[bytes] = []
+
             def _read_out() -> None:
-                try: chunks.append(proc.stdout.read())
-                except (OSError, ValueError): pass
+                try:
+                    if proc and proc.stdout:
+                        chunks.append(proc.stdout.read())
+                except (OSError, ValueError):
+                    pass
 
             def _kill_on_retry() -> None:
                 n = 0
                 try:
+                    if not proc or not proc.stderr:
+                        return
                     for raw in iter(proc.stderr.readline, b""):
                         line = raw.decode("utf-8", errors="replace")
                         if "[sudo]" in line or "password" in line.lower():
@@ -577,7 +598,7 @@ class SystemManagerThread(QThread):
                             if n >= 2:
                                 try:
                                     proc.kill()
-                                except ProcessLookupError:
+                                except (ProcessLookupError, AttributeError):
                                     pass
                                 return
                 except (OSError, ValueError):
@@ -591,7 +612,8 @@ class SystemManagerThread(QThread):
                 try: proc.wait(timeout=2)
                 except subprocess.TimeoutExpired: pass
             t1.join(2); t2.join(2)
-            ok = proc.returncode == 0 and token.encode() in (chunks[0] if chunks else b"")
+            output = chunks[0] if chunks else b""
+            ok = proc.returncode == 0 and output.strip() == token.encode()
         except Exception as exc: logger.error("_verify_sudo: %s", exc)
         finally:
             _zero(pw_buf)
@@ -619,6 +641,8 @@ class SystemManagerThread(QThread):
         return ok
 
     def _install_with_retry(self, pkgs: list[str], bulk_fn, single_fn) -> list[str]:
+        if not self.distro:
+            return pkgs
         bulk_fn(pkgs)
         still_missing = self.distro.filter_not_installed(pkgs)
         for p in pkgs:
@@ -649,7 +673,7 @@ class SystemManagerThread(QThread):
                 n = str(p).strip()
                 if not n:
                     continue
-            if all(c.isalnum() or c in "-_.+" for c in n):
+            if _BATCH_PKG_RE.match(n):
                 items.append(n)
             else:
                 logger.warning("_batch_install: skipping invalid package name %r", n)
@@ -668,8 +692,9 @@ class SystemManagerThread(QThread):
             bulk = lambda b: self._exec(["yay", "-S", "--noconfirm", "--needed"] + b, stream=True)
             single = lambda _p: self._exec(["yay", "-S", "--noconfirm", "--needed", _p], stream=True)
         else:
-            bulk = lambda b: self._exec(self.distro.get_batch_install_cmd(b), stream=True)
-            single = lambda p_: self._exec(self.distro.get_pkg_install_cmd(p_), stream=True)
+            _distro = self.distro
+            bulk = lambda b: self._exec(_distro.get_batch_install_cmd(b), stream=True)
+            single = lambda p_: self._exec(_distro.get_pkg_install_cmd(p_), stream=True)
 
         for i in range(0, len(to_install), 20):
             if self.terminated: break
@@ -796,7 +821,12 @@ class SystemManagerThread(QThread):
             ok = (self._exec(["yay", "-Syu", "--noconfirm"], stream=True).returncode == 0)
         else:
             cmd_str = self.distro.get_update_system_cmd()
-            cmd = ["sudo", "sh", "-c", cmd_str] if any(c in cmd_str for c in "&|") else cmd_str
+            if any(seq in cmd_str for seq in ("&&", "||", " | ")):
+                _stripped = cmd_str.lstrip()
+                inner_cmd = _stripped[5:] if _stripped.startswith("sudo ") else _stripped
+                cmd: list | str = ["sudo", "sh", "-c", inner_cmd]
+            else:
+                cmd = cmd_str
             ok = (self._exec(cmd, stream=True, timeout=None).returncode == 0)
         self._emit_result(ok, "System successfully updated", "System update failed")
         return ok
@@ -872,8 +902,9 @@ class SystemManagerThread(QThread):
             return _Status.SUCCESS
 
         self.outputReceived.emit(f"Installing: {', '.join(to_install)}", "info")
-        failed = self._install_with_retry(to_install, lambda batch: self._exec(self.distro.get_batch_install_cmd(batch), stream=True),
-                                          lambda pkg: self._exec(self.distro.get_pkg_install_cmd(pkg), stream=True))
+        _distro = self.distro
+        failed = self._install_with_retry(to_install, lambda batch: self._exec(_distro.get_batch_install_cmd(batch), stream=True),
+                                          lambda pkg: self._exec(_distro.get_pkg_install_cmd(pkg), stream=True))
 
         self._emit_result(not failed, "All Specific Packages successfully installed", f"Failed to install: {', '.join(failed)}")
         return _Status.SUCCESS if not failed else _Status.WARNING

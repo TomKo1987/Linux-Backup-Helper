@@ -5,7 +5,6 @@ import subprocess
 import threading
 from functools import lru_cache
 from typing import Optional
-from ui_utils import _StandardKeysMixin
 
 import keyring
 from PyQt6.QtCore import Qt
@@ -18,6 +17,7 @@ from keyring.errors import PasswordDeleteError, KeyringError
 from state import logger, _USER
 from sudo_password import SecureString
 from themes import current_theme
+from ui_utils import _StandardKeysMixin
 
 __all__ = ["SambaPasswordManager", "SambaPasswordDialog"]
 
@@ -94,6 +94,9 @@ class _VerifyPasswordDialog(QDialog):
         self._pw_input.setFocus()
 
     def _verify(self) -> None:
+        if self._stored_pw is None:
+            self.reject()
+            return
         entered_secure = SecureString(self._pw_input.text())
         self._pw_input.clear()
         temp_buf = self._stored_pw.get_bytes()
@@ -201,7 +204,6 @@ class SambaPasswordManager:
             stored_user = keyring.get_password(_KEYRING_SERVICE, _KEYRING_USER_KEY) or _USER
             pw = keyring.get_password(_KEYRING_SERVICE, stored_user)
             if pw:
-                logger.info("Retrieved Samba credentials from system keyring")
                 secure = SecureString(pw)
                 del pw
                 return stored_user, secure, False
@@ -252,7 +254,7 @@ class SambaPasswordDialog(_StandardKeysMixin, QDialog):
         manager                      = SambaPasswordManager()
         username, stored_pw, from_kw = manager.get_credentials()
         if stored_pw:
-            accepted = (_VerifyPasswordDialog(parent, username, stored_pw).exec() == QDialog.DialogCode.Accepted)
+            accepted = (_VerifyPasswordDialog(parent, username or "", stored_pw).exec() == QDialog.DialogCode.Accepted)
             if not accepted:
                 return
             cls(parent, manager, username or "", from_kw, has_credentials=True).exec()
@@ -359,6 +361,8 @@ class SambaPasswordDialog(_StandardKeysMixin, QDialog):
         self._password_field.setFocus()
 
     def _save_credentials(self) -> None:
+        if self._username_field is None or self._password_field is None or self._confirm_password_field is None:
+            return
         username = self._username_field.text().strip()
         pw_secure = SecureString(self._password_field.text())
         cf_secure = SecureString(self._confirm_password_field.text())
@@ -396,6 +400,10 @@ class SambaPasswordDialog(_StandardKeysMixin, QDialog):
         except Exception as exc:
             self._error_dialog.showMessage(f"Failed to save credentials:\n{exc}")
         finally:
+            try:
+                del pw_str
+            except NameError:
+                pass
             for i in range(len(pw_buf)):
                 pw_buf[i] = 0
 

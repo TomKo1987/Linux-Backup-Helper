@@ -1,5 +1,6 @@
 import shutil
 import sys
+import threading
 from pathlib import Path
 
 from PyQt6.QtCore import QTimer
@@ -13,8 +14,8 @@ from dialogs import LogViewer, SysInfoDialog
 from drive_utils import get_mounts, is_mounted, unmount_drive, get_session_managed_mounts
 from state import S, _HOME, _PROFILES_DIR, _PROFILE_RE, RESTART_DIALOG, save_profile, logger, startup_load
 from themes import apply_style, register_style_listener, unregister_style_listener
-from windows import base_window
 from ui_utils import _StandardKeysMixin
+from windows import base_window
 
 
 class MainWindow(_StandardKeysMixin, QMainWindow):
@@ -87,7 +88,10 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
     def _setup_tray(self) -> None:
         if not QSystemTrayIcon.isSystemTrayAvailable():
             return
-        icon = QApplication.style().standardIcon(QApplication.style().StandardPixmap.SP_DriveHDIcon)
+        from PyQt6.QtGui import QIcon
+        from PyQt6.QtWidgets import QStyle
+        _style = QApplication.style()
+        icon = _style.standardIcon(QStyle.StandardPixmap.SP_DriveHDIcon) if _style else QIcon()
         self.tray = QSystemTrayIcon(icon, self)
         self.tray.setToolTip("Backup Helper")
         menu = QMenu()
@@ -100,9 +104,12 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
             act.triggered.connect(fn)
             menu.addAction(act)
         self.tray.setContextMenu(menu)
-        self.tray.activated.connect(
-            lambda r: self._show_and_raise() if r == QSystemTrayIcon.ActivationReason.DoubleClick else None)
+        self.tray.activated.connect(self._on_tray_activated)
         self.tray.show()
+
+    def _on_tray_activated(self, r: QSystemTrayIcon.ActivationReason) -> None:
+        if r == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self._show_and_raise()
 
     def _show_and_raise(self) -> None:
         self.show()
@@ -150,8 +157,8 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
             msg = "The following drives are still mounted but have no unmount command:\n"
             msg += "\n".join(f"  • {_name(o)}" for o in info_only) + "\n\nQuit anyway?"
             if (QMessageBox.question(self, "Quit", msg,
-                                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-                    != QMessageBox.StandardButton.Yes):
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            != QMessageBox.StandardButton.Yes):
                 return
         else:
             if (QMessageBox.question(self, "Quit", "Really quit Backup Helper?",
@@ -176,8 +183,10 @@ def _first_run_wizard(parent) -> bool:
     msg.setWindowTitle("Welcome to Backup Helper")
     msg.setText("<b>No profile found.</b><br><br>Would you like to import an existing profile (.json)?")
     msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-    msg.button(QMessageBox.StandardButton.Yes).setText("Import profile")
-    msg.button(QMessageBox.StandardButton.No).setText("Create empty profile")
+    _yes_btn = msg.button(QMessageBox.StandardButton.Yes)
+    _no_btn = msg.button(QMessageBox.StandardButton.No)
+    if _yes_btn: _yes_btn.setText("Import profile")
+    if _no_btn:  _no_btn.setText("Create empty profile")
     if msg.exec() == QMessageBox.StandardButton.Yes:
         path, _ = QFileDialog.getOpenFileName(parent, "Select profile", str(_HOME), "JSON (*.json)")
         while path:
@@ -210,6 +219,7 @@ def _first_run_wizard(parent) -> bool:
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Backup Helper")
+
     def _excepthook(exc_type, exc_value, exc_tb):
         if issubclass(exc_type, KeyboardInterrupt):
             sys.__excepthook__(exc_type, exc_value, exc_tb)
@@ -217,7 +227,14 @@ def main():
         logger.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_tb))
         QMessageBox.critical(
             None, "Critical Error", f"Unexpected error:\n\n{exc_value}\n\nCheck logs for details.")
+
+    def _thread_excepthook(args):
+        if args.exc_type and issubclass(args.exc_type, KeyboardInterrupt):
+            return
+        logger.critical("Uncaught thread exception", exc_info=(args.exc_type, args.exc_value, args.exc_tb))
+
     sys.excepthook = _excepthook
+    threading.excepthook = _thread_excepthook
     has_profile = startup_load()
     win = MainWindow()
     apply_style()

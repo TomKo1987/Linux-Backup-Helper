@@ -24,6 +24,8 @@ from state import (
 from themes import current_theme, font_scale, font_sz, apply_tooltip
 from ui_utils import sep, hdr_label, ok_cancel_buttons, btn_row, ask_text, ask_profile_name, browse_field
 
+_ARCHIVE_MAX_PROFILE_BYTES = 1024 * 1024
+
 
 class _ListDialog(QDialog):
 
@@ -55,8 +57,9 @@ class _ListDialog(QDialog):
 
 class _TextViewDialog(QDialog):
 
-    def __init__(self, parent, title: str, min_size: tuple[int, int],
-                 font_size: int | None = None, extra_buttons: list[tuple[str, object]] = ()):
+    def __init__(self, parent, title: str, min_size: tuple[int, int], font_size: int | None = None,
+                 extra_buttons: list[tuple[str, object]] | None = None):
+
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setMinimumSize(*min_size)
@@ -77,7 +80,7 @@ class _TextViewDialog(QDialog):
         bl  = QHBoxLayout(bot)
         bl.setContentsMargins(12, 8, 12, 8)
         bl.setSpacing(8)
-        for label, fn in [*extra_buttons, ("✕ Close", self.accept)]:
+        for label, fn in [*(extra_buttons or []), ("✕ Close", self.accept)]:
             b = QPushButton(label)
             b.setFixedHeight(36)
             b.clicked.connect(fn)
@@ -150,7 +153,7 @@ class EntryDialog(QDialog):
         src_paths = _norm_paths(e.get("source", []))
         dst_paths = _norm_paths(e.get("destination", []))
         if not self._pairs_provided and not self.pairs:
-            n          = max(len(src_paths), len(dst_paths))
+            n = max(len(src_paths), len(dst_paths))
             self.pairs = [[src_paths[i] if i < len(src_paths) else "",
                            dst_paths[i] if i < len(dst_paths) else ""] for i in range(n)]
 
@@ -282,8 +285,9 @@ class EntryDialog(QDialog):
         flags = QHBoxLayout()
         self.no_backup  = QCheckBox("Exclude from backup")
         self.no_restore = QCheckBox("Exclude from restore")
-        self.no_backup.setChecked( e.get("details", {}).get("no_backup",  False))
-        self.no_restore.setChecked(e.get("details", {}).get("no_restore", False))
+        details = e.get("details") or {}
+        self.no_backup.setChecked(details.get("no_backup", False))
+        self.no_restore.setChecked(details.get("no_restore", False))
         flags.addWidget(self.no_backup)
         flags.addSpacing(16)
         flags.addWidget(self.no_restore)
@@ -299,8 +303,8 @@ class EntryDialog(QDialog):
         expand = os.path.expanduser
         fmt    = expand if self._show_full_paths else (lambda p: apply_replacements(expand(p)))
         for src, dst in self.pairs:
-            self._src_list.addItem(fmt(src))
-            self._dst_list.addItem(fmt(dst))
+            self._src_list.addItem(str(fmt(src)))
+            self._dst_list.addItem(str(fmt(dst)))
         self._src_hint.setVisible(self._src_list.count() == 0)
         self._src_hint.setGeometry(self._src_list.rect())
 
@@ -490,7 +494,7 @@ class MountDialog(QDialog):
         self.result: dict = {}
         self.setWindowTitle("Edit Drive" if opt else "New Drive")
         self.setMinimumSize(900, 500)
-        opt = opt or {}
+        _opt: dict = opt or {}
         t   = current_theme()
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
@@ -501,7 +505,7 @@ class MountDialog(QDialog):
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
 
         def _field(key: str, placeholder: str) -> QLineEdit:
-            f = QLineEdit(opt.get(key, ""))
+            f = QLineEdit(_opt.get(key, "") or "")
             f.setPlaceholderText(placeholder)
             return f
 
@@ -600,7 +604,7 @@ class MountsDialog(_ListDialog):
         opt = self._selected_data()
         if not opt:
             return
-        name = opt.get("drive_name", "?")
+        name: str = opt.get("drive_name", "?") if isinstance(opt, dict) else "?"
         if QMessageBox.question(
             self, "Remove Drive",
             f"Really remove '{name}' from mount options?",
@@ -643,8 +647,8 @@ class HeaderSettingsDialog(QDialog):
         self.item_list.clear()
         for name, d in S.headers.items():
             status = "  [inactive]" if d["inactive"] else ""
-            item   = QListWidgetItem(f"  {name}{status}")
-            item.setForeground(QColor(t["text_dim"] if d["inactive"] else d["color"]))
+            item = QListWidgetItem(f"  {name}{status}")
+            item.setForeground(QColor(t["text_dim"] if d.get("inactive", False) else d.get("color", "#ffffff")))
             item.setData(Qt.ItemDataRole.UserRole, name)
             self.item_list.addItem(item)
         if 0 <= row < self.item_list.count():
@@ -667,7 +671,8 @@ class HeaderSettingsDialog(QDialog):
         self.was_changed = True
         self._refresh()
         for i in range(self.item_list.count()):
-            if self.item_list.item(i).data(Qt.ItemDataRole.UserRole) == name:
+            item = self.item_list.item(i)
+            if item and item.data(Qt.ItemDataRole.UserRole) == name:
                 self.item_list.setCurrentRow(i)
                 break
 
@@ -791,7 +796,7 @@ class ProfilesDialog(QDialog):
             return
         _clear_default_flag(S.profile_name, "_load")
 
-        if self._activate_profile(name):
+        if name and self._activate_profile(name):
             QMessageBox.information(self, "Profile Loaded", f"Profile '{name}' is now active.")
         else: QMessageBox.critical(self, "Error", f"Could not load profile '{name}'.")
 
@@ -823,15 +828,15 @@ class ProfilesDialog(QDialog):
         if not name: return
         src_path = _PROFILES_DIR / f"{src_name}.json"
         if not src_path.exists() and src_name == S.profile_name:
-            save_profile()
-            self.was_changed = True
+            if not save_profile():
+                QMessageBox.critical(self, "Error", f"Could not save profile '{src_name}' before duplicating.")
+                return
         if not src_path.exists():
             QMessageBox.warning(self, "Duplicate", f"Source file for '{src_name}' not found.")
             return
         dest = _PROFILES_DIR / f"{name}.json"
-        if dest.exists() and QMessageBox.question(
-                self, "Overwrite?", f"Profile '{name}' already exists. Overwrite it?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+        if dest.exists() and QMessageBox.question(self, "Overwrite Profile?", f"Profile '{name}' already exists. Overwrite?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
         shutil.copy2(src_path, dest)
         self.was_changed = True
@@ -883,7 +888,6 @@ class ProfilesDialog(QDialog):
                     QMessageBox.warning(self, "Import", "The archive contains no .json profile files.")
                     return
                 imported, skipped = [], []
-                _MAX = 1024 * 1024
                 for member in members:
                     stem = Path(member.name).stem
                     p = Path(member.name)
@@ -907,8 +911,8 @@ class ProfilesDialog(QDialog):
                         f = tar.extractfile(member)
                         if f:
                             with f:
-                                raw = f.read(_MAX + 1)
-                            if len(raw) > _MAX:
+                                raw = f.read(_ARCHIVE_MAX_PROFILE_BYTES + 1)
+                            if len(raw) > _ARCHIVE_MAX_PROFILE_BYTES:
                                 skipped.append(f"{stem} (file too large, max 1 MiB)")
                                 continue
                             try:
@@ -988,7 +992,9 @@ class ProfilesDialog(QDialog):
         src = _PROFILES_DIR / f"{name}.json"
         if not src.exists():
             if name == S.profile_name:
-                save_profile()
+                if not save_profile():
+                    QMessageBox.critical(self, "Error", "Could not save profile before export.")
+                    return
             else:
                 QMessageBox.warning(self, "Export", f"Profile file for '{name}' not found.")
                 return
@@ -1024,8 +1030,19 @@ class LogViewer(_TextViewDialog):
             self.view.setPlainText("No log file found.")
             return
         try:
-            lines  = _LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines()
-            prefix = f"[… last 2000 of {len(lines)} lines …]\n" if len(lines) > 2000 else ""
+            size = _LOG_FILE.stat().st_size
+            read_bytes = min(size, 512 * 1024)
+            with open(_LOG_FILE, "rb") as f:
+                if read_bytes < size:
+                    f.seek(size - read_bytes)
+                raw = f.read(read_bytes)
+            text = raw.decode("utf-8", errors="replace")
+            if read_bytes < size:
+                first_nl = text.find("\n")
+                if first_nl != -1:
+                    text = text[first_nl + 1:]
+            lines = text.splitlines()
+            prefix = f"[… last 2000 of many lines …]\n" if read_bytes < size else ""
             self.view.setPlainText(prefix + "\n".join(lines[-2000:]))
             cursor = self.view.textCursor()
             cursor.movePosition(QTextCursor.MoveOperation.End)
@@ -1051,6 +1068,7 @@ class SysInfoDialog(_TextViewDialog):
         super().__init__(parent, "System Information", (1350, 825), font_size=font_sz(2))
         self.view.setPlainText("⏳ Loading system information…")
         self.done_sig.connect(self.view.setPlainText)
+        self._closed = False
         threading.Thread(target=self._run, daemon=True).start()
 
     def _run(self) -> None:
@@ -1070,11 +1088,13 @@ class SysInfoDialog(_TextViewDialog):
         except Exception as exc:
             result = f"An unexpected error occurred: {exc}"
         try:
-            self.done_sig.emit(result)
+            if not self._closed:
+                self.done_sig.emit(result)
         except RuntimeError:
             pass
 
     def closeEvent(self, event) -> None:
+        self._closed = True
         try:
             self.done_sig.disconnect()
         except (RuntimeError, TypeError):

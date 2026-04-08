@@ -158,8 +158,7 @@ def register_cache_invalidation_hook(fn) -> None:
             _cache_invalidation_hooks.append(fn)
 
 
-def current_theme() -> dict[str, str]:
-    return THEMES.get(_current_theme_name, THEMES[DEFAULT_THEME])
+def current_theme() -> dict[str, str]: return THEMES.get(_current_theme_name, THEMES[DEFAULT_THEME])
 
 
 def _base_font_size() -> int:
@@ -170,25 +169,14 @@ def _base_font_size() -> int:
 
 
 def _font_sizes(base: int) -> dict[str, int]:
-    return {
-        "xs":          max(9,  base - 3),
-        "sm":          max(11, base - 2),
-        "md":          base,
-        "lg":          base + 2,
-        "xl":          base + 3,
-        "xxl":         base + 6,
-        "card_title":  base + 4,
-        "card_val":    base + 18,
-        "card_val_sm": base + 10,
-    }
+    return {"xs": max(9,  base - 3), "sm": max(11, base - 2), "md": base, "lg": base + 2,
+            "xl": base + 3, "xxl": base + 6, "card_title": base + 4, "card_val": base + 18, "card_val_sm": base + 10}
 
 
-def font_scale() -> dict[str, int]:
-    return _font_sizes(_base_font_size())
+def font_scale() -> dict[str, int]: return _font_sizes(_base_font_size())
 
 
-def font_sz(delta: int = 0) -> int:
-    return max(9, _base_font_size() + delta)
+def font_sz(delta: int = 0) -> int: return max(9, _base_font_size() + delta)
 
 
 @lru_cache(maxsize=16)
@@ -200,12 +188,10 @@ def _build_indeterminate_svg(colour: str) -> str:
 
 @lru_cache(maxsize=16)
 def _tri_styles_cached(theme_name: str) -> tuple[str, str, str]:
-    t   = THEMES.get(theme_name, THEMES[DEFAULT_THEME])
+    t = THEMES.get(theme_name, THEMES[DEFAULT_THEME])
     b64 = _build_indeterminate_svg(t["highlight"])
 
-    ind = ("QCheckBox::indicator{"
-           "width:8px;height:8px;border-radius:4px;"
-           "background:transparent;border:1px solid transparent;image:none;}")
+    ind = "QCheckBox::indicator{width:8px;height:8px;border-radius:4px;background:transparent;border:1px solid transparent;image:none;}"
 
     checked   = f"QCheckBox::indicator:checked{{background:{t['green']};border:1px solid {t['green']};}}"
     unchecked = f"QCheckBox::indicator:unchecked{{background:{t['bg3']};border:1px solid {t['text_dim']};}}"
@@ -214,8 +200,7 @@ def _tri_styles_cached(theme_name: str) -> tuple[str, str, str]:
                  f"border:1px solid {t['highlight']};"
                  f"image:url('data:image/svg+xml;base64,{b64}');}}")
 
-    active = (f"QCheckBox{{color:{t['text']};font-weight:bold;spacing:8px;}}"
-              f"{ind}{checked}{unchecked}{indet_std}")
+    active = f"QCheckBox{{color:{t['text']};font-weight:bold;spacing:8px;}} {ind}{checked}{unchecked}{indet_std}"
 
     disabled = (f"QCheckBox{{color:{t['muted']};text-decoration:line-through;spacing:8px;}}{ind}"
                 f"QCheckBox::indicator:checked{{background:{t['bg3']};border:1px solid {t['muted']};}}"
@@ -229,14 +214,13 @@ def _tri_styles_cached(theme_name: str) -> tuple[str, str, str]:
     return active, disabled, delete
 
 
-def tri_styles() -> tuple[str, str, str]:
-    return _tri_styles_cached(_current_theme_name)
+def tri_styles() -> tuple[str, str, str]: return _tri_styles_cached(_current_theme_name)
 
 
 def style_label_info(font_size: int = 0, bold: bool = False) -> str:
-    t  = current_theme()
+    t = current_theme()
     fs = font_size or (font_scale()["lg"] if bold else font_scale()["xxl"])
-    s  = f"font-size:{fs}px;color:{t['success']};font-family:monospace;"
+    s = f"font-size:{fs}px;color:{t['success']};font-family:monospace;"
     return s + "font-weight:bold;padding:4px;" if bold else s
 
 
@@ -245,12 +229,10 @@ def style_label_mono(font_size: int = 0) -> str:
     return f"font-size:{fs}px;padding:5px;qproperty-alignment:AlignLeft;font-family:monospace;"
 
 
-def style_checkbox_select_all() -> str:
-    return f"QCheckBox{{color:{current_theme()['cyan']};}}"
+def style_checkbox_select_all() -> str: return f"QCheckBox{{color:{current_theme()['cyan']};}}"
 
 
-def style_checkbox_muted() -> str:
-    return f"QCheckBox{{color:{current_theme()['muted']};}}"
+def style_checkbox_muted() -> str: return f"QCheckBox{{color:{current_theme()['muted']};}}"
 
 
 def style_sudo_checkbox(muted: bool = False) -> str:
@@ -478,8 +460,7 @@ def _tri_legend_cached(theme_name: str) -> str:
             f"<span style='color:{t['red']};text-decoration:line-through;font-style:italic;'>Delete</span>")
 
 
-def tri_state_legend_html() -> str:
-    return _tri_legend_cached(_current_theme_name)
+def tri_state_legend_html() -> str: return _tri_legend_cached(_current_theme_name)
 
 
 def get_style() -> str:
@@ -490,12 +471,12 @@ def get_style() -> str:
     cache = _style_cache
     if cache is not None and cache[0] == key:
         return cache[1]
-    css = _build_stylesheet(current_theme(), font, size)
     with _style_cache_lock:
-        if _style_cache is None or _style_cache[0] != key:
-            _style_cache = (key, css)
-        else:
-            css = _style_cache[1]
+        cache = _style_cache
+        if cache is not None and cache[0] == key:
+            return cache[1]
+        css = _build_stylesheet(current_theme(), font, size)
+        _style_cache = (key, css)
     return css
 
 

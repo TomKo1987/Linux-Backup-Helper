@@ -47,7 +47,7 @@ _path_replacements: tuple[tuple[str, str], ...] = ((_HOME.as_posix(), "~"), (f"/
 
 
 _ANSI_RE       = re.compile(r"\x1b\[[0-9;]*[mKHJA-Z]")
-_NORM_PATHS_RE = re.compile(r" (?=/|smb://|cifs://)")
+_NORM_PATHS_RE = re.compile(r"(?<=[^\s/]) (?=/|smb://|cifs://)")
 
 
 def apply_replacements(text: str) -> str:
@@ -75,22 +75,21 @@ def invalidate_tooltip_cache() -> None:
 
 @dataclass
 class State:
-    profile_name:        str             = ""
-    entries:             list[dict]      = field(default_factory=list)
-    headers:             dict[str, dict] = field(default_factory=dict)
-    mount_options:       list[dict]      = field(default_factory=list)
-    system_manager_ops:  list[str]       = field(default_factory=list)
-    system_files:        list[dict]      = field(default_factory=list)
-    basic_packages:      list[dict]      = field(default_factory=list)
-    aur_packages:        list[dict]      = field(default_factory=list)
-    specific_packages:   list[dict]      = field(default_factory=list)
-    user_shell:          str             = "bash"
+    profile_name:       str             = ""
+    entries:            list[dict]      = field(default_factory=list)
+    headers:            dict[str, dict] = field(default_factory=dict)
+    mount_options:      list[dict]      = field(default_factory=list)
+    system_manager_ops: list[str]       = field(default_factory=list)
+    system_files:       list[dict]      = field(default_factory=list)
+    basic_packages:     list[dict]      = field(default_factory=list)
+    aur_packages:       list[dict]      = field(default_factory=list)
+    specific_packages:  list[dict]      = field(default_factory=list)
+    user_shell:         str             = "bash"
     ui: dict = field(default_factory=lambda: {"theme": "Tokyo Night", "font_family": "", "font_size": 14,
                                               "backup_window_columns": 2, "restore_window_columns": 2,
                                               "settings_window_columns": 2})
 
     def reset_to_fresh(self) -> None:
-        """Reset all fields to their default values (equivalent to a fresh State())."""
         fresh = State()
         for f in _dc_fields(fresh):
             setattr(self, f.name, getattr(fresh, f.name))
@@ -124,15 +123,16 @@ def _norm_pkgs(raw: list) -> list[dict]:
 def _norm_paths(raw: Any) -> list[str]:
     if not raw:
         return []
-    items = [raw] if isinstance(raw, str) else raw
+    if isinstance(raw, list):
+        return [p.strip() for p in (str(x) for x in raw) if p.strip()]
+    s = str(raw).strip()
+    if not s:
+        return []
     result = []
-    for item in items:
-        s = str(item).strip()
-        if s:
-            for p in _NORM_PATHS_RE.split(s):
-                p = p.strip()
-                if p:
-                    result.append(p)
+    for p in _NORM_PATHS_RE.split(s):
+        p = p.strip()
+        if p:
+            result.append(p)
     return result
 
 
@@ -149,7 +149,8 @@ def _parse_entry(raw: dict) -> Optional[dict]:
     if not (header and title and source and dest):
         return None
     details = raw.get("details", {})
-    return {"header": header, "title":  title, "source": source, "destination": dest, "details": details if isinstance(details, dict) else {}}
+    return {"header": header, "title":  title, "source": source, "destination": dest, "details": details
+    if isinstance(details, dict) else {}}
 
 
 def load_profile(path: Path) -> bool:
@@ -246,29 +247,38 @@ def list_profiles() -> list[str]:
 
 
 def startup_load() -> bool:
-    parsed: list[tuple[Path, dict]] = []
+    default_path = None
+    default_data = None
+    other_profiles = []
+
     for name in list_profiles():
         p = _PROFILES_DIR / f"{name}.json"
         try:
-            parsed.append((p, json.loads(p.read_text(encoding="utf-8"))))
-        except Exception as exc:
-            logger.error("startup_load: %s", exc)
-
-    default_path = default_data = None
-    for p, data in parsed:
-        if data.get("is_default"):
-            if default_path is None:
-                default_path, default_data = p, data
+            data = json.loads(p.read_text(encoding="utf-8"))
+            if data.get("is_default"):
+                if default_path is None:
+                    default_path = p
+                    default_data = data
+                else:
+                    data.pop("is_default", None)
+                    try:
+                        _atomic_write(p, data)
+                        logger.warning("Cleared duplicate is_default flag in '%s'", p.stem)
+                    except OSError as exc:
+                        logger.error("startup_load: could not clear duplicate in '%s': %s", p.stem, exc)
+                    other_profiles.append(p)
             else:
-                data = {k: v for k, v in data.items() if k != "is_default"}
-                try:
-                    _atomic_write(p, data)
-                except OSError as exc:
-                    logger.error("startup_load: could not clear duplicate in '%s': %s", p.stem, exc)
-                logger.warning("Cleared duplicate is_default flag in '%s'", p.stem)
+                other_profiles.append(p)
+        except Exception as exc:
+            logger.error("startup_load: Error reading '%s': %s", p.stem, exc)
 
-    if default_path and default_data:
+    if default_path and isinstance(default_data, dict):
         if _load_profile_from_data(default_path, default_data):
             return True
         logger.warning("startup_load: default profile '%s' failed to load, trying others", default_path.stem)
-    return any(_load_profile_from_data(p, data) for p, data in parsed if p != default_path)
+
+    for p in other_profiles:
+        if load_profile(p):
+            save_profile()
+            return True
+    return False

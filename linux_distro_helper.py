@@ -4,11 +4,11 @@ import re
 import shlex
 import subprocess
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from state import logger
 
-__all__ = ["LinuxDistroHelper", "distro_family", "USER_SHELLS", "SESSIONS"]
+__all__ = ["LinuxDistroHelper", "distro_family", "USER_SHELLS", "SESSIONS", "_PKG_RE"]
 
 _MIN_PARALLEL = 5
 
@@ -31,57 +31,28 @@ _DISTROS_SLACKWARE = {"slackware", "salix", "porteus", "slax"}
 
 _DISTRO_FAMILY_MAP: dict[str, str] = {
     distro_id: family
-    for family, distro_set in [
-        ("arch",      _DISTROS_ARCH),
-        ("debian",    _DISTROS_DEBIAN),
-        ("fedora",    _DISTROS_FEDORA),
-        ("suse",      _DISTROS_SUSE),
-        ("gentoo",    _DISTROS_GENTOO),
-        ("slackware", _DISTROS_SLACKWARE),
-        ("void",      {"void"}),
-        ("nixos",     {"nixos"}),
-        ("alpine",    {"alpine", "postmarketos"}),
-        ("solus",     {"solus"}),
-    ]
-    for distro_id in distro_set
-}
+    for family, distro_set in [("arch", _DISTROS_ARCH), ("debian", _DISTROS_DEBIAN), ("fedora", _DISTROS_FEDORA),
+                               ("suse", _DISTROS_SUSE), ("gentoo", _DISTROS_GENTOO), ("slackware", _DISTROS_SLACKWARE),
+                               ("void", {"void"}), ("nixos", {"nixos"}), ("alpine", {"alpine", "postmarketos"}),
+                               ("solus", {"solus"})] for distro_id in distro_set}
+
+del _DISTROS_ARCH, _DISTROS_DEBIAN, _DISTROS_FEDORA, _DISTROS_SUSE, _DISTROS_GENTOO, _DISTROS_SLACKWARE
 
 USER_SHELLS = ["bash", "fish", "zsh", "elvish", "nushell", "powershell", "xonsh", "ngs"]
 
-_SHELL_BINARIES: dict[str, str] = {
-    "nushell":        "nu",
-    "powershell":     "pwsh",
-    "powershell-bin": "pwsh",
-}
+_SHELL_BINARIES: dict[str, str] = {"nushell": "nu", "powershell": "pwsh", "powershell-bin": "pwsh"}
 
-_SHELL_PKG_MAP: dict[str, str] = {
-    "bash":    "bash",
-    "zsh":     "zsh",
-    "fish":    "fish",
-    "elvish":  "elvish",
-    "nushell": "nushell",
-    "xonsh":   "xonsh",
-    "ngs":     "ngs",
-}
+_SHELL_PKG_MAP: dict[str, str] = {"bash": "bash", "zsh": "zsh", "fish": "fish", "elvish": "elvish",
+                                  "nushell": "nushell", "xonsh": "xonsh", "ngs": "ngs"}
 
 SESSIONS = ["KDE", "GNOME", "XFCE", "Cinnamon", "MATE", "LXDE", "LXQt", "Budgie", "Deepin", "Openbox", "i3", "Sway",
             "Hyprland", "bspwm", "dwm", "awesome", "qtile", "xmonad", "Wayfire", "River", "niri", "COSMIC"]
 
 _SESSION_LOWER: dict[str, str] = {s.lower(): s for s in SESSIONS}
 
-_PKG_MGR_NAME: dict[str, str] = {
-    "arch":      "pacman",
-    "debian":    "apt",
-    "fedora":    "dnf",
-    "suse":      "zypper",
-    "void":      "xbps-install",
-    "gentoo":    "emerge",
-    "nixos":     "nix-env",
-    "alpine":    "apk",
-    "slackware": "pkgtool",
-    "solus":     "eopkg",
-    "unknown":   "unknown",
-}
+_PKG_MGR_NAME: dict[str, str] = {"arch": "pacman", "debian": "apt", "fedora": "dnf", "suse": "zypper", "solus": "eopkg",
+                                 "void": "xbps-install", "gentoo": "emerge", "nixos": "nix-env", "alpine": "apk",
+                                 "slackware": "pkgtool", "unknown": "unknown"}
 
 
 def _nixos_check(p: str) -> list[str]:
@@ -93,7 +64,7 @@ def _slackware_check(p: str) -> list[str]:
     return ["sh", "-c", f"ls /var/log/packages/{p_q}-* >/dev/null 2>&1"]
 
 
-_PKG: dict[str, dict] = {
+_PKG: dict[str, dict[str, Any]] = {
     "arch": dict(
         check   = lambda p: ["pacman", "-Qi", p],
         install = "sudo pacman -S --noconfirm {p}",
@@ -206,6 +177,7 @@ _PKG: dict[str, dict] = {
     ),
 }
 
+
 _SSH_PKGS: dict = {
     "debian":    ["openssh-server"],
     "fedora":    ["openssh-server"],
@@ -219,8 +191,8 @@ _SSH_PKGS: dict = {
     "solus":     ["openssh-server"],
     None:        ["openssh-server"],
 }
-_SSH_SVC    = {"debian": "ssh",  None: "sshd"}
-_SAMBA_SVC  = {"debian": "smbd", None: "smb"}
+_SSH_SVC  = {"debian": "ssh", None: "sshd"}
+_SAMBA_SVC = {"debian": "smbd", None: "smb"}
 _SAMBA_PKGS: dict = {
     "debian":    ["samba", "samba-common-bin"],
     "fedora":    ["samba", "samba-common"],
@@ -234,18 +206,18 @@ _SAMBA_PKGS: dict = {
     "solus":     ["samba"],
     None:        ["samba"],
 }
-_CRON_SVC   = {"debian": "cron", None: "cronie"}
+_CRON_SVC = {"debian": "cron", None: "cronie"}
 _CRON_PKGS: dict = {
-    "debian":    ["cron"],
-    "fedora":    ["cronie", "cronie-anacron"],
-    "suse":      ["cron"],
-    "arch":      ["cronie"],
-    "void":      ["cronie"],
-    "alpine":    ["cronie"],
-    "nixos":     ["cronie"],
-    "solus":     ["cronie"],
-    "gentoo":    ["sys-process/cronie"],
-    None:        ["cronie"],
+    "debian": ["cron"],
+    "fedora": ["cronie", "cronie-anacron"],
+    "suse":   ["cron"],
+    "arch":   ["cronie"],
+    "void":   ["cronie"],
+    "alpine": ["cronie"],
+    "nixos":  ["cronie"],
+    "solus":  ["cronie"],
+    "gentoo": ["sys-process/cronie"],
+    None:     ["cronie"],
 }
 _BT_PKGS: dict = {
     "arch":   ["bluez", "bluez-utils"],
@@ -291,9 +263,9 @@ _WM_PROCS: dict[str, str] = {
 def distro_family(distro_id: str) -> str: return _DISTRO_FAMILY_MAP.get(distro_id, distro_id)
 
 
-def _lookup(table: dict, family: str) -> list:
+def _lookup(table: dict, family: str) -> list[Any] | None | Any:
     result = table.get(family)
-    return result if result is not None else table.get(None, [])
+    return result if result is not None else (table.get(None) or [])
 
 
 class LinuxDistroHelper:
@@ -338,29 +310,23 @@ class LinuxDistroHelper:
             logger.warning("Unknown distro '%s', using generic commands.", self.distro_id)
 
         self._check_fn: Callable[[str], list[str]] = cfg["check"]
-        self._install   = cfg["install"]
-        self._update    = cfg["update"]
-        self._remove    = cfg["remove"]
-        self._clean     = cfg["clean"]
-        self._orphans   = cfg["orphans"]
-        self.has_aur: bool = cfg["has_aur"]
-        self._kernel_pkg   = cfg["kernel"]
+        self._install: str = cfg["install"]
+        self._update: str = cfg["update"]
+        self._remove: str = cfg["remove"]
+        self._clean: str = cfg["clean"]
+        self._orphans: str = cfg["orphans"]
+        self.has_aur: bool = bool(cfg["has_aur"])
+        self._kernel_pkg: str = cfg["kernel"]
 
-    def family(self) -> str:
-        return self._family
+    def family(self) -> str: return self._family
 
-    def pkg_manager_name(self) -> str:
-        return _PKG_MGR_NAME.get(self.family(), "unknown")
+    def pkg_manager_name(self) -> str: return _PKG_MGR_NAME.get(self.family(), "unknown")
 
-    def supports_aur(self) -> bool:
-        return self.has_aur
+    def supports_aur(self) -> bool: return self.has_aur
 
     @staticmethod
     def _valid(name: str) -> bool:
-        return (isinstance(name, str)
-                and bool(name.strip())
-                and len(name) <= 255
-                and bool(_PKG_RE.match(name.strip())))
+        return isinstance(name, str) and bool(name.strip()) and len(name) <= 255 and bool(_PKG_RE.match(name.strip()))
 
     def package_is_installed(self, pkg: str) -> bool:
         if not self._valid(pkg):
@@ -466,13 +432,13 @@ class LinuxDistroHelper:
                     if tag in kv.lower():
                         return f"linux-{tag}-headers"
                 return "linux-headers"
-            if fam == "debian":  return f"linux-headers-{kv}"
-            if fam == "fedora":  return f"kernel-devel-{kv}"
-            if fam == "suse":    return "kernel-default-devel"
-            if fam == "void":    return "linux-headers"
-            if fam == "alpine":  return "linux-headers"
-            if fam == "gentoo":  return "sys-kernel/linux-headers"
-            if fam == "solus":   return "linux-headers"
+            if fam == "debian": return f"linux-headers-{kv}"
+            if fam == "fedora": return f"kernel-devel-{kv}"
+            if fam == "suse":   return "kernel-default-devel"
+            if fam == "void":   return "linux-headers"
+            if fam == "alpine": return "linux-headers"
+            if fam == "gentoo": return "sys-kernel/linux-headers"
+            if fam == "solus":  return "linux-headers"
         except Exception as exc:
             logger.error("kernel headers pkg: %s", exc)
         return self._kernel_pkg
@@ -506,10 +472,10 @@ class LinuxDistroHelper:
         pkg = self.get_shell_package_name(shell_name)
         return _SHELL_BINARIES.get(pkg, pkg)
 
-    def get_ssh_packages(self)       -> list: return _lookup(_SSH_PKGS,   self.family())
-    def get_samba_packages(self)     -> list: return _lookup(_SAMBA_PKGS, self.family())
-    def get_bluetooth_packages(self) -> list: return _lookup(_BT_PKGS,    self.family())
-    def get_cron_packages(self)      -> list: return _lookup(_CRON_PKGS,  self.family())
+    def get_ssh_packages(self)       -> list[Any] | None | Any: return _lookup(_SSH_PKGS, self.family())
+    def get_samba_packages(self)     -> list[Any] | None | Any: return _lookup(_SAMBA_PKGS, self.family())
+    def get_bluetooth_packages(self) -> list[Any] | None | Any: return _lookup(_BT_PKGS, self.family())
+    def get_cron_packages(self)      -> list[Any] | None | Any: return _lookup(_CRON_PKGS, self.family())
 
     def get_ssh_service_name(self)   -> str: return _SSH_SVC.get(self.family())   or _SSH_SVC[None]
     def get_samba_service_name(self) -> str: return _SAMBA_SVC.get(self.family()) or _SAMBA_SVC[None]
@@ -524,7 +490,7 @@ class LinuxDistroHelper:
     @staticmethod
     def get_flatpak_packages()  -> list: return ["flatpak"]
     @staticmethod
-    def get_snap_packages()     -> list: return ["snapd"]
+    def get_snap_packages()    -> list: return ["snapd"]
     @staticmethod
     def flatpak_add_flathub() -> str:
         return "sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo"
