@@ -2,7 +2,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QMenu, QMessageBox, QPushButton, QSystemTrayIcon, QWidget,
@@ -14,9 +14,10 @@ from drive_utils import get_mounts, is_mounted, unmount_drive, get_session_manag
 from state import S, _HOME, _PROFILES_DIR, _PROFILE_RE, RESTART_DIALOG, save_profile, logger, startup_load
 from themes import apply_style, register_style_listener, unregister_style_listener
 from windows import base_window
+from ui_utils import _StandardKeysMixin
 
 
-class MainWindow(QMainWindow):
+class MainWindow(_StandardKeysMixin, QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Backup Helper")
@@ -99,7 +100,8 @@ class MainWindow(QMainWindow):
             act.triggered.connect(fn)
             menu.addAction(act)
         self.tray.setContextMenu(menu)
-        self.tray.activated.connect(lambda r: self._show_and_raise() if r == QSystemTrayIcon.ActivationReason.DoubleClick else None)
+        self.tray.activated.connect(
+            lambda r: self._show_and_raise() if r == QSystemTrayIcon.ActivationReason.DoubleClick else None)
         self.tray.show()
 
     def _show_and_raise(self) -> None:
@@ -130,7 +132,8 @@ class MainWindow(QMainWindow):
 
             msg = "The following drives are still mounted:\n\n" + "\n".join(lines) + "\n\nUnmount before quitting?\n"
             ans = QMessageBox.question(self, "Quit — Drives Still Mounted", msg,
-                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel)
+                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No |
+                                       QMessageBox.StandardButton.Cancel)
 
             if ans == QMessageBox.StandardButton.Cancel:
                 return
@@ -146,27 +149,18 @@ class MainWindow(QMainWindow):
         elif info_only:
             msg = "The following drives are still mounted but have no unmount command:\n"
             msg += "\n".join(f"  • {_name(o)}" for o in info_only) + "\n\nQuit anyway?"
-            if QMessageBox.question(self, "Quit", msg,
-                                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            if (QMessageBox.question(self, "Quit", msg,
+                                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                    != QMessageBox.StandardButton.Yes):
                 return
         else:
-            if QMessageBox.question(self, "Quit", "Really quit Backup Helper?",
-                                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            if (QMessageBox.question(self, "Quit", "Really quit Backup Helper?",
+                                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                    != QMessageBox.StandardButton.Yes):
                 return
 
         self._quitting = True
         QApplication.quit()
-
-    def keyPressEvent(self, event) -> None:
-        k = event.key()
-        widget = self.focusWidget()
-        if k in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
-            if isinstance(widget, QPushButton):
-                widget.click()
-        elif k == Qt.Key.Key_Escape:
-            self.close()
-        else:
-            super().keyPressEvent(event)
 
     def closeEvent(self, event) -> None:
         if self._quitting:
@@ -221,7 +215,8 @@ def main():
             sys.__excepthook__(exc_type, exc_value, exc_tb)
             return
         logger.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_tb))
-        QMessageBox.critical(None, "Critical Error", f"Unexpected error:\n\n{exc_value}\n\nCheck logs for details.")
+        QMessageBox.critical(
+            None, "Critical Error", f"Unexpected error:\n\n{exc_value}\n\nCheck logs for details.")
     sys.excepthook = _excepthook
     has_profile = startup_load()
     win = MainWindow()

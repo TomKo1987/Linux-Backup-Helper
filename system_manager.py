@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 
 from state import S, _HOME, _USER, logger, apply_replacements
 from themes import current_theme, font_sz
+from ui_utils import _StandardKeysMixin
 
 
 def _zero(buf: bytearray) -> None:
@@ -44,12 +45,19 @@ _INFO_RE = re.compile(
 class _Status: PENDING, IN_PROGRESS, SUCCESS, WARNING, ERROR = ("pending", "in_progress", "success", "warning", "error")
 
 
-class _Style:
-    _FM = "DejaVu Sans Mono, Fira Code, monospace"; _FS = "Hack, Fira Mono, monospace"
+_FONT_MONO = "DejaVu Sans Mono, Fira Code, monospace"
+_FONT_SANS = "Hack, Fira Mono, monospace"
 
-    KIND_CFG: dict[str, tuple] = {"operation": (_FM, 16, 1.2, "info"), "info": (_FM, 15, 1.0, "success"),
-                                  "subprocess": (_FS, 13, 0.6, "text"), "success": (_FM, 15, 1.0, "success"),
-                                  "warning": (_FM, 15, 1.0, "warning"), "error": (_FM, 15, 1.0, "error")}
+
+class _Style:
+    KIND_CFG: dict[str, tuple] = {
+        "operation": (_FONT_MONO, 16, 1.2, "info"),
+        "info":      (_FONT_MONO, 15, 1.0, "success"),
+        "subprocess":(_FONT_SANS, 13, 0.6, "text"),
+        "success":   (_FONT_MONO, 15, 1.0, "success"),
+        "warning":   (_FONT_MONO, 15, 1.0, "warning"),
+        "error":     (_FONT_MONO, 15, 1.0, "error"),
+    }
 
     STATUS_CFG: dict[str, tuple] = {_Status.SUCCESS: ("success", "dialog-ok-apply"), _Status.ERROR: ("error", "dialog-error"),
                                     _Status.WARNING: ("warning", "dialog-warning"),  _Status.IN_PROGRESS: ("info", "media-playback-start")}
@@ -113,7 +121,7 @@ class _PackageCache:
                 self._cache.clear()
                 self._ts = now
             elif len(self._cache) >= self._MAX:
-                self._cache = dict(list(self._cache.items())[self._MAX // 2:])
+                del self._cache[next(iter(self._cache))]
             if pkg in self._cache:
                 return self._cache[pkg]
         result = self._distro.package_is_installed(pkg)
@@ -125,7 +133,7 @@ class _PackageCache:
         with self._lock: self._cache[pkg] = True
 
 
-class SystemManagerDialog(QDialog):
+class SystemManagerDialog(_StandardKeysMixin, QDialog):
     DIALOG_SIZE = (1875, 1000)
     BUTTON_SIZE = (160, 50)
     RIGHT_W = 370
@@ -329,10 +337,10 @@ class SystemManagerDialog(QDialog):
             logger.error("_update_elapsed: %s", exc)
 
     def keyPressEvent(self, event) -> None:
-        k = event.key()
-        if k == Qt.Key.Key_Escape and not self._done and not self._auth_failed: event.ignore()
-        elif k == Qt.Key.Key_Tab: self.focusNextChild()
-        else: super().keyPressEvent(event)
+        if event.key() == Qt.Key.Key_Tab:
+            self.focusNextChild()
+        else:
+            super().keyPressEvent(event)
 
     def closeEvent(self, event) -> None: super().closeEvent(event) if (self._done or self._auth_failed) else event.ignore()
 
@@ -648,12 +656,12 @@ class SystemManagerThread(QThread):
 
         if not items:
             self.outputReceived.emit(f"No active {label}s configured", "info")
-            return True
+            return _Status.SUCCESS
 
         to_install = self.distro.filter_not_installed(items)
         if not to_install:
             self.outputReceived.emit(f"All {label}s already installed", "success")
-            return True
+            return _Status.SUCCESS
 
         failed = []
         if use_aur:
@@ -816,7 +824,9 @@ class SystemManagerThread(QThread):
         for msg, cmd, kw in [("Cloning yay…", ["git", "clone", "https://aur.archlinux.org/yay.git"], {"cwd": str(_HOME)}),
                              ("Building yay…", ["makepkg", "-c", "--noconfirm"], {"cwd": str(yay_dir)})]:
             self.outputReceived.emit(msg, "subprocess")
-            if self._exec(cmd, stream=True, **kw).returncode != 0: return False
+            if self._exec(cmd, stream=True, **kw).returncode != 0:
+                shutil.rmtree(yay_dir, ignore_errors=True)
+                return False
 
         to_remove = []
         if "go" in freshly_added and self.distro.package_is_installed("go"):
@@ -851,7 +861,7 @@ class SystemManagerThread(QThread):
         if not self.distro: return False
         if not (session := self.distro.detect_session()):
             self.outputReceived.emit("Cannot determine desktop session — skipping specific packages", "warning")
-            return True
+            return _Status.SUCCESS
         self.outputReceived.emit(f"Detected session: {session}", "success")
 
         pkgs = [p["package"] for p in (S.specific_packages or []) if isinstance(p, dict) and p.get("session") == session
@@ -859,7 +869,7 @@ class SystemManagerThread(QThread):
         to_install = self.distro.filter_not_installed(pkgs) if pkgs else []
         if not to_install:
             self.outputReceived.emit(f"All Specific Packages for {session} already installed", "success")
-            return True
+            return _Status.SUCCESS
 
         self.outputReceived.emit(f"Installing: {', '.join(to_install)}", "info")
         failed = self._install_with_retry(to_install, lambda batch: self._exec(self.distro.get_batch_install_cmd(batch), stream=True),

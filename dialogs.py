@@ -18,8 +18,8 @@ from PyQt6.QtWidgets import (
 )
 
 from state import (
-    _norm_paths, list_profiles, load_profile, save_profile, logger, State,
-    S, _HOME, _LOG_FILE, _PROFILES_DIR, _PROFILE_RE, _atomic_write, apply_replacements,
+    _norm_paths, list_profiles, load_profile, save_profile, logger, S, _HOME, _LOG_FILE, _PROFILES_DIR, _PROFILE_RE,
+    _atomic_write, apply_replacements,
 )
 from themes import current_theme, font_scale, font_sz, apply_tooltip
 from ui_utils import sep, hdr_label, ok_cancel_buttons, btn_row, ask_text, ask_profile_name, browse_field
@@ -717,6 +717,18 @@ class HeaderSettingsDialog(QDialog):
         if self._move_header(+1): self.was_changed = True
 
 
+def _clear_default_flag(profile_name: str, caller: str) -> None:
+    if not profile_name:
+        return
+    path = _PROFILES_DIR / f"{profile_name}.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data.pop("is_default", None):
+            _atomic_write(path, data)
+    except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
+        logger.warning("%s: could not clear is_default in '%s': %s", caller, path.name, exc)
+
+
 class ProfilesDialog(QDialog):
 
     def __init__(self, parent):
@@ -777,13 +789,7 @@ class ProfilesDialog(QDialog):
         if name == S.profile_name:
             QMessageBox.information(self, "Load Profile", f"'{name}' is already the active profile.")
             return
-        if S.profile_name:
-            old_path = _PROFILES_DIR / f"{S.profile_name}.json"
-            try:
-                data = json.loads(old_path.read_text(encoding="utf-8"))
-                if data.pop("is_default", None): _atomic_write(old_path, data)
-            except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
-                logger.warning("_load: could not clear is_default from '%s': %s", old_path.name, exc)
+        _clear_default_flag(S.profile_name, "_load")
 
         if self._activate_profile(name):
             QMessageBox.information(self, "Profile Loaded", f"Profile '{name}' is now active.")
@@ -797,27 +803,9 @@ class ProfilesDialog(QDialog):
                 self, "Overwrite?", f"Profile '{name}' already exists. Overwrite it?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
-        fresh = State()
-        old_name = S.profile_name
-        if old_name:
-            old_path = _PROFILES_DIR / f"{old_name}.json"
-            try:
-                data = json.loads(old_path.read_text(encoding="utf-8"))
-                if data.pop("is_default", None):
-                    _atomic_write(old_path, data)
-            except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
-                logger.warning("_new: could not clear is_default from '%s': %s", old_path.name, exc)
-        S.profile_name       = name
-        S.entries            = fresh.entries
-        S.headers            = fresh.headers
-        S.mount_options      = fresh.mount_options
-        S.system_manager_ops = fresh.system_manager_ops
-        S.system_files       = fresh.system_files
-        S.basic_packages     = fresh.basic_packages
-        S.aur_packages       = fresh.aur_packages
-        S.specific_packages  = fresh.specific_packages
-        S.user_shell         = fresh.user_shell
-        S.ui                 = fresh.ui
+        _clear_default_flag(S.profile_name, "_new")
+        S.reset_to_fresh()
+        S.profile_name = name
         if not save_profile():
             QMessageBox.critical(self, "Error", f"Could not save profile '{name}'.")
             return

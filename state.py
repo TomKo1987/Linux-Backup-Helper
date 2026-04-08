@@ -3,7 +3,7 @@ import logging
 import os
 import pwd
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields as _dc_fields
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Optional
@@ -88,6 +88,12 @@ class State:
     ui: dict = field(default_factory=lambda: {"theme": "Tokyo Night", "font_family": "", "font_size": 14,
                                               "backup_window_columns": 2, "restore_window_columns": 2,
                                               "settings_window_columns": 2})
+
+    def reset_to_fresh(self) -> None:
+        """Reset all fields to their default values (equivalent to a fresh State())."""
+        fresh = State()
+        for f in _dc_fields(fresh):
+            setattr(self, f.name, getattr(fresh, f.name))
 
 
 S = State()

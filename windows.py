@@ -13,58 +13,14 @@ from state import S, _PROFILES_DIR, RESTART_DIALOG, apply_replacements, save_pro
 from themes import (
     THEMES, current_theme, apply_style, font_scale, register_style_listener, unregister_style_listener, apply_tooltip
 )
-from tooltips import generate_tooltip
-from ui_utils import block_set, ok_cancel_buttons, btn_row
-
-
-def _copy_logic_tooltip() -> str:
-    t = current_theme()
-    return (
-        "<b>Copy &amp; Skip Logic</b><br><br>"
-        "<b>Local File Logic:</b><br>"
-        "- A file is <b>copied</b> if the destination is missing, the <b>size differs</b>, "
-        "or the source is newer than the backup.<br>"
-        "- A file is <b>skipped</b> only if the size matches <b>and</b> the backup "
-        "is already as new as the source (2s tolerance).<br><br>"
-        "<b>Samba (SMB) Logic:</b><br>"
-        "- To save bandwidth and avoid latency, the system only checks <b>existence and file size</b>.<br>"
-        "- Remote paths <b>must</b> follow the pattern: <code>'smb://ip/path'</code>.<br>"
-        "- <b>Local requirement:</b> <code>smbclient</code> must be installed on <b>this machine</b>.<br>"
-        "- <b>Remote requirement:</b> Samba must be configured on the <b>target system</b>; "
-        "Port must be open (default Port = 445).<br><br>"
-        "<b>Always Skipped (Name/Pattern Matches):</b><br>"
-        "- <b>Locks &amp; Handles:</b> <code>.lock</code>, <code>.lck</code>, <code>.parentlock</code>, <code>Singleton</code><br>"
-        "- <b>Browser Trash &amp; Config:</b> <code>Cache/</code>, <code>GPUCache/</code>, <code>ShaderCache/</code>, <code>blob_storage/</code>, <code>prefs.js</code><br>"
-        "- <b>Active DB States:</b> <code>.sqlite-wal/-shm</code>, <code>.db-wal/-shm</code>, <code>journal</code>, <code>.ldb</code><br>"
-        "- <b>Web Storage:</b> <code>idb/</code> (IndexedDB), <code>Session Storage</code>, <code>Local Storage</code>, <code>leveldb/</code><br>"
-        "- <b>System &amp; Temp:</b> <code>Thumbs.db</code>, <code>.DS_Store</code>, <code>temp</code>, <code>tmp</code>, <code>.bak</code>, <code>.tmp</code><br>"
-        "<i>Note: Pattern matching is strict. Files like 'Temperature.txt' or 'Template.docx' are safely copied.</i><br><br>"
-        "<b>Status Colors:</b><br>"
-        f"- <span style='color:{t['success']};'>Green</span> = Success, "
-        f"<span style='color:{t['warning']};'>Yellow</span> = Skipped, "
-        f"<span style='color:{t['error']};'>Red</span> = Error.<br><br><br>"
-        "<b>Samba Credentials &amp; Keyring</b><br><br>"
-        "- Passwords are <b>never stored in plain text</b>. The system uses a priority chain:<br>"
-        "  1. <b>KDE KWallet:</b> Looks for <code>'smb-[username]'</code> in the <code>'kdewallet'</code> folder.<br>"
-        "  2. <b>System Keyring:</b> Fallback via <code>libsecret</code> (service: <code>'backup-helper-samba'</code>).<br>"
-        "  3. <b>Guest:</b> If no credentials exist, an anonymous connection is attempted.<br><br><br>"
-        "<b>Execution Security (Hardened)</b><br><br>"
-        "- <b>Zero Visibility:</b> Passwords are <b>never</b> passed via command-line arguments to prevent exposure in process lists.<br>"
-        "- <b>RAM-Only Storage:</b> Credentials are stored in <code>/dev/shm</code> (RAM disk). If <code>/dev/shm</code> is unavailable, "
-        "no credential file is created and the connection falls back to an anonymous (guest) attempt.<br>"
-        "- <b>Race-Condition Protection:</b> The credential file remains active for the <b>exact duration</b> of the transfer "
-        "and is deleted immediately after the process ends.<br>"
-        "- <b>Secure Erasure:</b> Before deletion, the credential file is <b>overwritten with zeros</b> (Wipe) and synced.<br>"
-        "- <b>Guest Fallback:</b> In case of access errors to the secure storage, the system safely falls back to a guest connection.<br>"
-        "- <b>Memory Safety:</b> Internal password buffers (<code>SecureString</code>) are <b>manually zeroed out</b> in RAM after use."
-    )
-
+from tooltips import backup_tooltips, restore_tooltips, copy_logic_tooltip
+from ui_utils import block_set, ok_cancel_buttons, btn_row, _StandardKeysMixin
 
 _COLS_NARROW, _COLS_WIDE = 2, 4
 
 
 # noinspection PyUnresolvedReferences
-class _BaseCheckboxWindow(QDialog):
+class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
     _window_title: str = ""
     _cols_key:     str = "backup_window_columns"
     changed = pyqtSignal()
@@ -110,8 +66,7 @@ class _BaseCheckboxWindow(QDialog):
         self._sync_select_all()
 
     def _tips(self) -> dict:
-        backup_tips, _, _ = generate_tooltip()
-        return backup_tips
+        return backup_tooltips()
 
     def _src_dst(self, entry: dict) -> tuple[list, list]:
         return entry.get("source", []), entry.get("destination", [])
@@ -275,12 +230,8 @@ class _BaseCheckboxWindow(QDialog):
                 focused.toggle()
                 if focused == self._selectall:
                     self._toggle_all()
-            elif isinstance(focused, QPushButton):
-                focused.click()
-        elif k == Qt.Key.Key_Escape:
-            self.close()
-        else:
-            super().keyPressEvent(event)
+                return
+        super().keyPressEvent(event)
 
 
 class _CopyMixin:
@@ -337,8 +288,7 @@ class RestoreWindow(_CopyMixin, _BaseCheckboxWindow):
     def _entry_filter(self, entry: dict) -> bool: return not entry.get("details", {}).get("no_restore", False)
 
     def _tips(self) -> dict:
-        _, restore_tips, _ = generate_tooltip()
-        return restore_tips
+        return restore_tooltips()
 
     def _src_dst(self, entry: dict) -> tuple[list, list]: return entry.get("destination", []), entry.get("source", [])
 
@@ -361,7 +311,7 @@ class SettingsWindow(_BaseCheckboxWindow):
         lbl = QLabel(f" 󰔨  <span style='font-size:{fs['lg']}px;color:{t['accent2']};"
                      f"text-decoration:underline dotted;'>{apply_replacements(path)}</span>")
         lbl.setTextFormat(Qt.TextFormat.RichText)
-        apply_tooltip(lbl, _copy_logic_tooltip())
+        apply_tooltip(lbl, copy_logic_tooltip())
         return lbl
 
     def _exclusion_note(self, entry: dict) -> str:
@@ -514,7 +464,7 @@ class SettingsWindow(_BaseCheckboxWindow):
         dlg.activateWindow()
 
 
-class _ThemeDialog(QDialog):
+class _ThemeDialog(_StandardKeysMixin, QDialog):
     changed = pyqtSignal(int)
 
     def __init__(self, parent) -> None:
@@ -572,12 +522,6 @@ class _ThemeDialog(QDialog):
         S.ui.update(theme=orig_theme, font_family=orig_font, font_size=orig_size)
         apply_style()
         super().reject()
-
-    def keyPressEvent(self, event) -> None:
-        if event.key() == Qt.Key.Key_Escape:
-            self.reject()
-        else:
-            super().keyPressEvent(event)
 
 
 _WINDOW_MAP: "dict[str, Type[_BaseCheckboxWindow]]" = {"Backup": BackupWindow, "Restore": RestoreWindow, "Settings": SettingsWindow}

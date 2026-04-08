@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
 from drive_utils import is_smb
 from state import apply_replacements, logger
 from themes import current_theme, font_sz
+from ui_utils import _StandardKeysMixin
 
 _CHUNK           = 32 * 1024 * 1024
 _IO_BUF          =  8 * 1024 * 1024
@@ -2042,7 +2043,7 @@ class _LogWidget(QWidget):
         return [int(t) if t.isdigit() else t.lower() for t in _LogWidget._NATURAL_SORT_RE.split(s)]
 
 
-class CopyDialog(QDialog):
+class CopyDialog(_StandardKeysMixin, QDialog):
 
     def __init__(self, parent, tasks, operation: str) -> None:
         super().__init__(parent)
@@ -2183,7 +2184,7 @@ class CopyDialog(QDialog):
         self.tabs.setTabText(3, f"✗ Errors ({self.errors:,})")
 
     @staticmethod
-    def _fmt_ok(s, d) -> str: return f"{apply_replacements(s)}\n Copied to ⤵\n{apply_replacements(d)}"
+    def _fmt_ok(s, d) -> str: return f"{apply_replacements(s)}\nCopied to ⤵\n{apply_replacements(d)}"
 
     @staticmethod
     def _fmt_sk(p, r) -> str: return f"{apply_replacements(p)} ↷ {r}"
@@ -2253,17 +2254,6 @@ class CopyDialog(QDialog):
 
         self.cancel_btn.setText("✓ Close")
         self.cancel_btn.clicked.connect(self.accept)
-
-    def keyPressEvent(self, event) -> None:
-        k = event.key()
-        if k in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
-            focused = self.focusWidget()
-            if isinstance(focused, QPushButton):
-                focused.click()
-        elif k == Qt.Key.Key_Escape:
-            self.worker.cancel() if self.worker.isRunning() else self.accept()
-        else:
-            super().keyPressEvent(event)
 
     def closeEvent(self, event) -> None:
         if self.worker.isRunning():

@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QTextCursor
@@ -10,6 +10,12 @@ from PyQt6.QtWidgets import (
 )
 
 from state import _HOME, _PROFILE_RE
+
+if TYPE_CHECKING:
+    from PyQt6.QtWidgets import QWidget as _QWidgetBase
+    _MixinBase = _QWidgetBase
+else:
+    _MixinBase = object
 
 
 def block_set(cb: QCheckBox, checked: bool) -> None:
@@ -121,3 +127,16 @@ def ask_profile_name(title: str, default: str, parent=None) -> Optional[str]:
                                 "Only letters, digits, spaces, hyphens, underscores and dots are allowed.")
             continue
         return name
+
+
+class _StandardKeysMixin(_MixinBase):
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        k = event.key()
+        if k in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
+            widget = self.focusWidget()
+            if isinstance(widget, QPushButton):
+                widget.click()
+        elif k == Qt.Key.Key_Escape:
+            self.close()
+        else:
+            super().keyPressEvent(event)

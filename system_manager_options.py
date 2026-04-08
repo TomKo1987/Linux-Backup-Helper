@@ -13,10 +13,10 @@ from PyQt6.QtWidgets import (
 from ui_utils import ask_text, ok_cancel_buttons, sep, browse_field
 from linux_distro_helper import LinuxDistroHelper, SESSIONS, USER_SHELLS
 from state import S, _HOME, apply_replacements, save_profile
-from tooltips import generate_tooltip
+from tooltips import sm_tooltips, sudo_checkbox_tooltip
 from themes import (
-    style_label_info, style_label_info_bold, style_label_mono, style_op_label, tri_styles, apply_tooltip,
-    current_theme, font_sz, style_checkbox_muted, style_checkbox_select_all, style_sudo_checkbox, tri_state_legend_html
+    style_label_info, style_label_mono, style_op_label, tri_styles, apply_tooltip, style_sudo_checkbox,
+    current_theme, font_sz, style_checkbox_muted, style_checkbox_select_all, tri_state_legend_html
 )
 
 
@@ -75,6 +75,14 @@ def _scroll_dlg(parent, title: str, body: QWidget, on_save=None) -> tuple[QDialo
     if cancel_btn:
         cancel_btn.setFocus()
     return dlg, lay
+
+
+def _get_pkg_name(p: dict | str, is_specific: bool) -> str:
+    return p.get("package" if is_specific else "name", "") if isinstance(p, dict) else str(p)
+
+
+def _sort_pkgs(pkg_list: list, is_specific: bool) -> None:
+    pkg_list.sort(key=lambda x: _get_pkg_name(x, is_specific).lower())
 
 
 def _pkg_checkboxes(packages: list, is_specific: bool) -> list[TriCheckBox]:
@@ -212,7 +220,7 @@ class SystemManagerOptions(QDialog):
         lay      = QVBoxLayout(self)
         yay_info = (f" | AUR Helper: 'yay' {'detected' if self._yay_installed else 'not detected'}" if self._distro.has_aur else "")
         info = QLabel(f"Recognized Linux distribution: {self._distro.distro_pretty_name} | Session: {self._session}{yay_info}")
-        info.setStyleSheet(style_label_info_bold())
+        info.setStyleSheet(style_label_info(bold=True))
         info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(info)
 
@@ -265,13 +273,11 @@ class SystemManagerOptions(QDialog):
         close.clicked.connect(self.close)
         lay.addWidget(close)
 
-    @staticmethod
-    def _get_pkg_name(p: dict | str, is_specific: bool) -> str:
-        return p.get("package" if is_specific else "name", "") if isinstance(p, dict) else str(p)
+    def _reopen_pkgs(self, pkg_type: str) -> None:
+        QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
 
-    @staticmethod
-    def _sort_pkgs(pkg_list: list, is_specific: bool) -> None:
-        pkg_list.sort(key=lambda x: SystemManagerOptions._get_pkg_name(x, is_specific).lower())
+    def _reopen_sysfiles(self) -> None:
+        QTimer.singleShot(0, self._edit_sysfiles)
 
     def _save_shell(self) -> None:
         sel = self._shell_cb.currentText()
@@ -380,8 +386,8 @@ class SystemManagerOptions(QDialog):
                                         f"The following system file(s) will be permanently removed:\n\n{names}\n\nContinue?",
                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
                     return
-            S.system_files = [{**f, "disabled": __cb.checkState() == _STATE_DISABLED}
-                              for __cb, f in checkboxes if __cb.checkState() != _STATE_DELETE]
+            S.system_files = [{**f, "disabled": cb_.checkState() == _STATE_DISABLED}
+                              for cb_, f in checkboxes if cb_.checkState() != _STATE_DELETE]
             save_profile()
             _dlg.accept()
 
@@ -455,7 +461,7 @@ class SystemManagerOptions(QDialog):
             S.system_files.sort(key=lambda x: x.get("source", "").lower())
             save_profile()
             QMessageBox.information(self, "Success", f"Added {len(added)} item(s).")
-        QTimer.singleShot(0, self._edit_sysfiles)
+        self._reopen_sysfiles()
 
     def _edit_sysfile_entry(self, f: Optional[dict], parent_dlg) -> None:
         if not f:
@@ -489,16 +495,16 @@ class SystemManagerOptions(QDialog):
                 f["source"], f["destination"] = src, dst
                 save_profile()
                 parent_dlg.accept()
-                QTimer.singleShot(0, self._edit_sysfiles)
+                self._reopen_sysfiles()
 
     def _import_sysfiles(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Import System Files", str(_HOME), "Data (*.txt *.csv)")
         if not path:
-            QTimer.singleShot(0, self._edit_sysfiles)
+            self._reopen_sysfiles()
             return
         lines = _read_import_file(self, path)
         if lines is None:
-            QTimer.singleShot(0, self._edit_sysfiles)
+            self._reopen_sysfiles()
             return
 
         S.system_files = S.system_files or []
@@ -537,7 +543,7 @@ class SystemManagerOptions(QDialog):
         if skipped_dup: parts_msg.append(f"Skipped (duplicate): {skipped_dup}")
         if skipped_inv: parts_msg.append(f"Skipped (invalid format): {skipped_inv}")
         QMessageBox.information(self, "Import Complete", "\n".join(parts_msg))
-        QTimer.singleShot(0, self._edit_sysfiles)
+        self._reopen_sysfiles()
 
     def _edit_pkgs(self, pkg_type: str) -> None:
         is_specific = pkg_type == "specific_packages"
@@ -632,7 +638,7 @@ class SystemManagerOptions(QDialog):
         if is_specific:
             result = _pkg_form_dialog(self, "Add Specific Package", prefill_sess=SESSIONS[0] if SESSIONS else "")
             if result is None:
-                QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
+                self._reopen_pkgs(pkg_type)
                 return
             name, sess = result
             S.specific_packages = S.specific_packages or []
@@ -658,7 +664,7 @@ class SystemManagerOptions(QDialog):
                     setattr(S, pkg_type, sorted(current, key=lambda x: x.get("name", "").lower()))
                     save_profile()
                     QMessageBox.information(self, "Added", f"Added package(s):\n\n  • {name}")
-        QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
+        self._reopen_pkgs(pkg_type)
 
     def _edit_pkg_entry(self, cb_pkg: tuple, pkg_type: str, parent_dlg) -> None:
         cb, p = cb_pkg
@@ -676,10 +682,10 @@ class SystemManagerOptions(QDialog):
         else:
             p["name"] = name
         pkg_list = getattr(S, pkg_type, [])
-        self._sort_pkgs(pkg_list, is_specific)
+        _sort_pkgs(pkg_list, is_specific)
         save_profile()
         parent_dlg.accept()
-        QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
+        self._reopen_pkgs(pkg_type)
 
     def _batch_add(self, pkg_type: str) -> None:
         is_specific = pkg_type == "specific_packages"
@@ -706,7 +712,7 @@ class SystemManagerOptions(QDialog):
         lay.addWidget(ok_cancel_buttons(dlg, dlg.accept))
 
         if dlg.exec() != QDialog.DialogCode.Accepted:
-            QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
+            self._reopen_pkgs(pkg_type)
             return
 
         current = getattr(S, pkg_type, []) or []
@@ -735,7 +741,7 @@ class SystemManagerOptions(QDialog):
                     existing.add(name)
                     added.append(name)
 
-        self._sort_pkgs(current, is_specific)
+        _sort_pkgs(current, is_specific)
         setattr(S, pkg_type, current)
         save_profile()
 
@@ -743,17 +749,17 @@ class SystemManagerOptions(QDialog):
         if dupes:
             msg += f"\n\nSkipped (duplicate): {len(dupes)}\n" + "\n".join(f"  • {n}" for n in dupes)
         QMessageBox.information(self, "Batch Add", msg)
-        QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
+        self._reopen_pkgs(pkg_type)
 
     def _import_pkgs(self, pkg_type: str) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Import", str(_HOME), "Data (*.txt *.csv)")
         if not path:
-            QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
+            self._reopen_pkgs(pkg_type)
             return
 
         lines = _read_import_file(self, path)
         if lines is None:
-            QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
+            self._reopen_pkgs(pkg_type)
             return
 
         is_specific = (pkg_type == "specific_packages")
@@ -796,12 +802,12 @@ class SystemManagerOptions(QDialog):
                     added += 1
 
         if added:
-            self._sort_pkgs(current, is_specific)
+            _sort_pkgs(current, is_specific)
             setattr(S, pkg_type, current)
             save_profile()
             QMessageBox.information(self, "Import Complete", f"Successfully imported {added} packages.")
 
-        QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
+        self._reopen_pkgs(pkg_type)
 
     def _export_data(self, title: str, default_filename: str, items: list, fmt_fn, header: str = "") -> None:
         if not items:
@@ -872,7 +878,7 @@ class SystemManagerLauncher:
         if self._op_text is None:
             self._op_text = {k: v.replace("&&", "&") for k, v in _build_op_text(self._distro, self._session).items()}
         op_text = self._op_text
-        _, _, tips = generate_tooltip()
+        tips = sm_tooltips()
         dialog = QDialog(self.parent)
         dialog.setWindowTitle("System Manager")
         outer = QVBoxLayout(dialog)
@@ -926,34 +932,7 @@ class SystemManagerLauncher:
             self._sudo_checkbox.setChecked(True)
             self._sudo_checkbox.setEnabled(False)
             self._sudo_checkbox.setStyleSheet(style_sudo_checkbox(muted=True))
-
-        apply_tooltip(self._sudo_checkbox,
-                      "<b>How your sudo password is used — and why it is safe:</b><br><br>"
-                      "Your password is held <b>only in memory</b> as a mutable <code>bytearray</code> "
-                      "(via <code>SecureString</code>) — it is <b>never written to any file</b>, "
-                      "not even to a RAM-backed <code>tmpfs</code> such as <code>/dev/shm</code>.<br><br>"
-                      "All privileged operations (package installs, service activation, file copies…) "
-                      "run through <code>subprocess.Popen</code> with a dedicated writer thread: "
-                      "a <code>bytearray</code> copy of the password is written to the "
-                      "<b>kernel pipe buffer</b> (stdin of <code>sudo -S</code>) and then "
-                      "<b>zeroed byte-by-byte inside that thread</b>, immediately after the pipe is flushed. "
-                      "The password never touches a file, an environment variable, or a command-line argument.<br><br>"
-                       "Simple status checks … use <code>subprocess.run</code> — the original <code>bytearray</code> "
-                      "is zeroed immediately after the call. The subprocess-internal pipe buffer copy cannot be "
-                      "actively zeroed, but exists only for the duration of the blocking call.<br><br>"
-                      "The original <code>SecureString</code> buffer is zeroed in the <code>finally</code> "
-                      "block of the worker thread once all tasks are complete.<br><br>"
-                      "<b>Credential cache:</b><br>"
-                      "After the single successful authentication <code>sudo</code> stores a credential "
-                      "timestamp (in <code>/run/sudo/ts/</code>). A background keepalive thread calls "
-                      "<code>sudo -v</code> every 4 min so the cache never expires during a long session — "
-                      "no further password input or file I/O is ever required.<br><br>"
-                      "<b>Cleanup:</b><br>"
-                      "When System Manager finishes, <code>sudo -k</code> is called to <b>immediately "
-                      "invalidate</b> the credential cache, and the <code>SecureString</code> buffer "
-                      "is zeroed.<br><br>"
-                      "<i>Your password is never logged, never sent over the network, "
-                      "never written to any file, and never stored beyond this session.</i>")
+        apply_tooltip(self._sudo_checkbox, sudo_checkbox_tooltip())
 
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Yes | QDialogButtonBox.StandardButton.No)  # type: ignore
         bb.accepted.connect(dialog.accept)

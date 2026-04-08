@@ -5,6 +5,7 @@ import subprocess
 import threading
 from functools import lru_cache
 from typing import Optional
+from ui_utils import _StandardKeysMixin
 
 import keyring
 from PyQt6.QtCore import Qt
@@ -244,7 +245,7 @@ class SambaPasswordManager:
 
 
 # noinspection PyUnresolvedReferences
-class SambaPasswordDialog(QDialog):
+class SambaPasswordDialog(_StandardKeysMixin, QDialog):
 
     @classmethod
     def open(cls, parent=None) -> None:
@@ -408,17 +409,6 @@ class SambaPasswordDialog(QDialog):
                 QMessageBox.warning(self, "Failed", "Could not delete credentials. They might not exist.")
         except Exception as exc:
             self._error_dialog.showMessage(f"Failed to delete credentials:\n{exc}")
-
-    def keyPressEvent(self, event) -> None:
-        k = event.key()
-        widget = self.focusWidget()
-        if k in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
-            if isinstance(widget, QPushButton):
-                widget.click()
-        elif k == Qt.Key.Key_Escape:
-            self.reject()
-        else:
-            super().keyPressEvent(event)
 
     def closeEvent(self, event) -> None:
         if self._password_field is not None:

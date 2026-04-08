@@ -131,7 +131,7 @@ def is_mounted(opt: dict, mounts: Optional[list[tuple[str, str]]] = None) -> boo
         parts = without_schema.split("/", 1)
         if len(parts) == 2:
             host, share = parts
-            smb_prefixes = (f"//{host}/{share}".lower(), f"{host}:/{share}".lower())
+            smb_prefixes = (f"//{host}/{share}".lower(),)
 
     for dev, mnt in mounts:
         if mnt in expected_paths or (mount_path and mnt == mount_path):

@@ -1,6 +1,7 @@
 import base64
 import threading as _threading
 from functools import lru_cache
+from typing import Optional
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
@@ -232,15 +233,11 @@ def tri_styles() -> tuple[str, str, str]:
     return _tri_styles_cached(_current_theme_name)
 
 
-def style_label_info(font_size: int = 0) -> str:
-    fs = font_size or font_scale()["xxl"]
-    return f"font-size:{fs}px;color:{current_theme()['success']};font-family:monospace;"
-
-
-def style_label_info_bold(font_size: int = 0) -> str:
-    fs = font_size or font_scale()["lg"]
+def style_label_info(font_size: int = 0, bold: bool = False) -> str:
     t  = current_theme()
-    return f"font-size:{fs}px;color:{t['success']};font-weight:bold;padding:4px;font-family:monospace;"
+    fs = font_size or (font_scale()["lg"] if bold else font_scale()["xxl"])
+    s  = f"font-size:{fs}px;color:{t['success']};font-family:monospace;"
+    return s + "font-weight:bold;padding:4px;" if bold else s
 
 
 def style_label_mono(font_size: int = 0) -> str:
@@ -459,7 +456,7 @@ QFrame[frameShape="4"], QFrame[frameShape="5"] {{
 """
 
 
-_style_cache: tuple = ()
+_style_cache: Optional[tuple] = None
 _style_cache_lock = _threading.Lock()
 
 
@@ -491,11 +488,11 @@ def get_style() -> str:
     size = _base_font_size()
     key  = (_current_theme_name, font, size)
     cache = _style_cache
-    if cache and cache[0] == key:
+    if cache is not None and cache[0] == key:
         return cache[1]
     css = _build_stylesheet(current_theme(), font, size)
     with _style_cache_lock:
-        if not _style_cache or _style_cache[0] != key:
+        if _style_cache is None or _style_cache[0] != key:
             _style_cache = (key, css)
         else:
             css = _style_cache[1]

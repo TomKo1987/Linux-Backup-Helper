@@ -24,6 +24,16 @@ def _reset_cache() -> None:
 register_invalidate_hook(_reset_cache)
 
 
+def backup_tooltips() -> dict:
+    return generate_tooltip()[0]
+
+def restore_tooltips() -> dict:
+    return generate_tooltip()[1]
+
+def sm_tooltips() -> dict:
+    return generate_tooltip()[2]
+
+
 def _entry_tooltip_html(title: str, src_lines: list, dst_lines: list, bg: str, bg2: str, bg3: str, c_title: str,
                         c_data: str, font_sz_fn) -> str:
 
@@ -161,3 +171,78 @@ def generate_tooltip() -> tuple[dict, dict, dict]:
         if _cache is None:
             _cache = result
         return _cache
+
+
+def copy_logic_tooltip() -> str:
+    t = current_theme()
+    return (
+        "<b>Copy &amp; Skip Logic</b><br><br>"
+        "<b>Local File Logic:</b><br>"
+        "- A file is <b>copied</b> if the destination is missing, the <b>size differs</b>, "
+        "or the source is newer than the backup.<br>"
+        "- A file is <b>skipped</b> only if the size matches <b>and</b> the backup "
+        "is already as new as the source (2s tolerance).<br><br>"
+        "<b>Samba (SMB) Logic:</b><br>"
+        "- To save bandwidth and avoid latency, the system only checks <b>existence and file size</b>.<br>"
+        "- Remote paths <b>must</b> follow the pattern: <code>'smb://ip/path'</code>.<br>"
+        "- <b>Local requirement:</b> <code>smbclient</code> must be installed on <b>this machine</b>.<br>"
+        "- <b>Remote requirement:</b> Samba must be configured on the <b>target system</b>; "
+        "Port must be open (default Port = 445).<br><br>"
+        "- <b>Locks &amp; Handles:</b> <code>.lock</code>, <code>lockfile</code>, <code>.lck</code>, <code>.parentlock</code>, <code>Singleton*</code><br>"
+        "- <b>Browser Caches:</b> <code>cache/</code>, <code>Network Cache/</code>, <code>startupCache/</code>, <code>jumpListCache/</code>, "
+        "<code>GPUCache/</code>, <code>ShaderCache/</code>, <code>blob_storage/</code>, <code>prefs.js</code><br>"
+        "- <b>Active DB states:</b> <code>.sqlite-wal/-shm</code>, <code>.db-wal/-shm</code>, <code>.journal</code>, <code>-journal</code>, <code>.ldb</code><br>"
+        "- <b>Web Storage:</b> <code>idb/</code> (IndexedDB), <code>WebStorage/</code>, <code>Session Storage</code>, <code>Local Storage</code>, <code>leveldb/</code><br>"
+        "- <b>System &amp; Temp:</b> <code>Thumbs.db</code>, <code>.DS_Store</code>, <code>temp/</code>, <code>tmp/</code>, "
+        "<code>.bak</code>, <code>.tmp</code>, <code>.baklz4</code>, <code>recovery.jsonlz4</code>, "
+        "<code>recovery.baklz4</code>, <code>sessionstore-backups/</code><br>"
+        "- <b>Hidden system markers:</b> <code>.quota</code>, <code>.user64</code>, <code>.healthcheck</code>, <code>.active-update</code><br>"
+        "<i>Note: All patterns are case-insensitive. Files such as ‘Temperature.txt’ will be copied safely.</i><br><br>"
+        "<b>Status Colors:</b><br>"
+        f"- <span style='color:{t['success']};'>Green</span> = Success, "
+        f"<span style='color:{t['warning']};'>Yellow</span> = Skipped, "
+        f"<span style='color:{t['error']};'>Red</span> = Error.<br><br><br>"
+        "<b>Samba Credentials &amp; Keyring</b><br><br>"
+        "- Passwords are <b>never stored in plain text</b>. The system uses a priority chain:<br>"
+        "  1. <b>KDE KWallet:</b> Looks for <code>'smb-[username]'</code> in the <code>'kdewallet'</code> folder.<br>"
+        "  2. <b>System Keyring:</b> Fallback via <code>libsecret</code> (service: <code>'backup-helper-samba'</code>).<br>"
+        "  3. <b>Guest:</b> If no credentials exist, an anonymous connection is attempted.<br><br><br>"
+        "<b>Execution Security (Hardened)</b><br><br>"
+        "- <b>Zero Visibility:</b> Passwords are <b>never</b> passed via command-line arguments to prevent exposure in process lists.<br>"
+        "- <b>RAM-Only Storage:</b> Credentials are stored in <code>/dev/shm</code> (RAM disk). If <code>/dev/shm</code> is unavailable, "
+        "no credential file is created and the connection falls back to an anonymous (guest) attempt.<br>"
+        "- <b>Race-Condition Protection:</b> The credential file remains active for the <b>exact duration</b> of the transfer "
+        "and is deleted immediately after the process ends.<br>"
+        "- <b>Secure Erasure:</b> Before deletion, the credential file is <b>overwritten with zeros</b> (Wipe) and synced.<br>"
+        "- <b>Guest Fallback:</b> In case of access errors to the secure storage, the system safely falls back to a guest connection.<br>"
+        "- <b>Memory Safety:</b> Internal password buffers (<code>SecureString</code>) are <b>manually zeroed out</b> in RAM after use."
+    )
+
+
+def sudo_checkbox_tooltip() -> str:
+    return ("<b>How your sudo password is used — and why it is safe:</b><br><br>"
+            "Your password is held <b>only in memory</b> as a mutable <code>bytearray</code> "
+            "(via <code>SecureString</code>) — it is <b>never written to any file</b>, "
+            "not even to a RAM-backed <code>tmpfs</code> such as <code>/dev/shm</code>.<br><br>"
+            "All privileged operations (package installs, service activation, file copies…) "
+            "run through <code>subprocess.Popen</code> with a dedicated writer thread: "
+            "a <code>bytearray</code> copy of the password is written to the "
+            "<b>kernel pipe buffer</b> (stdin of <code>sudo -S</code>) and then "
+            "<b>zeroed byte-by-byte inside that thread</b>, immediately after the pipe is flushed. "
+            "The password never touches a file, an environment variable, or a command-line argument.<br><br>"
+            "Simple status checks … use <code>subprocess.run</code> — the original <code>bytearray</code> "
+            "is zeroed immediately after the call. The subprocess-internal pipe buffer copy cannot be "
+            "actively zeroed, but exists only for the duration of the blocking call.<br><br>"
+            "The original <code>SecureString</code> buffer is zeroed in the <code>finally</code> "
+            "block of the worker thread once all tasks are complete.<br><br>"
+            "<b>Credential cache:</b><br>"
+            "After the single successful authentication <code>sudo</code> stores a credential "
+            "timestamp (in <code>/run/sudo/ts/</code>). A background keepalive thread calls "
+            "<code>sudo -v</code> every 4 min so the cache never expires during a long session — "
+            "no further password input or file I/O is ever required.<br><br>"
+            "<b>Cleanup:</b><br>"
+            "When System Manager finishes, <code>sudo -k</code> is called to <b>immediately "
+            "invalidate</b> the credential cache, and the <code>SecureString</code> buffer "
+            "is zeroed.<br><br>"
+            "<i>Your password is never logged, never sent over the network, "
+            "never written to any file, and never stored beyond this session.</i>")
