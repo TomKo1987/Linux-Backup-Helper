@@ -371,22 +371,15 @@ def _copy_file(src: str, dst: str, cancel: threading.Event, src_st: "os.stat_res
         try:
             os.fdatasync(wfd)
         finally:
-            try:
-                os.posix_fadvise(wfd, 0, st.st_size, os.POSIX_FADV_DONTNEED)
-            except OSError:
-                pass
             os.close(wfd)
             wfd = None
         try:
-            os.posix_fadvise(rfd, 0, st.st_size, os.POSIX_FADV_DONTNEED)
-        except OSError:
-            pass
-
-        os.utime(tmp, ns=(st.st_atime_ns, st.st_mtime_ns))
+            os.utime(tmp, ns=(st.st_atime_ns, st.st_mtime_ns))
+        except OSError as e:
+            logger.debug("Could not preserve timestamps for %s: %s", dst, e)
         os.replace(tmp, dst)
         success = True
         return "ok", dst, copied
-
     except InterruptedError:
         return "skip", "", 0
     except Exception as exc:
@@ -1855,7 +1848,7 @@ class _SummaryWidget(QWidget):
         results = self._entry_results
         rebuild = False
 
-        for title, (ok, err, skip) in results.items():
+        for title, (ok, skip, err) in results.items():
             parts = []
             if ok:   parts.append(f"<span style='{self._s_ok}'>⤵ {ok:,}</span>")
             if skip: parts.append(f"<span style='{self._s_skip}'>↷ {skip:,}</span>")
