@@ -328,29 +328,27 @@ class SystemManagerOptions(QDialog):
             n = sum(c.isChecked() for c in enabled_widgets)
             sa.blockSignals(True)
             sa.setCheckState(Qt.CheckState.Checked
-            if n == len(enabled_widgets) else Qt.CheckState.Unchecked if n == 0 else Qt.CheckState.PartiallyChecked)
+                             if n == len(enabled_widgets) else Qt.CheckState.Unchecked if n == 0 else Qt.CheckState.PartiallyChecked)
             sa.blockSignals(False)
 
         def _sync_aur_dep():
-            if aur_cb and yay_cb and self._distro.has_aur:
+            if aur_cb and yay_cb and self._distro.supports_aur():
                 force = aur_cb.isChecked()
                 yay_cb.setChecked(force or yay_cb.isChecked())
                 yay_cb.setEnabled(not force)
                 yay_cb.setStyleSheet(style_checkbox_muted() if force else "")
             _sync_sa()
 
-        def _toggle_all(state: int) -> None:
-            checked = Qt.CheckState(state) != Qt.CheckState.Unchecked
+        def _toggle_all(state=None):
+            checked = Qt.CheckState(state if state is not None else 0) != Qt.CheckState.Unchecked
             for _cb, _ in widgets:
-                if not _cb.isEnabled():
-                    continue
                 _cb.blockSignals(True)
-                _cb.setChecked(checked)
+                if checked:
+                    if _cb.isEnabled():
+                        _cb.setChecked(True)
+                else:
+                    _cb.setChecked(False)
                 _cb.blockSignals(False)
-            if yay_cb is not None and self._distro.has_aur and not yay_cb.isEnabled():
-                yay_cb.blockSignals(True)
-                yay_cb.setChecked(checked)
-                yay_cb.blockSignals(False)
             _sync_aur_dep()
 
         sa.stateChanged.connect(_toggle_all)
@@ -359,7 +357,7 @@ class SystemManagerOptions(QDialog):
         _sync_aur_dep()
 
         def _save(dlg):
-            S.system_manager_ops = [k for cb_, k in widgets if cb_.isEnabled() and cb_.isChecked()]
+            S.system_manager_ops = [k for cb_, k in widgets if cb_.isChecked()]
             save_profile()
             QMessageBox.information(self, "Saved", "Operations saved.")
             dlg.accept()
