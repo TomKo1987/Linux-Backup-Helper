@@ -98,6 +98,9 @@ class State:
 S = State()
 
 
+_KNOWN_UI_KEYS = frozenset(S.ui.keys())
+
+
 def _atomic_write(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(".tmp")
@@ -192,7 +195,7 @@ def _load_profile_from_data(path: Path, data: dict) -> bool:
                     raw_ui = {**raw_ui, "font_size": max(8, min(48, int(raw_ui["font_size"])))}
                 except (ValueError, TypeError):
                     raw_ui = {k: v for k, v in raw_ui.items() if k != "font_size"}
-            new_ui.update(raw_ui)
+            new_ui.update({k: v for k, v in raw_ui.items() if k in _KNOWN_UI_KEYS})
 
         S.profile_name       = new_name
         S.headers            = new_headers

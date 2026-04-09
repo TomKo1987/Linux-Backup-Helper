@@ -400,10 +400,6 @@ class SambaPasswordDialog(_StandardKeysMixin, QDialog):
         except Exception as exc:
             self._error_dialog.showMessage(f"Failed to save credentials:\n{exc}")
         finally:
-            try:
-                del pw_str
-            except NameError:
-                pass
             for i in range(len(pw_buf)):
                 pw_buf[i] = 0
 

@@ -81,10 +81,16 @@ _SMB_DOWN_RE = re.compile(
     re.I,
 )
 
-_CACHE_MISS = object()
-_O_NOATIME = os.O_NOATIME
-_PID       = os.getpid()
-_tls       = threading.local()
+
+class _CacheMiss:
+    __slots__ = ()
+    def __repr__(self) -> str: return "<CACHE_MISS>"
+
+
+_CACHE_MISS = _CacheMiss()
+_O_NOATIME  = os.O_NOATIME
+_PID        = os.getpid()
+_tls        = threading.local()
 _seen_dirs_global: set[str] = set()
 _seen_dirs_lock = threading.Lock()
 _SHM_DIR: str | None = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else None
@@ -130,17 +136,17 @@ del _reg_cache_hook
 
 
 _SIZE_UNITS = ("B", "KB", "MB", "GB", "TB")
-def _format_unit(value: float, units: tuple = _SIZE_UNITS) -> str:
+def _format_unit(value: float) -> str:
     if value < 0:
         logger.debug("_format_unit: negative value %r", value)
         value = 0.0
     if value == 0:
-        return f"0 {units[0]}"
-    for i, unit in enumerate(units[:-1]):
+        return f"0 {_SIZE_UNITS[0]}"
+    for i, unit in enumerate(_SIZE_UNITS[:-1]):
         if value < 1024.0:
             return f"{int(value)} {unit}" if i == 0 else f"{value:.2f} {unit}"
         value /= 1024.0
-    return f"{value:.2f} {units[-1]}"
+    return f"{value:.2f} {_SIZE_UNITS[-1]}"
 
 
 def _is_unreachable(err: str) -> bool:
@@ -661,8 +667,9 @@ class _SmbScanner:
         if idx is None:
             lerr.append((src_url, "NT_STATUS_HOST_UNREACHABLE"))
         elif not idx:
-            if rpath:
-                logger.warning("SMB ls_index returned empty for %s — possible permission error or empty directory", src_url)
+            logger.warning("SMB ls_index returned empty for %s%s", src_url,
+                           " — possible permission error or empty directory"
+                           if rpath else " — share root is empty or inaccessible")
         else:
             prefix = rpath.rstrip("/") + "/" if rpath else None
             for path, (sz,) in idx.items():
@@ -1348,7 +1355,16 @@ class CopyWorker(QThread):
                         except queue.Empty:
                             break
                 for _ in range(_WORKERS):
-                    pipe_q.put(sentinel)
+                    while True:
+                        try:
+                            pipe_q.put(sentinel, timeout=0.1)
+                            break
+                        except queue.Full:
+                            if cancel.is_set():
+                                try:
+                                    pipe_q.get_nowait()
+                                except queue.Empty:
+                                    pass
 
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=1 + _WORKERS)
         try:

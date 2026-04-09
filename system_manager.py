@@ -387,9 +387,9 @@ class SystemManagerThread(QThread):
             if not self._verify_sudo(): self.passwordFailed.emit(); return
             self.passwordSuccess.emit()
             self._stop_keepalive.clear()
-            self._keepalive = _SudoKeepalive(self._stop_keepalive, self._pw)
-            assert self._keepalive is not None
-            self._keepalive.start()
+            _keepalive = _SudoKeepalive(self._stop_keepalive, self._pw)
+            self._keepalive = _keepalive
+            _keepalive.start()
             if not self.terminated: self._run_all_tasks()
         except Exception as exc:
             try:
@@ -441,18 +441,26 @@ class SystemManagerThread(QThread):
         return {k: (desc, lambda s=svc, p=pkg_fn: self._setup_service(s, p())) for k, (desc, svc, pkg_fn) in specs.items()}
 
     def _run_all_tasks(self) -> None:
-        for task_id, (desc, fn) in self._enabled_tasks.items():
-            if self.terminated: break
+        task_items = list(self._enabled_tasks.items())
+        for idx, (task_id, (desc, fn)) in enumerate(task_items):
+            if self.terminated:
+                for skipped_id, _ in task_items[idx:]:
+                    self.taskStatusChanged.emit(skipped_id, _Status.WARNING)
+                break
             self.taskStatusChanged.emit(task_id, _Status.IN_PROGRESS)
             self.outputReceived.emit(desc, "operation")
             try:
-                res    = fn()
+                res = fn()
                 status = _Status.ERROR if res is False else _Status.WARNING if res == _Status.WARNING else _Status.SUCCESS
             except Exception as exc:
-                self.outputReceived.emit(f"Task '{task_id}' failed: {exc}", "error"); status = _Status.ERROR
+                self.outputReceived.emit(f"Task '{task_id}' failed: {exc}", "error")
+                status = _Status.ERROR
             self.taskStatusChanged.emit(task_id, status)
             if status == _Status.ERROR:
-                self.outputReceived.emit(f"Aborting remaining tasks due to failure in '{task_id}'.", "error"); break
+                self.outputReceived.emit(f"Aborting remaining tasks due to failure in '{task_id}'.", "error")
+                for remaining_id, _ in task_items[idx + 1:]:
+                    self.taskStatusChanged.emit(remaining_id, _Status.WARNING)
+                break
 
     @staticmethod
     def _inject(cmd: list[str]) -> list[str]:

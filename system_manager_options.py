@@ -1,4 +1,3 @@
-import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
@@ -12,7 +11,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ui_utils import ask_text, ok_cancel_buttons, sep, browse_field
-from linux_distro_helper import LinuxDistroHelper, SESSIONS, USER_SHELLS
+from linux_distro_helper import LinuxDistroHelper, SESSIONS, USER_SHELLS, _PKG_RE as _BATCH_PKG_RE
 from state import S, _HOME, apply_replacements, save_profile
 from tooltips import sm_tooltips, sudo_checkbox_tooltip
 from themes import (
@@ -24,7 +23,6 @@ from themes import (
 _STATE_ACTIVE   = Qt.CheckState.Checked
 _STATE_DISABLED = Qt.CheckState.PartiallyChecked
 _STATE_DELETE   = Qt.CheckState.Unchecked
-_PKG_NAME_RE = re.compile(r"^\w[\w+\-.@]*$")
 
 
 class TriCheckBox(QCheckBox):
@@ -71,7 +69,7 @@ def _scroll_dlg(parent, title: str, body: QWidget, on_save=None) -> tuple[QDialo
     if scr:
         sg = scr.availableGeometry()
         width = min(max(sz.width() + 80, 950), sg.width() - 50)
-        height = min(sz.height() + 200, int(sg.height() * 0.9))
+        height = min(sz.height() + 210, int(sg.height() * 0.9))
         dlg.resize(width, height)
     cancel_btn = bb.button(QDialogButtonBox.StandardButton.Cancel)
     if cancel_btn:
@@ -160,7 +158,8 @@ def _build_op_text(distro: LinuxDistroHelper, session: Optional[str] = None, has
         "install_snap": f"Initialise Snap (Install '{pkglist(distro.get_snap_packages)}'. Enable & start 'snapd.service')",
         "enable_firewall": f"Initialise firewall (Install '{pkglist(distro.get_firewall_packages)}'. Enable & start 'ufw.service', set to 'deny all by default')",
         "remove_orphaned_packages": "Remove orphaned package(s)",
-        "clean_cache": f"Clean cache (for '{pm_name}'" + (" and 'yay')" if distro.has_aur else ")")}
+        "clean_cache": f"Clean cache (for '{pm_name}'" + (" and 'yay')" if distro.has_aur else ")"),
+    }
 
 
 def _read_import_file(parent, path: str) -> list[str] | None:
@@ -293,8 +292,11 @@ class SystemManagerOptions(QDialog):
             save_profile()
 
     def _edit_ops(self) -> None:
+        import re as _re
+        _br_re = _re.compile(r"<br\s*/?>", _re.IGNORECASE)
+
         arch_only = {"update_mirrors", "install_yay", "install_aur_packages"}
-        op_text = {k: v.replace("&&", "&").replace("<br>", "\n")
+        op_text = {k: _br_re.sub(" ", v).replace("&", "&&")
                    for k, v in _build_op_text(self._distro, self._session, has_yay=self.yay_installed).items()}
         widgets: list[tuple[QCheckBox, str]] = []
 
@@ -327,7 +329,7 @@ class SystemManagerOptions(QDialog):
             n = sum(c.isChecked() for c in enabled_widgets)
             sa.blockSignals(True)
             sa.setCheckState(Qt.CheckState.Checked
-                             if n == len(enabled_widgets) else Qt.CheckState.Unchecked if n == 0 else Qt.CheckState.PartiallyChecked)
+            if n == len(enabled_widgets) else Qt.CheckState.Unchecked if n == 0 else Qt.CheckState.PartiallyChecked)
             sa.blockSignals(False)
 
         def _sync_aur_dep():
@@ -346,7 +348,7 @@ class SystemManagerOptions(QDialog):
                 _cb.blockSignals(True)
                 _cb.setChecked(checked)
                 _cb.blockSignals(False)
-            if yay_cb is not None and self._distro.has_aur:
+            if yay_cb is not None and self._distro.has_aur and not yay_cb.isEnabled():
                 yay_cb.blockSignals(True)
                 yay_cb.setChecked(checked)
                 yay_cb.blockSignals(False)
@@ -371,7 +373,7 @@ class SystemManagerOptions(QDialog):
         legend = tri_state_legend_html()
         body = QWidget()
         vlay = QVBoxLayout(body)
-        vlay.setSpacing(4)
+        vlay.setSpacing(8)
 
         for f in files:
             text = f"{apply_replacements(f['source'])} 󰧂 {apply_replacements(f['destination'])}"
@@ -386,22 +388,26 @@ class SystemManagerOptions(QDialog):
 
         def _save(_dlg):
             to_del = [f for _cb_, f in checkboxes if _cb_.checkState() == _STATE_DELETE]
+            do_delete = True
             if to_del:
                 names = "\n".join(f"  • {apply_replacements(f.get('source', '?'))}" for f in to_del)
                 if QMessageBox.question(_dlg, "Confirm Delete",
                                         f"The following system file(s) will be permanently removed:\n\n{names}\n\nContinue?",
                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
-                    return
+                    do_delete = False
 
             updated_files = []
             for item in (S.system_files or []):
                 if item not in files:
                     updated_files.append(item)
                     continue
-
                 cb_match = next((__cb for __cb, _f in checkboxes if _f == item), None)
-                if cb_match and cb_match.checkState() != _STATE_DELETE:
+                if cb_match:
+                    if do_delete and cb_match.checkState() == _STATE_DELETE:
+                        continue
                     updated_files.append({**item, "disabled": cb_match.checkState() == _STATE_DISABLED})
+                else:
+                    updated_files.append(item)
 
             S.system_files = updated_files
             save_profile()
@@ -720,7 +726,6 @@ class SystemManagerOptions(QDialog):
                 save_profile()
                 QMessageBox.information(self, "Added", f"Added:\n\n  • {name} [{sess}]")
         else:
-            # Fix: "Aur" -> "AUR"
             label = pkg_type.replace("_", " ").title().replace("Aur", "AUR").rstrip("s")
             name, ok = ask_text(self, f"Add {label}", "Package name:")
             if ok and name.strip():
@@ -770,7 +775,7 @@ class SystemManagerOptions(QDialog):
             pkgs = []
             invalid = []
             for p in raw_pkgs:
-                if all(c.isalnum() or c in "-_.+" for c in p):
+                if _BATCH_PKG_RE.match(p):
                     pkgs.append(p)
                 else:
                     invalid.append(p)
@@ -913,7 +918,7 @@ class SystemManagerOptions(QDialog):
                 continue
 
             name = parts[0]
-            if not all(c.isalnum() or c in "-_.+" for c in name):
+            if not _BATCH_PKG_RE.match(name):
                 continue
 
             if is_specific:
@@ -970,8 +975,9 @@ class SystemManagerLauncher:
     def _confirm_and_start(self) -> None:
         ops = S.system_manager_ops
         if self._op_text is None:
-            self._op_text = {k: v.replace("&&", "&") for k, v in
-                             _build_op_text(self._distro, self._session, has_yay=self.yay_installed).items()}
+            import html as _html_mod
+            self._op_text = {k: _html_mod.escape(v).replace("&lt;br&gt;", "<br>")
+                             for k, v in _build_op_text(self._distro, self._session, has_yay=self.yay_installed).items()}
         assert self._op_text is not None
         op_text: dict[str, str] = self._op_text
         tips = sm_tooltips()

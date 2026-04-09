@@ -27,6 +27,7 @@ _OCTAL_ESCAPE_RE = re.compile(r"\\(\d{3})")
 
 
 _mounts_cache: tuple[float, list] = (0.0, [])
+_mounts_cache_lock = threading.Lock()
 
 
 def get_mounts(max_age: float = 0.5) -> list[tuple[str, str]]:
@@ -44,7 +45,8 @@ def get_mounts(max_age: float = 0.5) -> list[tuple[str, str]]:
     except OSError as e:
         logger.warning("get_mounts: %s", e)
         return _mounts_cache[1]
-    _mounts_cache = (now, mounts)
+    with _mounts_cache_lock:
+        _mounts_cache = (now, mounts)
     return mounts
 
 
@@ -80,12 +82,12 @@ def _validate_cmd(cmd: str) -> tuple[bool, str, list[str]]:
         return False, str(e), []
     if not tokens:
         return False, "No command tokens found", []
-    base = os.path.basename(tokens[0])
-    if base == "sudo" and len(tokens) > 1:
-        base = os.path.basename(tokens[1])
+    expanded = [os.path.expanduser(tok) for tok in tokens]
+    base = os.path.basename(expanded[0])
+    if base == "sudo" and len(expanded) > 1:
+        base = os.path.basename(expanded[1])
     if base not in _ALLOWED_MOUNT_CMDS:
         return False, f"'{base}' is not an allowed command", []
-    expanded = [os.path.expanduser(tok) for tok in tokens]
     for tok in expanded:
         if ".." in tok.split("/"):
             return False, f"Path traversal detected in token: {tok!r}", []

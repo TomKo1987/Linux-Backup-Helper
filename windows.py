@@ -213,16 +213,19 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
                 self._selectall.setFocus()
 
     def done(self, result: int) -> None:
-        self.closeEvent(None)
+        self._cleanup_connections()
         super().done(result)
 
-    def closeEvent(self, event) -> None:
+    def _cleanup_connections(self) -> None:
         unregister_style_listener(self._refresh_styles)
         for cb, *_ in self.checkbox_dirs:
             try:
                 cb.stateChanged.disconnect()
             except (TypeError, RuntimeError):
                 pass
+
+    def closeEvent(self, event) -> None:
+        self._cleanup_connections()
         if event is not None:
             super().closeEvent(event)
 

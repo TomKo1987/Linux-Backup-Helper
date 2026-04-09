@@ -156,8 +156,7 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
         elif info_only:
             msg = "The following drives are still mounted but have no unmount command:\n"
             msg += "\n".join(f"  • {_name(o)}" for o in info_only) + "\n\nQuit anyway?"
-            if (QMessageBox.question(self, "Quit", msg,
-                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if (QMessageBox.question(self, "Quit", msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
             != QMessageBox.StandardButton.Yes):
                 return
         else:

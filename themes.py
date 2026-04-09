@@ -245,7 +245,7 @@ def style_sudo_checkbox(muted: bool = False) -> str:
 def style_op_label(has_tip: bool) -> tuple[str, str]:
     t     = current_theme()
     color = t["accent2"] if has_tip else t["accent"]
-    deco  = "text-decoration:underline dotted;" if has_tip else ""
+    deco = "border-bottom:dotted;" if has_tip else ""
     return color, deco
 
 
