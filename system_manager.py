@@ -480,8 +480,9 @@ class SystemManagerThread(QThread):
         input_data = None
         _stdin_thread = None
         if self._pw and isinstance(cmd, list):
-            if cmd[:2] == ["sudo", "-S"]:
+            if cmd[:2] == ["sudo", "-S"] or cmd[:1] == ["yay"]:
                 input_data = _pw_bytes(self._pw)
+                if cmd[:1] == ["yay"] and "--sudoflags=-S" not in cmd: cmd.append("--sudoflags=-S")
 
         if not stream:
             try:
