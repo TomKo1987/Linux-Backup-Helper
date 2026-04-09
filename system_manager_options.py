@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
@@ -5,7 +6,7 @@ if TYPE_CHECKING:
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
-    QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea, QSizePolicy,
+    QFrame, QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea, QSizePolicy,
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QTextEdit,
     QFileDialog, QFormLayout, QGridLayout, QHBoxLayout, QVBoxLayout, QWidget,
 )
@@ -23,6 +24,7 @@ from themes import (
 _STATE_ACTIVE   = Qt.CheckState.Checked
 _STATE_DISABLED = Qt.CheckState.PartiallyChecked
 _STATE_DELETE   = Qt.CheckState.Unchecked
+_BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
 
 
 class TriCheckBox(QCheckBox):
@@ -292,11 +294,8 @@ class SystemManagerOptions(QDialog):
             save_profile()
 
     def _edit_ops(self) -> None:
-        import re as _re
-        _br_re = _re.compile(r"<br\s*/?>", _re.IGNORECASE)
-
         arch_only = {"update_mirrors", "install_yay", "install_aur_packages"}
-        op_text = {k: _br_re.sub(" ", v).replace("&", "&&")
+        op_text = {k: _BR_RE.sub(" ", v).replace("&", "&&")
                    for k, v in _build_op_text(self._distro, self._session, has_yay=self.yay_installed).items()}
         widgets: list[tuple[QCheckBox, str]] = []
 
@@ -370,18 +369,27 @@ class SystemManagerOptions(QDialog):
     def _edit_sysfiles(self) -> None:
         files = [f for f in (S.system_files or []) if isinstance(f, dict) and f.get("source") and f.get("destination")]
         checkboxes: list[tuple[TriCheckBox, dict]] = []
+        cb_frames: list[tuple[TriCheckBox, QFrame]] = []
         legend = tri_state_legend_html()
+        t = current_theme()
         body = QWidget()
         vlay = QVBoxLayout(body)
-        vlay.setSpacing(8)
+        vlay.setSpacing(2)
 
-        for f in files:
+        for idx, f in enumerate(files):
             text = f"{apply_replacements(f['source'])} 󰧂 {apply_replacements(f['destination'])}"
             tip = (f"<b>Source:</b><br>{f['source']}<br><br><b>Destination:</b><br>{f['destination']}<br><br>"
                    f"<i>Left-click file to change status. Right-click to edit.</i><br><br>{legend}")
             cb = _make_tri_cb(text, f.get("disabled", False), tip)
             checkboxes.append((cb, f))
-            vlay.addWidget(cb)
+            frame = QFrame()
+            bg = t["bg2"] if idx % 2 == 0 else t["bg3"]
+            frame.setStyleSheet(f"QFrame{{background-color:{bg};border-radius:4px;}}")
+            row_lay = QHBoxLayout(frame)
+            row_lay.setContentsMargins(6, 3, 6, 3)
+            row_lay.addWidget(cb)
+            vlay.addWidget(frame)
+            cb_frames.append((cb, frame))
 
         if checkboxes:
             _add_select_all_tri(vlay, [cb for cb, _ in checkboxes])
@@ -425,8 +433,10 @@ class SystemManagerOptions(QDialog):
 
         def _apply_search(txt: str) -> None:
             txt_lower = txt.lower()
-            for _cb, _ in checkboxes:
-                _cb.setVisible(txt_lower in _cb.text().lower())
+            for _cb, _frame in cb_frames:
+                visible = txt_lower in _cb.text().lower()
+                _cb.setVisible(visible)
+                _frame.setVisible(visible)
 
         search.textChanged.connect(_apply_search)
         btn_row = QHBoxLayout()
@@ -584,6 +594,7 @@ class SystemManagerOptions(QDialog):
         grid = QGridLayout(body)
         grid.setSpacing(6)
         cols = 5
+        t = current_theme()
 
         if is_specific:
             from collections import defaultdict
@@ -591,7 +602,6 @@ class SystemManagerOptions(QDialog):
             for p, cb in zip(packages, checkboxes):
                 groups[p.get("session", "") if isinstance(p, dict) else ""].append((cb, p))
             row = 0
-            t = current_theme()
             for idx, sess in enumerate(sorted(groups)):
                 hdr = QLabel(sess or "Unknown")
                 border = f"border-top:1px solid {t['header_sep']};" if idx > 0 else ""
@@ -600,11 +610,25 @@ class SystemManagerOptions(QDialog):
                 grid.addWidget(hdr, row, 0, 1, cols)
                 row += 1
                 for j, (cb, _) in enumerate(groups[sess]):
-                    grid.addWidget(cb, row + j // cols, j % cols)
+                    r_idx = row + j // cols
+                    frame = QFrame()
+                    bg = t["bg2"] if r_idx % 2 == 0 else t["bg3"]
+                    frame.setStyleSheet(f"QFrame{{background-color:{bg};border-radius:4px;}}")
+                    flay = QHBoxLayout(frame)
+                    flay.setContentsMargins(6, 3, 6, 3)
+                    flay.addWidget(cb)
+                    grid.addWidget(frame, r_idx, j % cols)
                 row += (len(groups[sess]) - 1) // cols + 1
         else:
             for i, cb in enumerate(checkboxes):
-                grid.addWidget(cb, i // cols, i % cols)
+                r_idx = i // cols
+                frame = QFrame()
+                bg = t["bg2"] if r_idx % 2 == 0 else t["bg3"]
+                frame.setStyleSheet(f"QFrame{{background-color:{bg};border-radius:4px;}}")
+                flay = QHBoxLayout(frame)
+                flay.setContentsMargins(6, 3, 6, 3)
+                flay.addWidget(cb)
+                grid.addWidget(frame, r_idx, i % cols)
 
         if checkboxes:
             _add_select_all_tri(grid, checkboxes, cols)
@@ -640,7 +664,11 @@ class SystemManagerOptions(QDialog):
         def _apply_search(txt: str) -> None:
             txt_lower = txt.lower()
             for _cb in checkboxes:
-                _cb.setVisible(txt_lower in _cb.text().lower())
+                visible = txt_lower in _cb.text().lower()
+                _cb.setVisible(visible)
+                parent_widget = _cb.parentWidget()
+                if parent_widget is not None:
+                    parent_widget.setVisible(visible)
 
         search.textChanged.connect(_apply_search)
         btn_add_row = QHBoxLayout()

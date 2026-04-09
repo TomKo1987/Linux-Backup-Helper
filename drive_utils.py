@@ -137,9 +137,10 @@ def is_mounted(opt: dict, mounts: Optional[list[tuple[str, str]]] = None) -> boo
 
     if mount_path and is_smb(mount_path):
         without_schema = re.sub(r"^(smb|cifs)://", "", mount_path).rstrip("/")
-        parts = without_schema.split("/", 1)
-        if len(parts) == 2:
-            host, share = parts
+        parts = without_schema.split("/", 2)
+        if len(parts) >= 2:
+            host = parts[0]
+            share = parts[1]
             smb_prefixes = (f"//{host}/{share}".lower(),)
 
     for dev, mnt in (mounts or []):
@@ -239,7 +240,11 @@ def mount_required_drives(drives: list[dict], parent=None) -> bool:
 
         if answer != QMessageBox.StandardButton.Yes:
             if is_managed:
-                logger.info("Skipping mount for managed drive '%s'", drive_name)
+                logger.info("Skipping mount for managed drive '%s'; continuing operation.", drive_name)
+                QMessageBox.information(
+                    parent, "Skipping Drive", f"'{drive_name}' was not mounted.\n\n"
+                                              f"Since this drive uses an external mount path, the operation will continue.\n"
+                                              f"Files on this drive may be unavailable.")
                 continue
             QMessageBox.warning(parent, "Operation Cancelled",
                                 f"The required drive '{drive_name}' was not mounted.\n\nThe operation has been cancelled.")

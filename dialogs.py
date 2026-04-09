@@ -1094,9 +1094,9 @@ class SysInfoDialog(_TextViewDialog):
             pass
 
     def closeEvent(self, event) -> None:
-        self._closed = True
         try:
             self.done_sig.disconnect()
         except (RuntimeError, TypeError):
             pass
+        self._closed = True
         super().closeEvent(event)

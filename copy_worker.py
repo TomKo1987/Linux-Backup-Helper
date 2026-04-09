@@ -142,9 +142,9 @@ def _format_unit(value: float) -> str:
         value = 0.0
     if value == 0:
         return f"0 {_SIZE_UNITS[0]}"
-    for i, unit in enumerate(_SIZE_UNITS[:-1]):
+    for unit in _SIZE_UNITS[:-1]:
         if value < 1024.0:
-            return f"{int(value)} {unit}" if i == 0 else f"{value:.2f} {unit}"
+            return f"{int(value)} {unit}" if unit == "B" else f"{value:.2f} {unit}"
         value /= 1024.0
     return f"{value:.2f} {_SIZE_UNITS[-1]}"
 
@@ -227,8 +227,10 @@ def _smb_cred_file(user: str, pw: "_SecurePw") -> "tuple[str, str]":
                 f.write(f"domain = {domain}\n")
             else:
                 f.write(f"username = {user}\n")
-            f.write(f"password = {pw.get()}\n")
-        return tmp_dir, cred_path
+            pwd_str = pw.get()
+            f.write(f"password = {pwd_str}\n")
+            del pwd_str
+            return tmp_dir, cred_path
     except Exception as exc:
         logger.error("Error creating the SMB credential file: %s", exc)
         if tmp_dir and os.path.isdir(tmp_dir):
@@ -270,6 +272,7 @@ def _is_up_to_date_local(dst: str, src_st: "os.stat_result") -> bool:
 
 def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
     rem = total
+    skip_sendfile = False
     try:
         while rem > 0:
             if cancel.is_set():
@@ -282,7 +285,7 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
         raise
     except OSError as exc:
         if exc.errno == errno.EXDEV:
-            pass
+            skip_sendfile = True
         else:
             logger.error("copy_file_range failed (errno=%d), falling back: %s", exc.errno, exc)
         try:
@@ -291,7 +294,7 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
         except OSError:
             pass
         rem = total
-    if rem > 0:
+    if rem > 0 and not skip_sendfile:
         offset = total - rem
         try:
             while rem > 0:
@@ -910,7 +913,7 @@ class _EntryTracker:
             snap = {t: ec[:] for t, ec in self._counts.items()}
         for t, ec in snap.items():
             if t:
-                signal.emit(t, ec[0], ec[2], ec[1])
+                signal.emit(t, ec[0], ec[1], ec[2])
 
 
 class _Flusher:
@@ -1774,11 +1777,11 @@ class _SummaryWidget(QWidget):
         self._update_segments(copied, skipped, errors, finished=finished)
         self._update_timing(elapsed_s, done, total, finished, cancelled)
 
-    def on_entry_status(self, title: str, ok: int, err: int, skip: int = 0) -> None:
+    def on_entry_status(self, title: str, ok: int, skip: int, err: int) -> None:
         ec = self._entry_results.setdefault(title, [0, 0, 0])
         ec[0] += ok
-        ec[1] += err
-        ec[2] += skip
+        ec[1] += skip
+        ec[2] += err
         if not self._entry_refresh_pending:
             self._entry_refresh_pending = True
             QTimer.singleShot(300, self._deferred_refresh_entry_labels)
@@ -2078,10 +2081,7 @@ class _LogWidget(QWidget):
 
         def _bg_sort() -> None:
             pairs.sort(key=lambda p: self._natural_sort_key(p[0].split('\n', 1)[0]))
-            if pairs:
-                sorted_items, sorted_lower = zip(*pairs)
-            else:
-                sorted_items, sorted_lower = [], []
+            sorted_items, sorted_lower = zip(*pairs) if pairs else ([], [])
             try:
                 self._sorted_ready.emit(list(sorted_items), list(sorted_lower))
             except RuntimeError:

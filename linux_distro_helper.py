@@ -55,13 +55,10 @@ _PKG_MGR_NAME: dict[str, str] = {"arch": "pacman", "debian": "apt", "fedora": "d
                                  "slackware": "pkgtool", "unknown": "unknown"}
 
 
-def _nixos_check(p: str) -> list[str]:
-    return ["sh", "-c", "nix-env -q --installed 2>/dev/null | grep -qF -- " + shlex.quote(p)]
+def _nixos_check(p: str) -> list[str]: return ["sh", "-c", "nix-env -q --installed 2>/dev/null | grep -qF -- " + shlex.quote(p)]
 
 
-def _slackware_check(p: str) -> list[str]:
-    p_q = shlex.quote(p)
-    return ["sh", "-c", f"ls /var/log/packages/{p_q}-* >/dev/null 2>&1"]
+def _slackware_check(p: str) -> list[str]: return ["sh", "-c", f"ls /var/log/packages/{p}-* >/dev/null 2>&1"]
 
 
 _PKG: dict[str, dict[str, Any]] = {
@@ -366,7 +363,10 @@ class LinuxDistroHelper:
             remaining = [p for p in packages if p not in done]
             logger.warning("parallel check timed out; %d package(s) checked sequentially", len(remaining))
             for p in remaining:
-                results[p] = self.package_is_installed(p)
+                try:
+                    results[p] = self.package_is_installed(p)
+                except Exception as exc:
+                    logger.warning("sequential fallback check '%s': %s", p, exc)
         except Exception as exc:
             logger.error("parallel check failed: %s", exc)
             return [p for p in packages if not self.package_is_installed(p)]

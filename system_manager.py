@@ -98,7 +98,7 @@ class _SudoKeepalive(threading.Thread):
                 if r.returncode != 0 and self._pw:
                     buf = _pw_bytes(self._pw)
                     try:
-                        subprocess.run(["sudo", "-S", "-v"], input=buf, capture_output=True, timeout=10)
+                        subprocess.run(["sudo", "-S", "-v"], input=bytes(buf), capture_output=True, timeout=10)
                     finally:
                         _zero(buf)
             except Exception as exc:
@@ -584,7 +584,6 @@ class SystemManagerThread(QThread):
             except OSError:
                 pass
 
-            assert proc is not None
             chunks: list[bytes] = []
 
             def _read_out() -> None:

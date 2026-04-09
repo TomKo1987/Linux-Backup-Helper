@@ -52,8 +52,7 @@ _NORM_PATHS_RE = re.compile(r"(?<=[^\s/]) (?=/|smb://|cifs://)")
 
 def apply_replacements(text: str) -> str:
     for old, new in _path_replacements:
-        if old:
-            text = text.replace(old, new)
+        text = text.replace(old, new)
     if "\x1b" in text:
         text = _ANSI_RE.sub("", text)
     return text
