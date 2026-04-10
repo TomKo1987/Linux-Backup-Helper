@@ -97,7 +97,8 @@ smb://192.168.0.53/share/mydata
 - They are stored securely via **KWallet** (KDE) or your **system keyring**.
 - If KWallet is available and already contains an entry starting with `smb-`, that entry is used automatically.
 - Otherwise, credentials can be managed directly in the application under **Samba Credentials**.
-- The SMB password is passed to `smbclient` via the `PASSWD` environment variable — never as a command-line argument, so it does not appear in `ps aux` or `/proc/<pid>/cmdline`.
+- The SMB password is written to a temporary credential file in /dev/shm (permissions 0600) and passed to smbclient via the -A flag. 
+  The file is securely overwritten with zeros and deleted immediately after use.
 
 ### Connection order
 
