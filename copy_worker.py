@@ -154,7 +154,7 @@ def _is_unreachable(err: str) -> bool:
 
 
 def _parse_smb(url: str) -> tuple[str, str, str]:
-    p     = urlparse(url)
+    p     = urlparse(url.replace("\\", "/"))
     host  = p.hostname or p.netloc
     parts = [x for x in p.path.split("/") if x]
     return host, (parts[0] if parts else ""), "/".join(parts[1:])
@@ -227,9 +227,14 @@ def _smb_cred_file(user: str, pw: "_SecurePw") -> "tuple[str, str]":
                 f.write(f"domain = {domain}\n")
             else:
                 f.write(f"username = {user}\n")
-            pwd_str = pw.get()
-            f.write(f"password = {pwd_str}\n")
-            del pwd_str
+            pwd_bytes = pw.get_bytes()
+            try:
+                f.write("password = ")
+                f.write(pwd_bytes.decode("utf-8"))
+                f.write("\n")
+            finally:
+                for i in range(len(pwd_bytes)):
+                    pwd_bytes[i] = 0
             return tmp_dir, cred_path
     except Exception as exc:
         logger.error("Error creating the SMB credential file: %s", exc)
@@ -378,7 +383,7 @@ def _copy_file(src: str, dst: str, cancel: threading.Event, src_st: "os.stat_res
         try:
             os.utime(tmp, ns=(st.st_atime_ns, st.st_mtime_ns))
         except OSError as e:
-            logger.debug("Could not preserve timestamps for %s: %s", dst, e)
+            logger.debug("Could not preserve timestamps for %s: %s", tmp, e)
         os.replace(tmp, dst)
         success = True
         return "ok", dst, copied
@@ -984,7 +989,10 @@ class CopyWorker(QThread):
                 continue
             for s, d in zip(srcs, dsts):
                 if s and d:
-                    result.append((os.path.expanduser(str(s)), os.path.expanduser(str(d)), title))
+                    s_str, d_str = str(s), str(d)
+                    s_norm = s_str if is_smb(s_str) else os.path.abspath(os.path.expanduser(s_str))
+                    d_norm = d_str if is_smb(d_str) else os.path.abspath(os.path.expanduser(d_str))
+                    result.append((s_norm, d_norm, title))
         return result
 
     def cancel(self) -> None:
@@ -1251,6 +1259,7 @@ class CopyWorker(QThread):
                                         except queue.Full:
                                             pass
                                     else:
+                                        local_n -= len(batch)
                                         batch = []
                 except NotADirectoryError:
                     batch.append((_src, _dst, _title, None))
@@ -1280,6 +1289,10 @@ class CopyWorker(QThread):
                         break
                     except queue.Full:
                         pass
+
+            if cancel.is_set():
+                local_n -= len(batch)
+
             if local_n:
                 with pend_lock:
                     found[0] += local_n

@@ -554,13 +554,15 @@ class SystemManagerThread(QThread):
                 self.outputReceived.emit(text, "error" if is_err and not _INFO_RE.search(text) else "subprocess")
 
         try:
-            rc = proc.wait(timeout=timeout) if proc.poll() is None else proc.returncode
+            rc = proc.wait(timeout=timeout if timeout is not None else 30)
         except subprocess.TimeoutExpired:
             proc.kill()
             rc = proc.wait()
         t1.join(3); t2.join(3)
         if _stdin_thread:
             _stdin_thread.join(2)
+            if _stdin_thread.is_alive() and isinstance(input_data, bytearray):
+                _zero(input_data)
         return SimpleNamespace(returncode=rc if rc is not None else 1)
 
     def _emit_result(self, ok: bool, msg_ok: str, msg_err: str): self.outputReceived.emit(msg_ok if ok else msg_err, "success" if ok else "error")
@@ -658,8 +660,10 @@ class SystemManagerThread(QThread):
         failed = []
         if still_missing:
             self.outputReceived.emit("Some packages were not installed — trying them individually…", "warning")
-            for pkg in still_missing:
-                if self.terminated: break
+            for i, pkg in enumerate(still_missing):
+                if self.terminated:
+                    failed.extend(still_missing[i:])
+                    break
                 single_fn(pkg)
                 if self.distro.package_is_installed(pkg):
                     if self._pkg_cache: self._pkg_cache.mark_installed(pkg)

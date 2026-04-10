@@ -223,7 +223,7 @@ class SystemManagerOptions(QDialog):
 
     def _build(self) -> None:
         lay      = QVBoxLayout(self)
-        yay_info = (f" | AUR Helper: 'yay' {'detected' if self.yay_installed else 'not detected'}" if self._distro.has_aur else "")
+        yay_info = " | AUR Helper: checking…" if self._distro.has_aur else ""
         info = QLabel(f"Recognized Linux distribution: {self._distro.distro_pretty_name} | Session: {self._session}{yay_info}")
         info.setStyleSheet(style_label_info(bold=True))
         info.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -691,6 +691,7 @@ class SystemManagerOptions(QDialog):
         is_specific = pkg_type == "specific_packages"
         packages = getattr(S, pkg_type, []) or []
         checkboxes = _pkg_checkboxes(packages, is_specific)
+        session_headers: dict[str, QLabel] = {}
 
         body = QWidget()
         grid = QGridLayout(body)
@@ -709,6 +710,7 @@ class SystemManagerOptions(QDialog):
                 border = f"border-top:1px solid {t['header_sep']};" if idx > 0 else ""
                 hdr.setStyleSheet(
                     f"font-size:{font_sz(-1)}px;font-weight:bold;color:{t['accent2']};padding:6px 2px 2px;{border}")
+                session_headers[sess] = hdr
                 grid.addWidget(hdr, row, 0, 1, cols)
                 row += 1
                 for j, (cb, _) in enumerate(groups[sess]):
@@ -766,12 +768,20 @@ class SystemManagerOptions(QDialog):
 
         def _apply_search(txt: str) -> None:
             txt_lower = txt.lower()
+            visible_sessions: set[str] = set()
             for _cb in checkboxes:
                 visible = txt_lower in _cb.text().lower()
                 _cb.setVisible(visible)
                 parent_widget = _cb.parentWidget()
                 if parent_widget is not None:
                     parent_widget.setVisible(visible)
+                if visible and is_specific:
+                    _p = packages[checkboxes.index(_cb)]
+                    if isinstance(_p, dict):
+                        visible_sessions.add(_p.get("session", ""))
+            if is_specific:
+                for _sess, hdr_lbl in session_headers.items():
+                    hdr_lbl.setVisible(not txt_lower or _sess in visible_sessions)
 
         search.textChanged.connect(_apply_search)
         btn_add_row = QHBoxLayout()
@@ -1082,11 +1092,17 @@ class SystemManagerLauncher:
         self._distro         = LinuxDistroHelper()
         self._distro_name    = self._distro.distro_pretty_name
         self._session        = self._distro.detect_session()
-        self.yay_installed  = self._distro.has_aur and self._distro.package_is_installed("yay")
         self._sudo_checkbox: QCheckBox | None = None
         self._op_text: dict[str, str] | None = None
+        self._yay_installed = None
         self._sm_thread = None
         self._sm_dialog = None
+
+    @property
+    def yay_installed(self) -> bool:
+        if self._yay_installed is None:
+            self._yay_installed = self._distro.has_aur and self._distro.package_is_installed("yay")
+        return bool(self._yay_installed)
 
     def launch(self) -> None:
         if not S.system_manager_ops:

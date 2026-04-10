@@ -182,7 +182,17 @@ def _load_profile_from_data(path: Path, data: dict) -> bool:
         new_sys_files = _as_list("system_files")
         new_basic     = _norm_pkgs(_as_list("basic_packages"))
         new_aur       = _norm_pkgs(_as_list("aur_packages"))
-        new_specific  = _as_list("specific_packages")
+
+        def _norm_specific(raw: list) -> list[dict]:
+            result = []
+            for p in raw:
+                if isinstance(p, str):
+                    result.append({"package": p, "session": "", "disabled": False})
+                elif isinstance(p, dict):
+                    result.append({**p, "disabled": p.get("disabled", False)})
+            return sorted(result, key=lambda x: (x.get("session", ""), x.get("package", "")))
+        new_specific = _norm_specific(_as_list("specific_packages"))
+
         raw_shell     = data.get("user_shell", "bash")
         new_shell     = raw_shell if isinstance(raw_shell, str) and raw_shell.strip() else "bash"
 

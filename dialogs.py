@@ -460,9 +460,7 @@ class EntryDialog(QDialog):
             **self._entry_snapshot,
             "header":  self.hdr.currentText().strip(),
             "title":   self.title_edit.text().strip(),
-            "details": {"no_backup":  self.no_backup.isChecked(),
-                        "no_restore": self.no_restore.isChecked()},
-        }
+            "details": {"no_backup":  self.no_backup.isChecked(), "no_restore": self.no_restore.isChecked()}}
         self.stacked = not self.stacked
         self.done(2)
 
