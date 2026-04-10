@@ -371,8 +371,10 @@ def _copy_file(src: str, dst: str, cancel: threading.Event, src_st: "os.stat_res
         try:
             os.fdatasync(wfd)
         finally:
-            os.close(wfd)
-            wfd = None
+            try:
+                os.close(wfd)
+            finally:
+                wfd = None
         try:
             os.utime(tmp, ns=(st.st_atime_ns, st.st_mtime_ns))
         except OSError as e:

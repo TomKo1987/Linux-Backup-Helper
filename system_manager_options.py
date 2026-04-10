@@ -61,6 +61,7 @@ def _scroll_dlg(parent, title: str, body: QWidget, on_save=None) -> tuple[QDialo
     sa = QScrollArea()
     sa.setWidgetResizable(True)
     sa.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    sa.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
     sa.setWidget(body)
     lay.addWidget(sa)
     bb = ok_cancel_buttons(dlg, lambda: on_save(dlg) if on_save else dlg.accept(), cancel_label="Close")
@@ -70,8 +71,8 @@ def _scroll_dlg(parent, title: str, body: QWidget, on_save=None) -> tuple[QDialo
     scr = QApplication.primaryScreen()
     if scr:
         sg = scr.availableGeometry()
-        width = min(max(sz.width() + 80, 950), sg.width() - 50)
-        height = min(sz.height() + 210, int(sg.height() * 0.9))
+        width = min(max(sz.width() + 125, 950), sg.width() - 50)
+        height = min(sz.height() + 225, int(sg.height() * 0.9))
         dlg.resize(width, height)
     cancel_btn = bb.button(QDialogButtonBox.StandardButton.Cancel)
     if cancel_btn:
@@ -299,27 +300,57 @@ class SystemManagerOptions(QDialog):
                    for k, v in _build_op_text(self._distro, self._session, has_yay=self.yay_installed).items()}
         widgets: list[tuple[QCheckBox, str]] = []
 
+        _OP_GROUPS = [("🖥  System", ["copy_system_files", "update_mirrors", "set_user_shell",
+                                     "update_system", "install_kernel_header"]),
+                      ("📦  Packages", ["install_basic_packages", "install_yay", "install_aur_packages",
+                                       "install_specific_packages", "enable_flatpak_integration"]),
+                      ("🔧  Services", ["enable_printer_support", "enable_ssh_service",
+                                       "enable_samba_network_filesharing", "enable_bluetooth_service",
+                                       "enable_atd_service", "enable_cronie_service", "install_snap", "enable_firewall"]),
+                      ("🧹  Maintenance", ["remove_orphaned_packages", "clean_cache"])]
+
         body = QWidget()
         grid = QGridLayout(body)
+        grid.setVerticalSpacing(3)
+        grid.setContentsMargins(10, 8, 10, 8)
+
+        t = current_theme()
 
         sa = QCheckBox("Check/Uncheck All")
         sa.setTristate(True)
         sa.setStyleSheet(style_checkbox_select_all())
         grid.addWidget(sa, 0, 0)
 
-        for i, (key, text) in enumerate(op_text.items()):
-            cb = QCheckBox(text)
-            if key in arch_only and not self._distro.has_aur:
-                cb.setEnabled(False)
-                cb.setStyleSheet(style_checkbox_muted())
-            else:
-                cb.setChecked(key in S.system_manager_ops)
-            grid.addWidget(cb, i + 1, 0)
-            widgets.append((cb, key))
+        grid_row = 1
+        for group_label, keys in _OP_GROUPS:
+            sep_line = QFrame()
+            sep_line.setFrameShape(QFrame.Shape.HLine)
+            sep_line.setStyleSheet(f"color:{t['header_sep']};margin:4px 0;")
+            grid.addWidget(sep_line, grid_row, 0)
+            grid_row += 1
+
+            hdr = QLabel(group_label)
+            hdr.setStyleSheet(f"font-size:{font_sz(1)}px;font-weight:bold;color:{t['accent']};padding:4px 2px 2px 4px;")
+            grid.addWidget(hdr, grid_row, 0)
+            grid_row += 1
+
+            for key in keys:
+                text = op_text.get(key)
+                if text is None:
+                    continue
+                cb = QCheckBox(text)
+                cb.setStyleSheet("margin-left:14px;")
+                if key in arch_only and not self._distro.has_aur:
+                    cb.setEnabled(False)
+                    cb.setStyleSheet(style_checkbox_muted() + "margin-left:14px;")
+                else:
+                    cb.setChecked(key in S.system_manager_ops)
+                grid.addWidget(cb, grid_row, 0)
+                widgets.append((cb, key))
+                grid_row += 1
 
         yay_cb = next((c for c, k in widgets if k == "install_yay"), None)
         aur_cb = next((c for c, k in widgets if k == "install_aur_packages"), None)
-
         enabled_widgets = [c for c, _ in widgets if c.isEnabled()]
 
         def _sync_sa():
@@ -336,7 +367,10 @@ class SystemManagerOptions(QDialog):
                 force = aur_cb.isChecked()
                 yay_cb.setChecked(force or yay_cb.isChecked())
                 yay_cb.setEnabled(not force)
-                yay_cb.setStyleSheet(style_checkbox_muted() if force else "")
+                if force:
+                    yay_cb.setStyleSheet(style_checkbox_muted() + "QCheckBox{margin-left:14px;}")
+                else:
+                    yay_cb.setStyleSheet("QCheckBox{margin-left:14px;}")
             _sync_sa()
 
         def _toggle_all(state=None):
@@ -367,27 +401,89 @@ class SystemManagerOptions(QDialog):
     def _edit_sysfiles(self) -> None:
         files = [f for f in (S.system_files or []) if isinstance(f, dict) and f.get("source") and f.get("destination")]
         checkboxes: list[tuple[TriCheckBox, dict]] = []
-        cb_frames: list[tuple[TriCheckBox, QFrame]] = []
+        rows: list[tuple[QFrame, TriCheckBox, dict]] = []
         legend = tri_state_legend_html()
         t = current_theme()
         body = QWidget()
         vlay = QVBoxLayout(body)
-        vlay.setSpacing(2)
+        vlay.setSpacing(4)
 
         for idx, f in enumerate(files):
-            text = f"{apply_replacements(f['source'])} 󰧂 {apply_replacements(f['destination'])}"
+            filename = Path(f["source"]).name or f["source"]
             tip = (f"<b>Source:</b><br>{f['source']}<br><br><b>Destination:</b><br>{f['destination']}<br><br>"
-                   f"<i>Left-click file to change status. Right-click to edit.</i><br><br>{legend}")
-            cb = _make_tri_cb(text, f.get("disabled", False), tip)
+                   f"<i>Left-click to change status. Click + to expand &amp; edit.</i><br><br>{legend}")
+            cb = _make_tri_cb(filename, f.get("disabled", False), tip)
             checkboxes.append((cb, f))
-            frame = QFrame()
+
+            outer = QFrame()
             bg = t["bg2"] if idx % 2 == 0 else t["bg3"]
-            frame.setStyleSheet(f"QFrame{{background-color:{bg};border-radius:4px;}}")
-            row_lay = QHBoxLayout(frame)
-            row_lay.setContentsMargins(6, 3, 6, 3)
-            row_lay.addWidget(cb)
-            vlay.addWidget(frame)
-            cb_frames.append((cb, frame))
+            outer.setStyleSheet(f"QFrame{{background-color:{bg};border-radius:6px;}}")
+            outer_vlay = QVBoxLayout(outer)
+            outer_vlay.setContentsMargins(6, 2, 6, 2)
+            outer_vlay.setSpacing(0)
+
+            header_row = QHBoxLayout()
+            header_row.setContentsMargins(0, 0, 0, 0)
+            header_row.addWidget(cb, 1)
+            hint = QLabel("+")
+            hint.setStyleSheet(f"font-size:{font_sz(10)}px")
+            hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            header_row.addWidget(hint)
+            outer_vlay.addLayout(header_row)
+
+            detail = QWidget()
+            detail.setVisible(False)
+            det_lay = QVBoxLayout(detail)
+            det_lay.setContentsMargins(4, 6, 4, 6)
+            det_lay.setSpacing(6)
+
+            src_ed = QLineEdit(f.get("source", ""))
+            dst_ed = QLineEdit(f.get("destination", ""))
+            for ed in (src_ed, dst_ed):
+                ed.setMinimumHeight(32)
+
+            for lbl_text, ed in [("Source:", src_ed), ("Destination:", dst_ed)]:
+                lbl = QLabel(lbl_text)
+                lbl.setStyleSheet(f"color:{t['muted']};font-size:{font_sz(-1)}px;")
+                det_lay.addWidget(lbl)
+                det_lay.addWidget(browse_field(self, ed))
+
+            apply_btn = QPushButton("Apply")
+            apply_btn.setMaximumWidth(110)
+            apply_btn.setMinimumHeight(30)
+
+            def _make_apply(entry, s_ed, d_ed, _cb):
+                def _do():
+                    new_src = s_ed.text().strip()
+                    new_dst = d_ed.text().strip()
+                    if not new_src or not new_dst:
+                        QMessageBox.warning(self, "Error", "Source and destination must not be empty.")
+                        return
+                    entry["source"] = new_src
+                    entry["destination"] = new_dst
+                    _cb.setText(Path(new_src).name or new_src)
+                    save_profile()
+
+                return _do
+
+            apply_btn.clicked.connect(_make_apply(f, src_ed, dst_ed, cb))
+            apply_row = QHBoxLayout()
+            apply_row.addStretch()
+            apply_row.addWidget(apply_btn)
+            det_lay.addLayout(apply_row)
+
+            outer_vlay.addWidget(detail)
+            vlay.addWidget(outer)
+            rows.append((outer, cb, f))
+
+            def _make_toggle(_det=detail, _hint=hint):
+                def _toggle():
+                    visible = not _det.isVisible()
+                    _det.setVisible(visible)
+                    _hint.setText("-" if visible else "+")
+                return _toggle
+
+            hint.mousePressEvent = lambda e, _fn=_make_toggle(): _fn()
 
         if checkboxes:
             _add_select_all_tri(vlay, [cb for cb, _ in checkboxes])
@@ -399,7 +495,8 @@ class SystemManagerOptions(QDialog):
                 names = "\n".join(f"  • {apply_replacements(f.get('source', '?'))}" for f in to_del)
                 if QMessageBox.question(_dlg, "Confirm Delete",
                                         f"The following system file(s) will be permanently removed:\n\n{names}\n\nContinue?",
-                                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+                                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                                        ) != QMessageBox.StandardButton.Yes:
                     do_delete = False
 
             updated_files = []
@@ -418,34 +515,40 @@ class SystemManagerOptions(QDialog):
             S.system_files = updated_files
             save_profile()
             _dlg.accept()
+
         dlg, lay = _scroll_dlg(self, "System Files", body, _save)
 
-        def _set_ctx(widget, f_dict, d):
-            widget.contextMenuEvent = lambda _e: self._edit_sysfile_entry(f_dict, d)
-
-        for cb, f in checkboxes:
-            _set_ctx(cb, f, dlg)
+        if files:
+            from PyQt6.QtGui import QFont, QFontMetrics
+            fm = QFontMetrics(QFont("monospace"))
+            longest = max(max(len(f.get("source", "")), len(f.get("destination", "")))
+                          for f in files)
+            needed_w = fm.horizontalAdvance("m") * longest + 280
+            scr = QApplication.primaryScreen()
+            max_w = (scr.availableGeometry().width() - 50) if scr else 1800
+            dlg.resize(max(dlg.width(), min(needed_w, max_w)), dlg.height())
 
         search = QLineEdit()
         search.setPlaceholderText("Filter files...")
 
         def _apply_search(txt: str) -> None:
-            txt_lower = txt.lower()
-            for _cb, _frame in cb_frames:
-                visible = txt_lower in _cb.text().lower()
-                _cb.setVisible(visible)
-                _frame.setVisible(visible)
+            lo = txt.lower()
+            for _outer, _cb, _f in rows:
+                visible = (lo in _cb.text().lower()
+                           or lo in _f.get("source", "").lower()
+                           or lo in _f.get("destination", "").lower())
+                _outer.setVisible(visible)
 
         search.textChanged.connect(_apply_search)
-        btn_row = QHBoxLayout()
 
         def _on_add_clicked():
             dlg.close()
             QTimer.singleShot(100, self._add_sysfile)
 
-        add_btn = QPushButton("➕ Add System File")
+        add_btn = QPushButton("+ Add System File")
         add_btn.clicked.connect(_on_add_clicked)
-        btn_row.addWidget(add_btn)
+        add_row = QHBoxLayout()
+        add_row.addWidget(add_btn)
 
         io_row = QHBoxLayout()
 
@@ -453,12 +556,13 @@ class SystemManagerOptions(QDialog):
             dlg.close()
             QTimer.singleShot(0, self._import_sysfiles)
 
-        for lbl, fn in [("📥 Import (.txt/.csv)", _on_import_clicked), ("📤 Export (.txt)", self._export_sysfiles)]:
+        for lbl, fn in [("Import (.txt/.csv)", _on_import_clicked), ("Export (.txt)", self._export_sysfiles)]:
             b = QPushButton(lbl)
             b.clicked.connect(fn)
             io_row.addWidget(b)
+
         lay.insertWidget(1, search)
-        lay.insertLayout(2, btn_row)
+        lay.insertLayout(2, add_row)
         lay.insertLayout(3, io_row)
         lay.setStretch(0, 1)
         dlg.exec()
@@ -633,16 +737,17 @@ class SystemManagerOptions(QDialog):
 
         def _save(_dlg):
             to_del = [pkg for _cb, pkg in zip(checkboxes, packages) if _cb.checkState() == _STATE_DELETE]
+            do_delete = True
             if to_del:
                 names = [(f"{pkg.get('package', '')} [{pkg.get('session', '')}]"
                           if is_specific else pkg.get("name", "")) if isinstance(pkg, dict) else str(pkg) for pkg in
                          to_del]
                 if (QMessageBox.question(_dlg, "Confirm Delete", f"Delete package(s)?\n\n  • " + "\n  • ".join(names),
                                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes):
-                    return
+                    do_delete = False
             updated = []
             for _cb, pkg in zip(checkboxes, packages):
-                if _cb.checkState() == _STATE_DELETE:
+                if do_delete and _cb.checkState() == _STATE_DELETE:
                     continue
                 d = pkg if isinstance(pkg, dict) else {"name": str(pkg)}
                 updated.append({**d, "disabled": _cb.checkState() == _STATE_DISABLED})
