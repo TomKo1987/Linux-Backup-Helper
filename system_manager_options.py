@@ -354,12 +354,14 @@ class SystemManagerOptions(QDialog):
         enabled_widgets = [c for c, _ in widgets if c.isEnabled()]
 
         def _sync_sa():
-            if not enabled_widgets:
+            currently_enabled = [c for c in enabled_widgets if c.isEnabled()]
+            if not currently_enabled:
                 return
-            n = sum(c.isChecked() for c in enabled_widgets)
+            n = sum(c.isChecked() for c in currently_enabled)
             sa.blockSignals(True)
             sa.setCheckState(Qt.CheckState.Checked
-                             if n == len(enabled_widgets) else Qt.CheckState.Unchecked if n == 0 else Qt.CheckState.PartiallyChecked)
+                             if n == len(
+                currently_enabled) else Qt.CheckState.Unchecked if n == 0 else Qt.CheckState.PartiallyChecked)
             sa.blockSignals(False)
 
         def _sync_aur_dep():
