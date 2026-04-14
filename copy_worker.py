@@ -316,8 +316,9 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
             logger.debug("sendfile fallback failed or not supported: %s", exc)
     if rem > 0:
         try:
-            os.lseek(rfd, total - rem, os.SEEK_SET)
-            os.lseek(wfd, total - rem, os.SEEK_SET)
+            if not skip_sendfile:
+                os.lseek(rfd, total - rem, os.SEEK_SET)
+                os.lseek(wfd, total - rem, os.SEEK_SET)
             while rem > 0:
                 if cancel.is_set():
                     raise InterruptedError
@@ -365,7 +366,7 @@ def _copy_file(src: str, dst: str, cancel: threading.Event, src_st: "os.stat_res
 
         if st.st_size > 0:
             try:
-                os.posix_fallocate(wfd, 0, st.st_size)
+                os.ftruncate(wfd, st.st_size)
                 os.posix_fadvise(rfd, 0, st.st_size, os.POSIX_FADV_SEQUENTIAL)
             except OSError:
                 pass
@@ -374,12 +375,9 @@ def _copy_file(src: str, dst: str, cancel: threading.Event, src_st: "os.stat_res
         if copied < st.st_size:
             raise OSError(f"Incomplete copy: {copied}/{st.st_size} bytes written")
         try:
-            os.fdatasync(wfd)
+            os.close(wfd)
         finally:
-            try:
-                os.close(wfd)
-            finally:
-                wfd = None
+            wfd = None
         try:
             os.utime(tmp, ns=(st.st_atime_ns, st.st_mtime_ns))
         except OSError as e:
@@ -470,7 +468,8 @@ class _SmbClient:
         self._user  = user
         self._pw    = pw
         self._guest = guest
-        self._argv  = (["smbclient", f"//{host}/{share}", "-N"] if guest else ["smbclient", f"//{host}/{share}"])
+        _smb_proto = ["-m", "SMB3"]
+        self._argv = (["smbclient", f"//{host}/{share}", "-N"] + _smb_proto if guest else ["smbclient", f"//{host}/{share}"] + _smb_proto)
 
     def _spawn(self, argv: list[str], input_data: str, timeout: int, wipe_fn=None) -> "tuple[subprocess.Popen | None, str, str]":
         tid = threading.get_ident()
@@ -783,24 +782,34 @@ class _ShareProcessor:
             for d in {os.path.dirname(j.dst_path) for j in get_transfer}:
                 if d:
                     _ensure_dir(str(d))
-            for i in range(0, len(get_transfer), _SMB_CHUNK):
-                if self._cancel.is_set():
-                    break
-                if self._unreachable.is_set():
-                    self._fail_batch(get_transfer[i:], is_get=True)
-                    break
-                ok_c, er_c = self._transfer(get_transfer[i: i + _SMB_CHUNK], _build_smb_get_cmds)
-                self._record(ok_c, [], er_c)
+            get_batches = [get_transfer[i: i + _SMB_CHUNK] for i in range(0, len(get_transfer), _SMB_CHUNK)]
+
+            def _run_get_batch(batch):
+                if self._cancel.is_set() or self._unreachable.is_set():
+                    self._fail_batch(batch, is_get=True)
+                    return
+                _ok_c, _er_c = self._transfer(batch, _build_smb_get_cmds)
+                self._record(_ok_c, [], _er_c)
+
+            with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=min(4, len(get_batches) or 1)) as _gpool:
+                gfuts = [_gpool.submit(_run_get_batch, b) for b in get_batches if not self._cancel.is_set()]
+                _run_futures(gfuts, self._cancel, "smb get batch")
 
         if put_transfer and not self._cancel.is_set():
-            for i in range(0, len(put_transfer), _SMB_CHUNK):
-                if self._cancel.is_set():
-                    break
-                if self._unreachable.is_set():
-                    self._fail_batch(put_transfer[i:], is_get=False)
-                    break
-                ok_c, er_c = self._transfer(put_transfer[i: i + _SMB_CHUNK], _build_smb_put_cmds)
+            put_batches = [put_transfer[i: i + _SMB_CHUNK] for i in range(0, len(put_transfer), _SMB_CHUNK)]
+
+            def _run_put_batch(batch):
+                if self._cancel.is_set() or self._unreachable.is_set():
+                    self._fail_batch(batch, is_get=False)
+                    return
+                ok_c, er_c = self._transfer(batch, _build_smb_put_cmds)
                 self._record(ok_c, [], er_c)
+
+            with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=min(4, len(put_batches) or 1)) as _ppool:
+                pfuts = [_ppool.submit(_run_put_batch, b) for b in put_batches if not self._cancel.is_set()]
+                _run_futures(pfuts, self._cancel, "smb put batch")
 
     def _remote_index(self, put_jobs: list) -> dict:
         needed = {(os.path.dirname(j.remote_path).replace("\\", "/") or "").split("/")[0] for j in put_jobs}
@@ -2088,7 +2097,8 @@ class _LogWidget(QWidget):
         pairs = list(zip(self._items, self._items_lower))
 
         def _bg_sort() -> None:
-            pairs.sort(key=lambda p: self._natural_sort_key(p[0].split('\n', 1)[0]))
+            _key = _LogWidget._natural_sort_key
+            pairs.sort(key=lambda p: _key(p[0].split('\n', 1)[0]))
             sorted_items, sorted_lower = zip(*pairs) if pairs else ([], [])
             try:
                 self._sorted_ready.emit(list(sorted_items), list(sorted_lower))
