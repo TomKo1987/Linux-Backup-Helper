@@ -196,7 +196,7 @@ class _CaptureWorker(QThread):
 
     def run(self) -> None:
         fam = self._h.family()
-        res: dict = {"basic": [], "aur": [], "services": [], "error": ""}
+        res: dict = {"basic": [], "aur": [], "specific": [], "sys_files": [], "services": [], "error": ""}
         self.progress.emit("Scanning installed packages…")
         try:
             if fam == "arch":
@@ -236,6 +236,30 @@ class _CaptureWorker(QThread):
             res["error"] = str(exc)
             logger.error("CaptureWorker: %s", exc)
 
+        self.progress.emit("Checking system files…")
+        try:
+            for sf in active_system_files():
+                src_raw = sf.get("source", "").strip()
+                dst_raw = sf.get("destination", "").strip()
+                if not src_raw or not dst_raw:
+                    continue
+                src  = _ep(src_raw)
+                dst  = _ep(dst_raw)
+                name = src.name or str(src)
+                if not src.exists():
+                    status = "src_missing"
+                elif not dst.exists():
+                    status = "dst_missing"
+                else:
+                    h_src, h_dst = _sha256(src), _sha256(dst)
+                    if h_src and h_dst:
+                        status = "ok" if h_src == h_dst else "changed"
+                    else:
+                        status = "ok" if _mtime(dst) >= _mtime(src) - 2 else "changed"
+                res["sys_files"].append({"name": name, "status": status, "src": str(src), "dst": str(dst)})
+        except Exception as exc:
+            logger.warning("CaptureWorker: system file check failed: %s", exc)
+
         self.progress.emit("Scanning active services…")
         try:
             all_services = _get_all_sm_services(self._h)
@@ -248,6 +272,19 @@ class _CaptureWorker(QThread):
                 })
         except Exception as exc:
             logger.warning("CaptureWorker: service scan failed: %s", exc)
+
+        self.progress.emit("Checking specific packages…")
+        try:
+            spec_entries = [p for p in S.specific_packages if isinstance(p, dict) and not p.get("disabled") and p.get("package")]
+            spec_names   = [p["package"] for p in spec_entries]
+            if spec_names:
+                missing = set(self._h.filter_not_installed(spec_names))
+                res["specific"] = [
+                    {"name": p["package"], "session": p.get("session", ""), "installed": p["package"] not in missing}
+                    for p in spec_entries
+                ]
+        except Exception as exc:
+            logger.warning("CaptureWorker: specific package check failed: %s", exc)
 
         self.done.emit(res)
 
@@ -514,6 +551,18 @@ class _CaptureTab(QWidget):
         br = QHBoxLayout(self._btns)
         br.setContentsMargins(0, 0, 0, 0)
 
+        btn_row_w = QHBoxLayout()
+        btn_row_w.addStretch()
+        refresh_btn = QPushButton("🔄  Re-run Check")
+        refresh_btn.clicked.connect(self._start)
+        export_btn  = QPushButton("💾  Export Report")
+        export_btn.clicked.connect(self._export_report)
+        btn_row_w.addWidget(export_btn)
+        btn_row_w.addWidget(refresh_btn)
+        lay.addLayout(btn_row_w)
+
+        self._last_result: dict = {}
+
         self._sel_all_btn = QPushButton("Select All New")
         self._sel_all_btn.clicked.connect(self._select_all_new)
 
@@ -532,6 +581,16 @@ class _CaptureTab(QWidget):
         self._prog_widget.show()
         self._scroll.hide()
         self._btns.hide()
+
+        needed = check_drives_to_mount(_collect_verify_paths())
+        if needed:
+            if not mount_required_drives(needed, parent=self.window()):
+                t = current_theme()
+                self._prog_label.setText("⚠  Capture cancelled: required drive(s) not mounted.")
+                self._prog_label.setStyleSheet(f"color:{t['warning']};font-weight:bold;")
+                self._prog_bar.hide()
+                return
+
         self._worker = _CaptureWorker(self._helper)
         self._worker.progress.connect(self._prog_label.setText)
         self._worker.done.connect(self._on_done)
@@ -540,9 +599,11 @@ class _CaptureTab(QWidget):
     def _on_done(self, res: dict) -> None:
         t = current_theme()
         if res.get("error"):
+            self._last_result = {}
             self._prog_label.setText(f"⚠  {res['error']}")
             self._prog_bar.hide()
             return
+        self._last_result = res
 
         self._prog_widget.hide()
         self._cbs.clear()
@@ -598,6 +659,78 @@ class _CaptureTab(QWidget):
             cl.addWidget(ok_lbl)
 
         cl.addWidget(self._build_specific_section(res["basic"], _excluded, t))
+
+        specific = res.get("specific", [])
+        if specific:
+            cl.addWidget(sep())
+            n_ok  = sum(1 for p in specific if p["installed"])
+            n_bad = len(specific) - n_ok
+            color = t["error"] if n_bad else t["success"]
+            hdr = QLabel(
+                f"<b>Specific Packages (Profile)</b> — "
+                f"<span style='color:{color};'>{n_ok}/{len(specific)} installed</span>"
+            )
+            hdr.setTextFormat(Qt.TextFormat.RichText)
+            hdr.setStyleSheet(f"font-size:{font_sz(1)}px;color:{t['accent2']};")
+            cl.addWidget(hdr)
+
+            grid = QWidget()
+            gl   = QGridLayout(grid)
+            gl.setContentsMargins(8, 2, 8, 2)
+            gl.setSpacing(3)
+            cols = 3
+            for i, p in enumerate(specific):
+                session = f"[{p['session']}]" if p.get("session") else ""
+                icon    = "✅" if p["installed"] else "❌"
+                lbl     = QLabel(f"{icon}  {p['name']}  <span style='color:{t['muted']};font-size:{font_sz(-2)}px;'>{session}</span>")
+                lbl.setTextFormat(Qt.TextFormat.RichText)
+                lbl.setStyleSheet(f"color:{t['success'] if p['installed'] else t['error']};")
+                gl.addWidget(lbl, i // cols, i % cols)
+            cl.addWidget(grid)
+
+        sys_files = res.get("sys_files", [])
+        if sys_files:
+            cl.addWidget(sep())
+            n_ok  = sum(1 for f in sys_files if f["status"] == "ok")
+            n_bad = len(sys_files) - n_ok
+            color = t["error"] if n_bad else t["success"]
+            hdr = QLabel(
+                f"<b>📄  System Files</b> — "
+                f"<span style='color:{color};'>{n_ok}/{len(sys_files)} up to date</span>"
+            )
+            hdr.setTextFormat(Qt.TextFormat.RichText)
+            hdr.setStyleSheet(f"font-size:{font_sz(1)}px;")
+            cl.addWidget(hdr)
+            _status_map = {
+                "changed":     ("⚠",  "Changed",       "warning"),
+                "dst_missing": ("❌", "Not backed up",  "error"),
+                "src_missing": ("❓", "Source missing", "muted"),
+            }
+            sf_grid = QWidget()
+            sg = QGridLayout(sf_grid)
+            sg.setContentsMargins(8, 2, 8, 2)
+            sg.setSpacing(2)
+            for i, f in enumerate(sys_files):
+                if f["status"] == "ok":
+                    icon, label, ck = "✅", "OK", "success"
+                else:
+                    icon, label, ck = _status_map.get(f["status"], ("?", f["status"], "text"))
+                row_lbl = QLabel(
+                    f"{icon}  <b>{f['name']}</b>  "
+                    f"<span style='color:{t['muted']};font-size:{font_sz(-2)}px;'>"
+                    f"{f['src']} → {f['dst']}</span>"
+                    f"  <span style='color:{t[ck]};font-size:{font_sz(-1)}px;'>[{label}]</span>"
+                )
+                row_lbl.setTextFormat(Qt.TextFormat.RichText)
+                row_lbl.setWordWrap(True)
+                sg.addWidget(row_lbl, i, 0)
+            cl.addWidget(sf_grid)
+        elif S.system_files:
+            cl.addWidget(sep())
+            info = QLabel("📄  <i>No active system files configured.</i>")
+            info.setTextFormat(Qt.TextFormat.RichText)
+            info.setStyleSheet(f"color:{t['muted']};")
+            cl.addWidget(info)
 
         services = res.get("services", [])
         if services:
@@ -766,6 +899,79 @@ class _CaptureTab(QWidget):
         for cb, _, _ in self._cbs:
             if cb.isEnabled():
                 cb.setChecked(True)
+
+    def _export_report(self) -> None:
+        from PyQt6.QtWidgets import QFileDialog
+        from state import _HOME
+        from datetime import datetime
+
+        res = self._last_result
+        if not res:
+            QMessageBox.information(self.window(), "No Data", "Run a check first.")
+            return
+
+        lines: list[str] = [
+            "Backup Helper — Capture Report",
+            f"Profile : {S.profile_name or '—'}",
+            f"Date    : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "=" * 60,
+        ]
+
+        def _section(title: str, rows: list[tuple[str, str]]) -> None:
+            lines.append(f"\n[{title}]")
+            if not rows:
+                lines.append("  —")
+                return
+            for _status, detail in rows:
+                lines.append(f"  {_status}  {detail}")
+
+        profile_all = all_profile_pkg_names()
+        _excluded   = self._sm_pkgs | _SYSTEM_BASE_PKGS
+        basic_pkgs  = res.get("basic", [])
+        aur_pkgs    = res.get("aur",   [])
+        pkg_rows: list[tuple[str, str]] = []
+        for name in basic_pkgs:
+            if name in _excluded:
+                continue
+            status = "✓" if name in profile_all else "new"
+            pkg_rows.append((status, f"{name} (basic)"))
+        for name in aur_pkgs:
+            if name in _excluded:
+                continue
+            status = "✓" if name in profile_all else "new"
+            pkg_rows.append((status, f"{name} (aur)"))
+        for p in res.get("specific", []):
+            session = p.get("session") or "—"
+            pkg_rows.append(("✓" if p["installed"] else "✗", f"{p['name']} (specific / {session})"))
+        _section("Packages", pkg_rows)
+
+        _status_labels = {"ok": "OK", "changed": "Changed", "dst_missing": "Not backed up", "src_missing": "Source missing"}
+        _section("System Files", [
+            ("✓" if f["status"] == "ok" else "⚠",
+             f"{f['name']}  [{_status_labels.get(f['status'], f['status'])}]  {f['src']} → {f['dst']}")
+            for f in res.get("sys_files", [])
+        ])
+
+        services = res.get("services", [])
+        _section("Services", [
+            ("✓" if s["active"] else "⚠",
+             f"{s['service']}.service  ({s['op']})")
+            for s in services
+        ])
+
+        text = "\n".join(lines)
+        ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path, _ = QFileDialog.getSaveFileName(
+            self.window(), "Export Capture Report",
+            str(_HOME / f"capture_report_{ts}.txt"), "Text (*.txt)")
+        if not path:
+            return
+        try:
+            from pathlib import Path
+            Path(path).write_text(text, encoding="utf-8")
+            QMessageBox.information(self.window(), "Exported", f"Report saved to:\n{path}")
+        except OSError as exc:
+            QMessageBox.critical(self.window(), "Export Failed", str(exc))
 
     def _add_to_profile(self) -> None:
         new_basic = [n for cb, n, k in self._cbs if cb.isChecked() and cb.isEnabled() and k == "basic"]
@@ -997,6 +1203,14 @@ class _VerifyTab(QWidget):
                     sec.add_row("✅", f"{s['service']}.service", f"Active  —  op: {s['op']}", t["success"])
                 else:
                     sec.add_row("⚠", f"{s['service']}.service", f"Inactive  —  op: {s['op']}", t["warning"])
+            cl.addWidget(sec)
+        elif S.system_manager_ops:
+            sec = _Section("⚙️", "Services", 0, 0, t["muted"], t["muted"])
+            sec.add_row("—", "No trackable services configured in profile", "", t["muted"])
+            cl.addWidget(sec)
+        else:
+            sec = _Section("⚙️", "Services", 0, 0, t["muted"], t["muted"])
+            sec.add_row("—", "No System Manager operations in profile", "", t["muted"])
             cl.addWidget(sec)
 
         cl.addStretch()

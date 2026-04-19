@@ -1795,7 +1795,7 @@ class _SummaryWidget(QWidget):
         size_str = _format_unit(size_copied + size_skipped)
         self.total_lbl.setText(f"{total:,} files / {size_str}" if total > 0 else "")
         self._update_progress(done, total, finished, cancelled)
-        self._update_segments(copied, skipped, errors, finished=finished)
+        self._update_segments(copied, skipped, errors)
         self._update_timing(elapsed_s, done, total, finished, cancelled)
 
     def on_entry_status(self, title: str, ok: int, skip: int, err: int) -> None:
@@ -1831,14 +1831,14 @@ class _SummaryWidget(QWidget):
             self._prog_pct.setText("…")
             self._progress_bar.setFormat("Scanning…")
 
-    def _update_segments(self, copied: int, skipped: int, errors: int, finished: bool = False) -> None:
+    def _update_segments(self, copied: int, skipped: int, errors: int) -> None:
         segs  = (self._seg_copied, self._seg_skipped, self._seg_errors)
         total = copied + skipped + errors
-        if not finished or total == 0:
+        if total == 0:
             for s in segs:
                 s.setFixedWidth(0)
             return
-        avail = self._rate_card.width() - 40
+        avail = max(1, self._rate_card.width() - 40)
         for seg, count in zip(segs, (copied, skipped, errors)):
             seg.setFixedWidth(max(0, int(avail * count / total)))
 
@@ -1997,6 +1997,22 @@ class _LogWidget(QWidget):
         nav.addLayout(pg)
         nav.addStretch(1)
         nav.addWidget(self._total_lbl)
+
+        self._copy_vis_btn = QPushButton("📋 Copy Visible")
+        self._copy_vis_btn.setMinimumHeight(28)
+        self._copy_vis_btn.setStyleSheet(style_btn)
+        self._copy_vis_btn.setToolTip("Copy visible entries on this page to the clipboard.")
+        self._copy_vis_btn.clicked.connect(lambda: self._copy_to_clipboard(copy_all=False))
+
+        self._copy_all_btn = QPushButton("📋 Copy All")
+        self._copy_all_btn.setMinimumHeight(28)
+        self._copy_all_btn.setStyleSheet(style_btn)
+        self._copy_all_btn.setToolTip("Copy all entries to the clipboard.")
+        self._copy_all_btn.clicked.connect(lambda: self._copy_to_clipboard(copy_all=True))
+
+        nav.addWidget(self._copy_vis_btn)
+        nav.addWidget(self._copy_all_btn)
+
         nav.addWidget(self._next)
         nav.addWidget(self._last)
 
@@ -2011,6 +2027,36 @@ class _LogWidget(QWidget):
                              f"hr {{background-color: {t['header_sep']}}} "
                              f".entry-odd  {{padding: 2px; background-color: rgba(0, 0, 0, 0.15)}} "
                              f".entry-even {{padding: 2px; background-color: rgba(255, 255, 255, 0.05)}}</style>")
+
+    def _copy_to_clipboard(self, copy_all: bool = False) -> None:
+        if copy_all:
+            chunk = self._filtered
+            active_btn = self._copy_all_btn
+        else:
+            start = self._page * self._PAGE
+            chunk = self._filtered[start: start + self._PAGE]
+            active_btn = self._copy_vis_btn
+
+        if not chunk:
+            return
+
+        text = "\n\n".join(chunk)
+
+        clipboard = QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(text)
+
+        original = active_btn.text()
+        active_btn.setText("✓ Copied!")
+        active_btn.setEnabled(False)
+
+        from PyQt6.QtCore import QTimer
+
+        def restore_btn() -> None:
+            active_btn.setText(original)
+            active_btn.setEnabled(True)
+
+        QTimer.singleShot(1500, restore_btn)
 
     @property
     def is_truncated(self) -> bool: return self._truncated

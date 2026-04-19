@@ -1,4 +1,5 @@
 import shutil
+import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -17,6 +18,21 @@ from state import S, _HOME, _PROFILES_DIR, _PROFILE_RE, RESTART_DIALOG, save_pro
 from themes import apply_style, register_style_listener, unregister_style_listener
 from ui_utils import _StandardKeysMixin
 from windows import base_window
+
+
+def _notify(title: str, body: str, urgency: str = "normal") -> None:
+    import shutil
+    if not shutil.which("notify-send"):
+        return
+    try:
+        subprocess.Popen(
+            ["notify-send", f"--urgency={urgency}", "--app-name=Backup Helper",
+             "--icon=drive-harddisk", title, body],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError:
+        pass
 
 
 class MainWindow(_StandardKeysMixin, QMainWindow):
@@ -75,9 +91,24 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
             dlg = cls(self, *args)
             if setup_fn:
                 setup_fn(dlg)
-            if dlg.exec() != RESTART_DIALOG:
+            result = dlg.exec()
+            if result != RESTART_DIALOG:
                 break
         self.show()
+
+        if cls.__name__ == "base_window" and args and args[0] in ("Backup", "Restore"):
+            op = args[0]
+            if hasattr(dlg, "worker") and hasattr(dlg, "errors"):
+                if getattr(dlg, "_quitting", False):
+                    return
+                errors = getattr(dlg, "errors", 0)
+                copied = getattr(dlg, "copied", 0)
+                if errors:
+                    _notify(f"{op} completed with errors",
+                            f"{copied} files copied, {errors} error(s)", urgency="critical")
+                elif copied > 0:
+                    _notify(f"{op} completed successfully",
+                            f"{copied} file(s) copied", urgency="normal")
 
     def _open_settings(self) -> None:
         self._open(base_window, "Settings", setup_fn=lambda d: d.changed.connect(apply_style))

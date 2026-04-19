@@ -217,11 +217,20 @@ def check_drives_to_mount(paths: list[str]) -> list[dict]:
     for opt in S.mount_options:
         if is_mounted(opt, mounts):
             continue
-        name = opt.get("drive_name", "")
+        name       = opt.get("drive_name", "")
         mount_path = opt.get("mount_path", "").strip()
-        candidates = [mount_path] if mount_path else _mount_paths(name) if _valid_drive_name(name) else []
+
+        if not mount_path and not _valid_drive_name(name):
+            logger.warning(
+                "check_drives_to_mount: Drive %r does not have a valid name or a "
+                "mount_path — will be skipped. Please correct this in the settings.", name
+            )
+            continue
+
+        candidates = [mount_path] if mount_path else (_mount_paths(name) if _valid_drive_name(name) else ())
         for candidate in candidates:
-            if not candidate: continue
+            if not candidate:
+                continue
             if any(_is_subpath(candidate, p) for p in paths):
                 needed.append(opt)
                 break

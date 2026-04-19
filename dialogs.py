@@ -404,7 +404,28 @@ class EntryDialog(QDialog):
         dlg.adjustSize()
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return None
-        s, d = src_ed.toPlainText().strip(), dst_ed.toPlainText().strip()
+
+        def _first_valid_line(text: str) -> str:
+            lines = [l.strip() for l in text.splitlines() if l.strip()]
+            return lines[0] if lines else ""
+
+        s_raw = src_ed.toPlainText().strip()
+        d_raw = dst_ed.toPlainText().strip()
+
+        s_lines = [l for l in s_raw.splitlines() if l.strip()]
+        d_lines = [l for l in d_raw.splitlines() if l.strip()]
+
+        if len(s_lines) > 1 or len(d_lines) > 1:
+            QMessageBox.warning(
+                self,
+                "One Path per Field",
+                "Each field must contain exactly one path.\n\n"
+                "Use '➕ Add Pair' again to add additional source/destination pairs.\n\n"
+                "Only the first line has been kept."
+            )
+
+        s = _first_valid_line(s_raw)
+        d = _first_valid_line(d_raw)
         return (s, d) if (s or d) else None
 
     def _add_pair(self) -> None:
