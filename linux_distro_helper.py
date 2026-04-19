@@ -5,10 +5,9 @@ import shlex
 import subprocess
 from pathlib import Path
 from typing import Any, Callable
+
 from constants import USER_SHELLS, ARCH_KERNEL_VARIANTS, PKG_NAME_RE
-
 from state import logger
-
 
 __all__ = ["LinuxDistroHelper", "SESSIONS", "USER_SHELLS", "ARCH_KERNEL_VARIANTS", "is_valid_pkg_name"]
 
@@ -489,14 +488,21 @@ class LinuxDistroHelper:
                 if match:
                     return match
         try:
+            _MAX_PROCS = 2000
+            _count = 0
             with os.scandir("/proc") as it:
                 for entry in it:
-                    if not entry.name.isdigit(): continue
+                    if not entry.name.isdigit():
+                        continue
+                    _count += 1
+                    if _count > _MAX_PROCS:
+                        break
                     try:
                         comm = Path(f"/proc/{entry.name}/comm").read_text().strip().lower()
                     except OSError:
                         continue
-                    if comm in _WM_PROCS: return _WM_PROCS[comm]
+                    if comm in _WM_PROCS:
+                        return _WM_PROCS[comm]
         except Exception as err:
             logger.error("Error detect_session: %s", err)
         return None

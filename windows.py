@@ -228,11 +228,6 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
             except (TypeError, RuntimeError):
                 pass
 
-    def closeEvent(self, event) -> None:
-        self._cleanup_connections()
-        if event is not None:
-            super().closeEvent(event)
-
     def keyPressEvent(self, event) -> None:
         k = event.key()
         if k in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
@@ -243,6 +238,10 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
                     self._toggle_all()
                 return
         super().keyPressEvent(event)
+
+    def closeEvent(self, event) -> None:
+        self._cleanup_connections()
+        super().closeEvent(event)
 
 
 class _CopyMixin:

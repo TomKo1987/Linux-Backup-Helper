@@ -4,7 +4,6 @@ import os
 import shutil
 import subprocess
 import tarfile
-import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -588,7 +587,7 @@ class MountsDialog(_ListDialog):
 
     def _edit(self) -> None:
         opt = self._selected_data()
-        if not opt: return
+        if not isinstance(opt, dict): return
         dlg = MountDialog(self, opt)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             idx = next((i for i, o in enumerate(S.mount_options) if o is opt), None)
@@ -600,13 +599,11 @@ class MountsDialog(_ListDialog):
 
     def _del(self) -> None:
         opt = self._selected_data()
-        if not opt:
+        if not isinstance(opt, dict):
             return
-        name: str = opt.get("drive_name", "?") if isinstance(opt, dict) else "?"
-        if QMessageBox.question(
-            self, "Remove Drive",
-            f"Really remove '{name}' from mount options?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+        name: str = opt.get("drive_name", "?")
+        if QMessageBox.question(self, "Remove Drive", f"Really remove '{name}' from mount options?",
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
         S.mount_options = [o for o in S.mount_options if o is not opt]
         save_profile()
@@ -1077,6 +1074,8 @@ class SysInfoDialog(_TextViewDialog):
         super().__init__(parent, "System Information", (1350, 825), font_size=font_sz(2))
         self.view.setPlainText("⏳ Loading system information…")
         self.done_sig.connect(self.view.setPlainText)
+        import threading
+        self._closed_lock = threading.Lock()
         self._closed = False
         threading.Thread(target=self._run, daemon=True).start()
 
@@ -1097,7 +1096,9 @@ class SysInfoDialog(_TextViewDialog):
         except Exception as exc:
             result = f"An unexpected error occurred: {exc}"
         try:
-            if not self._closed:
+            with self._closed_lock:
+                closed = self._closed
+            if not closed:
                 self.done_sig.emit(result)
         except RuntimeError:
             pass
@@ -1107,5 +1108,6 @@ class SysInfoDialog(_TextViewDialog):
             self.done_sig.disconnect()
         except (RuntimeError, TypeError):
             pass
-        self._closed = True
+        with self._closed_lock:
+            self._closed = True
         super().closeEvent(event)

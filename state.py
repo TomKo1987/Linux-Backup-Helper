@@ -7,8 +7,8 @@ from dataclasses import dataclass, field, fields as _dc_fields
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Optional
-from constants import USER_SHELLS, ARCH_KERNEL_VARIANTS
 
+from constants import USER_SHELLS, ARCH_KERNEL_VARIANTS
 
 _USER = pwd.getpwuid(os.getuid()).pw_name
 _HOME = Path.home()
@@ -190,7 +190,7 @@ def _norm_paths(raw: Any) -> list[str]:
     if not raw:
         return []
     if isinstance(raw, list):
-        return [p.strip() for p in (str(x) for x in raw) if p.strip()]
+        return [s for x in raw if (s := str(x).strip())]
     s = str(raw).strip()
     if not s:
         return []

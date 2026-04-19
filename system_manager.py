@@ -532,7 +532,7 @@ class SystemManagerThread(QThread):
             if status == _Status.ERROR:
                 self.outputReceived.emit(f"Aborting remaining tasks due to failure in '{task_id}'.", "error")
                 for remaining_id, _ in task_items[idx + 1:]:
-                    self.taskStatusChanged.emit(remaining_id, _Status.PENDING)
+                    self.taskStatusChanged.emit(remaining_id, _Status.WARNING)
                 break
 
     @staticmethod
@@ -823,11 +823,14 @@ class SystemManagerThread(QThread):
 
             t1 = threading.Thread(target=_read_out, daemon=True); t2 = threading.Thread(target=_kill_on_retry, daemon=True)
             t1.start(); t2.start()
-            try: proc.wait(timeout=2)
+            try:
+                proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                try: proc.wait(timeout=2)
-                except subprocess.TimeoutExpired: pass
+                try:
+                    proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    pass
             t1.join(2); t2.join(2)
             output = chunks[0] if chunks else b""
             ok = proc.returncode == 0 and output.strip() == token.encode()
@@ -1477,7 +1480,9 @@ class SystemManagerThread(QThread):
 
     def _install_flatpak(self) -> bool:
         if not self.distro: return False
-        if not all(self._install_pkg(p, "Flatpak") for p in self.distro.get_flatpak_packages()): return False
+        results = [self._install_pkg(p, "Flatpak") for p in self.distro.get_flatpak_packages()]
+        if not all(results):
+            return False
         self.outputReceived.emit("Adding Flathub remote…", "info")
         try:
             cmd = self.distro.flatpak_add_flathub()

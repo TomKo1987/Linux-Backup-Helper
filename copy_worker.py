@@ -276,7 +276,6 @@ def _is_up_to_date_local(dst: str, src_st: "os.stat_result") -> bool:
 
 def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
     rem = total
-    skip_sendfile = False
     try:
         while rem > 0:
             if cancel.is_set():
@@ -288,19 +287,18 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
     except InterruptedError:
         raise
     except OSError as exc:
-        if exc.errno == errno.EXDEV:
-            skip_sendfile = True
-        elif exc.errno in (errno.ENOSYS, errno.EOPNOTSUPP, errno.ENOTSUP):
-            logger.debug("copy_file_range not supported (errno=%d), falling back: %s", exc.errno, exc)
+        if exc.errno in (errno.ENOSYS, errno.EOPNOTSUPP, errno.ENOTSUP):
+            logger.debug("copy_file_range not supported, falling back: %s", exc)
         else:
-            logger.debug("copy_file_range failed (errno=%d), falling back to sendfile/read-write: %s", exc.errno, exc)
+            logger.debug("copy_file_range failed (errno=%d), falling back: %s", exc.errno, exc)
         try:
             os.lseek(rfd, 0, os.SEEK_SET)
             os.lseek(wfd, 0, os.SEEK_SET)
+            os.ftruncate(wfd, 0)
         except OSError:
             pass
         rem = total
-    if rem > 0 and not skip_sendfile:
+    if rem > 0:
         offset = total - rem
         try:
             while rem > 0:
@@ -317,7 +315,7 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
             logger.debug("sendfile fallback failed or not supported: %s", exc)
     if rem > 0:
         try:
-            seek_to = 0 if skip_sendfile else (total - rem)
+            seek_to = total - rem
             try:
                 os.lseek(rfd, seek_to, os.SEEK_SET)
                 os.lseek(wfd, seek_to, os.SEEK_SET)
@@ -505,6 +503,9 @@ class _SmbClient:
         if self._guest:
             return self._argv[:], None, None
         if not self._pw:
+            if self._user:
+                logger.warning("SMB //%s/%s: user '%s' set but no password available, falling back to guest.",
+                               self.host, self.share, self._user)
             return self._argv + ["-N"], None, None
         if _SHM_DIR is not None:
             try:
@@ -1018,9 +1019,8 @@ class CopyWorker(QThread):
                     pass
 
     def run(self) -> None:
-        global _seen_dirs_global
         with _seen_dirs_lock:
-            _seen_dirs_global = set()
+            _seen_dirs_global.clear()
         pw: "_SecurePw | None" = None
         try:
             smb_tasks, local_tasks = [], []

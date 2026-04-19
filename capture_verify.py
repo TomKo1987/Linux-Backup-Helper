@@ -77,7 +77,15 @@ _SYSTEM_BASE_PKGS: frozenset[str] = frozenset({
     "base",
     "base-devel",
     "linux-firmware",
-    "plasma-desktop"
+    "plasma-desktop",
+    "gnome-shell",
+    "xfce4-session",
+    "cinnamon",
+    "mate-session-manager",
+    "lxsession",
+    "lxqt-session",
+    "budgie-desktop",
+    "deepin-session-shell",
 })
 
 
@@ -105,7 +113,12 @@ def _get_sm_managed_packages(helper: LinuxDistroHelper) -> frozenset:
         pkgs.add(kernel_pkg)
         pkgs.add(header_pkg)
 
-    pkgs.add(helper.get_kernel_headers_pkg())
+    try:
+        hdr_pkg = helper.get_kernel_headers_pkg()
+        if hdr_pkg:
+            pkgs.add(hdr_pkg)
+    except (NotImplementedError, OSError, subprocess.SubprocessError):
+        pass
 
     pkgs.update({"intel-ucode", "intel-microcode", "microcode_ctl", "ucode-intel", "amd-ucode", "amd64-microcode"})
 
@@ -596,7 +609,7 @@ class _CaptureTab(QWidget):
         self._scroll.show()
         self._sel_all_btn.setVisible(has_new_pkgs)
         self._add_btn.setVisible(has_new_pkgs)
-        if has_new_pkgs or services:
+        if has_new_pkgs:
             self._btns.show()
 
     def _build_specific_section(self, new_basic: list[str], excluded: frozenset, t: dict) -> QWidget:
@@ -632,8 +645,7 @@ class _CaptureTab(QWidget):
         vl.addLayout(sess_row)
 
         existing_specific = {p.get("package", "") for p in S.specific_packages if isinstance(p, dict)}
-        eligible = [p for p in sorted(set(new_basic))
-                    if p not in excluded and p not in existing_specific]
+        eligible = [p for p in new_basic if p not in excluded and p not in existing_specific]
 
         if not eligible:
             no_lbl = QLabel("— No eligible packages found —")
@@ -703,14 +715,15 @@ class _CaptureTab(QWidget):
         gl.setSpacing(4)
 
         _OP_LABELS: dict[str, str] = {
-            "enable_bluetooth_service":         "Bluetooth",
-            "enable_atd_service":               "atd (at-daemon)",
-            "enable_firewall":                  "Firewall (ufw)",
-            "enable_printer_support":           "Printer (CUPS)",
-            "enable_ssh_service":               "SSH server",
+            "enable_bluetooth_service": "Bluetooth",
+            "enable_atd_service": "atd (at-daemon)",
+            "enable_firewall": "Firewall (ufw)",
+            "enable_printer_support": "Printer (CUPS)",
+            "enable_ssh_service": "SSH server",
             "enable_samba_network_filesharing": "Samba (file sharing)",
-            "enable_cronie_service":            "Cron (cronie/cron)",
-            "install_snap":                     "Snapd",
+            "enable_cronie_service": "Cron (cronie/cron)",
+            "install_snap": "Snapd",
+            "enable_flatpak_integration": "Flatpak",
         }
 
         cols = 2

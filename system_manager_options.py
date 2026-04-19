@@ -143,7 +143,7 @@ def _compute_op_status(distro: LinuxDistroHelper, has_yay: bool, system_default_
 
     try:
         target = S.effective_shell
-        binary  = distro.get_shell_binary_name(distro.get_shell_package_name(target))
+        binary  = distro.get_shell_binary_name(target)
         current = _pwd.getpwnam(_USER).pw_shell
         status["shell_ok"] = (Path(current).name == binary)
     except (KeyError, OSError):
@@ -722,7 +722,8 @@ class SystemManagerOptions(QDialog):
                     _hint.setText("-" if visible else "+")
                 return _toggle
 
-            hint.mousePressEvent = lambda e, _fn=_make_toggle(): _fn()
+            _toggle_fn = _make_toggle()
+            hint.mousePressEvent = lambda e, _fn=_toggle_fn: _fn()
 
         if checkboxes:
             _add_select_all_tri(vlay, [cb for cb, _ in checkboxes])

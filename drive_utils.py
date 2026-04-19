@@ -86,8 +86,11 @@ def _validate_cmd(cmd: str) -> tuple[bool, str, list[str]]:
         return False, "No command tokens found", []
     expanded = [os.path.expanduser(tok) for tok in tokens]
     base = os.path.basename(expanded[0])
-    if base == "sudo" and len(expanded) > 1:
-        base = os.path.basename(expanded[1])
+    if base == "sudo":
+        for tok in expanded[1:]:
+            if not tok.startswith("-"):
+                base = os.path.basename(tok)
+                break
     if base not in _ALLOWED_MOUNT_CMDS:
         return False, f"'{base}' is not an allowed command", []
     for tok in expanded:
