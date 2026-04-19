@@ -84,7 +84,6 @@ _SMB_DOWN_RE = re.compile(
 
 class _CacheMiss:
     __slots__ = ()
-    def __repr__(self) -> str: return "<CACHE_MISS>"
 
 
 _CACHE_MISS = _CacheMiss()
@@ -291,8 +290,10 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
     except OSError as exc:
         if exc.errno == errno.EXDEV:
             skip_sendfile = True
+        elif exc.errno in (errno.ENOSYS, errno.EOPNOTSUPP, errno.ENOTSUP):
+            logger.debug("copy_file_range not supported (errno=%d), falling back: %s", exc.errno, exc)
         else:
-            logger.error("copy_file_range failed (errno=%d), falling back: %s", exc.errno, exc)
+            logger.debug("copy_file_range failed (errno=%d), falling back to sendfile/read-write: %s", exc.errno, exc)
         try:
             os.lseek(rfd, 0, os.SEEK_SET)
             os.lseek(wfd, 0, os.SEEK_SET)
@@ -316,9 +317,12 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
             logger.debug("sendfile fallback failed or not supported: %s", exc)
     if rem > 0:
         try:
-            if not skip_sendfile:
-                os.lseek(rfd, total - rem, os.SEEK_SET)
-                os.lseek(wfd, total - rem, os.SEEK_SET)
+            seek_to = 0 if skip_sendfile else (total - rem)
+            try:
+                os.lseek(rfd, seek_to, os.SEEK_SET)
+                os.lseek(wfd, seek_to, os.SEEK_SET)
+            except OSError:
+                pass
             while rem > 0:
                 if cancel.is_set():
                     raise InterruptedError
@@ -468,8 +472,9 @@ class _SmbClient:
         self._user  = user
         self._pw    = pw
         self._guest = guest
-        _smb_proto = ["-m", "SMB3"]
-        self._argv = (["smbclient", f"//{host}/{share}", "-N"] + _smb_proto if guest else ["smbclient", f"//{host}/{share}"] + _smb_proto)
+        _proto = ["-m", "SMB3"]
+        base = ["smbclient", f"//{host}/{share}"]
+        self._argv = (base + ["-N"] + _proto) if guest else (base + _proto)
 
     def _spawn(self, argv: list[str], input_data: str, timeout: int, wipe_fn=None) -> "tuple[subprocess.Popen | None, str, str]":
         tid = threading.get_ident()
@@ -513,9 +518,8 @@ class _SmbClient:
 
     def _run_with_creds(self, input_data: str, timeout: int) -> "tuple[subprocess.Popen | None, str, str]":
         argv, tmp_dir, cred_path = self._argv_with_creds()
-        _tmp: str = tmp_dir or ""
-        _cred: str = cred_path or ""
-        wipe_fn = (lambda: _wipe_smb_cred(_tmp, _cred)) if (tmp_dir and cred_path) else None
+        wipe_fn = (lambda: _wipe_smb_cred(str(tmp_dir), str(cred_path))) if (tmp_dir and cred_path) else None
+
         return self._spawn(argv, input_data, timeout, wipe_fn=wipe_fn)
 
     def run(self, cmds: str, timeout: int) -> tuple[bool, str]:
@@ -1302,7 +1306,7 @@ class CopyWorker(QThread):
             if cancel.is_set():
                 local_n -= len(batch)
 
-            if local_n:
+            if local_n > 0:
                 with pend_lock:
                     found[0] += local_n
 
@@ -2341,6 +2345,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
                 pass
             self._cancel_connected = False
 
+        self.cancel_btn.setEnabled(True)
         self.cancel_btn.setText("✓ Close")
         self.cancel_btn.clicked.connect(self.accept)
 

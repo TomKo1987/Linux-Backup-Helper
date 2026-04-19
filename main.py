@@ -3,13 +3,14 @@ import sys
 import threading
 from pathlib import Path
 
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QMenu, QMessageBox, QPushButton, QSystemTrayIcon, QWidget,
     QApplication, QInputDialog, QMainWindow, QGridLayout, QFileDialog
 )
 
+from capture_verify import CaptureVerifyDialog
 from dialogs import LogViewer, SysInfoDialog
 from drive_utils import get_mounts, is_mounted, unmount_drive, get_session_managed_mounts
 from state import S, _HOME, _PROFILES_DIR, _PROFILE_RE, RESTART_DIALOG, save_profile, logger, startup_load
@@ -29,9 +30,10 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
         self.menu_actions = [("💾 Create Backup", lambda: self._open(base_window, "Backup"), False),
                              ("📤 Restore Backup", lambda: self._open(base_window, "Restore"), False),
                              ("🖥 System Manager", self._launch_system_manager, False),
+                             ("🔍 Capture && Verify", self._launch_capture_verify, False),
+                             ("⚙️ Settings", self._open_settings, False),
                              ("💻 System Info", lambda: self._open(SysInfoDialog), True),
                              ("📋 View Logs", lambda: self._open(LogViewer), False),
-                             ("⚙️ Settings", self._open_settings, False),
                              ("❌ Quit", self._exit, False)]
 
         self._build_ui()
@@ -81,6 +83,9 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
         self._open(base_window, "Settings", setup_fn=lambda d: d.changed.connect(apply_style))
         self._build_ui()
 
+    def _launch_capture_verify(self) -> None:
+        self._open(CaptureVerifyDialog)
+
     def _launch_system_manager(self) -> None:
         from system_manager_options import SystemManagerLauncher
         SystemManagerLauncher(self).launch()
@@ -123,7 +128,8 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
         mount_out = get_mounts()
         all_mounted = [o for o in S.mount_options if is_mounted(o, mount_out)]
         known_names = {x.get("drive_name") for x in all_mounted if x.get("drive_name")}
-        all_mounted.extend(o for o in get_session_managed_mounts() if o.get("drive_name") not in known_names)
+        all_mounted.extend(o for o in get_session_managed_mounts()
+                           if o.get("drive_name") and o.get("drive_name") not in known_names)
 
         unmountable = [o for o in all_mounted if o.get("unmount_command")]
         info_only = [o for o in all_mounted if not o.get("unmount_command")]
@@ -180,13 +186,57 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
 def _first_run_wizard(parent) -> bool:
     msg = QMessageBox(parent)
     msg.setWindowTitle("Welcome to Backup Helper")
-    msg.setText("<b>No profile found.</b><br><br>Would you like to import an existing profile (.json)?")
-    msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-    _yes_btn = msg.button(QMessageBox.StandardButton.Yes)
-    _no_btn = msg.button(QMessageBox.StandardButton.No)
-    if _yes_btn: _yes_btn.setText("Import profile")
-    if _no_btn:  _no_btn.setText("Create empty profile")
-    if msg.exec() == QMessageBox.StandardButton.Yes:
+    msg.setText(
+        "<b>No profile found.</b><br><br>"
+        "How would you like to set up your profile?<br><br>"
+        "<b>🔍 Scan System:</b> Detect installed packages on this machine and add them "
+        "to a new profile automatically — the recommended way to get started.<br><br>"
+        "<b>📥 Import Profile:</b> Load an existing <code>.json</code> profile from disk.<br><br>"
+        "<b>➕ Start Empty:</b> Create a blank profile you can fill in manually later."
+    )
+    msg.setTextFormat(Qt.TextFormat.RichText)
+    scan_btn   = msg.addButton("🔍 Scan System",    QMessageBox.ButtonRole.ActionRole)
+    import_btn = msg.addButton("📥 Import Profile", QMessageBox.ButtonRole.ActionRole)
+    _empty_btn = msg.addButton("➕ Start Empty",    QMessageBox.ButtonRole.RejectRole)
+    msg.setDefaultButton(scan_btn)
+    msg.exec()
+    clicked = msg.clickedButton()
+
+    if clicked == scan_btn:
+        from ui_utils import ask_profile_name
+        name = ask_profile_name("New Profile Name", "Default", parent)
+        if not name:
+            S.profile_name, S.headers, S.entries = "Default", {}, []
+            save_profile()
+            return True
+
+        _PROFILES_DIR.mkdir(parents=True, exist_ok=True)
+        S.profile_name, S.headers, S.entries = name, {}, []
+        save_profile()
+
+        QMessageBox.information(parent, "System Scan — How It Works",
+                                "<b>System Capture will now open.</b><br><br>"
+                                "The <b>System Capture</b> tab scans your installed packages and active services "
+                                "and shows what is not yet tracked in your profile.<br><br>"
+                                "<b>Packages:</b> Select new packages and click <b>Add Selected to Profile</b>.<br>"
+                                "<b>Specific Packages:</b> Mark packages that should only be installed for a "
+                                "certain desktop session (e.g. KDE-only or Hyprland-only packages).<br>"
+                                "<b>Services:</b> Active system services (SSH, Samba, Bluetooth …) are listed. "
+                                "Check any you want System Manager to handle, then click "
+                                "<b>Add Selected Services to Profile</b>.<br><br>"
+                                "The <b>Verify Profile</b> tab checks that all paths, services and packages "
+                                "defined in your profile actually exist on this system.<br><br>"
+                                "<b>Tips:</b><br>"
+                                "• Use <i>Select All New</i> to add all packages at once, then deselect "
+                                "what you don't need (e.g. temporary build tools).<br>"
+                                "• System-critical packages (kernel, base, firmware) are excluded automatically.<br>"
+                                "• You can re-open Capture &amp; Verify at any time from the main menu.<br><br>"
+                                "Click <b>OK</b> to start the scan.")
+
+        CaptureVerifyDialog(parent).exec()
+        return True
+
+    if clicked == import_btn:
         path, _ = QFileDialog.getOpenFileName(parent, "Select profile", str(_HOME), "JSON (*.json)")
         while path:
             name, ok = QInputDialog.getText(parent, "Profile name", "Name:", text=Path(path).stem)
@@ -210,6 +260,7 @@ def _first_run_wizard(parent) -> bool:
             except OSError as e:
                 QMessageBox.critical(parent, "Import Failed", f"Could not copy profile:\n{e}")
                 break
+
     S.profile_name, S.headers, S.entries = "Default", {}, []
     save_profile()
     return True
@@ -230,7 +281,7 @@ def main():
     def _thread_excepthook(args):
         if args.exc_type and issubclass(args.exc_type, KeyboardInterrupt):
             return
-        logger.critical("Uncaught thread exception", exc_info=(args.exc_type, args.exc_value, args.exc_tb))
+        logger.critical("Uncaught thread exception", exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
 
     sys.excepthook = _excepthook
     threading.excepthook = _thread_excepthook

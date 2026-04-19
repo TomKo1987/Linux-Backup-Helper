@@ -4,6 +4,7 @@ import pwd
 import queue
 import re
 import secrets
+import select as _select
 import shlex
 import shutil
 import subprocess
@@ -18,29 +19,30 @@ from typing import Optional
 from PyQt6.QtCore import Qt, QElapsedTimer, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QIcon, QTextCursor
 from PyQt6.QtWidgets import (
-    QDialog, QGraphicsDropShadowEffect, QHBoxLayout,
-    QLabel, QListWidget, QListWidgetItem, QPushButton, QTextEdit, QVBoxLayout
+    QApplication, QDialog, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QLineEdit,
+    QListWidget, QListWidgetItem, QPushButton, QTextEdit, QVBoxLayout, QWidget,
 )
 
-from linux_distro_helper import LinuxDistroHelper, _PKG_RE as _BATCH_PKG_RE
-from state import S, _HOME, _USER, logger, apply_replacements
+from linux_distro_helper import LinuxDistroHelper, ARCH_KERNEL_VARIANTS
+from state import S, _HOME, _USER, logger, apply_replacements, _ANSI_RE, active_pkg_names, active_system_files
 from themes import current_theme, font_sz
 from ui_utils import _StandardKeysMixin
 
 
-def _zero(buf: bytearray) -> None:
-    buf[:] = bytearray(len(buf))
+def _zero(buf: bytearray) -> None: buf[:] = bytearray(len(buf))
 
 
-def _pw_bytes(pw) -> bytearray:
-    return pw.get_bytes() + b"\n" if pw else bytearray()
+def _pw_bytes(pw) -> bytearray: return bytearray(pw.get_bytes() + b"\n") if pw else bytearray()
 
 
 _INFO_RE = re.compile(
-    r"INFO:|rating|mirror|download|synchroniz|\$srcdir/|Erfolg|Übertragung|"
-    r"avg speed|=====|OK|Statuserläuterung|Klon|PGP|MiB|Fertig|\.\.\.",
+    r"INFO:|rating|mirror|download|synchroniz|\$srcdir/|Success|Branch|Transmission|"
+    r"avg speed|=====|OK|Status Explanation|Status Legend:|Clone|PGP|MiB|Done|\.\.\.",
     re.IGNORECASE,
 )
+
+
+_PACMAN_PROGRESS_RE = re.compile(r'\[[-Co# ]+]\s*\d+%')
 
 
 class _Status: PENDING, IN_PROGRESS, SUCCESS, WARNING, ERROR = ("pending", "in_progress", "success", "warning", "error")
@@ -52,8 +54,9 @@ _FONT_SANS = "Hack, Noto Serif, monospace"
 
 class _Style:
     KIND_CFG: dict[str, tuple] = {"operation": (_FONT_MONO, 16, 1.2, "info"), "info": (_FONT_MONO, 15, 1.0, "success"),
-                                  "subprocess":(_FONT_SANS, 13, 0.6, "text"), "success": (_FONT_MONO, 15, 1.0, "success"),
-                                  "warning": (_FONT_MONO, 15, 1.0, "warning"), "error": (_FONT_MONO, 15, 1.0, "error")}
+                                  "subprocess":(_FONT_SANS, 13, 0.85, "text"), "success": (_FONT_MONO, 15, 1.0, "success"),
+                                  "warning": (_FONT_MONO, 15, 1.0, "warning"), "error": (_FONT_MONO, 15, 1.0, "error"),
+                                  "dimmed": (_FONT_SANS, 12, 0.95, "muted")}
 
     STATUS_CFG: dict[str, tuple] = {_Status.SUCCESS: ("success", "dialog-ok-apply"), _Status.ERROR: ("error", "dialog-error"),
                                     _Status.WARNING: ("warning", "dialog-warning"),  _Status.IN_PROGRESS: ("info", "media-playback-start")}
@@ -98,7 +101,7 @@ class _SudoKeepalive(threading.Thread):
                 if r.returncode != 0 and self._pw:
                     buf = _pw_bytes(self._pw)
                     try:
-                        subprocess.run(["sudo", "-S", "-v"], input=bytes(buf), capture_output=True, timeout=10)
+                        subprocess.run(["sudo", "-S", "-v"], input=buf, capture_output=True, timeout=10)
                     finally:
                         _zero(buf)
             except Exception as exc:
@@ -137,6 +140,7 @@ class SystemManagerDialog(_StandardKeysMixin, QDialog):
     BUTTON_SIZE = (160, 50)
     RIGHT_W = 370
     cancelRequested = pyqtSignal()
+    inputProvided   = pyqtSignal(str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -198,9 +202,35 @@ class SystemManagerDialog(_StandardKeysMixin, QDialog):
         btn_row.addStretch()
         btn_row.addWidget(self._close_btn)
 
+        self._input_panel = QWidget()
+        self._input_panel.setVisible(False)
+        ip_layout = QVBoxLayout(self._input_panel)
+        ip_layout.setContentsMargins(0, 6, 0, 0)
+        ip_layout.setSpacing(4)
+
+        self._input_prompt_lbl = QLabel()
+        self._input_prompt_lbl.setWordWrap(True)
+        self._input_prompt_lbl.setStyleSheet(f"color:{t['warning']};font-size:{font_sz(1)}px;font-weight:bold;"
+                                             f"padding:6px 8px;border-left:3px solid {t['warning']};background:{t['bg3']};")
+        ip_layout.addWidget(self._input_prompt_lbl)
+
+        ip_row = QHBoxLayout()
+        ip_row.setSpacing(6)
+        self._input_edit = QLineEdit()
+        self._input_edit.setFixedHeight(36)
+        self._input_edit.returnPressed.connect(self._on_input_confirmed)
+        self._input_send_btn = QPushButton("↵  Send")
+        self._input_send_btn.setFixedHeight(36)
+        self._input_send_btn.setMinimumWidth(90)
+        self._input_send_btn.clicked.connect(self._on_input_confirmed)
+        ip_row.addWidget(self._input_edit, 1)
+        ip_row.addWidget(self._input_send_btn)
+        ip_layout.addLayout(ip_row)
+
         left = QVBoxLayout()
         left.addWidget(self._text_edit)
         left.addWidget(self._fail_lbl)
+        left.addWidget(self._input_panel)
 
         right = QVBoxLayout()
         right.addWidget(self._checklist_lbl)
@@ -292,15 +322,27 @@ class SystemManagerDialog(_StandardKeysMixin, QDialog):
 
     def _show_db_lock_error(self) -> None:
         t = current_theme()
+
+        for i in range(self._checklist.count()):
+            item = self._checklist.item(i)
+            if item:
+                task_id = item.data(Qt.ItemDataRole.UserRole)
+                if self._task_status.get(task_id) == _Status.IN_PROGRESS:
+                    self.on_task_status(task_id, _Status.ERROR)
+                    break
+
+        self._append_html(f"<p style='{_Style.style_str('error')}'>Operation failed!</p>")
+
         ec = QColor(t["error"])
         r, g, b = ec.red(), ec.green(), ec.blue()
         self._append_html(f"<hr style='border:none;margin:10px 20px;border-top:1px dashed rgba({r},{g},{b},0.4);'>"
                           f"<div style='padding:15px;margin:10px;border-radius:10px;border-left:4px solid {t['error']};'>"
                           f"<p style='color:{t['error']};font-size:{font_sz(4)}px;text-align:center;'>"
-                          f"<b>⚠️ Installation Aborted</b><br>"
+                          f"<b>⚠️ System Manager Aborted</b><br>"
                           f"<span style='font-size:{font_sz(2)}px;'>/var/lib/pacman/db.lck detected!</span><br>"
                           f"<span style='color:{t['text']};font-size:{font_sz()}px;'>"
-                          f"Remove with: <code>sudo rm /var/lib/pacman/db.lck</code></span></p></div>")
+                          f"(Remove with: <code>'sudo rm /var/lib/pacman/db.lck</code>')</span></p></div><br>")
+
         self.mark_done()
         self.cancelRequested.emit()
 
@@ -341,16 +383,36 @@ class SystemManagerDialog(_StandardKeysMixin, QDialog):
         else:
             super().keyPressEvent(event)
 
+    def on_input_requested(self, prompt: str) -> None:
+        t = current_theme()
+        QApplication.processEvents()
+        self._input_prompt_lbl.setStyleSheet(f"color:{t['warning']};font-size:{font_sz(1)}px;font-weight:bold;"
+                                             f"padding:6px 8px;border-left:3px solid {t['warning']};background:{t['bg3']};")
+        self._input_prompt_lbl.setText(f"⚠ Provider selection required:")
+        self._input_edit.clear()
+        self._input_edit.setPlaceholderText(f"{prompt}")
+        self._input_panel.setVisible(True)
+        self._input_edit.setFocus()
+        if sb := self._text_edit.verticalScrollBar():
+            sb.setValue(sb.maximum())
+
+    def _on_input_confirmed(self) -> None:
+        answer = self._input_edit.text().strip()
+        self._input_panel.setVisible(False)
+        self._input_edit.clear()
+        self.inputProvided.emit(answer)
+
     def closeEvent(self, event) -> None: super().closeEvent(event) if (self._done or self._auth_failed) else event.ignore()
 
 
 class SystemManagerThread(QThread):
-    thread_started = pyqtSignal()
-    outputReceived = pyqtSignal(str, str)
+    thread_started    = pyqtSignal()
+    outputReceived    = pyqtSignal(str, str)
     taskStatusChanged = pyqtSignal(str, str)
-    taskListReady = pyqtSignal(list)
-    passwordFailed = pyqtSignal()
-    passwordSuccess = pyqtSignal()
+    taskListReady     = pyqtSignal(list)
+    passwordFailed    = pyqtSignal()
+    passwordSuccess   = pyqtSignal()
+    inputRequested    = pyqtSignal(str)
 
     def __init__(self, sudo_password, distro: Optional[LinuxDistroHelper] = None) -> None:
         super().__init__()
@@ -360,11 +422,15 @@ class SystemManagerThread(QThread):
         self._stop_keepalive = threading.Event()
         self._keepalive: Optional[_SudoKeepalive] = None
         self._enabled_tasks: dict[str, tuple] = {}
+        self._input_event: threading.Event = threading.Event()
+        self._input_value: str = ""
         self._env_snapshot: dict = os.environ.copy()
+        self._env_snapshot.update({"LC_ALL": "C", "LANG": "C", "LANGUAGE": "C"})
         self.distro: Optional[LinuxDistroHelper] = None
         self._pkg_cache: Optional[_PackageCache] = None
         try:
-            self.distro, self._pkg_cache = distro, _PackageCache(distro)
+            self.distro = distro
+            self._pkg_cache = _PackageCache(distro) if distro is not None else None
         except Exception as exc:
             logger.warning("distro init: %s", exc)
             self.distro = self._pkg_cache = None
@@ -403,6 +469,10 @@ class SystemManagerThread(QThread):
             except RuntimeError:
                 pass
 
+    def provide_input(self, answer: str) -> None:
+        self._input_value = answer.strip()
+        self._input_event.set()
+
     def _cleanup(self) -> None:
         self._stop_keepalive.set()
         if self._keepalive: self._keepalive.join(timeout=5); self._keepalive = None
@@ -418,9 +488,12 @@ class SystemManagerThread(QThread):
 
     def _base_tasks(self) -> dict:
         return {"copy_system_files": ("Copying System Files…", self._copy_sysfiles),
-                "update_mirrors": ("Updating mirrors…", self._update_mirrors), "set_user_shell": ("Setting user shell…", self._set_shell),
-                "update_system": ("Updating system…", self._update_system),
-                "install_kernel_header": ("Installing kernel headers…", self._install_kernel_header),
+                "update_mirrors": ("Updating mirrors…", self._update_mirrors), "update_system": ("Updating system…", self._update_system),
+                "set_user_shell": ("Setting user shell…", self._set_shell),
+                "install_ucode": ("Installing CPU microcode…", self._install_ucode),
+                "install_kernels": ("Installing kernel(s)…", self._install_kernels),
+                "install_kernel_header": ("Installing kernel header…", self._install_kernel_header),
+                "set_default_kernel": ("Setting default boot kernel…", self._set_default_kernel),
                 "install_basic_packages": ("Installing Basic Packages…", lambda: self._batch_install(S.basic_packages, "Basic Package")),
                 "install_yay": ("Installing yay…", self._install_yay),
                 "install_aur_packages": ("Installing AUR Packages with yay…", lambda: self._batch_install(S.aur_packages, "AUR Package", use_aur=True)),
@@ -459,7 +532,7 @@ class SystemManagerThread(QThread):
             if status == _Status.ERROR:
                 self.outputReceived.emit(f"Aborting remaining tasks due to failure in '{task_id}'.", "error")
                 for remaining_id, _ in task_items[idx + 1:]:
-                    self.taskStatusChanged.emit(remaining_id, _Status.WARNING)
+                    self.taskStatusChanged.emit(remaining_id, _Status.PENDING)
                 break
 
     @staticmethod
@@ -468,7 +541,8 @@ class SystemManagerThread(QThread):
             return ["sudo", "-S"] + cmd[1:]
         return cmd
 
-    def _exec(self, cmd: list[str] | str, stream: bool = False, timeout: Optional[int] = 15, cwd: Optional[str] = None) -> SimpleNamespace:
+    def _exec(self, cmd: list[str] | str, stream: bool = False, timeout: Optional[int] = 15,
+              cwd: Optional[str] = None) -> SimpleNamespace:
 
         if self.terminated: return SimpleNamespace(returncode=1, stdout="", stderr="")
 
@@ -477,92 +551,225 @@ class SystemManagerThread(QThread):
         elif isinstance(cmd, list):
             cmd = self._inject(list(cmd))
 
-        input_data = None
-        _stdin_thread = None
+        pw_to_send = None
         if self._pw and isinstance(cmd, list):
             if cmd[:2] == ["sudo", "-S"] or cmd[:1] == ["yay"]:
-                input_data = _pw_bytes(self._pw)
-                if cmd[:1] == ["yay"] and "--sudoflags=-S" not in cmd: cmd.append("--sudoflags=-S")
+                pw_to_send = self._pw
+                if cmd[:1] == ["yay"] and "--sudoflags=-S" not in cmd:
+                    cmd.append("--sudoflags=-S")
 
         if not stream:
+            input_data = _pw_bytes(pw_to_send) if pw_to_send else None
             try:
-                r = subprocess.run(cmd, input=bytes(input_data) if input_data else None,
-                                   capture_output=True, env=self._env_snapshot, timeout=timeout, cwd=cwd)
+                r = subprocess.run(cmd, input=input_data, capture_output=True, env=self._env_snapshot, timeout=timeout, cwd=cwd)
+
                 return SimpleNamespace(returncode=r.returncode, stdout=r.stdout.decode("utf-8", "replace"),
                                        stderr=r.stderr.decode("utf-8", "replace"))
+
             except subprocess.TimeoutExpired:
                 return SimpleNamespace(returncode=124, stdout="", stderr="Timeout")
             except Exception as exc:
                 return SimpleNamespace(returncode=1, stdout="", stderr=str(exc))
             finally:
-                if isinstance(input_data, bytearray): _zero(input_data)
+                if input_data: _zero(input_data)
 
         try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd, env=self._env_snapshot,
-                                    stdin=subprocess.PIPE if input_data else subprocess.DEVNULL)
-        except Exception as exc:
-            if isinstance(input_data, bytearray): _zero(input_data)
-            self.outputReceived.emit(f"Command launch error: {exc}", "error")
-            return SimpleNamespace(returncode=1)
-
-        if input_data:
-            def _write_stdin() -> None:
+            import pty as _pty_mod
+            try:
+                _pty_master, _pty_slave = _pty_mod.openpty()
                 try:
-                    if proc.stdin is not None and input_data is not None:
-                        proc.stdin.write(bytes(input_data))
-                        proc.stdin.flush()
-                except OSError:
-                    pass
-                finally:
+                    proc = subprocess.Popen(cmd, stdout=_pty_slave, stderr=subprocess.PIPE,
+                                            stdin=subprocess.PIPE, cwd=cwd, env=self._env_snapshot)
+                    os.close(_pty_slave)
+                    _pty_slave = -1
+                    proc.stdout = os.fdopen(_pty_master, 'rb', buffering=0)
+                except Exception:
+                    if _pty_slave != -1:
+                        try:
+                            os.close(_pty_slave)
+                        except OSError:
+                            pass
                     try:
-                        if proc.stdin:
-                            proc.stdin.close()
+                        os.close(_pty_master)
                     except OSError:
                         pass
-                    if isinstance(input_data, bytearray):
-                        _zero(input_data)
+                    raise
+            except OSError:
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                        stdin=subprocess.PIPE, cwd=cwd, env=self._env_snapshot)
+        except Exception as exc:
+            self.outputReceived.emit(f"Command launch error: {exc}", "error")
+            return SimpleNamespace(returncode=1, stdout="", stderr=str(exc))
 
-            _stdin_thread = threading.Thread(target=_write_stdin, daemon=True)
-            _stdin_thread.start()
-        out_q = queue.Queue()
+        out_q: queue.Queue = queue.Queue()
 
-        def _reader(_stream, _is_err):
-            for raw in iter(_stream.readline, b""):
-                if self.terminated: break
-                line = raw.decode("utf-8", errors="replace").strip()
-                if line: out_q.put((_is_err, line))
-            out_q.put(None)
+        def _make_pipe_reader(pipe, _is_err: bool):
+            def _reader() -> None:
+                buf = b""
+                try:
+                    _fd = pipe.fileno()
+                except (AttributeError, ValueError):
+                    out_q.put(None)
+                    return
 
-        t1 = threading.Thread(target=_reader, args=(proc.stdout, False), daemon=True)
-        t2 = threading.Thread(target=_reader, args=(proc.stderr, True), daemon=True)
-        t1.start(); t2.start()
+                try:
+                    while not self.terminated:
+                        try:
+                            ready, _, _ = _select.select([_fd], [], [], 0.1)
+                        except OSError:
+                            break
+
+                        if ready:
+                            chunk = os.read(_fd, 4096)
+                            if not chunk: break
+                            buf += chunk
+
+                        while b"\n" in buf:
+                            raw, buf = buf.split(b"\n", 1)
+                            line = raw.decode("utf-8", errors="replace").rstrip("\r")
+                            clean = _ANSI_RE.sub("", line).strip()
+                            if clean:
+                                if re.search(r"Enter a number|Enter a selection", clean, re.IGNORECASE):
+                                    out_q.put((_is_err, clean, "select"))
+                                elif re.search(r"\[N]one\s+\[A]ll", clean, re.IGNORECASE):
+                                    out_q.put((_is_err, clean, "auto_none"))
+                                else:
+                                    out_q.put((_is_err, clean, None))
+
+                        if buf:
+                            decoded = buf.decode("utf-8", errors="replace")
+                            clean = _ANSI_RE.sub("", decoded)
+                            if "[sudo]" in clean.lower() and "password" in clean.lower():
+                                out_q.put((_is_err, clean, "sudo_pw"))
+                                buf = b""
+                            elif re.search(r"Enter a number|Enter a selection", clean, re.IGNORECASE):
+                                out_q.put((_is_err, clean, "select"))
+                                buf = b""
+                            elif "[y/n]" in clean.lower():
+                                out_q.put((_is_err, clean, "confirm"))
+                                buf = b""
+                            elif re.search(r"\[N]one\s+\[A]ll", clean, re.IGNORECASE):
+                                out_q.put((_is_err, clean, "auto_none"))
+                                buf = b""
+
+                        if not ready and proc.poll() is not None: break
+                except (OSError, EOFError):
+                    pass
+                finally:
+                    if buf:
+                        clean = _ANSI_RE.sub("", buf.decode("utf-8", errors="replace")).strip()
+                        if clean: out_q.put((_is_err, clean, None))
+                    out_q.put(None)
+
+            return _reader
+
+        t_out = threading.Thread(target=_make_pipe_reader(proc.stdout, False), daemon=True)
+        t_err = threading.Thread(target=_make_pipe_reader(proc.stderr, True), daemon=True)
+        t_out.start(); t_err.start()
 
         sentinels = 0
         while sentinels < 2:
             try:
-                item = out_q.get(timeout=0.1)
+                item = out_q.get(timeout=0.25)
             except queue.Empty:
-                if self.terminated:
-                    proc.terminate()
-                    break
+                if self.terminated: proc.terminate(); break
                 continue
+
             if item is None:
                 sentinels += 1
-            else:
-                is_err, text = item
-                if "[sudo]" in text: text = re.sub(r"\[sudo].*?:\s*", "", text)
-                self.outputReceived.emit(text, "error" if is_err and not _INFO_RE.search(text) else "subprocess")
+                continue
 
+            is_err, text, tag = item
+
+            if tag == "sudo_pw":
+                if pw_to_send and proc.stdin:
+                    tmp_pw = _pw_bytes(pw_to_send)
+                    try:
+                        proc.stdin.write(tmp_pw)
+                        proc.stdin.flush()
+                    except OSError:
+                        pass
+                    finally:
+                        _zero(tmp_pw)
+                continue
+
+            if tag == "select":
+                time.sleep(0.1)
+                while True:
+                    try:
+                        pending = out_q.get_nowait()
+                    except queue.Empty:
+                        break
+                    if pending is None:
+                        sentinels += 1
+                        break
+                    p_err, p_text, p_tag = pending
+                    if p_tag is None:
+                        if "[sudo]" in p_text:
+                            p_text = re.sub(r"\[sudo].*?:\s*", "", p_text)
+                        if not _PACMAN_PROGRESS_RE.search(p_text):
+                            self.outputReceived.emit(
+                                p_text,
+                                "error" if p_err and not _INFO_RE.search(p_text) else "subprocess",
+                            )
+
+                self.inputRequested.emit(text)
+                self._input_event.clear()
+                timed_out = not self._input_event.wait(timeout=300)
+                answer = "" if timed_out else self._input_value.strip()
+                try:
+                    if proc.stdin and not proc.stdin.closed:
+                        proc.stdin.write((answer + "\n").encode())
+                        proc.stdin.flush()
+                except OSError:
+                    pass
+                if timed_out:
+                    logger.warning("_exec: input wait timed out for prompt, sending empty response")
+                self._input_value = ""
+                continue
+
+            if tag == "confirm":
+                try:
+                    if proc.stdin and not proc.stdin.closed:
+                        proc.stdin.write(b"y\n")
+                        proc.stdin.flush()
+                except OSError:
+                    pass
+                continue
+
+            if tag == "auto_none":
+                self.outputReceived.emit(text, "subprocess")
+                try:
+                    if proc.stdin and not proc.stdin.closed:
+                        proc.stdin.write(b"\n")
+                        proc.stdin.flush()
+                except OSError:
+                    pass
+                continue
+
+            if "[sudo]" in text: text = re.sub(r"\[sudo].*?:\s*", "", text)
+            if _PACMAN_PROGRESS_RE.search(text):
+                continue
+            if len(text) <= 2 and text.lower().strip() in ("y", "n"):
+                continue
+            _kind = "error" if is_err and not _INFO_RE.search(text) else "subprocess"
+            if re.search(r'\d+\s*(?:MiB|KiB|B)/s|\d+:\d{2}\s+\d+[KM]iB', text):
+                _kind = "dimmed"
+            _up_to_date_m = re.search(r"((?:\w+\s+is\s+up\s+to\s+date\s*)+)(::)", text, re.IGNORECASE)
+            if _up_to_date_m:
+                self.outputReceived.emit(text[:_up_to_date_m.start(2)].strip(), _kind)
+                self.outputReceived.emit(text[_up_to_date_m.start(2):].strip(), _kind)
+                continue
+            self.outputReceived.emit(text, _kind)
+
+        _wait_timeout = timeout if (not self.terminated and timeout is not None) else 30
         try:
-            rc = proc.wait(timeout=timeout if timeout is not None else 30)
+            rc = proc.wait(timeout=_wait_timeout) if proc.poll() is None else proc.returncode
         except subprocess.TimeoutExpired:
             proc.kill()
             rc = proc.wait()
-        t1.join(3); t2.join(3)
-        if _stdin_thread:
-            _stdin_thread.join(2)
-            if _stdin_thread.is_alive() and isinstance(input_data, bytearray):
-                _zero(input_data)
+
+        t_out.join(3); t_err.join(3)
         return SimpleNamespace(returncode=rc if rc is not None else 1)
 
     def _emit_result(self, ok: bool, msg_ok: str, msg_err: str): self.outputReceived.emit(msg_ok if ok else msg_err, "success" if ok else "error")
@@ -603,7 +810,7 @@ class SystemManagerThread(QThread):
                         return
                     for raw in iter(proc.stderr.readline, b""):
                         line = raw.decode("utf-8", errors="replace")
-                        if "[sudo]" in line or "password" in line.lower():
+                        if token not in line:
                             n += 1
                             if n >= 2:
                                 try:
@@ -675,17 +882,10 @@ class SystemManagerThread(QThread):
         if not self.distro:
             self.outputReceived.emit(f"Cannot install {label}s: no distro helper", "error")
             return False
+        all_names = active_pkg_names(pkg_list)
         items = []
-        for p in (pkg_list or []):
-            if isinstance(p, dict):
-                n = (p.get("name") or p.get("package") or "").strip()
-                if not n or p.get("disabled"):
-                    continue
-            else:
-                n = str(p).strip()
-                if not n:
-                    continue
-            if _BATCH_PKG_RE.match(n):
+        for n in all_names:
+            if self.distro.valid(n):
                 items.append(n)
             else:
                 logger.warning("_batch_install: skipping invalid package name %r", n)
@@ -701,8 +901,8 @@ class SystemManagerThread(QThread):
 
         failed = []
         if use_aur:
-            bulk = lambda b: self._exec(["yay", "-S", "--noconfirm", "--needed"] + b, stream=True)
-            single = lambda _p: self._exec(["yay", "-S", "--noconfirm", "--needed", _p], stream=True)
+            bulk = lambda b: self._exec(["yay", "-S", "--needed"] + b, stream=True)
+            single = lambda _p: self._exec(["yay", "-S", "--needed", _p], stream=True)
         else:
             _distro = self.distro
             bulk = lambda b: self._exec(_distro.get_batch_install_cmd(b), stream=True)
@@ -718,8 +918,7 @@ class SystemManagerThread(QThread):
         return _Status.SUCCESS if not failed else _Status.WARNING
 
     def _copy_sysfiles(self) -> bool:
-        files = [f for f in (S.system_files or []) if isinstance(f, dict) and not f.get("disabled")
-                 and f.get("source", "").strip() and f.get("destination", "").strip()]
+        files = active_system_files()
         if not files:
             self.outputReceived.emit("No system files configured", "warning")
             return True
@@ -727,7 +926,7 @@ class SystemManagerThread(QThread):
         from drive_utils import check_drives_to_mount, mount_drive
         for drive in check_drives_to_mount([p for f in files for p in (f["source"], f["destination"])]):
             name = drive.get("drive_name", "?")
-            self.outputReceived.emit(f"Mounting drive: {name}…", "info")
+            self.outputReceived.emit(f"Mounting drive: '{name}'…", "info")
             ok, err = mount_drive(drive)
             if not ok: self.outputReceived.emit(f"Failed to mount '{name}': {err}", "error"); return False
             self.outputReceived.emit(f"Mounted '{name}'", "success")
@@ -787,9 +986,25 @@ class SystemManagerThread(QThread):
         self.outputReceived.emit(f"Running: {' '.join(cmd)}", "info")
         return self._exec(cmd, stream=True).returncode == 0
 
+    def _update_system(self) -> bool:
+        if not self.distro: return False
+        if self.distro.has_aur and self._pkg_cache and self._pkg_cache.is_installed("yay"):
+            ok = (self._exec(["yay", "--noconfirm"], stream=True).returncode == 0)
+        else:
+            cmd_str = self.distro.get_update_system_cmd()
+            if any(seq in cmd_str for seq in ("&&", "||", " | ")):
+                _stripped = cmd_str.lstrip()
+                inner_cmd = _stripped[5:] if _stripped.startswith("sudo ") else _stripped
+                cmd = ["sudo", "sh", "-c", inner_cmd]
+            else:
+                cmd = cmd_str
+            ok = (self._exec(cmd, stream=True, timeout=None).returncode == 0)
+        self._emit_result(ok, "System successfully updated", "System update failed")
+        return ok
+
     def _set_shell(self) -> bool:
         if not self.distro: return False
-        target = (S.user_shell or "bash").strip()
+        target = S.effective_shell
         pkg = self.distro.get_shell_package_name(target)
         binary = self.distro.get_shell_binary_name(target)
         shell = shutil.which(binary) or f"/bin/{binary}"
@@ -827,24 +1042,363 @@ class SystemManagerThread(QThread):
         self._emit_result(ok, f"Shell for '{_USER}' set to '{shell}'", f"Shell for '{_USER}' failed to change to '{shell}'")
         return ok
 
-    def _update_system(self) -> bool:
-        if not self.distro: return False
-        if self.distro.has_aur and self._pkg_cache and self._pkg_cache.is_installed("yay"):
-            ok = (self._exec(["yay", "-Syu", "--noconfirm"], stream=True).returncode == 0)
-        else:
-            cmd_str = self.distro.get_update_system_cmd()
-            if any(seq in cmd_str for seq in ("&&", "||", " | ")):
-                _stripped = cmd_str.lstrip()
-                inner_cmd = _stripped[5:] if _stripped.startswith("sudo ") else _stripped
-                cmd: list | str = ["sudo", "sh", "-c", inner_cmd]
+    def _install_ucode(self) -> bool | str:
+        if not self.distro:
+            return False
+        pkg = self.distro.get_ucode_package()
+        if not pkg:
+            vendor = self.distro.detect_cpu_vendor() or "unknown"
+            self.outputReceived.emit(f"No microcode package available for {vendor} CPU on {self.distro.pkg_manager_name()} — skipping", "warning")
+            return _Status.WARNING
+        if self._pkg_cache and self._pkg_cache.is_installed(pkg):
+            self.outputReceived.emit(f"Microcode already installed ({pkg})", "success")
+            return True
+        return self._install_pkg(pkg, "CPU Microcode")
+
+    def _install_kernels(self) -> bool | str:
+        if not self.distro:
+            return False
+        targets = S.effective_kernels
+        entries_dir = Path("/boot/loader/entries")
+        self._exec(["sudo", "mkdir", "-p", str(entries_dir)], stream=False)
+        overall = True
+        for variant in targets:
+            pkgs = ARCH_KERNEL_VARIANTS.get(variant)
+            if self._pkg_cache and self._pkg_cache.is_installed(variant):
+                self.outputReceived.emit(f"{variant} already installed — skipping", "success")
+                continue
+            if not pkgs:
+                self.outputReceived.emit(f"Unknown kernel variant: {variant!r} — skipping", "warning")
+                continue
+            kernel_pkg = pkgs[0]
+            if not self._install_pkg(kernel_pkg, "Kernel Package"):
+                overall = False
             else:
-                cmd = cmd_str
-            ok = (self._exec(cmd, stream=True, timeout=None).returncode == 0)
-        self._emit_result(ok, "System successfully updated", "System update failed")
-        return ok
+                if not self._create_systemd_boot_entry(kernel_pkg, entries_dir):
+                    self.outputReceived.emit(f"Failed to create systemd-boot entry for {variant}", "warning")
+                    overall = False
+                else:
+                    self.outputReceived.emit(f"systemd-boot entry created for {variant}", "success")
+        self._emit_result(overall, "Kernel(s) successfully installed", "One or more kernels failed to install")
+        return overall
 
     def _install_kernel_header(self) -> bool:
-        return self._install_pkg(self.distro.get_kernel_headers_pkg(), "Kernel Header") if self.distro else False
+        if not self.distro:
+            return False
+        if self.distro.family() == "arch":
+            installed_variants = self.distro.detect_installed_kernel_variants()
+            if not installed_variants:
+                return self._install_pkg(self.distro.get_kernel_headers_pkg(), "Kernel Header")
+            overall = True
+            for variant in sorted(installed_variants):
+                pkgs = ARCH_KERNEL_VARIANTS.get(variant)
+                if not pkgs or len(pkgs) < 2:
+                    continue
+                header_pkg = pkgs[1]
+                if self._pkg_cache and self._pkg_cache.is_installed(header_pkg):
+                    self.outputReceived.emit(f"{header_pkg} already installed — skipping", "success")
+                    continue
+                if not self._install_pkg(header_pkg, "Kernel Header"):
+                    overall = False
+            return overall
+        return self._install_pkg(self.distro.get_kernel_headers_pkg(), "Kernel Header")
+
+    def _set_default_kernel(self) -> bool | str:
+        target = (S.default_kernel or "").strip()
+        if not target:
+            self.outputReceived.emit("No default kernel configured — skipping", "warning")
+            return _Status.WARNING
+
+        pkgs = ARCH_KERNEL_VARIANTS.get(target)
+        if not pkgs:
+            self.outputReceived.emit(f"Unknown kernel variant: {target!r}", "error")
+            return False
+
+        kernel_pkg = pkgs[0]
+        self.outputReceived.emit(f"Setting default kernel to: {kernel_pkg}", "info")
+
+        bootloader = LinuxDistroHelper.detect_bootloader()
+        current_default_variant = LinuxDistroHelper.detect_system_default_kernel(bootloader)
+        if current_default_variant and current_default_variant == target:
+            self.outputReceived.emit(f"{kernel_pkg} is already default", "success")
+            return True
+
+        if bootloader == "grub":
+            return self._set_grub_default(kernel_pkg)
+        if bootloader == "systemd-boot":
+            return self._set_systemd_boot_default(kernel_pkg)
+
+        self.outputReceived.emit("No supported bootloader found (/boot/grub/grub.cfg or /boot/loader). "
+                                 "Please set the default kernel manually.", "warning")
+        return _Status.WARNING
+
+    def _set_grub_default(self, kernel_pkg: str) -> bool | str:
+        grub_env = Path("/etc/default/grub")
+
+        try:
+            text = grub_env.read_text(encoding="utf-8")
+        except OSError as exc:
+            self.outputReceived.emit(f"Cannot read {grub_env}: {exc}", "error")
+            return False
+
+        if "GRUB_DEFAULT=saved" not in text:
+            self.outputReceived.emit("Patching /etc/default/grub: setting GRUB_DEFAULT=saved…", "info")
+            new_text = re.sub(r"^GRUB_DEFAULT=.*$", "GRUB_DEFAULT=saved", text, flags=re.MULTILINE)
+            if "GRUB_DEFAULT=" not in text:
+                new_text = "GRUB_DEFAULT=saved\n" + new_text
+            ok = self._exec([
+                "sudo", "sh", "-c", f"printf '%s' {shlex.quote(new_text)} > /etc/default/grub"], stream=True).returncode == 0
+            if not ok:
+                self.outputReceived.emit("Failed to patch /etc/default/grub", "error")
+                return False
+
+        self.outputReceived.emit("Regenerating /boot/grub/grub.cfg…", "info")
+        rc = self._exec(["sudo", "grub-mkconfig", "-o", "/boot/grub/grub.cfg"], stream=True, timeout=120).returncode
+        if rc != 0:
+            self.outputReceived.emit("grub-mkconfig failed — aborting default-kernel set", "error")
+            return False
+
+        entry_id = self._find_grub_entry(kernel_pkg)
+        if entry_id is None:
+            self.outputReceived.emit(f"Could not locate a GRUB menu entry for '{kernel_pkg}' in grub.cfg.\n"
+                                     "The kernel packages were installed — please set the boot default manually via GRUB.", "warning")
+            return _Status.WARNING
+
+        self.outputReceived.emit(f"Found GRUB entry: {entry_id!r}", "info")
+        ok = self._exec(["sudo", "grub-set-default", entry_id], stream=True).returncode == 0
+        self._emit_result(ok, f"GRUB default set to '{kernel_pkg}'", "grub-set-default failed")
+        return ok
+
+    @staticmethod
+    def _find_grub_entry(kernel_pkg: str) -> str | None:
+        grub_cfg = Path("/boot/grub/grub.cfg")
+        try:
+            lines = grub_cfg.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return None
+
+        _title_re = re.compile(r"""menuentry\s+['"]([^'"]+)['"]""")
+        _sub_re = re.compile(r"""submenu\s+['"]([^'"]+)['"]""")
+
+        _exact_re = re.compile(r"(?:^|[^\w-])" + re.escape(kernel_pkg) + r"(?:[^\w-]|$)", re.IGNORECASE)
+
+        top_idx = 0
+        current_sub = None
+        depth = 0
+
+        for line in lines:
+            stripped = line.strip()
+
+            m_sub = _sub_re.match(stripped)
+            if m_sub and depth == 0:
+                current_sub = m_sub.group(1)
+                depth = 1
+                top_idx += 1
+                continue
+
+            m_entry = _title_re.match(stripped)
+            if m_entry:
+                title = m_entry.group(1)
+                if _exact_re.search(title):
+                    if current_sub:
+                        return f"{current_sub}>{title}"
+                    return str(top_idx)
+                if depth == 0:
+                    top_idx += 1
+                elif depth > 0 and stripped.endswith("{"):
+                    depth += 1
+                continue
+
+            if stripped == "}":
+                if depth > 0:
+                    depth -= 1
+                    if depth == 0:
+                        current_sub = None
+
+        return None
+
+    def _set_systemd_boot_default(self, kernel_pkg: str) -> bool | str:
+        entries_dir = Path("/boot/loader/entries")
+        entry_paths = self._list_entry_files(entries_dir)
+        _kern_exact = re.compile(r"vmlinuz-" + re.escape(kernel_pkg) + r"(?:[^\w-]|$)")
+        canonical = entries_dir / f"{kernel_pkg}.conf"
+
+        canonical_exists = self._exec(["sudo", "test", "-f", str(canonical)], stream=False).returncode == 0
+
+        target_conf: str | None = None
+        if canonical_exists or any(p.stem == kernel_pkg for p in entry_paths):
+            target_conf = f"{kernel_pkg}.conf"
+        else:
+            for fpath in entry_paths:
+                content = self._read_file_sudo(fpath)
+                if content and _kern_exact.search(content):
+                    target_conf = f"{fpath.stem}.conf"
+                    break
+
+        if target_conf is None:
+            created = self._create_systemd_boot_entry(kernel_pkg, entries_dir)
+            if not created: return _Status.WARNING
+            target_conf = created
+        elif not canonical_exists:
+            created = self._create_systemd_boot_entry(kernel_pkg, entries_dir)
+            if created: target_conf = created
+
+        return self._apply_systemd_boot_default(str(target_conf))
+
+    def _list_entry_files(self, entries_dir: Path) -> list[Path]:
+        paths = []
+        try:
+            if entries_dir.is_dir():
+                paths = sorted(entries_dir.glob("*.conf"))
+        except OSError:
+            pass
+
+        if not paths:
+            r = self._exec(["sudo", "ls", "-1", str(entries_dir)], stream=False)
+            if r.returncode == 0:
+                paths = [entries_dir / n.strip() for n in r.stdout.splitlines() if n.strip().endswith(".conf")]
+        return paths
+
+    def _create_systemd_boot_entry(self, kernel_pkg: str, entries_dir: Path) -> str | None:
+        vmlinuz = Path(f"/boot/vmlinuz-{kernel_pkg}")
+        initramfs = Path(f"/boot/initramfs-{kernel_pkg}.img")
+
+        for img in (vmlinuz, initramfs):
+            if self._exec(["sudo", "test", "-f", str(img)], stream=False).returncode != 0:
+                self.outputReceived.emit(f"Kernel image not found: {img}", "warning")
+                return None
+
+        running_variant = LinuxDistroHelper.detect_running_kernel_variant()
+        running_kern_pkg = ARCH_KERNEL_VARIANTS.get(running_variant, ("linux", "linux-headers"))[0]
+
+        template_content: str | None = None
+        entry_files = sorted(entries_dir.glob("*.conf")) if entries_dir.exists() else []
+
+        for fpath in entry_files:
+            content = self._read_file_sudo(fpath)
+            if content and running_kern_pkg in content:
+                template_content = content
+                break
+
+        if not template_content and entry_files:
+            template_content = self._read_file_sudo(entry_files[0])
+
+        if not template_content:
+            self.outputReceived.emit("No template found in /boot/loader/entries/", "error")
+            return None
+
+        new_content = template_content.replace(running_kern_pkg, kernel_pkg)
+        dest_path = entries_dir / f"{kernel_pkg}.conf"
+
+        escaped_content = shlex.quote(new_content)
+        try:
+            cmd = f"printf '%s' {escaped_content} | sudo tee {shlex.quote(str(dest_path))} > /dev/null"
+            r = self._exec(["sh", "-c", cmd], stream=False, timeout=10)
+            self._update_sort_keys(kernel_pkg, Path("/boot/loader/entries"))
+            if r.returncode == 0:
+                self._exec(["sync"], stream=False)
+                self.outputReceived.emit(f"Created boot entry: {dest_path}", "success")
+                return f"{kernel_pkg}.conf"
+            else:
+                self.outputReceived.emit(f"Failed to write boot entry", "error")
+                return None
+        except Exception as exc:
+            self.outputReceived.emit(f"Error creating boot entry: {exc}", "error")
+            return None
+
+    def _apply_systemd_boot_default(self, entry_conf: str) -> bool | str:
+        ok = self._exec(["sudo", "bootctl", "set-default", entry_conf], stream=False, timeout=15).returncode == 0
+        if not ok:
+            loader_conf = Path("/boot/loader/loader.conf")
+            self.outputReceived.emit(f"Writing default to loader.conf: {entry_conf}", "info")
+            conf_text = self._read_file_sudo(loader_conf) or ""
+            if re.search(r"^default\s+", conf_text, re.MULTILINE):
+                new_conf = re.sub(r"^default\s+\S+", f"default {entry_conf}", conf_text, flags=re.MULTILINE)
+            else:
+                new_conf = f"default {entry_conf}\n" + conf_text
+            ok = self._exec(["sudo", "sh", "-c", f"printf '%s' {shlex.quote(new_conf)} > /boot/loader/loader.conf"],
+                            stream=False).returncode == 0
+            if not ok:
+                self._emit_result(False, "", "Failed to update /boot/loader/loader.conf")
+                return False
+
+        self._emit_result(True, f"systemd-boot default set to '{entry_conf}'", "")
+        self._update_sort_keys(entry_conf, Path("/boot/loader/entries"))
+        return True
+
+    def _update_sort_keys(self, new_kernel_conf: str, entries_dir: Path) -> None:
+        kernel_entries = self._list_entry_files(entries_dir)
+        if not kernel_entries:
+            return
+
+        loader_conf_text = self._read_file_sudo(Path("/boot/loader/loader.conf")) or ""
+        loader_default_match = re.search(r"^default\s+(\S+)", loader_conf_text, re.MULTILINE)
+        if loader_default_match:
+            default_filename = Path(loader_default_match.group(1)).name
+        else:
+            default_filename = Path(new_kernel_conf).name
+
+        default_path = entries_dir / default_filename
+        default_content = self._read_file_sudo(default_path)
+
+        options_line = ""
+        if default_content:
+            for line in default_content.splitlines():
+                if line.strip().startswith("options "):
+                    options_line = line.strip()
+                    break
+
+        def _entry_sort_key(p):
+            stem = p.stem.lower()
+            base, _, suffix = stem.partition("-")
+            return 0 if p.name == default_filename else 1, base, suffix
+
+        kernel_entries.sort(key=_entry_sort_key)
+
+        distro_pretty = self.distro.distro_pretty_name if self.distro else "Linux"
+        new_kernel_filename = Path(new_kernel_conf).name
+
+        for idx, fpath in enumerate(kernel_entries, start=1):
+            sort_val = f"{idx:02d}"
+            content = self._read_file_sudo(fpath)
+            if not content:
+                continue
+
+            variant = fpath.stem
+            target_title = f"{distro_pretty} ({variant})"
+            new_content = content
+
+            if re.search(r"^sort-key\s+", new_content, re.MULTILINE):
+                new_content = re.sub(r"^sort-key\s+\S+", f"sort-key {sort_val}", new_content, flags=re.MULTILINE)
+            else:
+                new_content = new_content.rstrip() + f"\nsort-key {sort_val}\n"
+
+            if fpath.name == new_kernel_filename:
+                current_title = ""
+                for line in content.splitlines():
+                    if line.strip().startswith("title "):
+                        current_title = line.strip()[6:].strip()
+                        break
+
+                if f"({variant})" not in current_title:
+                    if re.search(r"^title\s+", new_content, re.MULTILINE):
+                        new_content = re.sub(r"^title\s+.*$", f"title {target_title}", new_content, flags=re.MULTILINE)
+                    else:
+                        new_content = f"title {target_title}\n" + new_content
+
+                if options_line and fpath.name != default_filename:
+                    if re.search(r"^options\s+", new_content, re.MULTILINE):
+                        new_content = re.sub(r"^options\s+.*$", options_line, new_content, flags=re.MULTILINE)
+                    else:
+                        new_content = new_content.rstrip() + f"\n{options_line}\n"
+
+            if new_content != content:
+                self._exec(["sudo", "sh", "-c", f"printf '%s' {shlex.quote(new_content)} > {shlex.quote(str(fpath))}"],
+                           stream=False, timeout=10)
+
+    def _read_file_sudo(self, path: Path) -> str | None:
+        r = self._exec(["sudo", "cat", str(path)], stream=False)
+        return r.stdout if r.returncode == 0 else None
 
     def _install_yay(self) -> bool:
         if not self.distro or not self.distro.has_aur:
@@ -887,7 +1441,7 @@ class SystemManagerThread(QThread):
             except OSError:
                 mtime = 0
             return 0 if "-debug-" not in f.name else 1, mtime
-        pkgs = sorted((f for f in yay_dir.iterdir() if f.name.endswith(".pkg.tar.zst")), key=_pkg_key)
+        pkgs = sorted((f for f in yay_dir.iterdir() if ".pkg.tar." in f.name), key=_pkg_key)
 
         if not pkgs:
             self.outputReceived.emit("No yay package file found after build", "error")
@@ -944,7 +1498,6 @@ class SystemManagerThread(QThread):
         if self._exec(["systemctl", "is-active", "--quiet", svc]).returncode == 0:
             self.outputReceived.emit(f"{svc} already active", "success")
             return True
-
         ok = (self._exec(["sudo", "systemctl", "enable", "--now", svc], stream=True).returncode == 0)
         if ok:
             self.outputReceived.emit(f"{svc} successfully enabled", "success")

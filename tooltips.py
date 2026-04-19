@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 from linux_distro_helper import LinuxDistroHelper
-from state import S, apply_replacements, logger, register_invalidate_hook
+from state import S, apply_replacements, logger, register_invalidate_hook, active_pkg_names, active_system_files
 from themes import current_theme, font_sz
 
 _cache: Optional[tuple[dict, dict, dict]] = None
@@ -145,13 +145,12 @@ def generate_tooltip() -> tuple[dict, dict, dict]:
                     for e in S.entries}
     sm_tips: dict = {}
 
-    active_sys_files = [f for f in (S.system_files or []) if isinstance(f, dict) and not f.get("disabled")]
+    active_sys_files = active_system_files()
     if active_sys_files:
         sm_tips["copy_system_files"] = _sysfiles_tooltip_html(active_sys_files, t, font_sz)
 
-    for key, pkgs, label in [("install_basic_packages", S.basic_packages, "Basic Packages"),
-                             ("install_aur_packages", S.aur_packages, "AUR Packages")]:
-        active_names = [_html.escape(p["name"]) for p in pkgs if not p.get("disabled") and "name" in p]
+    for key, pkgs, label in [("install_basic_packages", S.basic_packages, "Basic Packages"), ("install_aur_packages", S.aur_packages, "AUR Packages")]:
+        active_names = [_html.escape(n) for n in active_pkg_names(pkgs)]
         if active_names:
             sm_tips[key] = _packages_tooltip_html(label, active_names, t, font_sz)
 
@@ -215,7 +214,10 @@ def copy_logic_tooltip() -> str:
         "and is deleted immediately after the process ends.<br>"
         "- <b>Secure Erasure:</b> Before deletion, the credential file is <b>overwritten with zeros</b> (Wipe) and synced.<br>"
         "- <b>Guest Fallback:</b> In case of access errors to the secure storage, the system safely falls back to a guest connection.<br>"
-        "- <b>Memory Safety:</b> Internal password buffers (<code>SecureString</code>) are <b>manually zeroed out</b> in RAM after use."
+        "- <b>Memory Safety:</b> The core password buffer (<code>SecureString</code>) is a mutable <code>bytearray</code> that is <b>manually zeroed</b> after use. "
+        "However, a brief immutable <code>str</code> is unavoidably created during the credential-file write step (<code>pwd_bytes.decode()</code>) and cannot be "
+        "actively overwritten — it persists until Python's garbage collector reclaims it. This window is limited to the narrow period while the file is being written to "
+        "<code>/dev/shm</code>, after which the file itself is wiped and deleted."
     )
 
 
@@ -224,15 +226,22 @@ def sudo_checkbox_tooltip() -> str:
             "Your password is held <b>only in memory</b> as a mutable <code>bytearray</code> "
             "(via <code>SecureString</code>) — it is <b>never written to any file</b>, "
             "not even to a RAM-backed <code>tmpfs</code> such as <code>/dev/shm</code>.<br><br>"
-            "All privileged operations (package installs, service activation, file copies…) "
-            "run through <code>subprocess.Popen</code> with a dedicated writer thread: "
-            "a <code>bytearray</code> copy of the password is written to the "
-            "<b>kernel pipe buffer</b> (stdin of <code>sudo -S</code>) and then "
-            "<b>zeroed byte-by-byte inside that thread</b>, immediately after the pipe is flushed. "
+            "<b>Non-streaming operations</b> (most privileged steps such as package installs, "
+            "service activation, file copies) use <code>subprocess.run(input=pw_bytearray, …)</code>. "
+            "The <code>bytearray</code> is passed directly as a bytes-like object — "
+            "<b>no Python-level <code>bytes</code> copy is created</b>. "
+            "After the call returns the buffer is <b>zeroed byte-by-byte</b> in a "
+            "<code>finally</code> block. "
             "The password never touches a file, an environment variable, or a command-line argument.<br><br>"
-            "Simple status checks (e.g. <code>systemctl is-active</code>) that may also "
-            "require sudo use <code>subprocess.run</code> with a transient <code>bytes</code> "
-            "object — it cannot be actively zeroed, but exists only for the duration of the blocking call.<br><br>"
+            "<b>Streaming operations</b> (long-running commands such as <code>yay</code>) use "
+            "<code>subprocess.Popen</code> with stdin kept open. When sudo requests a password, "
+            "the <code>bytearray</code> is written <b>directly</b> to the kernel pipe buffer "
+            "and then <b>zeroed byte-by-byte</b> in a <code>finally</code> block immediately "
+            "after the write.<br><br>"
+            "<b>Residual memory caveat:</b> Python's memory allocator and CPython's subprocess "
+            "internals may retain transient copies of credential data in freed heap pages that "
+            "cannot be actively overwritten from Python. This is a fundamental limitation of "
+            "managed-memory runtimes and applies equally to all Python-based security tools.<br><br>"
             "The original <code>SecureString</code> buffer is zeroed in the <code>finally</code> "
             "block of the worker thread once all tasks are complete.<br><br>"
             "<b>Credential cache:</b><br>"

@@ -13,7 +13,7 @@ from state import S, logger, _USER
 
 _DRIVE_NAME_RE = re.compile(r"^[\w\- .()@:]+$")
 
-_SHELL_INJECTION_SEQS = ("&&", "||", "$(", "${", ";", "|", "`", ">", "<", "\n", "\r", "\x00")
+_SHELL_INJECTION_SEQS = ("&&", "$(", "${", ";", "|", "`", ">", "<", "\n", "\r", "\x00")
 
 _ALLOWED_MOUNT_CMDS = frozenset({
     "mount", "umount", "mount.cifs", "udisksctl",
@@ -33,8 +33,9 @@ _mounts_cache_lock = threading.Lock()
 def get_mounts(max_age: float = 0.5) -> list[tuple[str, str]]:
     global _mounts_cache
     now = time.monotonic()
-    if now - _mounts_cache[0] < max_age:
-        return _mounts_cache[1]
+    with _mounts_cache_lock:
+        if now - _mounts_cache[0] < max_age:
+            return _mounts_cache[1]
     mounts: list[tuple[str, str]] = []
     try:
         with open("/proc/mounts", encoding="utf-8", errors="replace") as fh:
@@ -42,9 +43,10 @@ def get_mounts(max_age: float = 0.5) -> list[tuple[str, str]]:
                 parts = line.split()
                 if len(parts) >= 2:
                     mounts.append((_decode_octal(parts[0]), _decode_octal(parts[1])))
-    except OSError as e:
-        logger.warning("get_mounts: %s", e)
-        return _mounts_cache[1]
+    except (OSError, FileNotFoundError) as e:
+        logger.warning("get_mounts: /proc/mounts not available: %s", e)
+        with _mounts_cache_lock:
+            return _mounts_cache[1]
     with _mounts_cache_lock:
         _mounts_cache = (now, mounts)
     return mounts
@@ -141,7 +143,10 @@ def is_mounted(opt: dict, mounts: Optional[list[tuple[str, str]]] = None) -> boo
         if len(parts) >= 2:
             host = parts[0]
             share = parts[1]
-            smb_prefixes = (f"//{host}/{share}".lower(),)
+            full_device = f"//{host}/{share}"
+            if len(parts) == 3 and parts[2]:
+                full_device = f"{full_device}/{parts[2]}"
+            smb_prefixes = (full_device.lower(),)
 
     for dev, mnt in (mounts or []):
         if mnt in expected_paths or (mount_path and mnt == mount_path):

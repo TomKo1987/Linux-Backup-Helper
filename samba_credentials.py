@@ -414,9 +414,16 @@ class SambaPasswordDialog(_StandardKeysMixin, QDialog):
         except Exception as exc:
             self._error_dialog.showMessage(f"Failed to delete credentials:\n{exc}")
 
+    def _cleanup(self) -> None:
+        self._pw_input.clear()
+        if self._stored_pw is not None:
+            self._stored_pw.clear()
+            self._stored_pw = None
+
+    def reject(self) -> None:
+        self._cleanup()
+        super().reject()
+
     def closeEvent(self, event) -> None:
-        if self._password_field is not None:
-            self._password_field.clear()
-        if self._confirm_password_field is not None:
-            self._confirm_password_field.clear()
+        self._cleanup()
         super().closeEvent(event)

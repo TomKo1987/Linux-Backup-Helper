@@ -219,7 +219,7 @@ def tri_styles() -> tuple[str, str, str]: return _tri_styles_cached(_current_the
 
 def style_label_info(font_size: int = 0, bold: bool = False) -> str:
     t = current_theme()
-    fs = font_size or (font_scale()["lg"] if bold else font_scale()["xxl"])
+    fs = font_size or (font_scale()["xxl"] if bold else font_scale()["lg"])
     s = f"font-size:{fs}px;color:{t['success']};font-family:monospace;"
     return s + "font-weight:bold;padding:4px;" if bold else s
 

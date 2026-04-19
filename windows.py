@@ -28,6 +28,7 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
     def __init__(self, parent) -> None:
         super().__init__(parent)
         self.setWindowTitle(self._window_title)
+        self._connections_cleaned = False
 
         self.checkbox_dirs: list[tuple[QCheckBox, list, list, str, dict]] = []
         self.cols = S.ui.get(self._cols_key, _COLS_NARROW)
@@ -217,6 +218,9 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
         super().done(result)
 
     def _cleanup_connections(self) -> None:
+        if self._connections_cleaned:
+            return
+        self._connections_cleaned = True
         unregister_style_listener(self._refresh_styles)
         for cb, *_ in self.checkbox_dirs:
             try:
@@ -317,8 +321,7 @@ class SettingsWindow(_BaseCheckboxWindow):
         t = current_theme()
         fs = font_scale()
         path = (str(_PROFILES_DIR / f"{S.profile_name}.json") if S.profile_name else str(_PROFILES_DIR))
-        lbl = QLabel(f" 󰔨  <span style='font-size:{fs['lg']}px;color:{t['accent2']};"
-                     f"text-decoration:underline dotted;'>{apply_replacements(path)}</span>")
+        lbl = QLabel(f"<span style='font-size:{fs['lg']}px;color:{t['accent2']}'> 󰔨   {apply_replacements(path)}</span>")
         lbl.setTextFormat(Qt.TextFormat.RichText)
         apply_tooltip(lbl, copy_logic_tooltip())
         return lbl

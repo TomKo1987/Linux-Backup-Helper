@@ -16,6 +16,7 @@ The idea behind this project is to automatically configure a newly installed Lin
 - Samba/SMB share support with secure credential storage
 - Advanced configuration options and multi-session support
 - Customizable headers and layouts for different backup types
+- **System Capture & Verify** — scan your system and compare it against your profile
 - Theming support with multiple built-in themes
 - Extensive error handling and user feedback
 
@@ -42,6 +43,48 @@ If an error occurs during copying (permission denied, network issues, etc.) the 
 **Summary:**  
 The summary shows the total number of processed, copied, skipped, and error files.  
 The tooltip colour-codes the results: green = copied, yellow = skipped, red = errors.
+
+---
+
+## System Capture & Verify
+
+The **System Capture & Verify** dialog (accessible from the main menu via **🔍 Capture & Verify**) consists of two tabs.
+
+### 🔍 System Capture
+
+Scans your currently installed system and compares the result against your active profile.
+
+**Packages:**
+- Detects all installed packages (basic and AUR on Arch, manually installed on other distros).
+- Packages already tracked in the profile are shown as "already in profile" and excluded from the selection.
+- System-critical packages (kernel, base, firmware, microcode) and packages managed by System Manager (e.g. yay, samba, openssh, bluetooth) are automatically excluded.
+- New packages can be selected individually or all at once with **Select All New**, then added to the profile with **⬆ Add Selected to Profile**.
+
+**Specific Packages:**
+- Packages that should only be installed for a specific desktop session (e.g. KDE-only or Hyprland-only packages) can be marked as **Specific Packages**.
+- Select the target session from the dropdown, tick the packages, and click **⬆ Add Selected as Specific**.
+- Adding a package as Specific automatically removes it from Basic Packages if it was listed there.
+
+**Services:**
+- Active system services (SSH, Samba, Bluetooth, Firewall, CUPS, Cron, Snapd, atd) are listed with their current status.
+- Services already configured in System Manager Operations are shown greyed out.
+- Tick any service you want System Manager to manage, then click **⬆ Add Selected Services to Profile**.
+
+### ✅ Verify Profile
+
+Runs a full check of your active profile against the current system state.
+
+| Check | What is verified |
+|---|---|
+| **Packages** | Every package in the profile (basic, AUR, specific) is checked for installation |
+| **System Files** | Source and destination of every system file entry are compared (hash for files ≤ 8 MB, mtime otherwise) |
+| **Backup Entries** | Source and destination paths are checked for existence; outdated backups are flagged |
+| **Services** | All services referenced in System Manager Operations are checked for active status |
+
+Results are grouped in collapsible sections with colour-coded status icons. A summary banner at the top shows the overall result at a glance.  
+Required drives that are not yet mounted are automatically detected and the user is prompted to mount them before the check runs.
+
+**Re-run Check** reruns the verification at any time without reopening the dialog.
 
 ---
 
@@ -97,7 +140,7 @@ smb://192.168.0.53/share/mydata
 - They are stored securely via **KWallet** (KDE) or your **system keyring**.
 - If KWallet is available and already contains an entry starting with `smb-`, that entry is used automatically.
 - Otherwise, credentials can be managed directly in the application under **Samba Credentials**.
-- The SMB password is written to a temporary credential file in /dev/shm (permissions 0600) and passed to smbclient via the -A flag. 
+- The SMB password is written to a temporary credential file in `/dev/shm` (permissions 0600) and passed to smbclient via the `-A` flag.  
   The file is securely overwritten with zeros and deleted immediately after use.
 
 ### Connection order
@@ -161,6 +204,9 @@ pyinstaller --onefile main.py
 
 **Main Window**  
 ![Main Window](images/Main.png)
+
+**System Capture & Verify**  
+![System Capture & Verify](images/System%20Capture%20&%20Verify.png)
 
 **Backup Window**  
 ![Backup Window](images/Backup%20Window.png)

@@ -5,10 +5,12 @@ import shlex
 import subprocess
 from pathlib import Path
 from typing import Any, Callable
+from constants import USER_SHELLS, ARCH_KERNEL_VARIANTS, PKG_NAME_RE
 
 from state import logger
 
-__all__ = ["LinuxDistroHelper", "distro_family", "USER_SHELLS", "SESSIONS", "_PKG_RE"]
+
+__all__ = ["LinuxDistroHelper", "SESSIONS", "USER_SHELLS", "ARCH_KERNEL_VARIANTS", "is_valid_pkg_name"]
 
 _MIN_PARALLEL = 5
 
@@ -29,6 +31,15 @@ _DISTROS_GENTOO = {"gentoo", "funtoo", "calculate", "sabayon"}
 _DISTROS_SLACKWARE = {"slackware", "salix", "porteus", "slax"}
 
 
+def is_valid_pkg_name(name: str) -> bool:
+    return (
+        isinstance(name, str)
+        and bool(name.strip())
+        and len(name.strip()) <= 255
+        and bool(PKG_NAME_RE.match(name.strip()))
+    )
+
+
 _DISTRO_FAMILY_MAP: dict[str, str] = {
     distro_id: family
     for family, distro_set in [("arch", _DISTROS_ARCH), ("debian", _DISTROS_DEBIAN), ("fedora", _DISTROS_FEDORA),
@@ -38,7 +49,6 @@ _DISTRO_FAMILY_MAP: dict[str, str] = {
 
 del _DISTROS_ARCH, _DISTROS_DEBIAN, _DISTROS_FEDORA, _DISTROS_SUSE, _DISTROS_GENTOO, _DISTROS_SLACKWARE
 
-USER_SHELLS = ["bash", "fish", "zsh", "elvish", "nushell", "powershell", "xonsh", "ngs"]
 
 _SHELL_BINARIES: dict[str, str] = {"nushell": "nu", "powershell": "pwsh", "powershell-bin": "pwsh"}
 
@@ -64,7 +74,7 @@ def _slackware_check(p: str) -> list[str]: return ["sh", "-c", f"ls /var/log/pac
 _PKG: dict[str, dict[str, Any]] = {
     "arch": dict(
         check   = lambda p: ["pacman", "-Qi", p],
-        install = "sudo pacman -S --noconfirm {p}",
+        install = "sudo pacman -S --needed {p}",
         update  = "sudo pacman -Syu --noconfirm",
         remove  = "sudo pacman -Rns --noconfirm {p}",
         clean   = "sudo pacman -Scc --noconfirm",
@@ -228,7 +238,31 @@ _BT_PKGS: dict = {
     None:     ["bluez", "bluez-tools"],
 }
 
-_PKG_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._+-]*$")
+
+_UCODE_PKGS: dict[str, dict[str, str]] = {
+    "intel": {
+        "arch":     "intel-ucode",
+        "debian":   "intel-microcode",
+        "fedora":   "microcode_ctl",
+        "suse":     "ucode-intel",
+        "void":     "intel-ucode",
+        "alpine":   "intel-ucode",
+        "gentoo":   "sys-firmware/intel-microcode",
+        "nixos":    "hardware.cpu.intel.updateMicrocode",
+        "slackware":"","solus":"","unknown":"",
+    },
+    "amd": {
+        "arch":     "amd-ucode",
+        "debian":   "amd64-microcode",
+        "fedora":   "microcode_ctl",
+        "suse":     "ucode-amd",
+        "void":     "linux-firmware-amd",
+        "alpine":   "linux-firmware-amd",
+        "gentoo":   "sys-firmware/linux-firmware",
+        "nixos":    "hardware.cpu.amd.updateMicrocode",
+        "slackware":"","solus":"","unknown":"",
+    },
+}
 
 _WM_PROCS: dict[str, str] = {
     "kwin_wayland":   "KDE",
@@ -279,15 +313,19 @@ class LinuxDistroHelper:
                 for line in fh:
                     k, _, v = line.partition("=")
                     v = v.strip().strip('"')
-                    if   k == "ID":          d_id     = v.lower()
-                    elif k == "NAME":        d_name   = v
-                    elif k == "PRETTY_NAME": d_pretty = v
-                    elif k == "ID_LIKE":     d_like   = v.lower()
+                    if k == "ID":
+                        d_id = v.lower()
+                    elif k == "NAME":
+                        d_name = v
+                    elif k == "PRETTY_NAME":
+                        d_pretty = v
+                    elif k == "ID_LIKE":
+                        d_like = v.lower()
         except Exception as exc:
             logger.error("/etc/os-release: %s", exc)
-            d_id = os.uname().sysname.lower()
-            d_name = d_id
-            d_pretty = d_id
+            d_id = "unknown"
+            d_name = "Unknown Linux Distribution"
+            d_pretty = "Unknown Linux Distribution"
 
         resolved = d_id or "unknown"
         if resolved not in _DISTRO_FAMILY_MAP and d_like:
@@ -322,11 +360,11 @@ class LinuxDistroHelper:
     def supports_aur(self) -> bool: return self.has_aur
 
     @staticmethod
-    def _valid(name: str) -> bool:
-        return isinstance(name, str) and bool(name.strip()) and len(name) <= 255 and bool(_PKG_RE.match(name.strip()))
+    def valid(name: str) -> bool:
+        return is_valid_pkg_name(name)
 
     def package_is_installed(self, pkg: str) -> bool:
-        if not self._valid(pkg):
+        if not self.valid(pkg):
             return False
         try:
             r = subprocess.run(self._check_fn(pkg.strip()), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -337,7 +375,7 @@ class LinuxDistroHelper:
             return False
 
     def filter_not_installed(self, packages: list[str]) -> list[str]:
-        valid = [p.strip() for p in packages if self._valid(p)]
+        valid = [p.strip() for p in packages if self.valid(p)]
         if not valid:
             return []
         if len(valid) < _MIN_PARALLEL:
@@ -400,14 +438,14 @@ class LinuxDistroHelper:
                     parts = [p.strip() for p in line.split("|")]
                     if len(parts) >= 2:
                         name = parts[1].strip()
-                        if name and self._valid(name):
+                        if name and self.valid(name):
                             pkgs.append(name)
             return pkgs
 
         if fam == "debian":
             return [parts[1] for line in lines
                     if (parts := line.strip().split()) and line.strip().startswith("Remv ")
-                    and len(parts) >= 2 and self._valid(parts[1])]
+                    and len(parts) >= 2 and self.valid(parts[1])]
 
         if fam == "fedora":
             pkgs = []
@@ -417,11 +455,11 @@ class LinuxDistroHelper:
                     continue
                 name = re.sub(r"^\d+:", "", line)
                 name = re.sub(r"-\d.*$", "", name)
-                if name and self._valid(name):
+                if name and self.valid(name):
                     pkgs.append(name)
             return pkgs
 
-        return [name for line in lines if (name := line.strip()) and self._valid(name)]
+        return [name for line in lines if (name := line.strip()) and self.valid(name)]
 
     def get_kernel_headers_pkg(self) -> str:
         try:
@@ -494,3 +532,119 @@ class LinuxDistroHelper:
     @staticmethod
     def flatpak_add_flathub() -> str:
         return "sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo"
+
+    @staticmethod
+    def detect_bootloader() -> str:
+        if Path("/boot/grub/grub.cfg").exists():
+            return "grub"
+        if Path("/boot/loader/loader.conf").exists() or Path("/boot/loader/entries").is_dir():
+            return "systemd-boot"
+        return "unknown"
+
+    def get_ucode_package(self) -> str | None:
+        cpu_vendor = self.detect_cpu_vendor()
+        if not cpu_vendor:
+            return None
+        fam = self.family()
+        pkg = _UCODE_PKGS.get(cpu_vendor, {}).get(fam, "")
+        if not pkg or pkg.startswith("hardware.cpu"):
+            return None
+        return pkg
+
+    @staticmethod
+    def detect_cpu_vendor() -> str | None:
+        try:
+            text = Path("/proc/cpuinfo").read_text(encoding="utf-8", errors="replace")
+            for line in text.splitlines():
+                if line.startswith("vendor_id"):
+                    val = line.split(":", 1)[-1].strip().lower()
+                    if "intel" in val:
+                        return "intel"
+                    if "amd" in val:
+                        return "amd"
+        except OSError as exc:
+            logger.warning("CPU vendor detection: %s", exc)
+        return None
+
+    @staticmethod
+    def detect_running_kernel_variant() -> str:
+        try:
+            release = os.uname().release.lower()
+            if "hardened" in release:
+                return "linux-hardened"
+            if "lts" in release:
+                return "linux-lts"
+            if "zen" in release:
+                return "linux-zen"
+        except OSError:
+            pass
+        return "linux"
+
+    def detect_installed_kernel_variants(self) -> set[str]:
+        installed: set[str] = set()
+        for pkg in ARCH_KERNEL_VARIANTS.keys():
+            if self.package_is_installed(pkg):
+                installed.add(pkg)
+        return installed
+
+    @staticmethod
+    def detect_system_default_kernel(bootloader: str) -> str | None:
+        found = None
+        if bootloader == "systemd-boot":
+            try:
+                conf_path = Path("/boot/loader/loader.conf")
+                if conf_path.exists():
+                    text = conf_path.read_text(encoding="utf-8", errors="replace")
+                    for line in text.splitlines():
+                        line = line.strip()
+                        if not line or line.startswith("#"):
+                            continue
+                        parts = line.split(None, 1)
+                        if len(parts) == 2 and parts[0].lower() == "default":
+                            val = parts[1].strip().lower()
+                            if "lts" in val:
+                                found = "linux-lts"
+                            elif "zen" in val:
+                                found = "linux-zen"
+                            elif "hardened" in val:
+                                found = "linux-hardened"
+                            elif "arch" in val or "linux" in val:
+                                found = "linux"
+                            break
+            except OSError:
+                pass
+
+        elif bootloader == "grub":
+            try:
+                grub_def_path = Path("/etc/default/grub")
+                default_val = ""
+                if grub_def_path.exists():
+                    text = grub_def_path.read_text(encoding="utf-8", errors="replace")
+                    for line in text.splitlines():
+                        if line.strip().upper().startswith("GRUB_DEFAULT="):
+                            default_val = line.split("=", 1)[1].strip().strip('"\'').lower()
+                            break
+
+                if default_val == "saved":
+                    try:
+                        output = subprocess.check_output(["grub-editenv", "list"],
+                                                         stderr=subprocess.DEVNULL, text=True)
+                        for line in output.splitlines():
+                            if line.startswith("saved_entry="):
+                                default_val = line.split("=", 1)[1].lower()
+                                break
+                    except (subprocess.SubprocessError, FileNotFoundError):
+                        pass
+
+                if "lts" in default_val:
+                    found = "linux-lts"
+                elif "zen" in default_val:
+                    found = "linux-zen"
+                elif "hardened" in default_val:
+                    found = "linux-hardened"
+                elif default_val and default_val not in ("0", "saved"):
+                    found = "linux"
+            except OSError:
+                pass
+
+        return found or LinuxDistroHelper.detect_running_kernel_variant()

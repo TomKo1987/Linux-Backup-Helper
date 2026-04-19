@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QCheckBox, QColorDialog, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QTextEdit, QApplication
 )
 
+from drive_utils import get_mounts, is_mounted
 from state import (
     _norm_paths, list_profiles, load_profile, save_profile, logger, S, _HOME, _LOG_FILE, _PROFILES_DIR, _PROFILE_RE,
     _atomic_write, apply_replacements,
@@ -566,7 +567,6 @@ class MountsDialog(_ListDialog):
                          [("🆕 New", "_new"), ("✎ Edit", "_edit"), ("✕ Remove", "_del")])
 
     def _refresh(self) -> None:
-        from drive_utils import get_mounts, is_mounted
         self.item_list.clear()
         t   = current_theme()
         out = get_mounts()
@@ -794,9 +794,10 @@ class ProfilesDialog(QDialog):
             return
         _clear_default_flag(S.profile_name, "_load")
 
-        if name and self._activate_profile(name):
+        if self._activate_profile(str(name)):
             QMessageBox.information(self, "Profile Loaded", f"Profile '{name}' is now active.")
-        else: QMessageBox.critical(self, "Error", f"Could not load profile '{name}'.")
+        else:
+            QMessageBox.critical(self, "Error", f"Could not load profile '{name}'.")
 
     def _new(self) -> None:
         name = ask_profile_name("New Profile", "", self)
@@ -806,16 +807,19 @@ class ProfilesDialog(QDialog):
                 self, "Overwrite?", f"Profile '{name}' already exists. Overwrite it?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
-        _clear_default_flag(S.profile_name, "_new")
+        prev_name = S.profile_name
+        _clear_default_flag(prev_name, "_new")
         S.reset_to_fresh()
         S.profile_name = name
         if not save_profile():
             QMessageBox.critical(self, "Error", f"Could not save profile '{name}'.")
+            if prev_name:
+                load_profile(_PROFILES_DIR / f"{prev_name}.json")
             return
         self.was_changed = True
         self._refresh()
         QMessageBox.information(self, "Profile Created", f"Blank profile '{name}' created and is now active.\n\n"
-            "Go to Settings → Header Settings to add headers before creating entries.")
+                                                         "Go to Settings → Header Settings to add headers before creating entries.")
 
     def _copy(self) -> None:
         src_name = self._selected_name() or S.profile_name
@@ -837,6 +841,7 @@ class ProfilesDialog(QDialog):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
         shutil.copy2(src_path, dest)
+        _clear_default_flag(name, "_copy")
         self.was_changed = True
         self._refresh()
         QMessageBox.information(self, "Duplicated", f"'{src_name}' duplicated as '{name}'.")
@@ -874,7 +879,7 @@ class ProfilesDialog(QDialog):
         self._refresh()
         if QMessageBox.question(self, "Import Complete", f"'{name}' imported successfully.\nLoad it now?",
                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
-
+            _clear_default_flag(S.profile_name, "_import")
             if not self._activate_profile(name):
                 QMessageBox.critical(self, "Error", f"Could not load profile '{name}'.")
 
@@ -933,6 +938,7 @@ class ProfilesDialog(QDialog):
         QMessageBox.information(self, "Import Complete", "\n\n".join(parts) or "Nothing imported.")
         if len(imported) == 1 and QMessageBox.question(self, "Load Profile", f"Load '{imported[0]}' now?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+            _clear_default_flag(S.profile_name, "_import_archive")
             if not self._activate_profile(imported[0]):
                 QMessageBox.critical(self, "Error", f"Could not load profile '{imported[0]}'.")
 
@@ -1040,7 +1046,12 @@ class LogViewer(_TextViewDialog):
                 if first_nl != -1:
                     text = text[first_nl + 1:]
             lines = text.splitlines()
-            prefix = f"[… last 2000 of many lines …]\n" if read_bytes < size else ""
+            total_lines = len(lines)
+            if read_bytes < size or total_lines > 2000:
+                count = "many" if read_bytes < size else str(total_lines)
+                prefix = f"[… last 2000 of {count} lines …]\n"
+            else:
+                prefix = ""
             self.view.setPlainText(prefix + "\n".join(lines[-2000:]))
             cursor = self.view.textCursor()
             cursor.movePosition(QTextCursor.MoveOperation.End)

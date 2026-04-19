@@ -7,6 +7,8 @@ from dataclasses import dataclass, field, fields as _dc_fields
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Optional
+from constants import USER_SHELLS, ARCH_KERNEL_VARIANTS
+
 
 _USER = pwd.getpwuid(os.getuid()).pw_name
 _HOME = Path.home()
@@ -42,19 +44,50 @@ def _make_logger(name: str) -> logging.Logger:
 
 logger = _make_logger("backup_helper")
 
+_text_replacements: tuple[tuple[str, str], ...] = ((_HOME.as_posix(), "~"), (f"/run/media/{_USER}/", ""))
 
-_path_replacements: tuple[tuple[str, str], ...] = ((_HOME.as_posix(), "~"), (f"/run/media/{_USER}/", ""))
+_ANSI_RE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+
+_NORM_PATHS_RE = re.compile(r"(?<!:///)\s+(?=/|smb://|cifs://)")
 
 
-_ANSI_RE       = re.compile(r"\x1b\[[0-9;]*[mKHJA-Z]")
-_NORM_PATHS_RE = re.compile(r"(?<=[^\s/]) (?=/|smb://|cifs://)")
+def active_system_files() -> list[dict]:
+    return [
+        f for f in (S.system_files or [])
+        if isinstance(f, dict)
+        and not f.get("disabled")
+        and f.get("source", "").strip()
+        and f.get("destination", "").strip()
+    ]
+
+
+def pkg_name(p: dict | str, *, is_specific: bool = False) -> str:
+    if isinstance(p, dict):
+        return p.get("package" if is_specific else "name", "") or ""
+    return str(p)
+
+
+def active_pkg_names(pkg_list: list, *, is_specific: bool = False) -> list[str]:
+    key = "package" if is_specific else "name"
+    return [
+        p[key] for p in pkg_list
+        if isinstance(p, dict) and not p.get("disabled") and p.get(key)
+    ]
+
+
+def sort_pkg_list(pkg_list: list) -> None:
+    pkg_list.sort(key=lambda x: pkg_name(x).lower())
+
+
+def sort_specific_pkg_list(pkg_list: list) -> None:
+    pkg_list.sort(
+        key=lambda x: (x.get("session", ""), x.get("package", "")) if isinstance(x, dict) else ("", "")
+    )
 
 
 def apply_replacements(text: str) -> str:
-    for old, new in _path_replacements:
+    for old, new in _text_replacements:
         text = text.replace(old, new)
-    if "\x1b" in text:
-        text = _ANSI_RE.sub("", text)
     return text
 
 
@@ -84,6 +117,8 @@ class State:
     aur_packages:       list[dict]      = field(default_factory=list)
     specific_packages:  list[dict]      = field(default_factory=list)
     user_shell:         str             = "bash"
+    default_kernel:     str             = ""
+    kernels_to_install: list[str]       = field(default_factory=list)
     ui: dict = field(default_factory=lambda: {"theme": "Tokyo Night", "font_family": "", "font_size": 14,
                                               "backup_window_columns": 2, "restore_window_columns": 2,
                                               "settings_window_columns": 2})
@@ -92,6 +127,14 @@ class State:
         fresh = State()
         for f in _dc_fields(fresh):
             setattr(self, f.name, getattr(fresh, f.name))
+
+    @property
+    def effective_shell(self) -> str:
+        return (self.user_shell or "bash").strip()
+
+    @property
+    def effective_kernels(self) -> list[str]:
+        return list(dict.fromkeys(k for k in (self.kernels_to_install or []) if k))
 
 
 S = State()
@@ -120,6 +163,27 @@ def _normalise_pkg(p) -> dict:
 
 def _norm_pkgs(raw: list) -> list[dict]:
     return sorted((_normalise_pkg(p) for p in raw), key=lambda x: x.get("name", x.get("package", "")).lower())
+
+
+def _normalise_specific_pkg(p) -> dict:
+    if isinstance(p, str):
+        return {"package": p, "session": "", "disabled": False}
+    return {**p, "disabled": p.get("disabled", False)}
+
+
+def _norm_specific_pkgs(raw: list) -> list[dict]:
+    return sorted(
+        (_normalise_specific_pkg(p) for p in raw),
+        key=lambda x: (x.get("session", ""), x.get("package", ""))
+    )
+
+
+def all_profile_pkg_names() -> frozenset[str]:
+    return frozenset(
+        active_pkg_names(S.basic_packages) +
+        active_pkg_names(S.aur_packages) +
+        active_pkg_names(S.specific_packages, is_specific=True)
+    )
 
 
 def _norm_paths(raw: Any) -> list[str]:
@@ -167,9 +231,12 @@ def _load_profile_from_data(path: Path, data: dict) -> bool:
     try:
         new_name = path.stem
 
-        new_headers = {k: {"inactive": bool(v.get("inactive")), "color": (v.get("header_color", "#ffffff")
-        if _valid_hex_color(v.get("header_color")) else "#ffffff")} for k, v in data.get("header", {}).items()
-                       if isinstance(v, dict)}
+        def _resolve_color(v: dict) -> str:
+            raw = v.get("header_color") or v.get("color") or "#ffffff"
+            return raw if _valid_hex_color(raw) else "#ffffff"
+
+        new_headers = {k: {"inactive": bool(v.get("inactive")), "color": _resolve_color(v)}
+                       for k, v in data.get("header", {}).items() if isinstance(v, dict)}
 
         new_entries = [e for raw in data.get("entries", []) if (e := _parse_entry(raw)) is not None]
         new_mount = [o for o in data.get("mount_options", []) if isinstance(o, dict)]
@@ -183,18 +250,17 @@ def _load_profile_from_data(path: Path, data: dict) -> bool:
         new_basic     = _norm_pkgs(_as_list("basic_packages"))
         new_aur       = _norm_pkgs(_as_list("aur_packages"))
 
-        def _norm_specific(raw: list) -> list[dict]:
-            result = []
-            for p in raw:
-                if isinstance(p, str):
-                    result.append({"package": p, "session": "", "disabled": False})
-                elif isinstance(p, dict):
-                    result.append({**p, "disabled": p.get("disabled", False)})
-            return sorted(result, key=lambda x: (x.get("session", ""), x.get("package", "")))
-        new_specific = _norm_specific(_as_list("specific_packages"))
+        new_specific = _norm_specific_pkgs(_as_list("specific_packages"))
 
         raw_shell     = data.get("user_shell", "bash")
-        new_shell     = raw_shell if isinstance(raw_shell, str) and raw_shell.strip() else "bash"
+        _s = raw_shell.strip() if isinstance(raw_shell, str) else ""
+        new_shell = _s if _s in USER_SHELLS else "bash"
+
+        raw_dk = data.get("default_kernel", "")
+        new_dk = raw_dk if isinstance(raw_dk, str) and (not raw_dk or raw_dk in ARCH_KERNEL_VARIANTS) else ""
+
+        raw_kti   = data.get("kernels_to_install", [])
+        new_kti = [k for k in raw_kti if isinstance(k, str) and k in ARCH_KERNEL_VARIANTS] if isinstance(raw_kti, list) else []
 
         new_ui = dict(S.ui)
         raw_ui = data.get("ui_settings", {})
@@ -216,6 +282,8 @@ def _load_profile_from_data(path: Path, data: dict) -> bool:
         S.aur_packages       = new_aur
         S.specific_packages  = new_specific
         S.user_shell         = new_shell
+        S.default_kernel     = new_dk
+        S.kernels_to_install = new_kti
         S.ui                 = new_ui
 
         invalidate_tooltip_cache()
@@ -232,6 +300,8 @@ def save_profile(path: Optional[Path] = None) -> bool:
         return False
     data = {"is_default": True,
             "mount_options": S.mount_options,
+            "default_kernel": S.default_kernel,
+            "kernels_to_install": S.kernels_to_install,
             "header": {k: {"inactive": v.get("inactive", False), "header_color": v.get("color", "#ffffff")}
                        for k, v in S.headers.items()},
             "system_manager_operations": S.system_manager_ops,
@@ -242,7 +312,10 @@ def save_profile(path: Optional[Path] = None) -> bool:
                 S.specific_packages, key=lambda x: str(x.get("package", "") if isinstance(x, dict) else x).lower()),
             "ui_settings": S.ui,
             "user_shell":  S.user_shell,
-            "entries": sorted(S.entries, key=lambda e: (e.get("header", "").lower(), e.get("title", "").lower()))}
+            "entries": sorted(
+                S.entries,
+                key=lambda e: (e.get("header", "").lower(), e.get("title", "").lower(), str(e.get("source", "")))
+            )}
     try:
         _atomic_write(path, data)
         invalidate_tooltip_cache()
