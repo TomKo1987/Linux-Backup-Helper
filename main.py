@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QApplication, QInputDialog, QMainWindow, QGridLayout, QFileDialog
 )
 
-from capture_verify import CaptureVerifyDialog
+from scan_verify import ScanVerifyDialog
 from dialogs import LogViewer, SysInfoDialog
 from drive_utils import get_mounts, is_mounted, unmount_drive, get_session_managed_mounts
 from state import S, _HOME, _PROFILES_DIR, _PROFILE_RE, RESTART_DIALOG, save_profile, logger, startup_load
@@ -25,12 +25,8 @@ def _notify(title: str, body: str, urgency: str = "normal") -> None:
     if not shutil.which("notify-send"):
         return
     try:
-        subprocess.Popen(
-            ["notify-send", f"--urgency={urgency}", "--app-name=Backup Helper",
-             "--icon=drive-harddisk", title, body],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
+        subprocess.Popen(["notify-send", f"--urgency={urgency}", "--app-name=Backup Helper", "--icon=drive-harddisk",
+                          title, body], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     except OSError:
         pass
 
@@ -46,10 +42,9 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
         self.menu_actions = [("💾 Create Backup", lambda: self._open(base_window, "Backup"), False),
                              ("📤 Restore Backup", lambda: self._open(base_window, "Restore"), False),
                              ("🖥 System Manager", self._launch_system_manager, False),
-                             ("🔍 Capture && Verify", self._launch_capture_verify, False),
+                             ("🔍 Scan && Verify", self._launch_scan_verify, True), ("💻 System Info", lambda: self._open(SysInfoDialog), False),
+                             ("📜 History", self._open_history, True), ("📋 View Logs", lambda: self._open(LogViewer), False),
                              ("⚙️ Settings", self._open_settings, False),
-                             ("💻 System Info", lambda: self._open(SysInfoDialog), True),
-                             ("📋 View Logs", lambda: self._open(LogViewer), False),
                              ("❌ Quit", self._exit, False)]
 
         self._build_ui()
@@ -96,7 +91,7 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
                 break
         self.show()
 
-        if cls.__name__ == "base_window" and args and args[0] in ("Backup", "Restore"):
+        if cls is base_window and args and args[0] in ("Backup", "Restore"):
             op = args[0]
             if hasattr(dlg, "worker") and hasattr(dlg, "errors"):
                 if getattr(dlg, "_quitting", False):
@@ -104,18 +99,20 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
                 errors = getattr(dlg, "errors", 0)
                 copied = getattr(dlg, "copied", 0)
                 if errors:
-                    _notify(f"{op} completed with errors",
-                            f"{copied} files copied, {errors} error(s)", urgency="critical")
+                    _notify(f"{op} completed with errors", f"{copied} files copied, {errors} error(s)", urgency="critical")
                 elif copied > 0:
-                    _notify(f"{op} completed successfully",
-                            f"{copied} file(s) copied", urgency="normal")
+                    _notify(f"{op} completed successfully", f"{copied} file(s) copied", urgency="normal")
 
     def _open_settings(self) -> None:
         self._open(base_window, "Settings", setup_fn=lambda d: d.changed.connect(apply_style))
         self._build_ui()
 
-    def _launch_capture_verify(self) -> None:
-        self._open(CaptureVerifyDialog)
+    def _launch_scan_verify(self) -> None:
+        self._open(ScanVerifyDialog)
+
+    def _open_history(self) -> None:
+        from history import HistoryDialog
+        HistoryDialog(self).exec()
 
     def _launch_system_manager(self) -> None:
         from system_manager_options import SystemManagerLauncher
@@ -159,8 +156,7 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
         mount_out = get_mounts()
         all_mounted = [o for o in S.mount_options if is_mounted(o, mount_out)]
         known_names = {x.get("drive_name") for x in all_mounted if x.get("drive_name")}
-        all_mounted.extend(o for o in get_session_managed_mounts()
-                           if o.get("drive_name") and o.get("drive_name") not in known_names)
+        all_mounted.extend(o for o in get_session_managed_mounts() if o.get("drive_name") and o.get("drive_name") not in known_names)
 
         unmountable = [o for o in all_mounted if o.get("unmount_command")]
         info_only = [o for o in all_mounted if not o.get("unmount_command")]
@@ -217,14 +213,13 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
 def _first_run_wizard(parent) -> bool:
     msg = QMessageBox(parent)
     msg.setWindowTitle("Welcome to Backup Helper")
-    msg.setText(
-        "<b>No profile found.</b><br><br>"
-        "How would you like to set up your profile?<br><br>"
-        "<b>🔍 Scan System:</b> Detect installed packages on this machine and add them "
-        "to a new profile automatically — the recommended way to get started.<br><br>"
-        "<b>📥 Import Profile:</b> Load an existing <code>.json</code> profile from disk.<br><br>"
-        "<b>➕ Start Empty:</b> Create a blank profile you can fill in manually later."
-    )
+    msg.setText("<b>No profile found.</b><br><br>"
+                "How would you like to set up your profile?<br><br>"
+                "<b>🔍 Scan System:</b> Detect installed packages on this machine and add them "
+                "to a new profile automatically — the recommended way to get started.<br><br>"
+                "<b>📥 Import Profile:</b> Load an existing <code>.json</code> profile from disk.<br><br>"
+                "<b>➕ Start Empty:</b> Create a blank profile you can fill in manually later.")
+
     msg.setTextFormat(Qt.TextFormat.RichText)
     scan_btn   = msg.addButton("🔍 Scan System",    QMessageBox.ButtonRole.ActionRole)
     import_btn = msg.addButton("📥 Import Profile", QMessageBox.ButtonRole.ActionRole)
@@ -237,12 +232,14 @@ def _first_run_wizard(parent) -> bool:
         from ui_utils import ask_profile_name
         name = ask_profile_name("New Profile Name", "Default", parent)
         if not name:
-            S.profile_name, S.headers, S.entries = "Default", {}, []
+            S.reset_to_fresh()
+            S.profile_name = "Default"
             save_profile()
             return True
 
         _PROFILES_DIR.mkdir(parents=True, exist_ok=True)
-        S.profile_name, S.headers, S.entries = name, {}, []
+        S.reset_to_fresh()
+        S.profile_name = name
         save_profile()
 
         QMessageBox.information(parent, "System Scan — How It Works",
@@ -264,7 +261,7 @@ def _first_run_wizard(parent) -> bool:
                                 "• You can re-open Capture &amp; Verify at any time from the main menu.<br><br>"
                                 "Click <b>OK</b> to start the scan.")
 
-        CaptureVerifyDialog(parent).exec()
+        ScanVerifyDialog(parent).exec()
         return True
 
     if clicked == import_btn:
@@ -292,7 +289,8 @@ def _first_run_wizard(parent) -> bool:
                 QMessageBox.critical(parent, "Import Failed", f"Could not copy profile:\n{e}")
                 break
 
-    S.profile_name, S.headers, S.entries = "Default", {}, []
+    S.reset_to_fresh()
+    S.profile_name = "Default"
     save_profile()
     return True
 
@@ -306,8 +304,7 @@ def main():
             sys.__excepthook__(exc_type, exc_value, exc_tb)
             return
         logger.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_tb))
-        QMessageBox.critical(
-            None, "Critical Error", f"Unexpected error:\n\n{exc_value}\n\nCheck logs for details.")
+        QMessageBox.critical(None, "Critical Error", f"Unexpected error:\n\n{exc_value}\n\nCheck logs for details.")
 
     def _thread_excepthook(args):
         if args.exc_type and issubclass(args.exc_type, KeyboardInterrupt):

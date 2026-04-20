@@ -205,8 +205,8 @@ pyinstaller --onefile main.py
 **Main Window**  
 ![Main Window](images/Main.png)
 
-**System Capture & Verify**  
-![System Capture & Verify](images/System%20Capture%20&%20Verify.png)
+**Scan & Verify**  
+![Scan & Verify](images/Scan%20&%20Verify.png)
 
 **Backup Window**  
 ![Backup Window](images/Backup%20Window.png)

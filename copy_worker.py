@@ -1844,16 +1844,16 @@ class _SummaryWidget(QWidget):
 
     def _update_timing(self, elapsed_s: int, done: int, total: int, finished: bool, cancelled: bool) -> None:
         mins, secs = divmod(elapsed_s, 60)
-        speed_str  = "---"
-        eta_str    = "--:--"
+        speed_str = "---"
+        eta_str = "--:--"
+        if finished:
+            eta_str = "Cancelled" if cancelled else "Done"
         if elapsed_s > 0 and done > 0:
-            rate      = done / elapsed_s
+            rate = done / elapsed_s
             speed_str = (f"{rate:,.1f} files/s" if rate >= 1 else f"1 file/{1 / rate:.1f}s")
             if not finished and total > done:
-                eta_s   = int((total - done) / rate)
+                eta_s = int((total - done) / rate)
                 eta_str = f"{eta_s // 60:02d}:{eta_s % 60:02d}"
-            elif finished:
-                eta_str = "Cancelled" if cancelled else "Done"
         self._card_elapsed.set_val(f"{mins:02d}:{secs:02d}")
         self._card_speed.set_val(speed_str)
         self._card_eta.set_val(eta_str)
@@ -2198,8 +2198,11 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         self._status_fs = font_sz(8)
 
         screen = QApplication.primaryScreen()
-        geo    = screen.availableGeometry() if screen else None
-        if geo: self.setMinimumSize(min(1900, int(geo.width()  * 0.9)), min(925,  int(geo.height() * 0.9)))
+        geo = screen.availableGeometry() if screen else None
+        if geo:
+            self.setMinimumSize(min(1900, int(geo.width() * 0.9)), min(925, int(geo.height() * 0.9)))
+        else:
+            self.setMinimumSize(1200, 700)
 
         self._operation = operation
         self.worker     = CopyWorker(tasks)
@@ -2354,6 +2357,15 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         self._tick.stop()
         self._final_elapsed = self.timer.elapsed() // 1000
 
+        try:
+            from history import append_history
+            duration = self._final_elapsed if self._final_elapsed is not None else 0
+
+            append_history(operation=self._operation, copied=c, skipped=s, errors=e,
+                           duration_s=duration, cancelled=cancelled)
+        except Exception as exc:
+            logger.debug("append_history failed: %s", exc)
+
         for pending, widget, fmt in zip((self._pending_ok, self._pending_sk, self._pending_er),
                                         (self._w_copied, self._w_skipped, self._w_errors),
                                         (self._fmt_ok, self._fmt_sk, self._fmt_er)):
@@ -2391,9 +2403,14 @@ class CopyDialog(_StandardKeysMixin, QDialog):
                 pass
             self._cancel_connected = False
 
-        self.cancel_btn.setEnabled(True)
-        self.cancel_btn.setText("✓ Close")
+        if getattr(self, "_accept_connected", False):
+            try:
+                self.cancel_btn.clicked.disconnect(self.accept)
+            except (RuntimeError, TypeError):
+                pass
+
         self.cancel_btn.clicked.connect(self.accept)
+        self._accept_connected = True
 
     def closeEvent(self, event) -> None:
         if self.worker.isRunning():

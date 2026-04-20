@@ -14,8 +14,8 @@ _USER = pwd.getpwuid(os.getuid()).pw_name
 _HOME = Path.home()
 _CONFIG_DIR   = _HOME / ".config" / "Backup Helper"
 _PROFILES_DIR = _CONFIG_DIR / "profiles"
-_LOG_DIR      = _CONFIG_DIR / "logs"
-_LOG_FILE     = _LOG_DIR / "backup_helper.log"
+_LOG_HIST_DIR = _CONFIG_DIR / "logs_history"
+_LOG_FILE     = _LOG_HIST_DIR / "backup_helper.log"
 _PROFILE_RE   = re.compile(r"^[^\s._][\w\-. ]*\S$|^[^\s._]$")
 
 RESTART_DIALOG: int = 2
@@ -23,7 +23,7 @@ _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 def _make_logger(name: str) -> logging.Logger:
-    _LOG_DIR.mkdir(parents=True, exist_ok=True)
+    _LOG_HIST_DIR.mkdir(parents=True, exist_ok=True)
     log = logging.getLogger(name)
     if log.handlers:
         return log
@@ -328,7 +328,8 @@ def save_profile(path: Optional[Path] = None) -> bool:
 def list_profiles() -> list[str]:
     if not _PROFILES_DIR.exists():
         return []
-    return sorted(p.stem for p in _PROFILES_DIR.glob("*.json") if _PROFILE_RE.match(p.stem))
+    return sorted(p.stem for p in _PROFILES_DIR.glob("*.json")
+                  if not p.stem.endswith(".history") and _PROFILE_RE.match(p.stem))
 
 
 def startup_load() -> bool:

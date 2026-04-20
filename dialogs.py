@@ -571,10 +571,17 @@ class MountDialog(QDialog):
         layout.addWidget(ok_cancel_buttons(self, self._accept))
 
     def _accept(self) -> None:
-        if not self.name.text().strip():
+        from drive_utils import _valid_drive_name
+        name = self.name.text().strip()
+        if not name:
             QMessageBox.warning(self, "Error", "Name is a required field.")
             return
-        self.result = {"drive_name": self.name.text().strip(), "mount_path": self.mount_path.text().strip(),
+        if not _valid_drive_name(name):
+            QMessageBox.warning(self, "Invalid Drive Name",
+                                "The drive name contains invalid characters or exceeds 128 characters.\n\n"
+                                "Allowed: letters, digits, spaces, hyphens, underscores, dots, parentheses, @ and :")
+            return
+        self.result = {"drive_name": name, "mount_path": self.mount_path.text().strip(),
                        "mount_command": self.mount.text().strip(), "unmount_command": self.unmnt.text().strip()}
         self.accept()
 
@@ -1108,10 +1115,15 @@ class SysInfoDialog(_TextViewDialog):
         except FileNotFoundError:
             result = ("'inxi' is not installed.\n\n"
                       "Installation:\n"
-                      "  Arch:     sudo pacman -S inxi\n"
-                      "  Debian:   sudo apt install inxi\n"
-                      "  Fedora:   sudo dnf install inxi\n"
-                      "  openSUSE: sudo zypper install inxi\n")
+                      "  Arch / Manjaro:  sudo pacman -S inxi\n"
+                      "  Debian / Ubuntu: sudo apt install inxi\n"
+                      "  Fedora:          sudo dnf install inxi\n"
+                      "  openSUSE:        sudo zypper install inxi\n"
+                      "  Void:            sudo xbps-install inxi\n"
+                      "  Alpine:          sudo apk add inxi\n"
+                      "  Gentoo:          sudo emerge app-misc/inxi\n"
+                      "  Solus:           sudo eopkg install inxi\n"
+                      "  NixOS:           nix-env -iA nixpkgs.inxi\n")
         except subprocess.TimeoutExpired:
             result = "System information request timed out."
         except Exception as exc:
