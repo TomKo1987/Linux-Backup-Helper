@@ -130,14 +130,15 @@ def _execute_drive_op(drive: dict, cmd_key: str, timeout: int) -> tuple[bool, st
 
 def is_mounted(opt: dict, mounts: Optional[list[tuple[str, str]]] = None) -> bool:
     name = opt.get("drive_name", "")
-    if not _valid_drive_name(name):
+    mount_path = opt.get("mount_path", "").strip()
+
+    if not _valid_drive_name(name) and not mount_path:
         return False
 
     if mounts is None:
         mounts = get_mounts()
 
-    expected_paths = set(_mount_paths(name))
-    mount_path = opt.get("mount_path", "").strip()
+    expected_paths = set(_mount_paths(name)) if _valid_drive_name(name) else set()
     smb_prefixes: tuple = ()
 
     if mount_path and is_smb(mount_path):

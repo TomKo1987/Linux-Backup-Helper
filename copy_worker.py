@@ -293,7 +293,13 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
             logger.debug("copy_file_range failed (errno=%d), falling back: %s", exc.errno, exc)
         try:
             os.lseek(rfd, 0, os.SEEK_SET)
+        except OSError:
+            pass
+        try:
             os.lseek(wfd, 0, os.SEEK_SET)
+        except OSError:
+            pass
+        try:
             os.ftruncate(wfd, 0)
         except OSError:
             pass
@@ -527,7 +533,8 @@ class _SmbClient:
         proc, _, err = self._run_with_creds(cmds, timeout)
         if proc is None:
             return False, err
-        return proc.returncode == 0, (err.strip() or f"exit {proc.returncode}")
+        ok = proc.returncode == 0
+        return ok, ("" if ok else (err.strip() or f"exit {proc.returncode}"))
 
     def ls_index(self, base: str) -> "dict | None":
         base = base.replace("\\", "/").rstrip("/")
@@ -677,6 +684,7 @@ class _SmbScanner:
             logger.warning("SMB ls_index returned empty for %s%s", src_url,
                            " — possible permission error or empty directory"
                            if rpath else " — share root is empty or inaccessible")
+            lerr.append((src_url, "Directory empty or inaccessible"))
         else:
             prefix = rpath.rstrip("/") + "/" if rpath else None
             for path, (sz,) in idx.items():
@@ -1037,7 +1045,7 @@ class CopyWorker(QThread):
                 tracker = _EntryTracker()
                 if local_tasks and not self._cancel.is_set():
                     self._scan_copy_local_pipelined(local_tasks, flusher, tracker)
-                elif not self._cancel.is_set():
+                else:
                     self.scan_finished.emit(0)
 
                 flusher.flush()

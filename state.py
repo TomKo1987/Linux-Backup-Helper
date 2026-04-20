@@ -48,8 +48,6 @@ _text_replacements: tuple[tuple[str, str], ...] = ((_HOME.as_posix(), "~"), (f"/
 
 _ANSI_RE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
-_NORM_PATHS_RE = re.compile(r"(?<!:///)\s+(?=/|smb://|cifs://)")
-
 
 def active_system_files() -> list[dict]:
     return [
@@ -195,7 +193,7 @@ def _norm_paths(raw: Any) -> list[str]:
     if not s:
         return []
     result = []
-    for p in _NORM_PATHS_RE.split(s):
+    for p in re.split(r'[\n\t]+', s):
         p = p.strip()
         if p:
             result.append(p)

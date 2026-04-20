@@ -492,7 +492,7 @@ class SystemManagerThread(QThread):
                 "set_user_shell": ("Setting user shell…", self._set_shell),
                 "install_ucode": ("Installing CPU microcode…", self._install_ucode),
                 "install_kernels": ("Installing kernel(s)…", self._install_kernels),
-                "install_kernel_header": ("Installing kernel header…", self._install_kernel_header),
+                "install_kernel_headers": ("Installing headers…", self._install_kernel_headers),
                 "set_default_kernel": ("Setting default boot kernel…", self._set_default_kernel),
                 "install_basic_packages": ("Installing Basic Packages…", lambda: self._batch_install(S.basic_packages, "Basic Package")),
                 "install_yay": ("Installing yay…", self._install_yay),
@@ -832,7 +832,7 @@ class SystemManagerThread(QThread):
                 except subprocess.TimeoutExpired:
                     pass
             t1.join(2); t2.join(2)
-            output = chunks[0] if chunks else b""
+            output = b"".join(chunks)
             ok = proc.returncode == 0 and output.strip() == token.encode()
         except Exception as exc: logger.error("_verify_sudo: %s", exc)
         finally:
@@ -1067,12 +1067,15 @@ class SystemManagerThread(QThread):
         overall = True
         for variant in targets:
             pkgs = ARCH_KERNEL_VARIANTS.get(variant)
-            if self._pkg_cache and self._pkg_cache.is_installed(variant):
-                self.outputReceived.emit(f"{variant} already installed — skipping", "success")
-                continue
+
             if not pkgs:
                 self.outputReceived.emit(f"Unknown kernel variant: {variant!r} — skipping", "warning")
                 continue
+
+            if self._pkg_cache and self._pkg_cache.is_installed(pkgs[0]):
+                self.outputReceived.emit(f"{variant} already installed — skipping", "success")
+                continue
+
             kernel_pkg = pkgs[0]
             if not self._install_pkg(kernel_pkg, "Kernel Package"):
                 overall = False
@@ -1085,13 +1088,13 @@ class SystemManagerThread(QThread):
         self._emit_result(overall, "Kernel(s) successfully installed", "One or more kernels failed to install")
         return overall
 
-    def _install_kernel_header(self) -> bool:
+    def _install_kernel_headers(self) -> bool:
         if not self.distro:
             return False
         if self.distro.family() == "arch":
             installed_variants = self.distro.detect_installed_kernel_variants()
             if not installed_variants:
-                return self._install_pkg(self.distro.get_kernel_headers_pkg(), "Kernel Header")
+                return self._install_pkg(self.distro.get_kernel_headers_pkg(), "Headers Package")
             overall = True
             for variant in sorted(installed_variants):
                 pkgs = ARCH_KERNEL_VARIANTS.get(variant)
@@ -1101,10 +1104,10 @@ class SystemManagerThread(QThread):
                 if self._pkg_cache and self._pkg_cache.is_installed(header_pkg):
                     self.outputReceived.emit(f"{header_pkg} already installed — skipping", "success")
                     continue
-                if not self._install_pkg(header_pkg, "Kernel Header"):
+                if not self._install_pkg(header_pkg, "Headers Package"):
                     overall = False
             return overall
-        return self._install_pkg(self.distro.get_kernel_headers_pkg(), "Kernel Header")
+        return self._install_pkg(self.distro.get_kernel_headers_pkg(), "Headers Package")
 
     def _set_default_kernel(self) -> bool | str:
         target = (S.default_kernel or "").strip()
@@ -1295,8 +1298,8 @@ class SystemManagerThread(QThread):
 
         escaped_content = shlex.quote(new_content)
         try:
-            cmd = f"printf '%s' {escaped_content} | sudo tee {shlex.quote(str(dest_path))} > /dev/null"
-            r = self._exec(["sh", "-c", cmd], stream=False, timeout=10)
+            r = self._exec(["sudo", "sh", "-c", f"printf '%s' {escaped_content} > {shlex.quote(str(dest_path))}"],
+                           stream=False, timeout=10)
             self._update_sort_keys(kernel_pkg, Path("/boot/loader/entries"))
             if r.returncode == 0:
                 self._exec(["sync"], stream=False)

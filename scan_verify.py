@@ -15,7 +15,7 @@ from drive_utils import check_drives_to_mount, mount_required_drives
 from linux_distro_helper import LinuxDistroHelper, USER_SHELLS, ARCH_KERNEL_VARIANTS, SESSIONS
 from state import (
     S, _HOME, save_profile, logger, all_profile_pkg_names, active_pkg_names,
-    active_system_files, sort_pkg_list, sort_specific_pkg_list
+    active_system_files, sort_pkg_list, sort_specific_pkg_list, apply_replacements
 )
 from themes import current_theme, font_sz
 from ui_utils import sep, _StandardKeysMixin
@@ -210,7 +210,7 @@ class _CaptureWorker(QThread):
             elif fam == "debian":
                 res["basic"] = sorted(_run(["apt-mark", "showmanual"]))
             elif fam == "fedora":
-                raw = _run(["sh", "-c", "dnf repoquery --userinstalled -q --qf '%{name}' 2>/dev/null | sort -u"])
+                raw = _run(["sh", "-c", "dnf repoquery --userinstalled -q --qf '%{name}' 2>/dev/null"])
                 res["basic"] = sorted(set(raw))
             elif fam == "suse":
                 raw = _run(["sh", "-c",
@@ -449,7 +449,8 @@ class _Section(QWidget):
 
         tx = QLabel(text)
         tx.setStyleSheet(f"color:{color};border:none;font-family:monospace;")
-        tx.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        tx.setMinimumWidth(120)
+        tx.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
 
         lay.addWidget(ic)
         lay.addWidget(tx)
@@ -458,7 +459,7 @@ class _Section(QWidget):
             dt = QLabel(detail)
             dt.setStyleSheet(f"color:{t['muted']};border:none;font-size:{font_sz(-1)}px;font-family:monospace;")
             dt.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            dt.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+            dt.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
             lay.addWidget(dt)
 
         self._content_lay.addWidget(row)
@@ -636,12 +637,18 @@ class _CaptureTab(QWidget):
                          f"<span style='color:{t['accent']};'><b>{len(new_basic) + len(new_aur)}</b> new</span>")
         summary.setTextFormat(Qt.TextFormat.RichText)
         summary.setStyleSheet(f"font-size:{font_sz()}px; padding:4px 2px;")
+
+        if not has_new_pkgs:
+            ok_lbl = QLabel("✅  All packages from this system are already in the profile.")
+            ok_lbl.setStyleSheet(f"color:{t['success']}; font-weight:bold; padding:4px;")
+            ok_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            cl.addWidget(ok_lbl)
+
         cl.addWidget(summary)
 
         if has_new_pkgs:
             cl.addWidget(sep())
-            for title, items, kind in [("New Basic Packages", new_basic, "basic"),
-                                       ("New AUR Packages", new_aur, "aur")]:
+            for title, items, kind in [("New Basic Packages", new_basic, "basic"), ("New AUR Packages", new_aur, "aur")]:
                 if not items:
                     continue
                 hdr_lbl = QLabel(f"<b>{title}</b>  "
@@ -662,14 +669,6 @@ class _CaptureTab(QWidget):
                     gl.addWidget(cb, i // cols, i % cols)
                     self._cbs.append((cb, name, kind))
                 cl.addWidget(grid)
-        else:
-            ok_lbl = QLabel("✅  All packages from this system are already in the profile.")
-            ok_lbl.setStyleSheet(f"color:{t['success']}; font-weight:bold; padding:4px;")
-            ok_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            cl.addWidget(ok_lbl)
-
-        cl.addWidget(sep())
-        cl.addWidget(self._build_specific_section(res["basic"], _excluded, t))
 
         active_basic = [
             {"name": p.get("name", ""), "installed": p.get("name", "") in installed_basic_set}
@@ -741,6 +740,9 @@ class _CaptureTab(QWidget):
                 gl.addWidget(lbl, i // cols, i % cols)
             cl.addWidget(grid)
 
+        cl.addWidget(sep())
+        cl.addWidget(self._build_specific_section(res["basic"], _excluded, t))
+
         sys_files = res.get("sys_files", [])
         if sys_files:
             cl.addWidget(sep())
@@ -754,23 +756,42 @@ class _CaptureTab(QWidget):
             cl.addWidget(hdr)
             _status_map = {"changed": ("⚠", "Changed", "warning"), "dst_missing": ("❌", "Not backed up", "error"),
                            "src_missing": ("❓", "Source missing", "muted")}
-            sf_grid = QWidget()
-            sg = QGridLayout(sf_grid)
-            sg.setContentsMargins(8, 2, 8, 2)
-            sg.setSpacing(3)
+            sf_frame = QWidget()
+            sf_vl = QVBoxLayout(sf_frame)
+            sf_vl.setContentsMargins(0, 0, 0, 0)
+            sf_vl.setSpacing(0)
             for i, f in enumerate(sys_files):
                 if f["status"] == "ok":
                     icon, label, ck = "✅", "OK", "success"
                 else:
                     icon, label, ck = _status_map.get(f["status"], ("?", f["status"], "text"))
-                row_lbl = QLabel(f"{icon} <b>{f['name']}</b>  "
-                                 f"<span style='color:{t['muted']}; font-size:{font_sz(-2)}px;'>"
-                                 f"{f['src']} → {f['dst']}</span>  "
-                                 f"<span style='color:{t[ck]}; font-size:{font_sz(-1)}px;'>[{label}]</span>")
-                row_lbl.setTextFormat(Qt.TextFormat.RichText)
-                row_lbl.setWordWrap(True)
-                sg.addWidget(row_lbl, i, 0)
-            cl.addWidget(sf_grid)
+                row_w = QWidget()
+                row_w.setStyleSheet(f"background:{t['bg3'] if i % 2 == 0 else 'transparent'};")
+                row_lay = QHBoxLayout(row_w)
+                row_lay.setContentsMargins(8, 5, 8, 5)
+                row_lay.setSpacing(10)
+                ic_lbl = QLabel(icon)
+                ic_lbl.setMinimumWidth(30)
+                ic_lbl.setStyleSheet("background:transparent;")
+                name_lbl = QLabel(f"<b>{f['name']}</b>")
+                name_lbl.setTextFormat(Qt.TextFormat.RichText)
+                name_lbl.setMinimumWidth(250)
+                name_lbl.setStyleSheet(f"color:{t['text']};font-family:monospace;background:transparent;")
+                path_lbl = QLabel(f"{apply_replacements(f['src'])} 🢥 {apply_replacements(f['dst'])}")
+                path_lbl.setStyleSheet(f"color:{t['muted']};font-size:{font_sz(-2)}px;"
+                                       f"font-family:monospace;background:transparent;")
+                path_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+                status_lbl = QLabel(f"[{label}]")
+                status_lbl.setStyleSheet(f"color:{t[ck]};font-size:{font_sz(-1)}px;"
+                                         f"font-weight:bold;background:transparent;")
+                status_lbl.setMinimumWidth(100)
+                status_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                row_lay.addWidget(ic_lbl)
+                row_lay.addWidget(name_lbl)
+                row_lay.addWidget(path_lbl)
+                row_lay.addWidget(status_lbl)
+                sf_vl.addWidget(row_w)
+            cl.addWidget(sf_frame)
         elif S.system_files:
             cl.addWidget(sep())
             info = QLabel("📄  <i>No active system files configured.</i>")
@@ -782,6 +803,7 @@ class _CaptureTab(QWidget):
         if services:
             cl.addWidget(sep())
             cl.addWidget(self._build_service_section(services, t))
+            cl.addWidget(sep())
 
         cl.addStretch()
         self._scroll.setWidget(container)
@@ -878,18 +900,12 @@ class _CaptureTab(QWidget):
         hdr.setStyleSheet(f"font-size:{font_sz(1)}px;color:{t['accent2']};")
         vl.addWidget(hdr)
 
-        hint = QLabel("Active services are ticked. "
-                      "Check services you want to add to the profile (System Manager Operations). "
-                      "Services already in your profile are shown with a ✓ in profile badge.")
+        hint = QLabel("Active services are ticked. Check services you want to add to the profile (System Manager Operations)."
+                      "<br>Services already in your profile are shown with a ✓ in profile badge.")
         hint.setTextFormat(Qt.TextFormat.RichText)
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color:{t['muted']};font-size:{font_sz(-1)}px;")
         vl.addWidget(hint)
-
-        grid = QWidget()
-        gl = QGridLayout(grid)
-        gl.setContentsMargins(8, 4, 8, 4)
-        gl.setSpacing(4)
 
         _OP_LABELS: dict[str, str] = {"enable_bluetooth_service": "Bluetooth",
                                       "enable_atd_service": "atd (at-daemon)",
@@ -901,47 +917,64 @@ class _CaptureTab(QWidget):
                                       "install_snap": "Snapd",
                                       "enable_flatpak_integration": "Flatpak"}
 
-        cols = 2
+        svc_frame = QWidget()
+        svc_vl = QVBoxLayout(svc_frame)
+        svc_vl.setContentsMargins(0, 0, 0, 0)
+        svc_vl.setSpacing(0)
+
         for i, svc_info in enumerate(services):
-            op = svc_info["op"]
-            svc = svc_info["service"]
-            active = svc_info["active"]
+            op    = svc_info["op"]
+            svc   = svc_info["service"]
+            active     = svc_info["active"]
             in_profile = svc_info["in_profile"]
 
-            label = _OP_LABELS.get(op, op)
+            label       = _OP_LABELS.get(op, op)
             active_icon = "✅" if active else "⬜"
-            status_txt = "active" if active else "inactive"
+
+            row_w = QWidget()
+            row_w.setStyleSheet(f"background:{t['bg3'] if i % 2 == 0 else 'transparent'};")
+            row_lay = QHBoxLayout(row_w)
+            row_lay.setContentsMargins(8, 6, 8, 6)
+            row_lay.setSpacing(10)
+
+            ic_lbl = QLabel(active_icon)
+            ic_lbl.setMinimumWidth(30)
+            ic_lbl.setStyleSheet("background:transparent;")
 
             if in_profile:
-                cell = QWidget()
-                cell_l = QHBoxLayout(cell)
-                cell_l.setContentsMargins(0, 0, 0, 0)
-                cell_l.setSpacing(6)
-                info_lbl = QLabel(f"{active_icon}  {label}  "
-                                  f"<span style='color:{t['muted']};font-size:{font_sz(-2)}px;'>"
-                                  f"({svc}.service)</span>")
-                info_lbl.setTextFormat(Qt.TextFormat.RichText)
-                info_lbl.setStyleSheet(f"color:{t['text']};")
+                name_lbl = QLabel(f"<b>{label}</b>")
+                name_lbl.setTextFormat(Qt.TextFormat.RichText)
+                name_lbl.setMinimumWidth(250)
+                name_lbl.setStyleSheet(f"color:{t['text']};background:transparent;")
+                svc_lbl = QLabel(f"({svc}.service)")
+                svc_lbl.setStyleSheet(f"color:{t['muted']};font-size:{font_sz(-2)}px;"
+                                      f"font-family:monospace;background:transparent;")
+                svc_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
                 badge = QLabel("✓ in profile")
                 badge.setStyleSheet(f"color:{t['success']};font-size:{font_sz(-2)}px;"
                                     f"background:{t['bg2']};padding:1px 6px;border-radius:3px;")
-                cell_l.addWidget(info_lbl)
-                cell_l.addWidget(badge)
-                cell_l.addStretch()
-                gl.addWidget(cell, i // cols, i % cols)
+                row_lay.addWidget(ic_lbl)
+                row_lay.addWidget(name_lbl)
+                row_lay.addWidget(svc_lbl)
+                row_lay.addWidget(badge)
             else:
-                cb = QCheckBox(f"{label}  [{active_icon} {status_txt}]  ({svc}.service)")
+                cb = QCheckBox(label)
                 cb.setChecked(active)
-                if active:
-                    cb.setStyleSheet(f"color:{t['success']};")
-                    cb.setToolTip(f"{svc}.service is currently active — add to profile?")
-                else:
-                    cb.setStyleSheet(f"color:{t['muted']};")
-                    cb.setToolTip(f"{svc}.service is currently inactive")
-                gl.addWidget(cb, i // cols, i % cols)
+                cb.setMinimumWidth(250)
+                cb.setStyleSheet(f"color:{t['success'] if active else t['muted']};background:transparent;")
+                cb.setToolTip(f"{svc}.service is currently {'active' if active else 'inactive'}")
+                svc_lbl = QLabel(f"({svc}.service)")
+                svc_lbl.setStyleSheet(f"color:{t['muted']};font-size:{font_sz(-2)}px;"
+                                      f"font-family:monospace;background:transparent;")
+                svc_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+                row_lay.addWidget(ic_lbl)
+                row_lay.addWidget(cb)
+                row_lay.addWidget(svc_lbl)
                 self._svc_cbs.append((cb, op, svc))
 
-        vl.addWidget(grid)
+            svc_vl.addWidget(row_w)
+
+        vl.addWidget(svc_frame)
 
         add_svc_btn = QPushButton("⬆  Add Selected Services to Profile")
         add_svc_btn.clicked.connect(self._add_services_to_profile)
@@ -1001,7 +1034,7 @@ class _CaptureTab(QWidget):
         _status_labels = {"ok": "OK", "changed": "Changed", "dst_missing": "Not backed up",
                           "src_missing": "Source missing"}
         _section("System Files", [("✓" if f["status"] == "ok" else "⚠",
-                                   f"{f['name']}  [{_status_labels.get(f['status'], f['status'])}]  {f['src']} → {f['dst']}")
+                                   f"{f['name']}  [{_status_labels.get(f['status'], f['status'])}]  {f['src']} 🢥 {f['dst']}")
                                   for f in res.get("sys_files", [])])
 
         services = res.get("services", [])
@@ -1203,10 +1236,10 @@ class _VerifyTab(QWidget):
                            "src_missing": ("❓", "Source missing", "muted")}
             for f in sys_files:
                 if f["status"] == "ok":
-                    sec.add_row("✅", f["name"], f"OK  —  {f['src']}  →  {f['dst']}", t["success"])
+                    sec.add_row("✅", f["name"], f"{apply_replacements(f['src'])} 🢥 {apply_replacements(f['dst'])}", t["success"])
                 else:
                     ic, lbl, ck = _status_map.get(f["status"], ("?", f["status"], "text"))
-                    sec.add_row(ic, f["name"], f"{lbl}  —  {f['src']}  →  {f['dst']}", t[ck])
+                    sec.add_row(ic, f["name"], f"{lbl}  —  {apply_replacements(f['src'])} 🢥 {apply_replacements(f['dst'])}", t[ck])
             cl.addWidget(sec)
         else:
             sec = _Section("📄", "System Files", 0, 0, t["muted"], t["muted"])
@@ -1241,9 +1274,9 @@ class _VerifyTab(QWidget):
             sec = _Section("⚙️", "Services", n_ok, len(services), t["success"], t["warning"])
             for s in services:
                 if s["active"]:
-                    sec.add_row("✅", f"{s['service']}.service", f"Active  —  op: {s['op']}", t["success"])
+                    sec.add_row("✅", f"{s['service']}.service", f"Active", t["success"])
                 else:
-                    sec.add_row("⚠", f"{s['service']}.service", f"Inactive  —  op: {s['op']}", t["warning"])
+                    sec.add_row("⚠", f"{s['service']}.service", f"Inactive", t["warning"])
             cl.addWidget(sec)
         elif S.system_manager_ops:
             sec = _Section("⚙️", "Services", 0, 0, t["muted"], t["muted"])

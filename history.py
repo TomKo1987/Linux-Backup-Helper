@@ -1,4 +1,5 @@
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -40,7 +41,13 @@ def append_history(operation: str, copied: int, skipped: int, errors: int, durat
                  "duration_s": duration_s,
                  "cancelled":  cancelled}
         existing.append(entry)
-        path.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+        tmp_path = path.with_suffix(".tmp")
+        try:
+            tmp_path.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp_path, path)
+        except (OSError, PermissionError):
+            tmp_path.unlink(missing_ok=True)
+            raise
     except (OSError, PermissionError):
         pass
 

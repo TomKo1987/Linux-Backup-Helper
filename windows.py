@@ -233,9 +233,11 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
         if k in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
             focused = self.focusWidget()
             if isinstance(focused, QCheckBox):
-                focused.toggle()
                 if focused == self._selectall:
+                    focused.toggle()
                     self._toggle_all()
+                else:
+                    focused.toggle()
                 return
         super().keyPressEvent(event)
 
@@ -261,7 +263,10 @@ class _CopyMixin:
         if not mount_required_drives(drives_to_mount, self):
             return
 
-        CopyDialog(self, selected, self._op_label).exec()  # type: ignore[arg-type]
+        dlg_copy = CopyDialog(self, selected, self._op_label)  # type: ignore[attr-defined]
+        dlg_copy.exec()
+        self._last_copied = getattr(dlg_copy, "copied", 0)
+        self._last_errors = getattr(dlg_copy, "errors", 0)
 
     def _add_action_buttons(self: "_BaseCheckboxWindow", grid: QGridLayout, row: int) -> None:
         fs          = font_scale()

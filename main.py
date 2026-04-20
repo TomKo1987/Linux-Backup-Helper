@@ -21,7 +21,6 @@ from windows import base_window
 
 
 def _notify(title: str, body: str, urgency: str = "normal") -> None:
-    import shutil
     if not shutil.which("notify-send"):
         return
     try:
@@ -93,15 +92,14 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
 
         if cls is base_window and args and args[0] in ("Backup", "Restore"):
             op = args[0]
-            if hasattr(dlg, "worker") and hasattr(dlg, "errors"):
-                if getattr(dlg, "_quitting", False):
-                    return
-                errors = getattr(dlg, "errors", 0)
-                copied = getattr(dlg, "copied", 0)
-                if errors:
-                    _notify(f"{op} completed with errors", f"{copied} files copied, {errors} error(s)", urgency="critical")
-                elif copied > 0:
-                    _notify(f"{op} completed successfully", f"{copied} file(s) copied", urgency="normal")
+            if getattr(dlg, "_quitting", False):
+                return
+            errors = getattr(dlg, "_last_errors", 0)
+            copied = getattr(dlg, "_last_copied", 0)
+            if errors:
+                _notify(f"{op} completed with errors", f"{copied} files copied, {errors} error(s)", urgency="critical")
+            elif copied > 0:
+                _notify(f"{op} completed successfully", f"{copied} file(s) copied", urgency="normal")
 
     def _open_settings(self) -> None:
         self._open(base_window, "Settings", setup_fn=lambda d: d.changed.connect(apply_style))
