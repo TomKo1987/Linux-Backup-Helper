@@ -241,7 +241,7 @@ def _build_op_text(distro: LinuxDistroHelper, session: Optional[str] = None, has
             "update_system": (f"System update (Using '{'yay --noconfirm' if has_yay else distro.get_update_system_cmd()}')", _tip("update_system")),
         "install_ucode": (f"Install {cpu_label} CPU microcode updates (Package: '{ucode_pkg}'){_done('ucode_installed')}", _tip("install_ucode")),
         "install_kernels": (kernels_text, _tip("install_kernels")),
-        "install_kernel_headers": (f"Install headers (if missing) for each installed kernel{_done('kernel_headers_installed')}",
+        "install_kernel_headers": (f"Install missing headers for installed kernel(s): {kernels_text}{_done('kernel_headers_installed')}",
                                   _tip("install_kernel_headers")),
         "set_default_kernel": (f"Set default boot kernel to: {dk_pkg} {dk_note}", _tip("set_default_kernel")),
         "install_basic_packages": (f"Install 'Basic Packages' (Using '{install_cmd}')", _tip("install_basic_packages")),
@@ -587,8 +587,8 @@ class SystemManagerOptions(QDialog):
                         hdrs_ok = all(v in _variants_with_headers for v in future_kernels if ARCH_KERNEL_VARIANTS.get(v))
                     else:
                         hdrs_ok = bool(_op_status.get("kernel_headers_installed"))
-                    _no_chg = " (No changes necessary)" if hdrs_ok else f" {'-headers, '.join(missing)}-headers"
-                    _cb.setText(f"{_icon}Install headers for each installed kernel:{_no_chg}")
+                    _no_chg = " (No changes necessary)" if hdrs_ok else f" {', '.join(missing)}"
+                    _cb.setText(f"{_icon}Install missing headers for kernel(s):{_no_chg}")
 
                 elif _key == "set_default_kernel" and _default_kernel_combo is not None:
                     _sel = _default_kernel_combo.currentData() or ""
