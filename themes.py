@@ -477,7 +477,7 @@ def get_style() -> str:
             return cache[1]
         css = _build_stylesheet(current_theme(), font, size)
         _style_cache = (key, css)
-    return css
+        return css
 
 
 def apply_style() -> None:

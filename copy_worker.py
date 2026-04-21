@@ -82,6 +82,17 @@ _SMB_DOWN_RE = re.compile(
 )
 
 
+def _notify(title: str, body: str, urgency: str = "normal") -> None:
+    if not shutil.which("notify-send"):
+        return
+    try:
+        subprocess.Popen(["notify-send", f"--urgency={urgency}", f"--expire-time=0", "--app-name=Backup Helper",
+                          "--icon=drive-harddisk", title, body],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        pass
+
+
 class _CacheMiss:
     __slots__ = ()
 
@@ -2369,8 +2380,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
             from history import append_history
             duration = self._final_elapsed if self._final_elapsed is not None else 0
 
-            append_history(operation=self._operation, copied=c, skipped=s, errors=e,
-                           duration_s=duration, cancelled=cancelled)
+            append_history(operation=self._operation, copied=c, skipped=s, errors=e, duration_s=duration, cancelled=cancelled)
         except Exception as exc:
             logger.debug("append_history failed: %s", exc)
 
@@ -2418,7 +2428,22 @@ class CopyDialog(_StandardKeysMixin, QDialog):
                 pass
 
         self.cancel_btn.clicked.connect(self.accept)
+        self.cancel_btn.setText("Close")
         self._accept_connected = True
+
+        if not self.isActiveWindow() and not cancelled:
+            if e > 0:
+                _notify(
+                    f"{self._operation} completed with errors",
+                    f"{c} file{'s' if c != 1 else ''} copied, {s} skipped, {e} error{'s' if e != 1 else ''}",
+                    urgency="critical",
+                )
+            else:
+                _notify(
+                    f"{self._operation} successfully completed",
+                    f"{c} file{'s' if c != 1 else ''} copied, {s} skipped",
+                    urgency="normal",
+                )
 
     def closeEvent(self, event) -> None:
         if self.worker.isRunning():

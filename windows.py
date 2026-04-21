@@ -290,7 +290,7 @@ class _CopyMixin:
 class BackupWindow(_CopyMixin, _BaseCheckboxWindow):
     _window_title = "Create Backup"
     _cols_key     = "backup_window_columns"
-    _op_label     = "Create Backup"
+    _op_label     = "Backup"
 
     def _entry_filter(self, entry: dict) -> bool:
         return not entry.get("details", {}).get("no_backup", False)
@@ -299,7 +299,7 @@ class BackupWindow(_CopyMixin, _BaseCheckboxWindow):
 class RestoreWindow(_CopyMixin, _BaseCheckboxWindow):
     _window_title = "Restore Backup"
     _cols_key = "restore_window_columns"
-    _op_label = "Restore Backup"
+    _op_label = "Restore"
 
     def _entry_filter(self, entry: dict) -> bool:
         return not entry.get("details", {}).get("no_restore", False)

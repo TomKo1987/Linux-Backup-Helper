@@ -6,7 +6,8 @@ from pathlib import Path
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QDialog, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QTextEdit, QVBoxLayout
+    QDialog, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
+    QMessageBox, QPushButton, QTextEdit, QVBoxLayout
 )
 
 from state import S, _LOG_HIST_DIR
@@ -69,6 +70,13 @@ def _fmt_duration(s: int) -> str:
     return f"{s // 60}m {s % 60:02d}s"
 
 
+def _op_classify(op: str) -> tuple[bool, bool]:
+    lo = op.lower()
+    is_restore = "restore" in lo
+    is_backup  = "backup" in lo and not is_restore
+    return is_backup, is_restore
+
+
 def _entry_detail_html(e: dict, t: dict) -> str:
     ts      = e.get("timestamp", "?")
     op      = e.get("operation", "?")
@@ -98,8 +106,9 @@ def _entry_detail_html(e: dict, t: dict) -> str:
 
     can_html  = (f"<span style='color:{sk_col};'>yes  ⏹</span>" if can else f"<span style='color:{ok_col};'>no</span>")
     err_color = er_col if errors > 0 else ok_col
-    op_label = "Backup created" if "backup" in op.lower() else ("Restored from backup" if "restore" in op.lower() else op)
-    op_icon = "⤵" if "backup" in op.lower() else ("⤴" if "restore" in op.lower() else "▶")
+    is_backup, is_restore = _op_classify(op)
+    op_label = "Backup created" if is_backup else ("Restored from backup" if is_restore else op)
+    op_icon  = "⤵" if is_backup else ("⤴" if is_restore else "▶")
 
     return (f"<div style='font-family:monospace;padding:4px;'>"
             f"<div style='font-size:{font_sz(4)}px;font-weight:bold;color:{acc};"
@@ -203,6 +212,15 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
         bot_lay.addWidget(self._count_lbl)
         bot_lay.addStretch()
 
+        clear_btn = QPushButton("🗑 Clear History")
+        clear_btn.setMinimumHeight(32)
+        clear_btn.setMinimumWidth(130)
+        clear_btn.setStyleSheet(f"QPushButton {{ background:{bg3}; border:1px solid {sep}; border-radius:4px;"
+                                f"  color:{t['error']}; padding:2px 14px; }}"
+                                f"QPushButton:hover {{ background:{bg2}; border-color:{t['error']}; }}")
+        clear_btn.clicked.connect(self._clear_history)
+        bot_lay.addWidget(clear_btn)
+
         close_btn = QPushButton("Close")
         close_btn.setMinimumHeight(32)
         close_btn.setMinimumWidth(100)
@@ -243,8 +261,10 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
         ok_col = t["success"]
         er_col = t["error"]
         sk_col = t["warning"]
+        row_bg_even = QColor(t["bg3"])
+        row_bg_odd  = QColor(t["bg2"])
 
-        for e in reversed(self._entries):
+        for idx, e in enumerate(reversed(self._entries)):
             ts      = e.get("timestamp", "?")
             op      = e.get("operation", "?")
             copied  = e.get("copied",  0)
@@ -253,12 +273,14 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
             dur     = _fmt_duration(e.get("duration_s", 0))
             can     = e.get("cancelled", False)
 
-            op_icon = "Backup created" if "backup" in op.lower() else ("Restored from backup" if "restore" in op.lower() else "▶")
-            can_tag = "  ⏹" if can else ""
-            line1   = f"{op_icon}  {ts}{can_tag}"
-            line2   = f"    ⤵ {copied:,}   ↷ {skipped:,}   ✗ {errors:,}   ⏱ {dur}"
+            is_backup, is_restore = _op_classify(op)
+            op_label = "Backup created" if is_backup else ("Restored from backup" if is_restore else op)
+            can_tag  = "  ⏹" if can else ""
+            line1    = f"{op_label}  {ts}{can_tag}"
+            line2    = f"    ⤵ {copied:,}   ↷ {skipped:,}   ✗ {errors:,}   ⏱ {dur}"
 
             item = QListWidgetItem(f"{line1}\n{line2}")
+            item.setBackground(row_bg_even if idx % 2 == 0 else row_bg_odd)
 
             if errors > 0:
                 item.setForeground(QColor(er_col))
@@ -272,6 +294,24 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
         n = len(self._entries)
         self._count_lbl.setText(f"{n} run{'s' if n != 1 else ''}")
         self._list.setCurrentRow(0)
+
+    def _clear_history(self) -> None:
+        name = S.profile_name or ""
+        if not name:
+            return
+        ans = QMessageBox.question(
+            self, "Clear History",
+            f"Delete the entire run history for profile '{name}'?\n\nThis cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if ans != QMessageBox.StandardButton.Yes:
+            return
+        path = _history_path(name)
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        self._load()
 
     def _on_select(self, row: int) -> None:
         if row < 0 or row >= len(self._entries):
