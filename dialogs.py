@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import tarfile
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -865,7 +866,11 @@ class ProfilesDialog(QDialog):
         if dest.exists() and QMessageBox.question(self, "Overwrite Profile?", f"Profile '{name}' already exists. Overwrite?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
-        shutil.copy2(src_path, dest)
+        try:
+            shutil.copy2(src_path, dest)
+        except OSError as exc:
+            QMessageBox.critical(self, "Duplicate Failed", f"Could not copy profile '{src_name}':\n{exc}")
+            return
         _clear_default_flag(name, "_copy")
         self.was_changed = True
         self._refresh()
@@ -1102,9 +1107,7 @@ class SysInfoDialog(_TextViewDialog):
         super().__init__(parent, "System Information", (1350, 825), font_size=font_sz(2))
         self.view.setPlainText("⏳ Loading system information…")
         self.done_sig.connect(self.view.setPlainText)
-        import threading
-        self._closed_lock = threading.Lock()
-        self._closed = False
+        self._closed = threading.Event()
         threading.Thread(target=self._run, daemon=True).start()
 
     def _run(self) -> None:
@@ -1129,9 +1132,7 @@ class SysInfoDialog(_TextViewDialog):
         except Exception as exc:
             result = f"An unexpected error occurred: {exc}"
         try:
-            with self._closed_lock:
-                closed = self._closed
-            if not closed:
+            if not self._closed.is_set():
                 self.done_sig.emit(result)
         except RuntimeError:
             pass
@@ -1141,6 +1142,5 @@ class SysInfoDialog(_TextViewDialog):
             self.done_sig.disconnect()
         except (RuntimeError, TypeError):
             pass
-        with self._closed_lock:
-            self._closed = True
+        self._closed.set()
         super().closeEvent(event)

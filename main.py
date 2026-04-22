@@ -1,5 +1,6 @@
 import shutil
 import sys
+import os
 import threading
 from pathlib import Path
 
@@ -17,6 +18,11 @@ from state import S, _HOME, _PROFILES_DIR, _PROFILE_RE, RESTART_DIALOG, save_pro
 from themes import apply_style, register_style_listener, unregister_style_listener
 from ui_utils import _StandardKeysMixin
 from windows import base_window
+
+
+if os.name != "posix" or sys.platform != "linux":
+    print("This program can only be run on Linux.")
+    sys.exit(1)
 
 
 class MainWindow(_StandardKeysMixin, QMainWindow):
@@ -199,7 +205,7 @@ def _first_run_wizard(parent) -> bool:
     msg.setTextFormat(Qt.TextFormat.RichText)
     scan_btn   = msg.addButton("🔍 Scan System",    QMessageBox.ButtonRole.ActionRole)
     import_btn = msg.addButton("📥 Import Profile", QMessageBox.ButtonRole.ActionRole)
-    _empty_btn = msg.addButton("➕ Start Empty",    QMessageBox.ButtonRole.RejectRole)
+    _          = msg.addButton("➕ Start Empty",    QMessageBox.ButtonRole.RejectRole)
     msg.setDefaultButton(scan_btn)
     msg.exec()
     clicked = msg.clickedButton()

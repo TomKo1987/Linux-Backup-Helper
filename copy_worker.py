@@ -86,7 +86,7 @@ def _notify(title: str, body: str, urgency: str = "normal") -> None:
     if not shutil.which("notify-send"):
         return
     try:
-        subprocess.Popen(["notify-send", f"--urgency={urgency}", f"--expire-time=0", "--app-name=Backup Helper",
+        subprocess.Popen(["notify-send", f"--urgency={urgency}", "--expire-time=0", "--app-name=Backup Helper",
                           "--icon=drive-harddisk", title, body],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     except OSError:
@@ -298,10 +298,9 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
     except InterruptedError:
         raise
     except OSError as exc:
-        if exc.errno in (errno.ENOSYS, errno.EOPNOTSUPP, errno.ENOTSUP):
-            logger.debug("copy_file_range not supported, falling back: %s", exc)
-        else:
-            logger.debug("copy_file_range failed (errno=%d), falling back: %s", exc.errno, exc)
+        if exc.errno not in (errno.ENOSYS, errno.EOPNOTSUPP, errno.ENOTSUP):
+            raise
+        logger.debug("copy_file_range not supported, falling back: %s", exc)
         try:
             os.lseek(rfd, 0, os.SEEK_SET)
         except OSError:
@@ -333,11 +332,8 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
     if rem > 0:
         try:
             seek_to = total - rem
-            try:
-                os.lseek(rfd, seek_to, os.SEEK_SET)
-                os.lseek(wfd, seek_to, os.SEEK_SET)
-            except OSError:
-                pass
+            os.lseek(rfd, seek_to, os.SEEK_SET)
+            os.lseek(wfd, seek_to, os.SEEK_SET)
             while rem > 0:
                 if cancel.is_set():
                     raise InterruptedError
@@ -691,12 +687,7 @@ class _SmbScanner:
         lerr:   list = []
         if idx is None:
             lerr.append((src_url, "NT_STATUS_HOST_UNREACHABLE"))
-        elif not idx:
-            logger.warning("SMB ls_index returned empty for %s%s", src_url,
-                           " — possible permission error or empty directory"
-                           if rpath else " — share root is empty or inaccessible")
-            lerr.append((src_url, "Directory empty or inaccessible"))
-        else:
+        elif idx:
             prefix = rpath.rstrip("/") + "/" if rpath else None
             for path, (sz,) in idx.items():
                 if self._cancel.is_set():
@@ -1075,7 +1066,6 @@ class CopyWorker(QThread):
                     local_items = self._scan_local_all(local_tasks)
 
             def _phase1_smb() -> None:
-                nonlocal smb_expanded, smb_errors
                 if not smb_tasks or self._cancel.is_set():
                     return
                 ur, af, _guest = self._probe_shares(smb_tasks, user, pw)
@@ -1398,6 +1388,8 @@ class CopyWorker(QThread):
                         except queue.Empty:
                             break
                 for _ in range(_WORKERS):
+                    if cancel.is_set():
+                        break
                     inserted = False
                     while not inserted:
                         try:
@@ -1405,11 +1397,7 @@ class CopyWorker(QThread):
                             inserted = True
                         except queue.Full:
                             if cancel.is_set():
-                                try:
-                                    pipe_q.get_nowait()
-                                except queue.Empty:
-                                    pass
-                                inserted = True
+                                break
 
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=1 + _WORKERS)
         try:
@@ -2071,8 +2059,6 @@ class _LogWidget(QWidget):
         active_btn.setText("✓ Copied!")
         active_btn.setEnabled(False)
 
-        from PyQt6.QtCore import QTimer
-
         def restore_btn() -> None:
             active_btn.setText(original)
             active_btn.setEnabled(True)
@@ -2170,7 +2156,12 @@ class _LogWidget(QWidget):
         def _bg_sort() -> None:
             _key = _LogWidget._natural_sort_key
             pairs.sort(key=lambda p: _key(p[0].split('\n', 1)[0]))
-            sorted_items, sorted_lower = zip(*pairs) if pairs else ([], [])
+            if pairs:
+                sorted_items_t, sorted_lower_t = zip(*pairs)
+                sorted_items = list(sorted_items_t)
+                sorted_lower = list(sorted_lower_t)
+            else:
+                sorted_items, sorted_lower = [], []
             try:
                 self._sorted_ready.emit(list(sorted_items), list(sorted_lower))
             except RuntimeError:
@@ -2265,6 +2256,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         self.cancel_btn.setStyleSheet(f"QPushButton {{background: {t['bg3']}; border: 1px solid {t['header_sep']}; "
                                       f"border-radius: 4px}} QPushButton:hover {{ background: {t['bg2']}; }}")
         self._cancel_connected = True
+        self._accept_connected = False
         self.cancel_btn.clicked.connect(self.worker.cancel)
 
         layout = QVBoxLayout(self)
@@ -2376,13 +2368,11 @@ class CopyDialog(_StandardKeysMixin, QDialog):
 
     def _on_done(self, c, s, e, cancelled) -> None:
         self._tick.stop()
-        self._final_elapsed = self.timer.elapsed() // 1000
+        elapsed = self._final_elapsed = self.timer.elapsed() // 1000
 
         try:
             from history import append_history
-            duration = self._final_elapsed if self._final_elapsed is not None else 0
-
-            append_history(operation=self._operation, copied=c, skipped=s, errors=e, duration_s=duration, cancelled=cancelled)
+            append_history(operation=self._operation, copied=c, skipped=s, errors=e, duration_s=elapsed, cancelled=cancelled)
         except Exception as exc:
             logger.debug("append_history failed: %s", exc)
 
@@ -2398,7 +2388,6 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         self.copied, self.skipped, self.errors = c, s, e
         self._done = self._total
 
-        elapsed: int = self._final_elapsed if self._final_elapsed is not None else 0
         tstr = f"{elapsed // 60:02d}:{elapsed % 60:02d}"
 
         if cancelled:
@@ -2423,7 +2412,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
                 pass
             self._cancel_connected = False
 
-        if getattr(self, "_accept_connected", False):
+        if self._accept_connected:
             try:
                 self.cancel_btn.clicked.disconnect(self.accept)
             except (RuntimeError, TypeError):

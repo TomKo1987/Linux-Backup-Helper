@@ -1,8 +1,6 @@
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
-if TYPE_CHECKING:
-    from sudo_password import SecureString
+from typing import Optional
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
@@ -11,15 +9,15 @@ from PyQt6.QtWidgets import (
     QFileDialog, QFormLayout, QGridLayout, QHBoxLayout, QVBoxLayout, QWidget,
 )
 
-from ui_utils import ask_text, ok_cancel_buttons, sep, browse_field
 from linux_distro_helper import LinuxDistroHelper, SESSIONS, USER_SHELLS, ARCH_KERNEL_VARIANTS, is_valid_pkg_name
 from state import S, _HOME, _USER, apply_replacements, save_profile, sort_pkg_list
-from tooltips import sm_tooltips, sudo_checkbox_tooltip
+from sudo_password import SecureString
 from themes import (
     style_label_info, style_label_mono, style_op_label, tri_styles, apply_tooltip, style_sudo_checkbox,
     current_theme, font_sz, style_checkbox_muted, style_checkbox_select_all, tri_state_legend_html
 )
-
+from tooltips import sm_tooltips, sudo_checkbox_tooltip
+from ui_utils import ask_text, ok_cancel_buttons, sep, browse_field
 
 _STATE_ACTIVE   = Qt.CheckState.Checked
 _STATE_DISABLED = Qt.CheckState.PartiallyChecked
@@ -226,7 +224,7 @@ def _build_op_text(distro: LinuxDistroHelper, session: Optional[str] = None, has
     missing_kernels = sorted(str(k) for k in kti if k and k not in _ik)
 
     if not missing_kernels:
-        kernels_text = f"Install kernel(s): (No changes necessary.)"
+        kernels_text = "Install kernel(s): (No changes necessary.)"
     else:
         kernels_list = ", ".join(missing_kernels)
         kernels_text = f"Install kernel(s): {kernels_list}{_done('kernels_all_installed')}"
@@ -1036,7 +1034,7 @@ class SystemManagerOptions(QDialog):
                 names = [(f"{pkg.get('package', '')} [{pkg.get('session', '')}]"
                           if is_specific else pkg.get("name", "")) if isinstance(pkg, dict) else str(pkg) for pkg in
                          to_del]
-                if (QMessageBox.question(_dlg, "Confirm Delete", f"Delete package(s)?\n\n  • " + "\n  • ".join(names),
+                if (QMessageBox.question(_dlg, "Confirm Delete", "Delete package(s)?\n\n  • " + "\n  • ".join(names),
                                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes):
                     do_delete = False
             updated = []
@@ -1244,17 +1242,17 @@ class SystemManagerOptions(QDialog):
 
                 extra = []
                 if dupes:
-                    extra.append(f"Skipped duplicate(s):\n\n" + "\n".join(f"  • {d}" for d in dupes))
+                    extra.append("Skipped duplicate(s):\n\n" + "\n".join(f"  • {d}" for d in dupes))
                 if invalid:
-                    extra.append(f"Skipped invalid name(s):\n" + "\n".join(f"  • {i}" for i in invalid))
+                    extra.append("Skipped invalid name(s):\n" + "\n".join(f"  • {i}" for i in invalid))
 
                 final_msg = added_str + ("\n\n" + "\n\n".join(extra) if extra else "")
                 QMessageBox.information(dlg, "Added", final_msg)
 
             elif dupes or invalid:
                 msg_fail = []
-                if dupes: msg_fail.append(f"Skipped duplicates:\n" + "\n".join(f"  • {d}" for d in dupes))
-                if invalid: msg_fail.append(f"Invalid names:\n" + "\n".join(f"  • {i}" for i in invalid))
+                if dupes: msg_fail.append("Skipped duplicates:\n" + "\n".join(f"  • {d}" for d in dupes))
+                if invalid: msg_fail.append("Invalid names:\n" + "\n".join(f"  • {i}" for i in invalid))
                 QMessageBox.warning(dlg, "Not Added", "\n\n".join(msg_fail))
 
             dlg.accept()

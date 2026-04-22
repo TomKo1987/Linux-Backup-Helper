@@ -150,7 +150,7 @@ def _resolve_all_ops(helper: LinuxDistroHelper) -> dict[str, str]:
             if res:
                 dynamic[op] = res
         except Exception as exc:
-            logger.debug(f"Could not resolve dynamic service for {op}: {exc}")
+            logger.debug("Could not resolve dynamic service for %s: %s", op, exc)
     return {**_OP_SERVICE_ALL, **dynamic}
 
 
@@ -822,7 +822,7 @@ class _CaptureTab(QWidget):
         vl.setContentsMargins(0, 0, 0, 0)
         vl.setSpacing(4)
 
-        hdr = QLabel(f"<b>Mark as Specific Package</b> — install only for a certain session")
+        hdr = QLabel("<b>Mark as Specific Package</b> — install only for a certain session")
         hdr.setTextFormat(Qt.TextFormat.RichText)
         hdr.setStyleSheet(f"font-size:{font_sz(1)}px;color:{t['accent2']};")
         vl.addWidget(hdr)
@@ -1274,9 +1274,9 @@ class _VerifyTab(QWidget):
             sec = _Section("⚙️", "Services", n_ok, len(services), t["success"], t["warning"])
             for s in services:
                 if s["active"]:
-                    sec.add_row("✅", f"{s['service']}.service", f"Active", t["success"])
+                    sec.add_row("✅", f"{s['service']}.service", "Active", t["success"])
                 else:
-                    sec.add_row("⚠", f"{s['service']}.service", f"Inactive", t["warning"])
+                    sec.add_row("⚠", f"{s['service']}.service", "Inactive", t["warning"])
             cl.addWidget(sec)
         elif S.system_manager_ops:
             sec = _Section("⚙️", "Services", 0, 0, t["muted"], t["muted"])

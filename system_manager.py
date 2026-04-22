@@ -388,9 +388,9 @@ class SystemManagerDialog(_StandardKeysMixin, QDialog):
         QApplication.processEvents()
         self._input_prompt_lbl.setStyleSheet(f"color:{t['warning']};font-size:{font_sz(1)}px;font-weight:bold;"
                                              f"padding:6px 8px;border-left:3px solid {t['warning']};background:{t['bg3']};")
-        self._input_prompt_lbl.setText(f"⚠ Provider selection required:")
+        self._input_prompt_lbl.setText("⚠ Provider selection required:")
         self._input_edit.clear()
-        self._input_edit.setPlaceholderText(f"{prompt}")
+        self._input_edit.setPlaceholderText(prompt)
         self._input_panel.setVisible(True)
         self._input_edit.setFocus()
         if sb := self._text_edit.verticalScrollBar():
@@ -428,12 +428,14 @@ class SystemManagerThread(QThread):
         self._env_snapshot.update({"LC_ALL": "C", "LANG": "C", "LANGUAGE": "C"})
         self.distro: Optional[LinuxDistroHelper] = None
         self._pkg_cache: Optional[_PackageCache] = None
+        self.distro = None
+        self._pkg_cache = None
         try:
-            self.distro = distro
-            self._pkg_cache = _PackageCache(distro) if distro is not None else None
+            if distro is not None:
+                self.distro = distro
+                self._pkg_cache = _PackageCache(distro)
         except Exception as exc:
             logger.warning("distro init: %s", exc)
-            self.distro = self._pkg_cache = None
 
     @property
     def terminated(self) -> bool: return self._stop.is_set()
@@ -652,6 +654,9 @@ class SystemManagerThread(QThread):
             def _reader() -> None:
                 buf = b""
                 try:
+                    if pipe is None or not hasattr(pipe, 'fileno'):
+                        out_q.put(None)
+                        return
                     _fd = pipe.fileno()
                 except (AttributeError, ValueError):
                     out_q.put(None)
@@ -789,20 +794,30 @@ class SystemManagerThread(QThread):
         _wait_timeout = timeout if (not self.terminated and timeout is not None) else 30
 
         try:
-            rc = proc.wait(timeout=_wait_timeout) if proc and proc.poll() is None else proc.returncode
+            rc = proc.wait(timeout=_wait_timeout) if proc and proc.poll() is None else (proc.returncode if proc else 1)
         except subprocess.TimeoutExpired:
             if proc:
-                proc.kill()
-                rc = proc.wait()
+                try:
+                    proc.kill()
+                    rc = proc.wait()
+                except OSError:
+                    rc = 1
             else:
                 rc = 1
+        except (OSError, subprocess.SubprocessError):
+            rc = 1
 
-        t_out.join(3)
-        t_err.join(3)
+        try:
+            if proc.stdin and not proc.stdin.closed:
+                proc.stdin.close()
+        except OSError:
+            pass
 
+        t_out.join(3); t_err.join(3)
         return SimpleNamespace(returncode=rc if rc is not None else 1)
 
-    def _emit_result(self, ok: bool, msg_ok: str, msg_err: str): self.outputReceived.emit(msg_ok if ok else msg_err, "success" if ok else "error")
+    def _emit_result(self, ok: bool, msg_ok: str, msg_err: str):
+        self.outputReceived.emit(msg_ok if ok else msg_err, "success" if ok else "error")
 
     def _verify_sudo(self) -> bool:
         self.outputReceived.emit("Verifying sudo access…", "operation")
@@ -857,10 +872,7 @@ class SystemManagerThread(QThread):
                 proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                try:
-                    proc.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    pass
+                proc.wait()
             t1.join(2); t2.join(2)
             output = b"".join(chunks)
             ok = proc.returncode == 0 and output.strip() == token.encode()
@@ -934,8 +946,8 @@ class SystemManagerThread(QThread):
 
         failed = []
         if use_aur:
-            bulk = lambda b: self._exec(["yay", "-S", "--needed"] + b, stream=True)
-            single = lambda _p: self._exec(["yay", "-S", "--needed", _p], stream=True)
+            bulk = lambda b: self._exec(["yay", "-S", "--needed", "--noconfirm"] + b, stream=True)
+            single = lambda _p: self._exec(["yay", "-S", "--needed", "--noconfirm", _p], stream=True)
         else:
             _distro = self.distro
             bulk = lambda b: self._exec(_distro.get_batch_install_cmd(b), stream=True)
@@ -1338,7 +1350,7 @@ class SystemManagerThread(QThread):
                 self.outputReceived.emit(f"Created boot entry: {dest_path}", "success")
                 return f"{kernel_pkg}.conf"
             else:
-                self.outputReceived.emit(f"Failed to write boot entry", "error")
+                self.outputReceived.emit("Failed to write boot entry", "error")
                 return None
         except Exception as exc:
             self.outputReceived.emit(f"Error creating boot entry: {exc}", "error")

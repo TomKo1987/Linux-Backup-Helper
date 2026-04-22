@@ -468,9 +468,6 @@ def get_style() -> str:
     font = S.ui.get("font_family", "") or ""
     size = _base_font_size()
     key  = (_current_theme_name, font, size)
-    cache = _style_cache
-    if cache is not None and cache[0] == key:
-        return cache[1]
     with _style_cache_lock:
         cache = _style_cache
         if cache is not None and cache[0] == key:

@@ -169,7 +169,7 @@ def generate_tooltip() -> tuple[dict, dict, dict]:
     with _cache_lock:
         if _cache is None:
             _cache = result
-    return _cache or result
+    return _cache
 
 
 def copy_logic_tooltip() -> str:

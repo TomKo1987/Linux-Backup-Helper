@@ -295,7 +295,9 @@ def distro_family(distro_id: str) -> str: return _DISTRO_FAMILY_MAP.get(distro_i
 
 def _lookup(table: dict, family: str) -> list[Any] | None | Any:
     result = table.get(family)
-    return result if result is not None else (table.get(None) or [])
+    if result is not None:
+        return result
+    return table.get(None) or []
 
 
 class LinuxDistroHelper:
@@ -534,7 +536,7 @@ class LinuxDistroHelper:
     @staticmethod
     def get_flatpak_packages()  -> list: return ["flatpak"]
     @staticmethod
-    def get_snap_packages()    -> list: return ["snapd"]
+    def get_snap_packages()     -> list: return ["snapd"]
     @staticmethod
     def flatpak_add_flathub() -> str:
         return "sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo"
