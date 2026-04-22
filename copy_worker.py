@@ -1398,16 +1398,18 @@ class CopyWorker(QThread):
                         except queue.Empty:
                             break
                 for _ in range(_WORKERS):
-                    while True:
+                    inserted = False
+                    while not inserted:
                         try:
                             pipe_q.put(sentinel, timeout=0.1)
-                            break
+                            inserted = True
                         except queue.Full:
                             if cancel.is_set():
                                 try:
                                     pipe_q.get_nowait()
                                 except queue.Empty:
                                     pass
+                                inserted = True
 
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=1 + _WORKERS)
         try:
@@ -2427,6 +2429,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
             except (RuntimeError, TypeError):
                 pass
 
+        self.cancel_btn.setEnabled(True)
         self.cancel_btn.clicked.connect(self.accept)
         self.cancel_btn.setText("Close")
         self._accept_connected = True

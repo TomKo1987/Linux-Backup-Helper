@@ -544,7 +544,8 @@ class SystemManagerThread(QThread):
     def _exec(self, cmd: list[str] | str, stream: bool = False, timeout: Optional[int] = 15,
               cwd: Optional[str] = None) -> SimpleNamespace:
 
-        if self.terminated: return SimpleNamespace(returncode=1, stdout="", stderr="")
+        if self.terminated:
+            return SimpleNamespace(returncode=1, stdout="", stderr="")
 
         if isinstance(cmd, str):
             cmd = self._inject(shlex.split(cmd))
@@ -561,49 +562,93 @@ class SystemManagerThread(QThread):
         if not stream:
             input_data = _pw_bytes(pw_to_send) if pw_to_send else None
             try:
-                r = subprocess.run(cmd, input=input_data, capture_output=True, env=self._env_snapshot, timeout=timeout, cwd=cwd)
+                r = subprocess.run(
+                    cmd,
+                    input=input_data,
+                    capture_output=True,
+                    env=self._env_snapshot,
+                    timeout=timeout,
+                    cwd=cwd
+                )
 
-                return SimpleNamespace(returncode=r.returncode, stdout=r.stdout.decode("utf-8", "replace"),
-                                       stderr=r.stderr.decode("utf-8", "replace"))
+                return SimpleNamespace(
+                    returncode=r.returncode,
+                    stdout=r.stdout.decode("utf-8", "replace"),
+                    stderr=r.stderr.decode("utf-8", "replace")
+                )
 
             except subprocess.TimeoutExpired:
                 return SimpleNamespace(returncode=124, stdout="", stderr="Timeout")
-            except Exception as exc:
+
+            except (OSError, subprocess.SubprocessError) as exc:
                 return SimpleNamespace(returncode=1, stdout="", stderr=str(exc))
+
             finally:
-                if input_data: _zero(input_data)
+                if input_data:
+                    _zero(input_data)
+
+        proc = None
 
         try:
             import pty as _pty_mod
+
             try:
                 _pty_master, _pty_slave = _pty_mod.openpty()
+
                 try:
-                    proc = subprocess.Popen(cmd, stdout=_pty_slave, stderr=subprocess.PIPE,
-                                            stdin=subprocess.PIPE, cwd=cwd, env=self._env_snapshot)
+                    proc = subprocess.Popen(
+                        cmd,
+                        stdout=_pty_slave,
+                        stderr=subprocess.PIPE,
+                        stdin=subprocess.PIPE,
+                        cwd=cwd,
+                        env=self._env_snapshot
+                    )
+
                     os.close(_pty_slave)
                     _pty_slave = -1
                     proc.stdout = os.fdopen(_pty_master, 'rb', buffering=0)
-                except Exception:
+
+                except (OSError, subprocess.SubprocessError) as exc:
+                    logger.exception("Failed to launch subprocess with PTY")
+
                     if _pty_slave != -1:
                         try:
                             os.close(_pty_slave)
                         except OSError:
                             pass
+
                     try:
                         os.close(_pty_master)
                     except OSError:
                         pass
-                    raise
+
+                    if proc is not None:
+                        try:
+                            proc.kill()
+                            proc.wait()
+                        except (OSError, subprocess.SubprocessError):
+                            pass
+
+                    raise exc
+
             except OSError:
-                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                        stdin=subprocess.PIPE, cwd=cwd, env=self._env_snapshot)
-        except Exception as exc:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    stdin=subprocess.PIPE,
+                    cwd=cwd,
+                    env=self._env_snapshot
+                )
+
+        except (OSError, subprocess.SubprocessError) as exc:
             self.outputReceived.emit(f"Command launch error: {exc}", "error")
             return SimpleNamespace(returncode=1, stdout="", stderr=str(exc))
 
         out_q: queue.Queue = queue.Queue()
 
-        def _make_pipe_reader(pipe, _is_err: bool):
+        def _make_pipe_reader(pipe, _is_err: bool, proc_ref):
             def _reader() -> None:
                 buf = b""
                 try:
@@ -621,7 +666,8 @@ class SystemManagerThread(QThread):
 
                         if ready:
                             chunk = os.read(_fd, 4096)
-                            if not chunk: break
+                            if not chunk:
+                                break
                             buf += chunk
 
                         while b"\n" in buf:
@@ -639,40 +685,52 @@ class SystemManagerThread(QThread):
                         if buf:
                             decoded = buf.decode("utf-8", errors="replace")
                             clean = _ANSI_RE.sub("", decoded)
+
                             if "[sudo]" in clean.lower() and "password" in clean.lower():
                                 out_q.put((_is_err, clean, "sudo_pw"))
                                 buf = b""
+
                             elif re.search(r"Enter a number|Enter a selection", clean, re.IGNORECASE):
                                 out_q.put((_is_err, clean, "select"))
                                 buf = b""
+
                             elif "[y/n]" in clean.lower():
                                 out_q.put((_is_err, clean, "confirm"))
                                 buf = b""
+
                             elif re.search(r"\[N]one\s+\[A]ll", clean, re.IGNORECASE):
                                 out_q.put((_is_err, clean, "auto_none"))
                                 buf = b""
 
-                        if not ready and proc.poll() is not None: break
+                        if not ready and proc_ref.poll() is not None:
+                            break
+
                 except (OSError, EOFError):
                     pass
+
                 finally:
                     if buf:
                         clean = _ANSI_RE.sub("", buf.decode("utf-8", errors="replace")).strip()
-                        if clean: out_q.put((_is_err, clean, None))
+                        if clean:
+                            out_q.put((_is_err, clean, None))
                     out_q.put(None)
 
             return _reader
 
-        t_out = threading.Thread(target=_make_pipe_reader(proc.stdout, False), daemon=True)
-        t_err = threading.Thread(target=_make_pipe_reader(proc.stderr, True), daemon=True)
-        t_out.start(); t_err.start()
+        t_out = threading.Thread(target=_make_pipe_reader(proc.stdout, False, proc), daemon=True)
+        t_err = threading.Thread(target=_make_pipe_reader(proc.stderr, True, proc), daemon=True)
+        t_out.start()
+        t_err.start()
 
         sentinels = 0
+
         while sentinels < 2:
             try:
                 item = out_q.get(timeout=0.25)
             except queue.Empty:
-                if self.terminated: proc.terminate(); break
+                if self.terminated and proc:
+                    proc.terminate()
+                    break
                 continue
 
             if item is None:
@@ -691,41 +749,6 @@ class SystemManagerThread(QThread):
                         pass
                     finally:
                         _zero(tmp_pw)
-                continue
-
-            if tag == "select":
-                time.sleep(0.1)
-                while True:
-                    try:
-                        pending = out_q.get_nowait()
-                    except queue.Empty:
-                        break
-                    if pending is None:
-                        sentinels += 1
-                        break
-                    p_err, p_text, p_tag = pending
-                    if p_tag is None:
-                        if "[sudo]" in p_text:
-                            p_text = re.sub(r"\[sudo].*?:\s*", "", p_text)
-                        if not _PACMAN_PROGRESS_RE.search(p_text):
-                            self.outputReceived.emit(
-                                p_text,
-                                "error" if p_err and not _INFO_RE.search(p_text) else "subprocess",
-                            )
-
-                self.inputRequested.emit(text)
-                self._input_event.clear()
-                timed_out = not self._input_event.wait(timeout=300)
-                answer = "" if timed_out else self._input_value.strip()
-                try:
-                    if proc.stdin and not proc.stdin.closed:
-                        proc.stdin.write((answer + "\n").encode())
-                        proc.stdin.flush()
-                except OSError:
-                    pass
-                if timed_out:
-                    logger.warning("_exec: input wait timed out for prompt, sending empty response")
-                self._input_value = ""
                 continue
 
             if tag == "confirm":
@@ -747,29 +770,36 @@ class SystemManagerThread(QThread):
                     pass
                 continue
 
-            if "[sudo]" in text: text = re.sub(r"\[sudo].*?:\s*", "", text)
+            if "[sudo]" in text:
+                text = re.sub(r"\[sudo].*?:\s*", "", text)
+
             if _PACMAN_PROGRESS_RE.search(text):
                 continue
+
             if len(text) <= 2 and text.lower().strip() in ("y", "n"):
                 continue
+
             _kind = "error" if is_err and not _INFO_RE.search(text) else "subprocess"
+
             if re.search(r'\d+\s*(?:MiB|KiB|B)/s|\d+:\d{2}\s+\d+[KM]iB', text):
                 _kind = "dimmed"
-            _up_to_date_m = re.search(r"((?:\w+\s+is\s+up\s+to\s+date\s*)+)(::)", text, re.IGNORECASE)
-            if _up_to_date_m:
-                self.outputReceived.emit(text[:_up_to_date_m.start(2)].strip(), _kind)
-                self.outputReceived.emit(text[_up_to_date_m.start(2):].strip(), _kind)
-                continue
+
             self.outputReceived.emit(text, _kind)
 
         _wait_timeout = timeout if (not self.terminated and timeout is not None) else 30
-        try:
-            rc = proc.wait(timeout=_wait_timeout) if proc.poll() is None else proc.returncode
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            rc = proc.wait()
 
-        t_out.join(3); t_err.join(3)
+        try:
+            rc = proc.wait(timeout=_wait_timeout) if proc and proc.poll() is None else proc.returncode
+        except subprocess.TimeoutExpired:
+            if proc:
+                proc.kill()
+                rc = proc.wait()
+            else:
+                rc = 1
+
+        t_out.join(3)
+        t_err.join(3)
+
         return SimpleNamespace(returncode=rc if rc is not None else 1)
 
     def _emit_result(self, ok: bool, msg_ok: str, msg_err: str): self.outputReceived.emit(msg_ok if ok else msg_err, "success" if ok else "error")
@@ -810,7 +840,7 @@ class SystemManagerThread(QThread):
                         return
                     for raw in iter(proc.stderr.readline, b""):
                         line = raw.decode("utf-8", errors="replace")
-                        if token not in line:
+                        if "[sudo]" in line.lower() and "password" in line.lower():
                             n += 1
                             if n >= 2:
                                 try:
@@ -1062,8 +1092,7 @@ class SystemManagerThread(QThread):
         if not self.distro:
             return False
         targets = S.effective_kernels
-        entries_dir = Path("/boot/loader/entries")
-        self._exec(["sudo", "mkdir", "-p", str(entries_dir)], stream=False)
+        bootloader = LinuxDistroHelper.detect_bootloader()
         overall = True
         for variant in targets:
             pkgs = ARCH_KERNEL_VARIANTS.get(variant)
@@ -1079,12 +1108,17 @@ class SystemManagerThread(QThread):
             kernel_pkg = pkgs[0]
             if not self._install_pkg(kernel_pkg, "Kernel Package"):
                 overall = False
-            else:
+            elif bootloader == "systemd-boot":
+                entries_dir = Path("/boot/loader/entries")
+                self._exec(["sudo", "mkdir", "-p", str(entries_dir)], stream=False)
                 if not self._create_systemd_boot_entry(kernel_pkg, entries_dir):
-                    self.outputReceived.emit(f"Failed to create systemd-boot entry for {variant}", "warning")
-                    overall = False
+                    self.outputReceived.emit(
+                        f"Kernel '{variant}' installed, but failed to create systemd-boot entry — "
+                        f"please create it manually.", "warning"
+                    )
                 else:
                     self.outputReceived.emit(f"systemd-boot entry created for {variant}", "success")
+
         self._emit_result(overall, "Kernel(s) successfully installed", "One or more kernels failed to install")
         return overall
 
@@ -1211,8 +1245,6 @@ class SystemManagerThread(QThread):
                     return str(top_idx)
                 if depth == 0:
                     top_idx += 1
-                elif depth > 0 and stripped.endswith("{"):
-                    depth += 1
                 continue
 
             if stripped == "}":

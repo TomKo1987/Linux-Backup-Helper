@@ -170,7 +170,8 @@ def _compute_op_status(distro: LinuxDistroHelper, has_yay: bool, system_default_
 
     if distro.family() == "arch":
         future_kernels = _ik.union(set(targets_kti))
-        headers_ok = all((not ARCH_KERNEL_VARIANTS.get(v) or distro.package_is_installed(ARCH_KERNEL_VARIANTS[v][1])) for v in future_kernels)
+        headers_ok = all((pkgs := ARCH_KERNEL_VARIANTS.get(v)) is None or len(pkgs) < 2 or distro.package_is_installed(pkgs[1])
+                         for v in future_kernels)
         status["kernel_headers_installed"] = headers_ok
     else:
         hpkg = distro.get_kernel_headers_pkg()
@@ -186,9 +187,11 @@ def _compute_op_status(distro: LinuxDistroHelper, has_yay: bool, system_default_
 
 def _build_op_text(distro: LinuxDistroHelper, session: Optional[str] = None, has_yay: Optional[bool] = None,
                    system_default_variant: Optional[str] = None, op_status: Optional[dict] = None,
-                   installed_kernels: Optional[set] = None) -> dict[str, tuple[str, str]]:
+                   installed_kernels: Optional[set] = None, kernels_to_install_override: Optional[list] = None,
+                   default_kernel_override: Optional[str] = None) -> dict[str, tuple[str, str]]:
+
     tips = sm_tooltips()
-    _NO_CHANGE = " (No changes necessary)"
+    _NO_CHANGE = " (No changes necessary.)"
 
     def _done(key: str) -> str:
         return _NO_CHANGE if (op_status and op_status.get(key)) else ""
@@ -218,32 +221,45 @@ def _build_op_text(distro: LinuxDistroHelper, session: Optional[str] = None, has
     cpu_label = {"intel": "Intel", "amd": "AMD"}.get(cpu_vendor, cpu_vendor.capitalize())
 
     _ik = installed_kernels if installed_kernels is not None else distro.detect_installed_kernel_variants()
-    kti = S.effective_kernels
+    kti = kernels_to_install_override if kernels_to_install_override is not None else S.effective_kernels
 
-    missing_kernels = [str(k) for k in kti if k and k not in _ik]
+    missing_kernels = sorted(str(k) for k in kti if k and k not in _ik)
 
     if not missing_kernels:
-        kernels_text = f"Install kernel(s): Selected kernel(s) already installed{_done('kernels_all_installed')}"
+        kernels_text = f"Install kernel(s): (No changes necessary.)"
     else:
         kernels_list = ", ".join(missing_kernels)
         kernels_text = f"Install kernel(s): {kernels_list}{_done('kernels_all_installed')}"
 
-    dk = S.default_kernel or ""
+    if distro.family() == "arch":
+        _future_hdr = set(_ik) | set(kti)
+        _missing_hdrs = [
+            ARCH_KERNEL_VARIANTS[v][1]
+            for v in sorted(_future_hdr)
+            if ARCH_KERNEL_VARIANTS.get(v) and not distro.package_is_installed(ARCH_KERNEL_VARIANTS[v][1])
+        ]
+        headers_text = ("Install kernel headers: (Headers for installed kernel(s) already installed. No changes necessary.)" if not _missing_hdrs
+                        else f"Install kernel headers: {', '.join(_missing_hdrs)}")
+    else:
+        _hpkg = distro.get_kernel_headers_pkg() or "linux-headers"
+        _hdr_done = " (No changes necessary)" if (op_status and op_status.get("kernel_headers_installed")) else ""
+        headers_text = f"Install kernel header(s) (Package: '{_hpkg}'){_hdr_done}"
+
+    dk = ((default_kernel_override if default_kernel_override is not None else S.default_kernel) or "")
     dk_pkg = dk or system_default_variant or "(not selected)"
     sys_def_info = f" [System default: {system_default_variant}]" if system_default_variant and system_default_variant != dk_pkg else ""
-    dk_note = " (is already default. No changes necessary)" if (op_status and op_status.get("default_kernel_ok")) else sys_def_info
+    dk_note = " (Is already default. No changes necessary.)" if (op_status and op_status.get("default_kernel_ok")) else sys_def_info
 
     return {"copy_system_files": ("Copy 'System Files' (Using 'sudo cp')", _tip("copy_system_files")),
             "update_mirrors": ("Mirror update<br>(Install 'reflector' and get the 10 fastest servers in your country, or worldwide if location is not detected)",
                                _tip("update_mirrors")),
         "set_user_shell": (f"Change shell for current user (Install package for the selected shell and set it as the default){_done('shell_ok')}",
                            _tip("set_user_shell")),
-            "update_system": (f"System update (Using '{'yay --noconfirm' if has_yay else distro.get_update_system_cmd()}')", _tip("update_system")),
+        "update_system": (f"System update (Using '{'yay --noconfirm' if has_yay else distro.get_update_system_cmd()}')", _tip("update_system")),
         "install_ucode": (f"Install {cpu_label} CPU microcode updates (Package: '{ucode_pkg}'){_done('ucode_installed')}", _tip("install_ucode")),
         "install_kernels": (kernels_text, _tip("install_kernels")),
-        "install_kernel_headers": (f"Install missing headers for installed kernel(s): {kernels_text}{_done('kernel_headers_installed')}",
-                                  _tip("install_kernel_headers")),
-        "set_default_kernel": (f"Set default boot kernel to: {dk_pkg} {dk_note}", _tip("set_default_kernel")),
+        "install_kernel_headers": (headers_text, _tip("install_kernel_headers")),
+        "set_default_kernel": (f"Set default boot kernel to: {dk_pkg}{dk_note}", _tip("set_default_kernel")),
         "install_basic_packages": (f"Install 'Basic Packages' (Using '{install_cmd}')", _tip("install_basic_packages")),
         "install_yay": (f"Install 'yay' (required for 'AUR Packages'){_done('yay_installed')}", _tip("install_yay")),
         "install_aur_packages": ("Install 'AUR Packages' ('yay' required. Using 'yay -S --needed ...')", _tip("install_aur_packages")),
@@ -266,6 +282,19 @@ def _build_op_text(distro: LinuxDistroHelper, session: Optional[str] = None, has
                             _tip("enable_firewall")),
         "remove_orphaned_packages": ("Remove orphaned package(s)", _tip("remove_orphaned_packages")),
         "clean_cache": (f"Clean cache (for '{pm_name}'" + (" and 'yay')" if distro.has_aur else ")"), _tip("clean_cache"))}
+
+
+def _raw_to_label_html(raw: dict[str, tuple[str, str]]) -> dict[str, str]:
+    import html as _html_mod
+    return {k: _html_mod.escape(text).replace("&lt;br&gt;", "<br>") for k, (text, _) in raw.items()}
+
+
+def _raw_to_checkbox_text(raw: dict[str, tuple[str, str]]) -> dict[str, str]:
+    return {k: _BR_RE.sub(" ", text).replace("&", "&&") for k, (text, _) in raw.items()}
+
+
+def _raw_to_tips(raw: dict[str, tuple[str, str]]) -> dict[str, str]:
+    return {k: tip for k, (_, tip) in raw.items()}
 
 
 def _read_import_file(parent, path: str) -> list[str] | None:
@@ -424,8 +453,8 @@ class SystemManagerOptions(QDialog):
                                  system_default_variant=_system_default_variant, op_status=_op_status,
                                  installed_kernels=_installed_kernels)
 
-        op_text = {k: _BR_RE.sub(" ", text).replace("&", "&&") for k, (text, _) in _raw_op.items()}
-        op_tips = {k: tip for k, (_, tip) in _raw_op.items()}
+        op_text = _raw_to_checkbox_text(_raw_op)
+        op_tips = _raw_to_tips(_raw_op)
         widgets: list[tuple[QCheckBox, str]] = []
 
         _OP_GROUPS = [("🖥  System", ["copy_system_files", "update_mirrors", "update_system", "set_user_shell",
@@ -499,7 +528,7 @@ class SystemManagerOptions(QDialog):
                 is_arch = key in arch_only
                 if is_arch and not self._distro.has_aur:
                     cb.setEnabled(False)
-                    cb.setStyleSheet(style_checkbox_muted() + "margin-left:14px;")
+                    cb.setStyleSheet(style_checkbox_muted() + "QCheckBox{margin-left:14px;}")
                 else:
                     cb.setChecked(key in S.system_manager_ops)
 
@@ -569,38 +598,34 @@ class SystemManagerOptions(QDialog):
                 widgets.append((cb, key))
 
         def _refresh_labels() -> None:
-            currently_selected = {v for v, sub in _kernel_sub_cbs.items() if sub.isChecked() and sub.isEnabled()}
-            missing = [v for v in currently_selected if v not in _installed_kernels]
+            currently_selected = [v for v, sub in _kernel_sub_cbs.items() if sub.isChecked() and sub.isEnabled()]
+            dk_override = (_default_kernel_combo.currentData() or "") if _default_kernel_combo is not None else None
 
+            _dyn_status = dict(_op_status)
+            _dyn_status["kernels_all_installed"] = not any(v for v in currently_selected if v not in _installed_kernels)
+            if self._distro.family() == "arch":
+                _future = _installed_kernels | set(currently_selected)
+                _dyn_status["kernel_headers_installed"] = not any(
+                    ARCH_KERNEL_VARIANTS.get(v) and v not in _variants_with_headers for v in _future
+                )
+            if dk_override is not None:
+                _eff = (dk_override or _system_default_variant or "").strip()
+                _dyn_status["default_kernel_ok"] = bool(_eff and _system_default_variant and _eff == _system_default_variant)
+
+            _refreshed = _build_op_text(
+                self._distro, self._session, has_yay=self.yay_installed,
+                system_default_variant=_system_default_variant, op_status=_dyn_status,
+                installed_kernels=_installed_kernels,
+                kernels_to_install_override=currently_selected,
+                default_kernel_override=dk_override,
+            )
+            _dyn_keys = {"install_kernels", "install_kernel_headers", "set_default_kernel"}
             for _cb, _key in widgets:
+                if _key not in _dyn_keys or _key not in _refreshed:
+                    continue
                 _icon = "󰔨  " if op_tips.get(_key) else ""
-
-                if _key == "install_kernels":
-                    if not missing:
-                        _cb.setText(f"{_icon}Install kernel(s): Selected kernel(s) already installed (No changes necessary)")
-                    else:
-                        _cb.setText(f"{_icon}Install kernel(s): {', '.join(missing)}")
-
-                elif _key == "install_kernel_headers":
-                    future_kernels = _installed_kernels | currently_selected
-                    if self._distro.family() == "arch":
-                        hdrs_ok = all(v in _variants_with_headers for v in future_kernels if ARCH_KERNEL_VARIANTS.get(v))
-                    else:
-                        hdrs_ok = bool(_op_status.get("kernel_headers_installed"))
-                    _no_chg = " (No changes necessary)" if hdrs_ok else f" {', '.join(missing)}"
-                    _cb.setText(f"{_icon}Install missing headers for kernel(s):{_no_chg}")
-
-                elif _key == "set_default_kernel" and _default_kernel_combo is not None:
-                    _sel = _default_kernel_combo.currentData() or ""
-                    _dk_pkg = _sel or _system_default_variant or "(not selected)"
-                    _already = bool(_sel and _system_default_variant and _sel == _system_default_variant)
-                    if _already:
-                        _dk_note = " (is already default. No changes necessary)"
-                    elif _system_default_variant and _system_default_variant != _dk_pkg:
-                        _dk_note = f" [System default: {_system_default_variant}]"
-                    else:
-                        _dk_note = ""
-                    _cb.setText(f"{_icon}Set default boot kernel to: {_dk_pkg}{_dk_note}")
+                _text, _ = _refreshed[_key]
+                _cb.setText(f"{_icon}{_BR_RE.sub(' ', _text).replace('&', '&&')}")
 
         def _populate_default_combo():
             if _default_kernel_combo is None: return
@@ -679,6 +704,8 @@ class SystemManagerOptions(QDialog):
                     _cb.setChecked(False)
                 _cb.blockSignals(False)
             _sync_aur_dep()
+            if _install_kernels_cb is not None:
+                _sync_kernel_subs()
 
         sa.stateChanged.connect(_toggle_all)
         for cb, key in widgets:
@@ -1372,15 +1399,15 @@ class SystemManagerLauncher:
     def _confirm_and_start(self) -> None:
         ops = S.system_manager_ops
         if self._op_text is None:
-            import html as _html_mod
             _bootloader, _current_variant, _sys_default = _detect_boot_info()
             _ik = self._distro.detect_installed_kernel_variants()
             _ik.add(_current_variant)
             _op_status = _compute_op_status(self._distro, self.yay_installed, _sys_default, installed_kernels=_ik)
-            _raw = _build_op_text(self._distro, self._session, has_yay=self.yay_installed,
-                                  system_default_variant=_sys_default, op_status=_op_status, installed_kernels=_ik)
-            self._op_text = {k: _html_mod.escape(text).replace("&lt;br&gt;", "<br>") for k, (text, _) in _raw.items()}
-            self._op_tips = {k: tip for k, (_, tip) in _raw.items()}
+            _kti_override = [] if "install_kernels" not in ops else None
+            _raw = _build_op_text(self._distro, self._session, has_yay=self.yay_installed, system_default_variant=_sys_default,
+                                  op_status=_op_status, installed_kernels=_ik, kernels_to_install_override=_kti_override)
+            self._op_text = _raw_to_label_html(_raw)
+            self._op_tips = _raw_to_tips(_raw)
         if not self._op_text:
             return
         op_text: dict[str, str] = self._op_text
