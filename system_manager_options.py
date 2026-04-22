@@ -69,7 +69,7 @@ def _scroll_dlg(parent, title: str, body: QWidget, on_save=None) -> tuple[QDialo
     scr = QApplication.primaryScreen()
     if scr:
         sg = scr.availableGeometry()
-        width = min(max(sz.width() + 125, 950), sg.width() - 50)
+        width = min(max(sz.width() + 150, 950), sg.width() - 50)
         height = min(sz.height() + 225, int(sg.height() * 0.9))
         dlg.resize(width, height)
     cancel_btn = bb.button(QDialogButtonBox.StandardButton.Cancel)
@@ -251,7 +251,7 @@ def _build_op_text(distro: LinuxDistroHelper, session: Optional[str] = None, has
     return {"copy_system_files": ("Copy 'System Files' (Using 'sudo cp')", _tip("copy_system_files")),
             "update_mirrors": ("Mirror update<br>(Install 'reflector' and get the 10 fastest servers in your country, or worldwide if location is not detected)",
                                _tip("update_mirrors")),
-        "set_user_shell": (f"Change shell for current user (Install package for the selected shell and set it as the default){_done('shell_ok')}",
+        "set_user_shell": (f"Change shell for current user (Install shell package and as default){_done('shell_ok')}",
                            _tip("set_user_shell")),
         "update_system": (f"System update (Using '{'yay --noconfirm' if has_yay else distro.get_update_system_cmd()}')", _tip("update_system")),
         "install_ucode": (f"Install {cpu_label} CPU microcode updates (Package: '{ucode_pkg}'){_done('ucode_installed')}", _tip("install_ucode")),
@@ -356,14 +356,15 @@ class SystemManagerOptions(QDialog):
         self._build()
 
     def _build(self) -> None:
-        lay      = QVBoxLayout(self)
+        lay = QVBoxLayout(self)
         yay_info = f"   |   AUR Helper: 'yay' {'detected' if self.yay_installed else 'not detected'}"
-        info = QLabel(f"Recognized Linux distribution: {self._distro.distro_pretty_name}   |   Session: {self._session}{yay_info}")
+        info = QLabel(
+            f"Recognized Linux distribution: {self._distro.distro_pretty_name}   |   Session: {self._session}{yay_info}")
         info.setStyleSheet(style_label_info(bold=True) + f"font-size:{font_sz()}px")
         info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(info)
 
-        cmd      = self._distro.get_pkg_install_cmd("")
+        cmd = self._distro.get_pkg_install_cmd("")
         top_text = QLabel(
             f"First you can select 'System Files' in System Manager. These files will be copied using 'sudo', "
             f"for root privilege.\nIf you have 'System Files' selected, System Manager will copy these first. "
@@ -385,17 +386,6 @@ class SystemManagerOptions(QDialog):
         scroll.setWidgetResizable(True)
         scroll.setWidget(top_text)
         lay.addWidget(scroll)
-
-        shell_row = QHBoxLayout()
-        shell_row.addWidget(QLabel("User Shell:"))
-        self._shell_cb = QComboBox()
-        self._shell_cb.addItems(USER_SHELLS)
-        if S.user_shell in USER_SHELLS:
-            self._shell_cb.setCurrentText(S.user_shell)
-        self._shell_cb.currentIndexChanged.connect(self._save_shell)
-        shell_row.addWidget(self._shell_cb)
-        shell_row.addStretch()
-        lay.addLayout(shell_row)
 
         for row_specs in [[("System Manager Operations", self._edit_ops), ("System Files", self._edit_sysfiles)],
                           [("Basic Packages", lambda: self._edit_pkgs("basic_packages")),
@@ -421,12 +411,6 @@ class SystemManagerOptions(QDialog):
     def _reopen_pkgs(self, pkg_type: str) -> None: QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
 
     def _reopen_sysfiles(self) -> None: QTimer.singleShot(0, self._edit_sysfiles)
-
-    def _save_shell(self) -> None:
-        sel = self._shell_cb.currentText()
-        if sel in USER_SHELLS and sel != S.user_shell:
-            S.user_shell = sel
-            save_profile()
 
     def _edit_ops(self):
         bootloader, current_variant, _system_default_variant = _detect_boot_info()
@@ -456,12 +440,14 @@ class SystemManagerOptions(QDialog):
         widgets: list[tuple[QCheckBox, str]] = []
 
         _OP_GROUPS = [("🖥  System", ["copy_system_files", "update_mirrors", "update_system", "set_user_shell",
-                                     "install_ucode", "install_kernels", "install_kernel_headers", "set_default_kernel"]),
+                                     "install_ucode", "install_kernels", "install_kernel_headers",
+                                     "set_default_kernel"]),
                       ("📦  Packages", ["install_basic_packages", "install_yay", "install_aur_packages",
                                        "install_specific_packages", "enable_flatpak_integration"]),
-                      ("🔧  Services", ["enable_printer_support", "enable_ssh_service", "enable_samba_network_filesharing",
-                                       "enable_bluetooth_service", "enable_atd_service", "enable_cronie_service",
-                                       "install_snap", "enable_firewall"]),
+                      ("🔧  Services",
+                       ["enable_printer_support", "enable_ssh_service", "enable_samba_network_filesharing",
+                        "enable_bluetooth_service", "enable_atd_service", "enable_cronie_service",
+                        "install_snap", "enable_firewall"]),
                       ("🧹  Maintenance", ["remove_orphaned_packages", "clean_cache"])]
 
         _KERNEL_VARIANTS = list(ARCH_KERNEL_VARIANTS.keys())
@@ -497,6 +483,9 @@ class SystemManagerOptions(QDialog):
         _default_kernel_combo: QComboBox | None = None
         _install_kernels_cb: QCheckBox | None = None
         _kernel_sub_cbs: dict[str, QCheckBox] = {}
+
+        _set_shell_cb: QCheckBox | None = None
+        _user_shell_combo: QComboBox | None = None
 
         for group_label, keys in _OP_GROUPS:
             sep_line = QFrame()
@@ -584,11 +573,26 @@ class SystemManagerOptions(QDialog):
                     grid.addWidget(cb, grid_row, 0)
                     combo = QComboBox()
                     combo.setMinimumHeight(30)
-                    combo.setMaximumWidth(300)
+                    combo.setFixedWidth(200)
                     combo.setEnabled(cb.isEnabled() and cb.isChecked())
                     grid.addWidget(combo, grid_row, 1)
                     _default_kernel_combo = combo
                     grid_row += 1
+
+                elif key == "set_user_shell":
+                    _set_shell_cb = cb
+                    grid.addWidget(cb, grid_row, 0)
+                    combo = QComboBox()
+                    combo.addItems(USER_SHELLS)
+                    if S.user_shell in USER_SHELLS:
+                        combo.setCurrentText(S.user_shell)
+                    combo.setMinimumHeight(30)
+                    combo.setFixedWidth(200)
+                    combo.setEnabled(cb.isEnabled() and cb.isChecked())
+                    grid.addWidget(combo, grid_row, 1)
+                    _user_shell_combo = combo
+                    grid_row += 1
+
                 else:
                     grid.addWidget(cb, grid_row, 0, 1, 2)
                     grid_row += 1
@@ -596,34 +600,51 @@ class SystemManagerOptions(QDialog):
                 widgets.append((cb, key))
 
         def _refresh_labels() -> None:
-            currently_selected = [v for v, sub in _kernel_sub_cbs.items() if sub.isChecked() and sub.isEnabled()]
-            dk_override = (_default_kernel_combo.currentData() or "") if _default_kernel_combo is not None else None
+            try:
+                currently_selected = [v for v, sub in _kernel_sub_cbs.items() if sub.isChecked() and sub.isEnabled()]
+                dk_override = (_default_kernel_combo.currentData() or "") if _default_kernel_combo is not None else None
 
-            _dyn_status = dict(_op_status)
-            _dyn_status["kernels_all_installed"] = not any(v for v in currently_selected if v not in _installed_kernels)
-            if self._distro.family() == "arch":
-                _future = _installed_kernels | set(currently_selected)
-                _dyn_status["kernel_headers_installed"] = not any(
-                    ARCH_KERNEL_VARIANTS.get(v) and v not in _variants_with_headers for v in _future
+                _dyn_status = dict(_op_status)
+                _dyn_status["kernels_all_installed"] = not any(
+                    v for v in currently_selected if v not in _installed_kernels)
+                if self._distro.family() == "arch":
+                    _future = _installed_kernels | set(currently_selected)
+                    _dyn_status["kernel_headers_installed"] = not any(
+                        ARCH_KERNEL_VARIANTS.get(v) and v not in _variants_with_headers for v in _future
+                    )
+                if dk_override is not None:
+                    _eff = (dk_override or _system_default_variant or "").strip()
+                    _dyn_status["default_kernel_ok"] = bool(
+                        _eff and _system_default_variant and _eff == _system_default_variant)
+
+                if _user_shell_combo is not None:
+                    shell_override = _user_shell_combo.currentText()
+                    try:
+                        import pwd as _pwd
+                        binary = shell_override.lower().strip()
+                        current = _pwd.getpwnam(_USER).pw_shell
+                        _dyn_status["shell_ok"] = (Path(current).name == binary)
+                    except (KeyError, ImportError, AttributeError):
+                        _dyn_status["shell_ok"] = False
+
+                _refreshed_raw = _build_op_text(
+                    self._distro, self._session, has_yay=self.yay_installed,
+                    system_default_variant=_system_default_variant, op_status=_dyn_status,
+                    installed_kernels=_installed_kernels,
+                    kernels_to_install_override=currently_selected,
+                    default_kernel_override=dk_override,
                 )
-            if dk_override is not None:
-                _eff = (dk_override or _system_default_variant or "").strip()
-                _dyn_status["default_kernel_ok"] = bool(_eff and _system_default_variant and _eff == _system_default_variant)
+                _refreshed_text = _raw_to_checkbox_text(_refreshed_raw)
 
-            _refreshed = _build_op_text(
-                self._distro, self._session, has_yay=self.yay_installed,
-                system_default_variant=_system_default_variant, op_status=_dyn_status,
-                installed_kernels=_installed_kernels,
-                kernels_to_install_override=currently_selected,
-                default_kernel_override=dk_override,
-            )
-            _dyn_keys = {"install_kernels", "install_kernel_headers", "set_default_kernel"}
-            for _cb, _key in widgets:
-                if _key not in _dyn_keys or _key not in _refreshed:
-                    continue
-                _icon = "󰔨  " if op_tips.get(_key) else ""
-                _text, _ = _refreshed[_key]
-                _cb.setText(f"{_icon}{_BR_RE.sub(' ', _text).replace('&', '&&')}")
+                _dyn_keys = {"install_kernels", "install_kernel_headers", "set_default_kernel", "set_user_shell"}
+                for _cb, _key in widgets:
+                    if _key not in _dyn_keys or _key not in _refreshed_text:
+                        continue
+                    _icon = "󰔨  " if op_tips.get(_key) else ""
+                    _text = _refreshed_text[_key]
+                    _cb.setText(f"{_icon}{_BR_RE.sub(' ', _text).replace('&', '&&')}")
+            except Exception as e:
+                print(f"Error during _refresh_labels: {e}")
 
         def _populate_default_combo():
             if _default_kernel_combo is None: return
@@ -670,6 +691,17 @@ class SystemManagerOptions(QDialog):
             _default_kernel_combo.currentIndexChanged.connect(lambda _: _refresh_labels())
             _sync_dk_combo()
 
+        if _set_shell_cb is not None and _user_shell_combo is not None:
+            _sh_cb, _sh_cmb = _set_shell_cb, _user_shell_combo
+
+            def _sync_sh_combo():
+                _sh_cmb.setEnabled(_sh_cb.isChecked() and _sh_cb.isEnabled())
+                _refresh_labels()
+
+            _sh_cb.stateChanged.connect(lambda _: _sync_sh_combo())
+            _user_shell_combo.currentIndexChanged.connect(lambda _: _refresh_labels())
+            _sync_sh_combo()
+
         yay_cb = next((c for c, k in widgets if k == "install_yay"), None)
         aur_cb = next((c for c, k in widgets if k == "install_aur_packages"), None)
         enabled_widgets = [c for c, _ in widgets if c.isEnabled()]
@@ -712,9 +744,12 @@ class SystemManagerOptions(QDialog):
 
         def _save(dlg):
             S.system_manager_ops = [k for cb_, k in widgets if cb_.isChecked()]
-            S.kernels_to_install = [v for v in _KERNEL_VARIANTS if _kernel_sub_cbs.get(v) and _kernel_sub_cbs[v].isChecked()]
+            S.kernels_to_install = [v for v in _KERNEL_VARIANTS if
+                                    _kernel_sub_cbs.get(v) and _kernel_sub_cbs[v].isChecked()]
             if _default_kernel_combo and _set_default_cb:
                 S.default_kernel = _default_kernel_combo.currentData() if _set_default_cb.isChecked() else ""
+            if _user_shell_combo:
+                S.user_shell = _user_shell_combo.currentText()
             save_profile()
             QMessageBox.information(self, "Saved", "Operations saved.")
             dlg.accept()

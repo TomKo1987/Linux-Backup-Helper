@@ -127,7 +127,7 @@ def generate_tooltip() -> tuple[dict, dict, dict]:
     if not already_detected:
         try:
             local_session = LinuxDistroHelper.detect_session() or ""
-        except Exception as e:
+        except (OSError, ValueError) as e:
             logger.warning("Session detect failed: %s", e)
 
     with _session_lock:
@@ -158,18 +158,24 @@ def generate_tooltip() -> tuple[dict, dict, dict]:
     if sp_active:
         sm_tips["install_specific_packages"] = _specific_pkgs_tooltip_html(sp_active, session, t, font_sz)
 
-    if S.user_shell:
+    try:
+        import pwd as _pwd
+        from state import _USER
+        _system_shell = Path(_pwd.getpwnam(_USER).pw_shell).name
+    except (KeyError, ImportError, OSError):
+        _system_shell = ""
+    if _system_shell:
         sm_tips["set_user_shell"] = (f"<table style='white-space:nowrap; font-family:monospace;'>"
                                      f"<tr><td style='padding:4px 5px 2px;font-size:{font_sz(-1)}px;font-weight:bold;"
-                                     f"color:{t['accent2']};border-bottom:1px solid {t['header_sep']};'>Selected Shell</td></tr>"
+                                     f"color:{t['accent2']};border-bottom:1px solid {t['header_sep']};'>Current User Shell</td></tr>"
                                      f"<tr style='background-color:{t['bg2']};'><td style='padding:8px 6px;border:1px solid "
-                                     f"{t['header_sep']};color:{t['success']};'>{_html.escape(S.user_shell)}</td></tr></table>")
+                                     f"{t['header_sep']};color:{t['success']};'>{_html.escape(_system_shell)}</td></tr></table>")
 
     result = (backup_tips, restore_tips, sm_tips)
     with _cache_lock:
         if _cache is None:
             _cache = result
-    return _cache
+    return result
 
 
 def copy_logic_tooltip() -> str:
