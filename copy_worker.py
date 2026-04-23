@@ -189,7 +189,7 @@ def _run_futures(futs: list, cancel: threading.Event, tag: str = "worker") -> No
 def _do_copy(entry, cancel: threading.Event, ok_l: list, sk_l: list, er_l: list, tc: dict) -> None:
     src, dst, title, src_st = entry
     try:
-        status, aux, sz = _copy_file(src, dst, cancel, src_st)
+        status, aux, sz = _copy_file(src, dst, cancel)
     except Exception as exc:
         logger.error("copy %s: %s", src, exc)
         status, aux, sz = "error", str(exc), 0
@@ -298,7 +298,7 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
     except InterruptedError:
         raise
     except OSError as exc:
-        if exc.errno not in (errno.ENOSYS, errno.EOPNOTSUPP, errno.ENOTSUP):
+        if exc.errno not in (errno.ENOSYS, errno.EOPNOTSUPP, errno.ENOTSUP, errno.EXDEV):
             raise
         logger.debug("copy_file_range not supported, falling back: %s", exc)
         try:
@@ -354,67 +354,75 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
     return total - rem
 
 
-def _copy_file(src: str, dst: str, cancel: threading.Event, src_st: "os.stat_result | None" = None) -> tuple[str, str, int]:
-    tmp = f"{dst}.{_PID}.{threading.get_ident()}.part"
-    rfd = wfd = None
-    success   = False
-    try:
-        if cancel.is_set():
+def _copy_file(src, dst, cancel):
+    for _attempt in range(2):
+        tmp = f"{dst}.{_PID}.{threading.get_ident()}.part"
+        rfd = wfd = None
+        success = False
+        try:
+            if cancel.is_set():
+                return "skip", "", 0
+            try:
+                st = os.stat(src)
+            except OSError:
+                return "error", "Source unreadable", 0
+
+            if _is_up_to_date_local(dst, st):
+                return "skip", "Up to date", st.st_size
+
+            if not _ensure_dir(os.path.dirname(dst)):
+                return "error", "Directory could not be created", 0
+
+            try:
+                rfd = os.open(src, os.O_RDONLY | _O_NOATIME)
+            except OSError:
+                rfd = os.open(src, os.O_RDONLY)
+
+            wfd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, st.st_mode & 0o777)
+
+            if st.st_size > 0:
+                try:
+                    os.ftruncate(wfd, st.st_size)
+                    os.posix_fadvise(rfd, 0, st.st_size, os.POSIX_FADV_SEQUENTIAL)
+                except OSError:
+                    pass
+
+            copied = _copy_loop(rfd, wfd, st.st_size, cancel)
+            if copied < st.st_size:
+                raise OSError(f"Incomplete copy: {copied}/{st.st_size} bytes written")
+
+            try:
+                os.close(wfd)
+            finally:
+                wfd = None
+            try:
+                os.utime(tmp, ns=(st.st_atime_ns, st.st_mtime_ns))
+            except OSError as e:
+                logger.debug("Could not preserve timestamps for %s: %s", tmp, e)
+            os.replace(tmp, dst)
+            success = True
+            return "ok", dst, copied
+
+        except InterruptedError:
             return "skip", "", 0
-        try:
-            st = src_st if src_st is not None else os.stat(src)
-        except OSError:
-            return "error", "Source unreadable", 0
-
-        if _is_up_to_date_local(dst, st):
-            return "skip", "Up to date", st.st_size
-
-        if not _ensure_dir(os.path.dirname(dst)):
-            return "error", "Directory could not be created", 0
-
-        try:
-            rfd = os.open(src, os.O_RDONLY | _O_NOATIME)
-        except OSError:
-            rfd = os.open(src, os.O_RDONLY)
-
-        wfd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, st.st_mode & 0o777)
-
-        if st.st_size > 0:
-            try:
-                os.ftruncate(wfd, st.st_size)
-                os.posix_fadvise(rfd, 0, st.st_size, os.POSIX_FADV_SEQUENTIAL)
-            except OSError:
-                pass
-
-        copied = _copy_loop(rfd, wfd, st.st_size, cancel)
-        if copied < st.st_size:
-            raise OSError(f"Incomplete copy: {copied}/{st.st_size} bytes written")
-        try:
-            os.close(wfd)
+        except OSError as exc:
+            if "Incomplete copy" in str(exc) and _attempt == 0:
+                logger.debug("copy %s: %s — retrying", src, exc)
+                continue
+            logger.error("copy %s → %s: %s", src, dst, exc)
+            return "error", str(exc), 0
         finally:
-            wfd = None
-        try:
-            os.utime(tmp, ns=(st.st_atime_ns, st.st_mtime_ns))
-        except OSError as e:
-            logger.debug("Could not preserve timestamps for %s: %s", tmp, e)
-        os.replace(tmp, dst)
-        success = True
-        return "ok", dst, copied
-    except InterruptedError:
-        return "skip", "", 0
-    except Exception as exc:
-        logger.error("copy %s → %s: %s", src, dst, exc)
-        return "error", str(exc), 0
-    finally:
-        if rfd is not None:
-            os.close(rfd)
-        if wfd is not None:
-            os.close(wfd)
-        if not success:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
+            if rfd is not None:
+                os.close(rfd)
+            if wfd is not None:
+                os.close(wfd)
+            if not success:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+
+    return "error", "Incomplete copy after retry", 0
 
 
 @dataclass
