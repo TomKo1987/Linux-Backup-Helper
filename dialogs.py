@@ -406,10 +406,6 @@ class EntryDialog(QDialog):
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return None
 
-        def _first_valid_line(text: str) -> str:
-            lines = [l.strip() for l in text.splitlines() if l.strip()]
-            return lines[0] if lines else ""
-
         s_raw = src_ed.toPlainText().strip()
         d_raw = dst_ed.toPlainText().strip()
 
@@ -425,8 +421,8 @@ class EntryDialog(QDialog):
                 "Only the first line has been kept."
             )
 
-        s = _first_valid_line(s_raw)
-        d = _first_valid_line(d_raw)
+        s = s_lines[0] if s_lines else ""
+        d = d_lines[0] if d_lines else ""
         return (s, d) if (s or d) else None
 
     def _add_pair(self) -> None:
@@ -928,7 +924,7 @@ class ProfilesDialog(QDialog):
                         skipped.append(f"{stem} (rejected: path traversal)")
                         continue
                     if p.parent != Path("."):
-                        skipped.append(f"{stem} (skipped: file is in a subdirectory)")
+                        skipped.append(f"{stem} (skipped: not a top-level file)")
                         continue
                     if not _PROFILE_RE.match(stem):
                         skipped.append(f"{stem} (invalid name)")

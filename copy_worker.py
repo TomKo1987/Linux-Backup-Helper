@@ -93,14 +93,11 @@ def _notify(title: str, body: str, urgency: str = "normal") -> None:
         pass
 
 
-class _CacheMiss:
-    __slots__ = ()
-
-
-_CACHE_MISS = _CacheMiss()
+_CACHE_MISS = object()
 _O_NOATIME  = os.O_NOATIME
 _PID        = os.getpid()
 _tls        = threading.local()
+_TIME_CHECK_EVERY = 32
 _seen_dirs_global: set[str] = set()
 _seen_dirs_lock = threading.Lock()
 _SHM_DIR: str | None = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else None
@@ -577,7 +574,7 @@ class _SmbClient:
         return index
 
     def probe(self) -> str:
-        if self._user and self._pw is not None:
+        if self._user and self._pw:
             ok, err = self.run("exit\n", _SMB_TIMEOUT)
             if ok:
                 return "ok"
@@ -1335,7 +1332,6 @@ class CopyWorker(QThread):
             last_fl_t   = time.monotonic()
             _pend_count = 0
             _file_ctr   = 0
-            _TIME_CHECK_EVERY = 32
 
             def _fl() -> None:
                 nonlocal last_fl_t, _pend_count, _file_ctr

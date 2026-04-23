@@ -134,7 +134,7 @@ class _StandardKeysMixin(_MixinBase):
         k = event.key()
         if k in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
             widget = self.focusWidget()
-            if isinstance(widget, QPushButton):
+            if widget is not None and isinstance(widget, QPushButton):
                 widget.click()
         elif k == Qt.Key.Key_Escape:
             self.close()

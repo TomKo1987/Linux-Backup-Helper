@@ -1,6 +1,6 @@
+import os
 import shutil
 import sys
-import os
 import threading
 from pathlib import Path
 
@@ -17,8 +17,8 @@ from scan_verify import ScanVerifyDialog
 from state import S, _HOME, _PROFILES_DIR, _PROFILE_RE, RESTART_DIALOG, save_profile, logger, startup_load
 from themes import apply_style, register_style_listener, unregister_style_listener
 from ui_utils import _StandardKeysMixin
+from ui_utils import ask_profile_name
 from windows import base_window
-
 
 if os.name != "posix" or sys.platform != "linux":
     print("This program can only be run on Linux.")
@@ -211,7 +211,6 @@ def _first_run_wizard(parent) -> bool:
     clicked = msg.clickedButton()
 
     if clicked == scan_btn:
-        from ui_utils import ask_profile_name
         name = ask_profile_name("New Profile Name", "Default", parent)
         if not name:
             S.reset_to_fresh()

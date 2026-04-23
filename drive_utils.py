@@ -11,23 +11,26 @@ from PyQt6.QtWidgets import QMessageBox
 
 from state import S, logger, _USER
 
+
 _DRIVE_NAME_RE = re.compile(r"^[\w\- .()@:]+$")
 
+
 _SHELL_INJECTION_SEQS = ("&&", "$(", "${", ";", "|", "`", ">", "<", "\n", "\r", "\x00")
+
 
 _ALLOWED_MOUNT_CMDS = frozenset({
     "mount", "umount", "mount.cifs", "udisksctl",
     "kdeconnect-cli", "sshfs", "fusermount3", "fusermount",
 })
 
+
 _session_managed_mounts: list[dict] = []
 _session_mounts_lock = threading.Lock()
-
 _OCTAL_ESCAPE_RE = re.compile(r"\\(\d{3})")
-
-
 _mounts_cache: tuple[float, list] = (0.0, [])
 _mounts_cache_lock = threading.Lock()
+_MOUNT_TIMEOUT_S   = 15
+_UNMOUNT_TIMEOUT_S = 30
 
 
 def get_mounts(max_age: float = 0.5) -> list[tuple[str, str]]:
@@ -48,8 +51,9 @@ def get_mounts(max_age: float = 0.5) -> list[tuple[str, str]]:
         with _mounts_cache_lock:
             return _mounts_cache[1]
     with _mounts_cache_lock:
-        _mounts_cache = (now, mounts)
-    return mounts
+        if now >= _mounts_cache[0]:
+            _mounts_cache = (now, mounts)
+        return _mounts_cache[1]
 
 
 def _decode_octal(s: str) -> str:
@@ -88,9 +92,13 @@ def _validate_cmd(cmd: str) -> tuple[bool, str, list[str]]:
     base = os.path.basename(expanded[0])
     if base == "sudo":
         for tok in expanded[1:]:
+            if tok in ("-u", "-H", "--user"):
+                return False, "sudo user-switching flags are not permitted", []
             if not tok.startswith("-"):
                 base = os.path.basename(tok)
                 break
+        else:
+            return False, "sudo without a command", []
     if base not in _ALLOWED_MOUNT_CMDS:
         return False, f"'{base}' is not an allowed command", []
     for tok in expanded:
@@ -165,7 +173,7 @@ def is_mounted(opt: dict, mounts: Optional[list[tuple[str, str]]] = None) -> boo
 
 def mount_drive(drive: dict) -> tuple[bool, str]:
     name = drive.get("drive_name", "?")
-    success, error_msg = _execute_drive_op(drive, "mount_command", 15)
+    success, error_msg = _execute_drive_op(drive, "mount_command", _MOUNT_TIMEOUT_S)
     if success:
         mounted_confirmed = False
         deadline = time.monotonic() + 1.0
@@ -196,7 +204,7 @@ def mount_drive(drive: dict) -> tuple[bool, str]:
 
 def unmount_drive(drive: dict) -> tuple[bool, str]:
     name = drive.get("drive_name", "?")
-    success, error_msg = _execute_drive_op(drive, "unmount_command", 30)
+    success, error_msg = _execute_drive_op(drive, "unmount_command", _UNMOUNT_TIMEOUT_S)
     if success:
         _untrack_session_mount(drive)
         logger.info("Unmounted '%s'", name)

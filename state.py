@@ -17,7 +17,7 @@ _PROFILES_DIR = _CONFIG_DIR / "profiles"
 _LOG_HIST_DIR = _CONFIG_DIR / "logs_history"
 _LOG_FILE     = _LOG_HIST_DIR / "backup_helper.log"
 _PROFILE_RE   = re.compile(r"^[^\s._][\w\-. ]*\S$|^[^\s._]$")
-
+_ANSI_RE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 RESTART_DIALOG: int = 2
 _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -45,8 +45,6 @@ def _make_logger(name: str) -> logging.Logger:
 logger = _make_logger("backup_helper")
 
 _text_replacements: tuple[tuple[str, str], ...] = ((_HOME.as_posix(), "~"), (f"/run/media/{_USER}/", ""))
-
-_ANSI_RE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
 
 def active_system_files() -> list[dict]:
@@ -193,7 +191,7 @@ def _norm_paths(raw: Any) -> list[str]:
     if not s:
         return []
     result = []
-    for p in re.split(r'[\r\n\t]+', s):
+    for p in re.split(r'\r\n|\r|\n', s):
         p = p.strip()
         if p:
             result.append(p)
@@ -293,10 +291,12 @@ def _load_profile_from_data(path: Path, data: dict) -> bool:
 
 
 def save_profile(path: Optional[Path] = None) -> bool:
-    path = path or (_PROFILES_DIR / f"{S.profile_name}.json" if S.profile_name else None)
-    if not path:
+    resolved = path or (_PROFILES_DIR / f"{S.profile_name}.json" if S.profile_name else None)
+    if not resolved:
         return False
-    data = {"is_default": True,
+    is_active = (resolved.stem == S.profile_name)
+    data = {
+        **({"is_default": True} if is_active else {}),
             "mount_options": S.mount_options,
             "default_kernel": S.default_kernel,
             "kernels_to_install": S.kernels_to_install,
@@ -315,7 +315,7 @@ def save_profile(path: Optional[Path] = None) -> bool:
                 key=lambda e: (e.get("header", "").lower(), e.get("title", "").lower(), str(e.get("source", "")))
             )}
     try:
-        _atomic_write(path, data)
+        _atomic_write(resolved, data)
         invalidate_tooltip_cache()
         return True
     except Exception as exc:

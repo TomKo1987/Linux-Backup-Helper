@@ -65,16 +65,26 @@ def load_history(profile_name: str) -> list[dict]:
 
 
 def _fmt_duration(s: int) -> str:
+    s = max(0, s)
     if s < 60:
         return f"{s}s"
-    return f"{s // 60}m {s % 60:02d}s"
+    if s < 3600:
+        return f"{s // 60}m {s % 60:02d}s"
+    h = s // 3600
+    m = (s % 3600) // 60
+    return f"{h}h {m:02d}m {s % 60:02d}s"
 
 
-def _op_classify(op: str) -> tuple[bool, bool]:
+from typing import NamedTuple
+
+class _OpKind(NamedTuple):
+    is_backup: bool
+    is_restore: bool
+
+def _op_classify(op: str) -> _OpKind:
     lo = op.lower()
     is_restore = "restore" in lo
-    is_backup  = "backup" in lo and not is_restore
-    return is_backup, is_restore
+    return _OpKind(is_backup="backup" in lo and not is_restore, is_restore=is_restore)
 
 
 def _entry_detail_html(e: dict, t: dict) -> str:
