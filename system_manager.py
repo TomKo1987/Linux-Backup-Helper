@@ -775,6 +775,42 @@ class SystemManagerThread(QThread):
                     pass
                 continue
 
+            if tag == "select":
+                time.sleep(0.3)
+                _flush: list = []
+                while True:
+                    try:
+                        _flush.append(out_q.get_nowait())
+                    except queue.Empty:
+                        break
+                for _fi in _flush:
+                    if _fi is None:
+                        sentinels += 1
+                        continue
+                    _fe, _ft, _ftag = _fi
+                    if _ftag in ("sudo_pw", "confirm", "auto_none", "select"):
+                        out_q.put(_fi)
+                        continue
+                    if not _ft or _PACMAN_PROGRESS_RE.search(_ft):
+                        continue
+                    if len(_ft) <= 2 and _ft.lower().strip() in ("y", "n"):
+                        continue
+                    _fkind = "error" if _fe and not _INFO_RE.search(_ft) else "subprocess"
+                    self.outputReceived.emit(_ft, _fkind)
+                self.outputReceived.emit(text, "subprocess")
+                self._input_event.clear()
+                self._input_value = ""
+                self.inputRequested.emit(text)
+                answered = self._input_event.wait(timeout=300)
+                answer = self._input_value.strip() if answered and self._input_value.strip() else "1"
+                try:
+                    if proc.stdin and not proc.stdin.closed:
+                        proc.stdin.write((answer + "\n").encode("utf-8"))
+                        proc.stdin.flush()
+                except OSError:
+                    pass
+                continue
+
             if "[sudo]" in text:
                 text = re.sub(r"\[sudo].*?:\s*", "", text)
 
