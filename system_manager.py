@@ -428,8 +428,6 @@ class SystemManagerThread(QThread):
         self._env_snapshot.update({"LC_ALL": "C", "LANG": "C", "LANGUAGE": "C"})
         self.distro: Optional[LinuxDistroHelper] = None
         self._pkg_cache: Optional[_PackageCache] = None
-        self.distro = None
-        self._pkg_cache = None
         try:
             if distro is not None:
                 self.distro = distro

@@ -299,10 +299,6 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
             raise
         logger.debug("copy_file_range not supported, falling back: %s", exc)
         try:
-            os.lseek(rfd, 0, os.SEEK_SET)
-        except OSError:
-            pass
-        try:
             os.lseek(wfd, 0, os.SEEK_SET)
         except OSError:
             pass

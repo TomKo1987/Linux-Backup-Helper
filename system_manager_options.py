@@ -624,7 +624,7 @@ class SystemManagerOptions(QDialog):
                     shell_override = _user_shell_combo.currentText()
                     try:
                         import pwd as _pwd
-                        binary = shell_override.lower().strip()
+                        binary = self._distro.get_shell_binary_name(shell_override)
                         current = _pwd.getpwnam(_USER).pw_shell
                         _dyn_status["shell_ok"] = (Path(current).name == binary)
                     except (KeyError, ImportError, AttributeError):

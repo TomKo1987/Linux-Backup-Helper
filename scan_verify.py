@@ -156,8 +156,7 @@ def _resolve_all_ops(helper: LinuxDistroHelper) -> dict[str, str]:
 
 def _get_active_sm_services(helper: LinuxDistroHelper) -> list[tuple[str, str]]:
     all_ops = _resolve_all_ops(helper)
-    return [(op, svc) for op, svc in all_ops.items()
-            if op in S.system_manager_ops and svc]
+    return [(op, svc) for op, svc in all_ops.items() if op in S.system_manager_ops and svc]
 
 
 def _get_all_sm_services(helper: LinuxDistroHelper) -> list[tuple[str, str]]:
