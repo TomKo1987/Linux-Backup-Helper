@@ -64,6 +64,12 @@ def load_history(profile_name: str) -> list[dict]:
         return []
 
 
+from typing import NamedTuple
+
+class _OpKind(NamedTuple):
+    is_backup: bool
+    is_restore: bool
+
 def _fmt_duration(s: int) -> str:
     s = max(0, s)
     if s < 60:
@@ -73,13 +79,6 @@ def _fmt_duration(s: int) -> str:
     h = s // 3600
     m = (s % 3600) // 60
     return f"{h}h {m:02d}m {s % 60:02d}s"
-
-
-from typing import NamedTuple
-
-class _OpKind(NamedTuple):
-    is_backup: bool
-    is_restore: bool
 
 def _op_classify(op: str) -> _OpKind:
     lo = op.lower()
