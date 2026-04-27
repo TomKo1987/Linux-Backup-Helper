@@ -16,8 +16,7 @@ from drive_utils import get_mounts, is_mounted, unmount_drive, get_session_manag
 from scan_verify import ScanVerifyDialog
 from state import S, _HOME, _PROFILES_DIR, _PROFILE_RE, RESTART_DIALOG, save_profile, logger, startup_load
 from themes import apply_style, register_style_listener, unregister_style_listener
-from ui_utils import _StandardKeysMixin
-from ui_utils import ask_profile_name
+from ui_utils import _StandardKeysMixin, ask_profile_name
 from windows import base_window
 
 if os.name != "posix" or sys.platform != "linux":

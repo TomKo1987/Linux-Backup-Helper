@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
 )
 
 from linux_distro_helper import LinuxDistroHelper, SESSIONS, USER_SHELLS, ARCH_KERNEL_VARIANTS, is_valid_pkg_name
-from state import S, _HOME, _USER, apply_replacements, save_profile, sort_pkg_list
+from state import S, _HOME, _USER, apply_replacements, save_profile, sort_pkg_list, sort_specific_pkg_list
 from sudo_password import SecureString
 from themes import (
     style_label_info, style_label_mono, style_op_label, tri_styles, apply_tooltip, style_sudo_checkbox,
@@ -90,7 +90,10 @@ def _is_specific(pkg_type: str) -> bool:
 
 
 def _commit_pkgs(pkg_type: str, updated: list) -> None:
-    sort_pkg_list(updated)
+    if _is_specific(pkg_type):
+        sort_specific_pkg_list(updated)
+    else:
+        sort_pkg_list(updated)
     setattr(S, pkg_type, updated)
     save_profile()
 
@@ -1169,7 +1172,10 @@ class SystemManagerOptions(QDialog):
         else:
             p["name"] = name
         pkg_list = getattr(S, pkg_type, [])
-        sort_pkg_list(pkg_list)
+        if is_specific:
+            sort_specific_pkg_list(pkg_list)
+        else:
+            sort_pkg_list(pkg_list)
         save_profile()
         parent_dlg.accept()
         self._reopen_pkgs(pkg_type)
@@ -1188,7 +1194,7 @@ class SystemManagerOptions(QDialog):
                 QMessageBox.warning(self, "Duplicate", f"'{name}' for '{sess}' already exists.")
             else:
                 S.specific_packages.append({"package": name, "session": sess, "disabled": False})
-                sort_pkg_list(S.specific_packages)
+                sort_specific_pkg_list(S.specific_packages)
                 save_profile()
                 QMessageBox.information(self, "Added", f"Added:\n\n  • {name} [{sess}]")
         else:
