@@ -1280,7 +1280,10 @@ class CopyWorker(QThread):
                                             batch = []
                                             break
                                         except queue.Full:
-                                            pass
+                                            if cancel.is_set():
+                                                local_n -= len(batch)
+                                                batch = []
+                                                break
                                     else:
                                         local_n -= len(batch)
                                         batch = []

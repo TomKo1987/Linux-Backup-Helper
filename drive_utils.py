@@ -92,7 +92,7 @@ def _validate_cmd(cmd: str) -> tuple[bool, str, list[str]]:
     base = os.path.basename(expanded[0])
     if base == "sudo":
         for tok in expanded[1:]:
-            if tok in ("-u", "-H", "--user"):
+            if tok in ("-u", "-H", "--user") or tok.startswith("--user="):
                 return False, "sudo user-switching flags are not permitted", []
             if not tok.startswith("-"):
                 base = os.path.basename(tok)
