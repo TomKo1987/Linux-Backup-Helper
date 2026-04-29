@@ -237,7 +237,8 @@ def _build_op_text(distro: LinuxDistroHelper, session: Optional[str] = None, has
         _missing_hdrs = [
             ARCH_KERNEL_VARIANTS[v][1]
             for v in sorted(_future_hdr)
-            if ARCH_KERNEL_VARIANTS.get(v) and not distro.package_is_installed(ARCH_KERNEL_VARIANTS[v][1])
+            if ARCH_KERNEL_VARIANTS.get(v) and len(ARCH_KERNEL_VARIANTS[v]) >= 2 and not distro.package_is_installed(
+                ARCH_KERNEL_VARIANTS[v][1])
         ]
         headers_text = ("Install kernel headers: (Headers for installed kernel(s) already installed. No changes necessary.)" if not _missing_hdrs
                         else f"Install kernel headers: {', '.join(_missing_hdrs)}")
@@ -613,7 +614,8 @@ class SystemManagerOptions(QDialog):
                 if self._distro.family() == "arch":
                     _future = _installed_kernels | set(currently_selected)
                     _dyn_status["kernel_headers_installed"] = not any(
-                        ARCH_KERNEL_VARIANTS.get(v) and v not in _variants_with_headers for v in _future
+                        ARCH_KERNEL_VARIANTS.get(v) and len(
+                            ARCH_KERNEL_VARIANTS[v]) >= 2 and v not in _variants_with_headers for v in _future
                     )
                 if dk_override is not None:
                     _eff = (dk_override or _system_default_variant or "").strip()

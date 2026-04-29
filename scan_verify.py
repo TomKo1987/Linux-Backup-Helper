@@ -107,9 +107,11 @@ def _get_sm_managed_packages(helper: LinuxDistroHelper) -> frozenset:
         except (NotImplementedError, OSError, subprocess.SubprocessError):
             pass
 
-    for kernel_pkg, header_pkg in ARCH_KERNEL_VARIANTS.values():
-        pkgs.add(kernel_pkg)
-        pkgs.add(header_pkg)
+    for val in ARCH_KERNEL_VARIANTS.values():
+        if val:
+            pkgs.add(val[0])
+            if len(val) >= 2:
+                pkgs.add(val[1])
 
     try:
         hdr_pkg = helper.get_kernel_headers_pkg()

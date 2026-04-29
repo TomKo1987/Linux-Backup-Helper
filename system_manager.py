@@ -1379,7 +1379,7 @@ class SystemManagerThread(QThread):
             r = self._exec(["sudo", "sh", "-c", f"printf '%s' {escaped_content} > {shlex.quote(str(dest_path))}"],
                            stream=False, timeout=10)
             if r.returncode == 0:
-                self._update_sort_keys(kernel_pkg, Path("/boot/loader/entries"))  # ← jetzt hier
+                self._update_sort_keys(f"{kernel_pkg}.conf", Path("/boot/loader/entries"))
                 self._exec(["sync"], stream=False)
                 self.outputReceived.emit(f"Created boot entry: {dest_path}", "success")
                 return f"{kernel_pkg}.conf"
