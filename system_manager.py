@@ -618,10 +618,16 @@ class SystemManagerThread(QThread):
                         except OSError:
                             pass
 
-                    try:
-                        os.close(_pty_master)
-                    except OSError:
-                        pass
+                    if proc is not None and proc.stdout is not None:
+                        try:
+                            proc.stdout.close()
+                        except OSError:
+                            pass
+                    else:
+                        try:
+                            os.close(_pty_master)
+                        except OSError:
+                            pass
 
                     if proc is not None:
                         try:

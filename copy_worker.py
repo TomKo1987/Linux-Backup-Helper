@@ -247,7 +247,11 @@ def _smb_cred_file(user: str, pw: "_SecurePw") -> "tuple[str, str]":
         logger.error("Error creating the SMB credential file: %s", exc)
         if tmp_dir and os.path.isdir(tmp_dir):
             try:
-                shutil.rmtree(tmp_dir)
+                _cred = os.path.join(tmp_dir, "cred")
+                if os.path.exists(_cred):
+                    _wipe_smb_cred(tmp_dir, _cred)
+                else:
+                    shutil.rmtree(tmp_dir)
             except OSError:
                 pass
         raise
