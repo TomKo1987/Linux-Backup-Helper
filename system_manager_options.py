@@ -255,7 +255,7 @@ def _build_op_text(distro: LinuxDistroHelper, session: Optional[str] = None, has
     return {"copy_system_files": ("Copy 'System Files' (Using 'sudo cp')", _tip("copy_system_files")),
             "update_mirrors": ("Mirror update<br>(Install 'reflector' and get the 10 fastest servers in your country, or worldwide if location is not detected)",
                                _tip("update_mirrors")),
-        "set_user_shell": (f"Change shell for current user (Install shell package and as default){_done('shell_ok')}",
+        "set_user_shell": (f"Change shell for current user (Install shell package and set as default.){_done('shell_ok')}",
                            _tip("set_user_shell")),
         "update_system": (f"System update (Using '{'yay --noconfirm' if has_yay else distro.get_update_system_cmd()}')", _tip("update_system")),
         "install_ucode": (f"Install {cpu_label} CPU microcode updates (Package: '{ucode_pkg}'){_done('ucode_installed')}", _tip("install_ucode")),
