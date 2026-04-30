@@ -542,11 +542,28 @@ class LinuxDistroHelper:
         return "sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo"
 
     @staticmethod
+    def detect_esp() -> Path:
+        for candidate in (Path("/efi"), Path("/boot/efi"), Path("/boot")):
+            if (candidate / "loader" / "loader.conf").exists() or (candidate / "EFI").is_dir():
+                return candidate
+        return Path("/boot")
+
+    @staticmethod
+    def detect_uki_mode(esp: Path | None = None) -> bool:
+        resolved_esp: Path = esp if esp is not None else LinuxDistroHelper.detect_esp()
+        efi_linux = resolved_esp / "EFI" / "Linux"
+        try:
+            return efi_linux.is_dir() and any(efi_linux.glob("*.efi"))
+        except OSError:
+            return False
+
+    @staticmethod
     def detect_bootloader() -> str:
         if Path("/boot/grub/grub.cfg").exists():
             return "grub"
-        if Path("/boot/loader/loader.conf").exists() or Path("/boot/loader/entries").is_dir():
-            return "systemd-boot"
+        for esp in (Path("/efi"), Path("/boot/efi"), Path("/boot")):
+            if (esp / "loader" / "loader.conf").exists() or (esp / "loader" / "entries").is_dir():
+                return "systemd-boot"
         return "unknown"
 
     def get_ucode_package(self) -> str | None:
@@ -600,7 +617,8 @@ class LinuxDistroHelper:
         found = None
         if bootloader == "systemd-boot":
             try:
-                conf_path = Path("/boot/loader/loader.conf")
+                esp = LinuxDistroHelper.detect_esp()
+                conf_path = esp / "loader" / "loader.conf"
                 if conf_path.exists():
                     text = conf_path.read_text(encoding="utf-8", errors="replace")
                     for line in text.splitlines():
@@ -610,6 +628,8 @@ class LinuxDistroHelper:
                         parts = line.split(None, 1)
                         if len(parts) == 2 and parts[0].lower() == "default":
                             val = parts[1].strip().lower()
+                            if val in ("@saved", "@current"):
+                                break
                             if "lts" in val:
                                 found = "linux-lts"
                             elif "zen" in val:

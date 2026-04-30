@@ -1161,15 +1161,22 @@ class SystemManagerThread(QThread):
             if not self._install_pkg(kernel_pkg, "Kernel Package"):
                 overall = False
             elif bootloader == "systemd-boot":
-                entries_dir = Path("/boot/loader/entries")
-                self._exec(["sudo", "mkdir", "-p", str(entries_dir)], stream=False)
-                if not self._create_systemd_boot_entry(kernel_pkg, entries_dir):
+                esp = LinuxDistroHelper.detect_esp()
+                if LinuxDistroHelper.detect_uki_mode(esp):
                     self.outputReceived.emit(
-                        f"Kernel '{variant}' installed, but failed to create systemd-boot entry — "
-                        f"please create it manually.", "warning"
+                        f"UKI mode detected — systemd-boot will auto-discover '{variant}'; "
+                        f"no .conf entry needed.", "info"
                     )
                 else:
-                    self.outputReceived.emit(f"systemd-boot entry created for {variant}", "success")
+                    entries_dir = esp / "loader" / "entries"
+                    self._exec(["sudo", "mkdir", "-p", str(entries_dir)], stream=False)
+                    if not self._create_systemd_boot_entry(kernel_pkg, entries_dir, esp):
+                        self.outputReceived.emit(
+                            f"Kernel '{variant}' installed, but failed to create systemd-boot entry — "
+                            f"please create it manually.", "warning"
+                        )
+                    else:
+                        self.outputReceived.emit(f"systemd-boot entry created for {variant}", "success")
 
         self._emit_result(overall, "Kernel(s) successfully installed", "One or more kernels failed to install")
         return overall
@@ -1218,9 +1225,10 @@ class SystemManagerThread(QThread):
         if bootloader == "grub":
             return self._set_grub_default(kernel_pkg)
         if bootloader == "systemd-boot":
-            return self._set_systemd_boot_default(kernel_pkg)
+            esp = LinuxDistroHelper.detect_esp()
+            return self._set_systemd_boot_default(kernel_pkg, esp)
 
-        self.outputReceived.emit("No supported bootloader found (/boot/grub/grub.cfg or /boot/loader). "
+        self.outputReceived.emit("No supported bootloader found (grub.cfg or loader.conf). "
                                  "Please set the default kernel manually.", "warning")
         return _Status.WARNING
 
@@ -1307,8 +1315,8 @@ class SystemManagerThread(QThread):
 
         return None
 
-    def _set_systemd_boot_default(self, kernel_pkg: str) -> bool | str:
-        entries_dir = Path("/boot/loader/entries")
+    def _set_systemd_boot_default(self, kernel_pkg: str, esp: Path) -> bool | str:
+        entries_dir = esp / "loader" / "entries"
         entry_paths = self._list_entry_files(entries_dir)
         _kern_exact = re.compile(r"vmlinuz-" + re.escape(kernel_pkg) + r"(?:[^\w-]|$)")
         canonical = entries_dir / f"{kernel_pkg}.conf"
@@ -1326,14 +1334,40 @@ class SystemManagerThread(QThread):
                     break
 
         if target_conf is None:
-            created = self._create_systemd_boot_entry(kernel_pkg, entries_dir)
-            if not created: return _Status.WARNING
+            if LinuxDistroHelper.detect_uki_mode(esp):
+                uki_entry = self._find_uki_entry(kernel_pkg, esp)
+                if uki_entry:
+                    return self._apply_systemd_boot_default(uki_entry, esp)
+                self.outputReceived.emit(
+                    f"UKI mode detected but no matching .efi found for '{kernel_pkg}'. "
+                    f"Please run 'bootctl set-default' manually.", "warning")
+                return _Status.WARNING
+            created = self._create_systemd_boot_entry(kernel_pkg, entries_dir, esp)
+            if not created:
+                return _Status.WARNING
             target_conf = created
         elif not canonical_exists:
-            created = self._create_systemd_boot_entry(kernel_pkg, entries_dir)
-            if created: target_conf = created
+            if not LinuxDistroHelper.detect_uki_mode(esp):
+                created = self._create_systemd_boot_entry(kernel_pkg, entries_dir, esp)
+                if created:
+                    target_conf = created
 
-        return self._apply_systemd_boot_default(str(target_conf))
+        return self._apply_systemd_boot_default(str(target_conf), esp)
+
+    def _find_uki_entry(self, kernel_pkg: str, esp: Path) -> str | None:
+        efi_linux = esp / "EFI" / "Linux"
+        try:
+            efi_files = sorted(efi_linux.glob("*.efi"))
+        except OSError:
+            r = self._exec(["sudo", "ls", "-1", str(efi_linux)], stream=False)
+            if r.returncode != 0:
+                return None
+            efi_files = [efi_linux / n.strip() for n in r.stdout.splitlines() if n.strip().endswith(".efi")]
+        for f in efi_files:
+            name = f.name.lower().removesuffix(".efi")
+            if name == kernel_pkg or name.endswith(f"-{kernel_pkg}") or name.endswith(f"_{kernel_pkg}"):
+                return f.name
+        return None
 
     def _list_entry_files(self, entries_dir: Path) -> list[Path]:
         paths = []
@@ -1349,7 +1383,7 @@ class SystemManagerThread(QThread):
                 paths = [entries_dir / n.strip() for n in r.stdout.splitlines() if n.strip().endswith(".conf")]
         return paths
 
-    def _create_systemd_boot_entry(self, kernel_pkg: str, entries_dir: Path) -> str | None:
+    def _create_systemd_boot_entry(self, kernel_pkg: str, entries_dir: Path, esp: Path) -> str | None:
         vmlinuz = Path(f"/boot/vmlinuz-{kernel_pkg}")
         initramfs = Path(f"/boot/initramfs-{kernel_pkg}.img")
 
@@ -1374,7 +1408,7 @@ class SystemManagerThread(QThread):
             template_content = self._read_file_sudo(entry_files[0])
 
         if not template_content:
-            self.outputReceived.emit("No template found in /boot/loader/entries/", "error")
+            self.outputReceived.emit(f"No template found in {entries_dir}", "error")
             return None
 
         new_content = template_content.replace(running_kern_pkg, kernel_pkg)
@@ -1382,46 +1416,48 @@ class SystemManagerThread(QThread):
 
         escaped_content = shlex.quote(new_content)
         try:
-            r = self._exec(["sudo", "sh", "-c", f"printf '%s' {escaped_content} > {shlex.quote(str(dest_path))}"],
+            r = self._exec(["sudo", "sh", "-c",
+                            f"printf '%s' {escaped_content} > {shlex.quote(str(dest_path))}"],
                            stream=False, timeout=10)
             if r.returncode == 0:
-                self._update_sort_keys(f"{kernel_pkg}.conf", Path("/boot/loader/entries"))
+                self._update_sort_keys(f"{kernel_pkg}.conf", entries_dir, esp)
                 self._exec(["sync"], stream=False)
                 self.outputReceived.emit(f"Created boot entry: {dest_path}", "success")
                 return f"{kernel_pkg}.conf"
-            else:
-                self.outputReceived.emit("Failed to write boot entry", "error")
-                return None
+            self.outputReceived.emit("Failed to write boot entry", "error")
+            return None
         except Exception as exc:
             self.outputReceived.emit(f"Error creating boot entry: {exc}", "error")
             return None
 
-    def _apply_systemd_boot_default(self, entry_conf: str) -> bool | str:
+    def _apply_systemd_boot_default(self, entry_conf: str, esp: Path) -> bool | str:
         ok = self._exec(["sudo", "bootctl", "set-default", entry_conf], stream=False, timeout=15).returncode == 0
         if not ok:
-            loader_conf = Path("/boot/loader/loader.conf")
+            loader_conf = esp / "loader" / "loader.conf"
             self.outputReceived.emit(f"Writing default to loader.conf: {entry_conf}", "info")
             conf_text = self._read_file_sudo(loader_conf) or ""
             if re.search(r"^default\s+", conf_text, re.MULTILINE):
                 new_conf = re.sub(r"^default\s+\S+", f"default {entry_conf}", conf_text, flags=re.MULTILINE)
             else:
                 new_conf = f"default {entry_conf}\n" + conf_text
-            ok = self._exec(["sudo", "sh", "-c", f"printf '%s' {shlex.quote(new_conf)} > /boot/loader/loader.conf"],
-                            stream=False).returncode == 0
+            ok = self._exec(
+                ["sudo", "sh", "-c",
+                 f"printf '%s' {shlex.quote(new_conf)} > {shlex.quote(str(loader_conf))}"],
+                stream=False).returncode == 0
             if not ok:
-                self._emit_result(False, "", "Failed to update /boot/loader/loader.conf")
+                self._emit_result(False, "", f"Failed to update {loader_conf}")
                 return False
 
         self._emit_result(True, f"systemd-boot default set to '{entry_conf}'", "")
-        self._update_sort_keys(entry_conf, Path("/boot/loader/entries"))
+        self._update_sort_keys(entry_conf, esp / "loader" / "entries", esp)
         return True
 
-    def _update_sort_keys(self, new_kernel_conf: str, entries_dir: Path) -> None:
+    def _update_sort_keys(self, new_kernel_conf: str, entries_dir: Path, esp: Path) -> None:
         kernel_entries = self._list_entry_files(entries_dir)
         if not kernel_entries:
             return
 
-        loader_conf_text = self._read_file_sudo(Path("/boot/loader/loader.conf")) or ""
+        loader_conf_text = self._read_file_sudo(esp / "loader" / "loader.conf") or ""
         loader_default_match = re.search(r"^default\s+(\S+)", loader_conf_text, re.MULTILINE)
         if loader_default_match:
             default_filename = Path(loader_default_match.group(1)).name
