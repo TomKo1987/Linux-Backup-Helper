@@ -51,7 +51,10 @@ def append_history(operation: str, copied: int, skipped: int, errors: int, durat
             existing = existing[-_MAX_HISTORY_ENTRIES:]
         tmp_path = path.with_suffix(".tmp")
         try:
-            tmp_path.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+            with open(tmp_path, "w", encoding="utf-8") as _fh:
+                _fh.write(json.dumps(existing, indent=2, ensure_ascii=False))
+                _fh.flush()
+                os.fsync(_fh.fileno())
             os.replace(tmp_path, path)
         except (OSError, PermissionError):
             tmp_path.unlink(missing_ok=True)

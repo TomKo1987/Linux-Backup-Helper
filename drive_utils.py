@@ -46,7 +46,7 @@ def get_mounts(max_age: float = 0.5) -> list[tuple[str, str]]:
                 parts = line.split()
                 if len(parts) >= 2:
                     mounts.append((_decode_octal(parts[0]), _decode_octal(parts[1])))
-    except (OSError, FileNotFoundError) as e:
+    except OSError as e:
         logger.warning("get_mounts: /proc/mounts not available: %s", e)
         with _mounts_cache_lock:
             return _mounts_cache[1]

@@ -36,19 +36,19 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
         self._quitting = False
 
         self.menu_actions = [
-            ("💾 Create Backup",   lambda: self._open(base_window, "Backup"),  False),
-            ("📤 Restore Backup",  lambda: self._open(base_window, "Restore"), False),
-            ("🔎 Dry Run",         self._launch_dry_run,                             False),
-            ("🖥 System Manager",   self._launch_system_manager,                      False),
-            ("🔍 Scan && Verify",  self._launch_scan_verify,                         True),
-            ("💻 System Info",     lambda: self._open(SysInfoDialog),                False),
-            ("📊 Backup Stats",    self._open_stats,                                 True),
-            ("🔬 Integrity Check", self._open_integrity,                             False),
-            ("📜 History",          self._open_history,                              True),
-            ("📋 View Logs",        lambda: self._open(LogViewer),                   False),
-            ("📝 Notes",            self._open_notes,                                True),
-            ("⚙️ Settings",         self._open_settings,                             False),
-            ("❌ Quit",             self._exit,                                       False),
+            ("💾 Create Backup",  lambda: self._open(base_window, "Backup"),  False),
+            ("📤 Restore Backup", lambda: self._open(base_window, "Restore"), False),
+            ("🔎 Dry Run",        self._launch_dry_run,                             False),
+            ("🖥 System Manager",  self._launch_system_manager,                      False),
+            ("🔍 Scan && Verify",  self._launch_scan_verify,                        True),
+            ("💻 System Info",     lambda: self._open(SysInfoDialog),               False),
+            ("📊 Backup Stats",    self._open_stats,                                True),
+            ("🔬 Integrity Check", self._open_integrity,                            False),
+            ("📜 History",         self._open_history,                              True),
+            ("📋 View Logs",       lambda: self._open(LogViewer),                   False),
+            ("📝 Notes",           self._open_notes,                                True),
+            ("⚙️ Settings",        self._open_settings,                             False),
+            ("❌ Quit",             self._exit,                                      False),
         ]
 
         self._status_panel: StatusPanel | None = None

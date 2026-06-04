@@ -19,7 +19,7 @@ _SERVICE_NAME = "backup-helper-auto"
 _INTERVALS: dict[str, tuple[str, str]] = {
     "Hourly":        ("hourly",   "*-*-* *:00:00"),
     "Daily":         ("daily",    "*-*-* 02:00:00"),
-    "Every 2 days":  ("2day",     "*-*-* /2 02:00:00"),
+    "Every 2 days":  ("2day",     "*-*-*/2 02:00:00"),
     "Weekly":        ("weekly",   "Mon *-*-* 02:00:00"),
     "Monthly":       ("monthly",  "*-*-01 02:00:00"),
     "Custom time …": ("custom",   ""),
@@ -62,11 +62,6 @@ def get_next_run_time() -> str:
 
 
 def install_timer(interval_key: str, backup_headers: list[str], *, on_calendar: str = "", only_on_ac: bool = False) -> tuple[bool, str]:
-    """Install a systemd user timer for headless backups.
-
-    on_calendar: the fully-resolved OnCalendar expression (already includes
-    user-chosen start time).  Must be non-empty.
-    """
     if interval_key not in _INTERVALS:
         return False, "Unknown interval"
 
@@ -78,13 +73,13 @@ def install_timer(interval_key: str, backup_headers: list[str], *, on_calendar: 
     import json, base64 as _b64
     headers_b64 = _b64.b64encode(json.dumps(backup_headers).encode()).decode()
 
-    ac_condition = "\nConditionACPower=true" if only_on_ac else ""
+    ac_condition = "ConditionACPower=true\n" if only_on_ac else ""
 
     service = (
         "[Unit]\n"
         "Description=Backup Helper Automatic Backup\n"
         "After=network-online.target\n"
-        f"{ac_condition}\n"
+        f"{ac_condition}"
         "\n"
         "[Service]\n"
         "Type=oneshot\n"
@@ -298,7 +293,7 @@ class SchedulerDialog(_StandardKeysMixin, QDialog):
         if interval_key == "Daily":
             return f"*-*-* {time_str}"
         if interval_key == "Every 2 days":
-            return f"*-*-* /2 {time_str}"
+            return f"*-*-*/2 {time_str}"
         if interval_key == "Weekly":
             return f"Mon *-*-* {time_str}"
         if interval_key == "Monthly":
