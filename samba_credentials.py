@@ -348,7 +348,11 @@ class SambaPasswordDialog(_StandardKeysMixin, QDialog):
 
         if self._has_credentials and not from_kwallet:
             del_btn = QPushButton("Delete Credentials")
-            del_btn.setStyleSheet(f"border:1px solid {t['error']};color:{t['error']};")
+            del_btn.setStyleSheet(
+                f"QPushButton{{border:1px solid {t['error']};color:{t['error']};}}"
+                f"QPushButton:hover{{background:{t['bg2']};border-color:{t['error']};color:{t['error']};}}"
+                f"QPushButton:focus{{border-color:{t['error']};color:{t['error']};outline:none;}}"
+                f"QPushButton:pressed{{background:{t['bg']};border-color:{t['error']};color:{t['error']};}}")
             del_btn.clicked.connect(self._delete_credentials)
             btn_row.addWidget(del_btn)
 

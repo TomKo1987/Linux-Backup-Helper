@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
 )
 
 from linux_distro_helper import LinuxDistroHelper, SESSIONS, USER_SHELLS, ARCH_KERNEL_VARIANTS, is_valid_pkg_name
-from state import S, _HOME, _USER, apply_replacements, save_profile, sort_pkg_list, sort_specific_pkg_list
+from state import S, _HOME, _USER, apply_replacements, save_profile, sort_pkg_list, sort_specific_pkg_list, logger
 from sudo_password import SecureString
 from themes import (
     style_label_info, style_label_mono, style_op_label, tri_styles, apply_tooltip, style_sudo_checkbox,
@@ -171,9 +171,12 @@ def _compute_op_status(distro: LinuxDistroHelper, has_yay: bool, system_default_
 
     if distro.family() == "arch":
         future_kernels = _ik.union(set(targets_kti))
-        headers_ok = all((pkgs := ARCH_KERNEL_VARIANTS.get(v)) is None or len(pkgs) < 2 or distro.package_is_installed(pkgs[1])
-                         for v in future_kernels)
-        status["kernel_headers_installed"] = headers_ok
+
+        def _header_ok(v: str) -> bool:
+            pkgs = ARCH_KERNEL_VARIANTS.get(v)
+            return pkgs is None or len(pkgs) < 2 or distro.package_is_installed(pkgs[1])
+
+        status["kernel_headers_installed"] = all(_header_ok(v) for v in future_kernels)
     else:
         hpkg = distro.get_kernel_headers_pkg()
         status["kernel_headers_installed"] = bool(hpkg and distro.package_is_installed(hpkg))
@@ -252,7 +255,7 @@ def _build_op_text(distro: LinuxDistroHelper, session: Optional[str] = None, has
     sys_def_info = f" [System default: {system_default_variant}]" if system_default_variant and system_default_variant != dk_pkg else ""
     dk_note = " (Is already default. No changes necessary.)" if (op_status and op_status.get("default_kernel_ok")) else sys_def_info
 
-    return {"copy_system_files": ("Copy 'System Files' (Using 'sudo cp')", _tip("copy_system_files")),
+    return {"copy_dotfiles": ("Copy 'Dotfiles' (Using 'sudo cp')", _tip("copy_dotfiles")),
             "update_mirrors": ("Mirror update<br>(Install 'reflector' and get the 10 fastest servers in your country, or worldwide if location is not detected)",
                                _tip("update_mirrors")),
         "set_user_shell": (f"Change shell for current user (Install shell package and set as default.){_done('shell_ok')}",
@@ -370,8 +373,8 @@ class SystemManagerOptions(QDialog):
 
         cmd = self._distro.get_pkg_install_cmd("")
         top_text = QLabel(
-            f"First you can select 'System Files' in System Manager. These files will be copied using 'sudo', "
-            f"for root privilege.\nIf you have 'System Files' selected, System Manager will copy these first. "
+            f"First you can select 'Dotfiles' in System Manager. These files will be copied using 'sudo', "
+            f"for root privilege.\nIf you have 'Dotfiles' selected, System Manager will copy these first. "
             f"This allows you to copy files\nsuch as 'pacman.conf' or 'smb.conf' to '/etc/'.\n\n\n"
             f"Under 'System Manager Operations' you can specify how you would like to proceed. "
             f"Each operation is executed\none after the other. Uncheck operations to disable them.\n\n"
@@ -391,7 +394,7 @@ class SystemManagerOptions(QDialog):
         scroll.setWidget(top_text)
         lay.addWidget(scroll)
 
-        for row_specs in [[("System Manager Operations", self._edit_ops), ("System Files", self._edit_sysfiles)],
+        for row_specs in [[("System Manager Operations", self._edit_ops), ("Dotfiles", self._edit_dotfiles)],
                           [("Basic Packages", lambda: self._edit_pkgs("basic_packages")),
                            ("AUR Packages", lambda: self._edit_pkgs("aur_packages")),
                            ("Specific Packages", lambda: self._edit_pkgs("specific_packages"))]]:
@@ -414,7 +417,7 @@ class SystemManagerOptions(QDialog):
 
     def _reopen_pkgs(self, pkg_type: str) -> None: QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
 
-    def _reopen_sysfiles(self) -> None: QTimer.singleShot(0, self._edit_sysfiles)
+    def _reopen_dotfiles(self) -> None: QTimer.singleShot(0, self._edit_dotfiles)
 
     def _edit_ops(self):
         bootloader, current_variant, _system_default_variant = _detect_boot_info()
@@ -422,7 +425,7 @@ class SystemManagerOptions(QDialog):
 
         _saved_default_variant = S.default_kernel or _system_default_variant
 
-        arch_only = {"update_mirrors", "install_yay", "install_aur_packages", "install_kernels"}
+        arch_only = {"update_mirrors", "install_yay", "install_aur_packages", "install_kernels", "set_default_kernel"}
         _installed_kernels = self._distro.detect_installed_kernel_variants()
         _installed_kernels.add(current_variant)
 
@@ -443,7 +446,7 @@ class SystemManagerOptions(QDialog):
         op_tips = _raw_to_tips(_raw_op)
         widgets: list[tuple[QCheckBox, str]] = []
 
-        _OP_GROUPS = [("🖥  System", ["copy_system_files", "update_mirrors", "update_system", "set_user_shell",
+        _OP_GROUPS = [("🖥  System", ["copy_dotfiles", "update_mirrors", "update_system", "set_user_shell",
                                      "install_ucode", "install_kernels", "install_kernel_headers",
                                      "set_default_kernel"]),
                       ("📦  Packages", ["install_basic_packages", "install_yay", "install_aur_packages",
@@ -649,7 +652,7 @@ class SystemManagerOptions(QDialog):
                     _text = _refreshed_text[_key]
                     _cb.setText(f"{_icon}{_BR_RE.sub(' ', _text).replace('&', '&&')}")
             except Exception as e:
-                print(f"Error during _refresh_labels: {e}")
+                logger.error("_refresh_labels: %s", e, exc_info=True)
 
         def _populate_default_combo():
             if _default_kernel_combo is None: return
@@ -750,9 +753,10 @@ class SystemManagerOptions(QDialog):
         def _save(dlg):
             S.system_manager_ops = [k for cb_, k in widgets if cb_.isChecked()]
             S.kernels_to_install = [v for v in _KERNEL_VARIANTS if
-                                    _kernel_sub_cbs.get(v) and _kernel_sub_cbs[v].isChecked()]
+                                    _kernel_sub_cbs.get(v) and _kernel_sub_cbs[v].isChecked()
+                                    and _kernel_sub_cbs[v].isEnabled()]
             if _default_kernel_combo and _set_default_cb:
-                S.default_kernel = _default_kernel_combo.currentData() if _set_default_cb.isChecked() else ""
+                S.default_kernel = (_default_kernel_combo.currentData() or "") if _set_default_cb.isChecked() else ""
             if _user_shell_combo:
                 S.user_shell = _user_shell_combo.currentText()
             save_profile()
@@ -761,8 +765,11 @@ class SystemManagerOptions(QDialog):
 
         _scroll_dlg(self, "System Manager Operations", body, _save)[0].exec()
 
-    def _edit_sysfiles(self) -> None:
-        files = [f for f in (S.system_files or []) if isinstance(f, dict) and f.get("source") and f.get("destination")]
+    def _edit_dotfiles(self) -> None:
+        files = sorted(
+            [f for f in (S.dotfiles or []) if isinstance(f, dict) and f.get("source") and f.get("destination")],
+            key=lambda f: Path(f["source"]).name.lower()
+        )
         checkboxes: list[tuple[TriCheckBox, dict]] = []
         rows: list[tuple[QFrame, TriCheckBox, dict]] = []
         legend = tri_state_legend_html()
@@ -858,13 +865,13 @@ class SystemManagerOptions(QDialog):
             if to_del:
                 names = "\n".join(f"  • {apply_replacements(f.get('source', '?'))}" for f in to_del)
                 if QMessageBox.question(_dlg, "Confirm Delete",
-                                        f"The following system file(s) will be permanently removed:\n\n{names}\n\nContinue?",
+                                        f"The following dotfile(s) will be permanently removed:\n\n{names}\n\nContinue?",
                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
                                         ) != QMessageBox.StandardButton.Yes:
                     do_delete = False
 
             updated_files = []
-            for item in (S.system_files or []):
+            for item in (S.dotfiles or []):
                 if item not in files:
                     updated_files.append(item)
                     continue
@@ -876,11 +883,14 @@ class SystemManagerOptions(QDialog):
                 else:
                     updated_files.append(item)
 
-            S.system_files = updated_files
+            S.dotfiles = sorted(
+                updated_files,
+                key=lambda x: Path(x.get("source", "")).name.lower() if isinstance(x, dict) else ""
+            )
             save_profile()
             _dlg.accept()
 
-        dlg, lay = _scroll_dlg(self, "System Files", body, _save)
+        dlg, lay = _scroll_dlg(self, "Dotfiles", body, _save)
 
         if files:
             from PyQt6.QtGui import QFont, QFontMetrics
@@ -907,33 +917,44 @@ class SystemManagerOptions(QDialog):
 
         def _on_add_clicked():
             dlg.close()
-            QTimer.singleShot(100, self._add_sysfile)
+            QTimer.singleShot(100, self._add_dotfile)
 
-        add_btn = QPushButton("+ Add System File")
+        add_btn = QPushButton("+ Add Dotfile")
         add_btn.clicked.connect(_on_add_clicked)
         add_row = QHBoxLayout()
         add_row.addWidget(add_btn)
 
         io_row = QHBoxLayout()
 
+        def _open_manager():
+            dlg.close()
+            from dotfiles_manager import DotfilesManagerDialog
+            DotfilesManagerDialog(self).exec()
+            QTimer.singleShot(0, self._edit_dotfiles)
+
+        manager_btn = QPushButton("📄 Open Dotfiles Manager")
+        manager_btn.setMinimumHeight(34)
+        manager_btn.clicked.connect(_open_manager)
+
         def _on_import_clicked():
             dlg.close()
-            QTimer.singleShot(0, self._import_sysfiles)
+            QTimer.singleShot(0, self._import_dotfiles)
 
-        for lbl, fn in [("Import (.txt/.csv)", _on_import_clicked), ("Export (.txt)", self._export_sysfiles)]:
+        for lbl, fn in [("Import (.txt/.csv)", _on_import_clicked), ("Export (.txt)", self._export_dotfiles)]:
             b = QPushButton(lbl)
             b.clicked.connect(fn)
             io_row.addWidget(b)
 
         lay.insertWidget(1, search)
         lay.insertLayout(2, add_row)
-        lay.insertLayout(3, io_row)
+        lay.insertWidget(3, manager_btn)
+        lay.insertLayout(4, io_row)
         lay.setStretch(0, 1)
         dlg.exec()
 
-    def _add_sysfile(self) -> None:
+    def _add_dotfile(self) -> None:
         box = QMessageBox(self)
-        box.setWindowTitle("Add System File/Folder")
+        box.setWindowTitle("Add Dotfile/Folder")
         box.setText("Choose the source type:")
         file_btn = box.addButton("📄 File(s)", QMessageBox.ButtonRole.YesRole)
         box.addButton("📁 Directory", QMessageBox.ButtonRole.NoRole)
@@ -953,34 +974,34 @@ class SystemManagerOptions(QDialog):
         if not dst_dir:
             return
 
-        S.system_files = S.system_files or []
+        S.dotfiles = S.dotfiles or []
         added = []
         for s in sources:
             src_path = Path(s).resolve()
             dst_path = Path(dst_dir) / src_path.name
 
-            if not any(f.get("source") == str(src_path) if isinstance(f, dict) else False for f in S.system_files):
-                S.system_files.append({"source": str(src_path), "destination": str(dst_path), "disabled": False})
+            if not any(f.get("source") == str(src_path) if isinstance(f, dict) else False for f in S.dotfiles):
+                S.dotfiles.append({"source": str(src_path), "destination": str(dst_path), "disabled": False})
                 added.append(src_path.name)
 
         if added:
-            S.system_files.sort(key=lambda x: x.get("source", "").lower() if isinstance(x, dict) else str(x).lower())
+            S.dotfiles.sort(key=lambda x: Path(x.get("source", "")).name.lower() if isinstance(x, dict) else str(x).lower())
             save_profile()
             QMessageBox.information(self, "Success", f"Added {len(added)} item(s).")
-        QTimer.singleShot(0, self._edit_sysfiles)
+        QTimer.singleShot(0, self._edit_dotfiles)
 
-    def _import_sysfiles(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Import System Files", str(_HOME), "Data (*.txt *.csv)")
+    def _import_dotfiles(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Import Dotfiles", str(_HOME), "Data (*.txt *.csv)")
         if not path:
-            self._reopen_sysfiles()
+            self._reopen_dotfiles()
             return
         lines = _read_import_file(self, path)
         if lines is None:
-            self._reopen_sysfiles()
+            self._reopen_dotfiles()
             return
 
-        S.system_files = S.system_files or []
-        existing: set[tuple] = {(f["source"], f["destination"]) for f in S.system_files if isinstance(f, dict)}
+        S.dotfiles = S.dotfiles or []
+        existing: set[tuple] = {(f["source"], f["destination"]) for f in S.dotfiles if isinstance(f, dict)}
         added = skipped_dup = skipped_inv = 0
 
         for raw in lines:
@@ -1003,19 +1024,19 @@ class SystemManagerOptions(QDialog):
             if (src, dst) in existing:
                 skipped_dup += 1
                 continue
-            S.system_files.append({"source": src, "destination": dst, "disabled": False})
+            S.dotfiles.append({"source": src, "destination": dst, "disabled": False})
             existing.add((src, dst))
             added += 1
 
         if added:
-            S.system_files.sort(key=lambda x: x.get("source", "").lower())
+            S.dotfiles.sort(key=lambda x: Path(x.get("source", "")).name.lower() if isinstance(x, dict) else str(x).lower())
             save_profile()
 
         parts_msg = [f"Imported: {added}"]
         if skipped_dup: parts_msg.append(f"Skipped (duplicate): {skipped_dup}")
         if skipped_inv: parts_msg.append(f"Skipped (invalid format): {skipped_inv}")
         QMessageBox.information(self, "Import Complete", "\n".join(parts_msg))
-        self._reopen_sysfiles()
+        self._reopen_dotfiles()
 
     def _edit_pkgs(self, pkg_type: str) -> None:
         is_specific = _is_specific(pkg_type)
@@ -1083,6 +1104,11 @@ class SystemManagerOptions(QDialog):
                     continue
                 d = pkg if isinstance(pkg, dict) else {"name": str(pkg)}
                 updated.append({**d, "disabled": _cb.checkState() == _STATE_DISABLED})
+            setattr(S, pkg_type, updated)
+            if _is_specific(pkg_type):
+                sort_specific_pkg_list(updated)
+            else:
+                sort_pkg_list(updated)
             setattr(S, pkg_type, updated)
             save_profile()
             _dlg.accept()
@@ -1322,9 +1348,9 @@ class SystemManagerOptions(QDialog):
         except OSError as exc:
             QMessageBox.critical(self, "Export Error", str(exc))
 
-    def _export_sysfiles(self) -> None:
-        files = [f for f in (S.system_files or []) if isinstance(f, dict) and f.get("source") and f.get("destination")]
-        self._export_data("System Files", "system_files.txt", files,
+    def _export_dotfiles(self) -> None:
+        files = [f for f in (S.dotfiles or []) if isinstance(f, dict) and f.get("source") and f.get("destination")]
+        self._export_data("Dotfiles", "dotfiles.txt", files,
                           lambda f: f"{f['source']}\t{f['destination']}", header="# source\tdestination")
 
     def _export_pkgs(self, pkg_type: str) -> None:

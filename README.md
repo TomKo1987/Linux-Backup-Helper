@@ -3,7 +3,7 @@
 **Linux-Backup-Helper** is a graphical Python tool for backups and system management under Linux.  
 The idea behind this project is to automatically configure a newly installed Linux system — packages, services, system files, and all the configuration you need, with a single click.
 
-> As this is my first project and I am new to programming, I would be very grateful for feedback and suggestions. I'm still learning, so please don't expect everything to be perfect. But at least on my system it runs very fast and smoothly.
+> Since this is my first project and I’m still new to programming, I’d really appreciate any feedback or suggestions. I’m still learning, so please don’t expect everything to be perfect. But at least on my system, it runs very quickly and smoothly. Of course, this app was created with the help of AI, mainly using Claude.
 
 ---
 
@@ -234,6 +234,12 @@ pyinstaller --onefile main.py
 
 **Themes**  
 ![Themes](images/Themes.png)
+
+**Dry Run**  
+![Dry Run](images/Dry%20Run.png)
+
+**Integrity Check**  
+![Integrity Check](images/Integrity%20Check.png)
 
 ---
 

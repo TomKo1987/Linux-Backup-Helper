@@ -10,16 +10,17 @@ from typing import Any, Optional
 
 from constants import USER_SHELLS, ARCH_KERNEL_VARIANTS
 
+
+RESTART_DIALOG: int = 2
 _USER = pwd.getpwuid(os.getuid()).pw_name
 _HOME = Path.home()
 _CONFIG_DIR   = _HOME / ".config" / "Backup Helper"
 _PROFILES_DIR = _CONFIG_DIR / "profiles"
 _LOG_HIST_DIR = _CONFIG_DIR / "logs_history"
 _LOG_FILE     = _LOG_HIST_DIR / "backup_helper.log"
-_PROFILE_RE   = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9\-. _]*\S$|^[a-zA-Z0-9]$")
-_ANSI_RE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-RESTART_DIALOG: int = 2
+_PROFILE_RE   = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9\-. _]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$")
 _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+_ANSI_RE      = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
 
 def _make_logger(name: str) -> logging.Logger:
@@ -47,13 +48,18 @@ logger = _make_logger("backup_helper")
 _text_replacements: tuple[tuple[str, str], ...] = ((_HOME.as_posix(), "~"), (f"/run/media/{_USER}/", ""))
 
 
-def active_system_files() -> list[dict]:
+def active_dotfiles() -> list[dict]:
+    def _nonempty(v) -> bool:
+        if isinstance(v, list):
+            return bool(v and str(v[0]).strip())
+        return bool(str(v).strip()) if v else False
+
     return [
-        f for f in (S.system_files or [])
+        f for f in (S.dotfiles or [])
         if isinstance(f, dict)
         and not f.get("disabled")
-        and f.get("source", "").strip()
-        and f.get("destination", "").strip()
+        and _nonempty(f.get("source"))
+        and _nonempty(f.get("destination"))
     ]
 
 
@@ -108,7 +114,7 @@ class State:
     headers:            dict[str, dict] = field(default_factory=dict)
     mount_options:      list[dict]      = field(default_factory=list)
     system_manager_ops: list[str]       = field(default_factory=list)
-    system_files:       list[dict]      = field(default_factory=list)
+    dotfiles:           list[dict]      = field(default_factory=list)
     basic_packages:     list[dict]      = field(default_factory=list)
     aur_packages:       list[dict]      = field(default_factory=list)
     specific_packages:  list[dict]      = field(default_factory=list)
@@ -118,6 +124,7 @@ class State:
     ui: dict = field(default_factory=lambda: {"theme": "Tokyo Night", "font_family": "", "font_size": 14,
                                               "backup_window_columns": 2, "restore_window_columns": 2,
                                               "settings_window_columns": 2})
+    notes: str = ""
 
     def reset_to_fresh(self) -> None:
         fresh = State()
@@ -145,7 +152,17 @@ def _atomic_write(path: Path, data: dict) -> None:
     try:
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp_path, path)
+        try:
+            dfd = os.open(str(path.parent), os.O_RDONLY)
+            try:
+                os.fsync(dfd)
+            finally:
+                os.close(dfd)
+        except OSError:
+            pass
     except (OSError, TypeError, ValueError):
         tmp_path.unlink(missing_ok=True)
         raise
@@ -211,8 +228,8 @@ def _parse_entry(raw: dict) -> Optional[dict]:
     if not (header and title and source and dest):
         return None
     details = raw.get("details", {})
-    return {"header": header, "title":  title, "source": source, "destination": dest, "details": details
-    if isinstance(details, dict) else {}}
+    return {"header": header, "title": title, "source": source, "destination": dest,
+            "details": details if isinstance(details, dict) else {}}
 
 
 def load_profile(path: Path) -> bool:
@@ -226,6 +243,20 @@ def load_profile(path: Path) -> bool:
 def _load_profile_from_data(path: Path, data: dict) -> bool:
     try:
         new_name = path.stem
+
+        _needs_migration = False
+        if "system_files" in data and "dotfiles" not in data:
+            data = {**data, "dotfiles": data["system_files"]}
+            _needs_migration = True
+            logger.info("Migration: 'system_files' → 'dotfiles' in profile '%s'", path.stem)
+        raw_ops = data.get("system_manager_operations", [])
+        if isinstance(raw_ops, list) and "copy_system_files" in raw_ops:
+            data = {**data, "system_manager_operations": [
+                "copy_dotfiles" if op == "copy_system_files" else op
+                for op in raw_ops
+            ]}
+            _needs_migration = True
+            logger.info("Migration: 'copy_system_files' → 'copy_dotfiles' in profile '%s'", path.stem)
 
         def _resolve_color(v: dict) -> str:
             raw = v.get("header_color") or v.get("color") or "#ffffff"
@@ -242,7 +273,7 @@ def _load_profile_from_data(path: Path, data: dict) -> bool:
             return v if isinstance(v, list) else []
 
         new_sm_ops    = _as_list("system_manager_operations")
-        new_sys_files = _as_list("system_files")
+        new_sys_files = _as_list("dotfiles")
         new_basic     = _norm_pkgs(_as_list("basic_packages"))
         new_aur       = _norm_pkgs(_as_list("aur_packages"))
 
@@ -268,12 +299,14 @@ def _load_profile_from_data(path: Path, data: dict) -> bool:
                     raw_ui = {k: v for k, v in raw_ui.items() if k != "font_size"}
             new_ui.update({k: v for k, v in raw_ui.items() if k in _KNOWN_UI_KEYS})
 
+        new_notes = str(data.get("notes", ""))
+
         S.profile_name       = new_name
         S.headers            = new_headers
         S.entries            = new_entries
         S.mount_options      = new_mount
         S.system_manager_ops = new_sm_ops
-        S.system_files       = new_sys_files
+        S.dotfiles       = new_sys_files
         S.basic_packages     = new_basic
         S.aur_packages       = new_aur
         S.specific_packages  = new_specific
@@ -281,6 +314,14 @@ def _load_profile_from_data(path: Path, data: dict) -> bool:
         S.default_kernel     = new_dk
         S.kernels_to_install = new_kti
         S.ui                 = new_ui
+        S.notes              = new_notes
+
+        if _needs_migration:
+            try:
+                save_profile(path)
+                logger.info("Migration: profile '%s' auto-saved with updated keys", S.profile_name)
+            except Exception as save_exc:
+                logger.warning("Migration: could not auto-save profile '%s': %s", S.profile_name, save_exc)
 
         invalidate_tooltip_cache()
         logger.info("Loaded profile '%s'", S.profile_name)
@@ -295,15 +336,29 @@ def save_profile(path: Optional[Path] = None) -> bool:
     if not resolved:
         return False
     is_active = (resolved.stem == S.profile_name)
+
+    if is_active and _PROFILES_DIR.exists():
+        for other in _PROFILES_DIR.glob("*.json"):
+            if other.resolve() == resolved.resolve():
+                continue
+            try:
+                other_data = json.loads(other.read_text(encoding="utf-8"))
+                if other_data.get("is_default"):
+                    other_data.pop("is_default")
+                    _atomic_write(other, other_data)
+            except (OSError, json.JSONDecodeError):
+                pass
+
     data = {
         **({"is_default": True} if is_active else {}),
+            "notes": S.notes,
             "mount_options": S.mount_options,
             "default_kernel": S.default_kernel,
             "kernels_to_install": S.kernels_to_install,
             "header": {k: {"inactive": v.get("inactive", False), "header_color": v.get("color", "#ffffff")}
                        for k, v in S.headers.items()},
             "system_manager_operations": S.system_manager_ops,
-            "system_files":   S.system_files,
+            "dotfiles":   S.dotfiles,
             "basic_packages": S.basic_packages,
             "aur_packages":   S.aur_packages,
             "specific_packages": sorted(
@@ -360,6 +415,12 @@ def startup_load() -> bool:
         if _load_profile_from_data(default_path, default_data):
             return True
         logger.warning("startup_load: default profile '%s' failed to load, trying others", default_path.stem)
+        try:
+            default_data.pop("is_default", None)
+            _atomic_write(default_path, default_data)
+            logger.info("startup_load: cleared is_default from broken profile '%s'", default_path.stem)
+        except OSError as exc:
+            logger.error("startup_load: could not clear is_default from '%s': %s", default_path.stem, exc)
 
     for p in other_profiles:
         if load_profile(p):

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 from linux_distro_helper import LinuxDistroHelper
-from state import S, apply_replacements, logger, register_invalidate_hook, active_pkg_names, active_system_files
+from state import S, apply_replacements, logger, register_invalidate_hook, active_pkg_names, active_dotfiles
 from themes import current_theme, font_sz
 
 _cache: Optional[tuple[dict, dict, dict]] = None
@@ -54,11 +54,11 @@ def _entry_tooltip_html(title: str, src_lines: list, dst_lines: list, bg: str, b
             f"</tr></table>")
 
 
-def _sysfiles_tooltip_html(sys_files: list, t: dict, font_sz_fn) -> str:
+def _dotfiles_tooltip_html(sys_files: list, t: dict, font_sz_fn) -> str:
     cols = 2 if len(sys_files) > 8 else 1
     header = (f"<tr><td colspan='{cols}' style='padding:4px 5px 2px;font-size:{font_sz_fn(-1)}px;"
               f"font-weight:bold;white-space:nowrap;color:{t['accent2']};border-bottom:1px solid {t['header_sep']}'>"
-              f"System Files ({len(sys_files)})</td></tr>")
+              f"Dotfiles ({len(sys_files)})</td></tr>")
     cells = []
     for sf in sys_files:
         src = sf.get("source", "")
@@ -145,9 +145,9 @@ def generate_tooltip() -> tuple[dict, dict, dict]:
                     for e in S.entries}
     sm_tips: dict = {}
 
-    active_sys_files = active_system_files()
+    active_sys_files = active_dotfiles()
     if active_sys_files:
-        sm_tips["copy_system_files"] = _sysfiles_tooltip_html(active_sys_files, t, font_sz)
+        sm_tips["copy_dotfiles"] = _dotfiles_tooltip_html(active_sys_files, t, font_sz)
 
     for key, pkgs, label in [("install_basic_packages", S.basic_packages, "Basic Packages"), ("install_aur_packages", S.aur_packages, "AUR Packages")]:
         active_names = [_html.escape(n) for n in active_pkg_names(pkgs)]

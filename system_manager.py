@@ -23,8 +23,9 @@ from PyQt6.QtWidgets import (
     QListWidget, QListWidgetItem, QPushButton, QTextEdit, QVBoxLayout, QWidget,
 )
 
+from dotfiles_manager import _first_path
 from linux_distro_helper import LinuxDistroHelper, ARCH_KERNEL_VARIANTS
-from state import S, _HOME, _USER, logger, apply_replacements, _ANSI_RE, active_pkg_names, active_system_files
+from state import S, _HOME, _USER, logger, apply_replacements, _ANSI_RE, active_pkg_names, active_dotfiles
 from themes import current_theme, font_sz
 from ui_utils import _StandardKeysMixin
 
@@ -446,9 +447,9 @@ class SystemManagerThread(QThread):
             self._stop.clear()
 
     def run(self) -> None:
-        self.thread_started.emit()
-        self._prepare_tasks()
         try:
+            self.thread_started.emit()
+            self._prepare_tasks()
             if self.terminated: return
             if not self._verify_sudo(): self.passwordFailed.emit(); return
             self.passwordSuccess.emit()
@@ -487,7 +488,7 @@ class SystemManagerThread(QThread):
         self.taskListReady.emit([(k, d) for k, (d, _) in self._enabled_tasks.items()])
 
     def _base_tasks(self) -> dict:
-        return {"copy_system_files": ("Copying System Files…", self._copy_sysfiles),
+        return {"copy_dotfiles": ("Copying Dotfiles…", self._copy_dotfiles),
                 "update_mirrors": ("Updating mirrors…", self._update_mirrors), "update_system": ("Updating system…", self._update_system),
                 "set_user_shell": ("Setting user shell…", self._set_shell),
                 "install_ucode": ("Installing CPU microcode…", self._install_ucode),
@@ -596,17 +597,19 @@ class SystemManagerThread(QThread):
                 _pty_master, _pty_slave = _pty_mod.openpty()
 
                 try:
-                    proc = subprocess.Popen(
-                        cmd,
-                        stdout=_pty_slave,
-                        stderr=subprocess.PIPE,
-                        stdin=subprocess.PIPE,
-                        cwd=cwd,
-                        env=self._env_snapshot
-                    )
+                    try:
+                        proc = subprocess.Popen(
+                            cmd,
+                            stdout=_pty_slave,
+                            stderr=subprocess.PIPE,
+                            stdin=subprocess.PIPE,
+                            cwd=cwd,
+                            env=self._env_snapshot
+                        )
+                    finally:
+                        os.close(_pty_slave)
+                        _pty_slave = -1
 
-                    os.close(_pty_slave)
-                    _pty_slave = -1
                     proc.stdout = os.fdopen(_pty_master, 'rb', buffering=0)
 
                 except (OSError, subprocess.SubprocessError) as exc:
@@ -831,7 +834,7 @@ class SystemManagerThread(QThread):
 
             self.outputReceived.emit(text, _kind)
 
-        _wait_timeout = timeout if (not self.terminated and timeout is not None) else 30
+        _wait_timeout = timeout if (not self.terminated) else 30
 
         try:
             rc = proc.wait(timeout=_wait_timeout) if proc and proc.poll() is None else (proc.returncode if proc else 1)
@@ -854,6 +857,16 @@ class SystemManagerThread(QThread):
             pass
 
         t_out.join(3); t_err.join(3)
+        try:
+            if proc.stdout:
+                proc.stdout.close()
+        except OSError:
+            pass
+        try:
+            if proc.stderr and not proc.stderr.closed:
+                proc.stderr.close()
+        except OSError:
+            pass
         return SimpleNamespace(returncode=rc if rc is not None else 1)
 
     def _emit_result(self, ok: bool, msg_ok: str, msg_err: str):
@@ -1002,14 +1015,18 @@ class SystemManagerThread(QThread):
         self._emit_result(not failed, f"All {label}s successfully installed", f"Failed {label}(s): {', '.join(failed)}")
         return _Status.SUCCESS if not failed else _Status.WARNING
 
-    def _copy_sysfiles(self) -> bool:
-        files = active_system_files()
+    def _copy_dotfiles(self) -> bool:
+        files = active_dotfiles()
         if not files:
-            self.outputReceived.emit("No system files configured", "warning")
+            self.outputReceived.emit("No dotfiles configured", "warning")
             return True
 
         from drive_utils import check_drives_to_mount, mount_drive
-        for drive in check_drives_to_mount([p for f in files for p in (f["source"], f["destination"])]):
+        for drive in check_drives_to_mount(
+                [os.path.expandvars(os.path.expanduser(p))
+                 for f in files
+                 for p in (_first_path(f.get("source", "")), _first_path(f.get("destination", "")))
+                 if p]):
             name = drive.get("drive_name", "?")
             self.outputReceived.emit(f"Mounting drive: '{name}'…", "info")
             ok, err = mount_drive(drive)
@@ -1018,7 +1035,8 @@ class SystemManagerThread(QThread):
 
         overall = True
         for f in files:
-            src, dst = f["source"].strip(), f["destination"].strip()
+            src = os.path.expandvars(os.path.expanduser(_first_path(f.get("source", "")).strip()))
+            dst = os.path.expandvars(os.path.expanduser(_first_path(f.get("destination", "")).strip()))
             if not Path(src).exists():
                 self.outputReceived.emit(f"Source not found: {src}", "error")
                 overall = False
@@ -1082,7 +1100,7 @@ class SystemManagerThread(QThread):
                 inner_cmd = _stripped[5:] if _stripped.startswith("sudo ") else _stripped
                 cmd = ["sudo", "sh", "-c", inner_cmd]
             else:
-                cmd = cmd_str
+                cmd = shlex.split(cmd_str)
             ok = (self._exec(cmd, stream=True, timeout=None).returncode == 0)
         self._emit_result(ok, "System successfully updated", "System update failed")
         return ok
@@ -1101,7 +1119,7 @@ class SystemManagerThread(QThread):
             self.outputReceived.emit(f"Cannot determine current shell: {exc}", "error")
             return False
 
-        if current == shell:
+        if os.path.realpath(current) == os.path.realpath(shell):
             self.outputReceived.emit(f"Shell is already '{target}' ({shell})", "success")
             return True
 
@@ -1143,6 +1161,11 @@ class SystemManagerThread(QThread):
     def _install_kernels(self) -> bool | str:
         if not self.distro:
             return False
+        if self.distro.family() != "arch":
+            self.outputReceived.emit(
+                f"Kernel variant management is only supported on Arch Linux "
+                f"(detected: {self.distro.family()})", "warning")
+            return _Status.WARNING
         targets = S.effective_kernels
         bootloader = LinuxDistroHelper.detect_bootloader()
         overall = True
@@ -1206,6 +1229,12 @@ class SystemManagerThread(QThread):
         target = (S.default_kernel or "").strip()
         if not target:
             self.outputReceived.emit("No default kernel configured — skipping", "warning")
+            return _Status.WARNING
+
+        if self.distro and self.distro.family() != "arch":
+            self.outputReceived.emit(
+                f"Default kernel selection is only supported "
+                f"on Arch Linux (detected: {self.distro.family()})", "warning")
             return _Status.WARNING
 
         pkgs = ARCH_KERNEL_VARIANTS.get(target)

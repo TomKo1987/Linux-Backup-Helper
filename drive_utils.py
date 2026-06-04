@@ -92,7 +92,7 @@ def _validate_cmd(cmd: str) -> tuple[bool, str, list[str]]:
     base = os.path.basename(expanded[0])
     if base == "sudo":
         for tok in expanded[1:]:
-            if (tok in ("-u", "-H", "--user")
+            if (tok in ("-u", "--user")
                     or tok.startswith("--user=")
                     or (tok.startswith("-u") and len(tok) > 2)):
                 return False, "sudo user-switching flags are not permitted", []
@@ -159,7 +159,7 @@ def is_mounted(opt: dict, mounts: Optional[list[tuple[str, str]]] = None) -> boo
             share = parts[1]
             full_device = f"//{host}/{share}"
             if len(parts) == 3 and parts[2]:
-                full_device = f"{full_device}/{parts[2]}"
+                full_device = f"{full_device}/{parts[2].lstrip('/')}"
             smb_prefixes = (full_device.lower(),)
 
     for dev, mnt in (mounts or []):
@@ -220,6 +220,20 @@ def is_smb(path: str) -> bool: return path.startswith(("smb://", "cifs://"))
 
 
 def _is_subpath(parent: str, child: str) -> bool: return (child.rstrip("/") + "/").startswith(parent.rstrip("/") + "/")
+
+
+def is_ssh(path: str) -> bool:
+    return path.startswith("ssh://") or bool(re.match(r"^[^/@]+@[^:]+:.+", path))
+
+
+def build_rsync_cmd(src: str, dst: str, *, delete: bool = False, exclude: list[str] | None = None) -> list[str]:
+    cmd = ["rsync", "-az", "--info=progress2", "-e", "ssh -o StrictHostKeyChecking=accept-new"]
+    if delete:
+        cmd.append("--delete")
+    for ex in (exclude or []):
+        cmd += [f"--exclude={ex}"]
+    cmd += [src, dst]
+    return cmd
 
 
 def check_drives_to_mount(paths: list[str]) -> list[dict]:

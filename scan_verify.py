@@ -1,6 +1,7 @@
 import hashlib
 import re
 import subprocess
+from functools import lru_cache as _lru_cache
 from pathlib import Path
 from typing import Optional
 
@@ -8,14 +9,15 @@ from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
     QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
-    QTabWidget, QVBoxLayout, QWidget
+    QTabWidget, QVBoxLayout, QWidget, QListWidget
 )
 
+from dotfiles_manager import _first_path
 from drive_utils import check_drives_to_mount, mount_required_drives
 from linux_distro_helper import LinuxDistroHelper, USER_SHELLS, ARCH_KERNEL_VARIANTS, SESSIONS
 from state import (
     S, _HOME, save_profile, logger, all_profile_pkg_names, active_pkg_names,
-    active_system_files, sort_pkg_list, sort_specific_pkg_list, apply_replacements
+    active_dotfiles, sort_pkg_list, sort_specific_pkg_list, apply_replacements
 )
 from themes import current_theme, font_sz
 from ui_utils import sep, _StandardKeysMixin
@@ -62,6 +64,11 @@ def _sha256(path: Path, limit: int = 8 * 1024 * 1024) -> Optional[str]:
         return None
 
 
+@_lru_cache(maxsize=1024)
+def _sha256_cached(path_str: str, _mtime_ns: int, _size: int) -> Optional[str]:
+    return _sha256(Path(path_str))
+
+
 def _surface_mtime(path: Path) -> float:
     best = _mtime(path)
     if path.is_dir():
@@ -75,18 +82,39 @@ def _surface_mtime(path: Path) -> float:
     return best
 
 
-_SYSTEM_BASE_PKGS: frozenset[str] = frozenset({"base",
-                                               "base-devel",
-                                               "linux-firmware",
-                                               "plasma-desktop",
-                                               "gnome-shell",
-                                               "xfce4-session",
-                                               "cinnamon",
-                                               "mate-session-manager",
-                                               "lxsession",
-                                               "lxqt-session",
-                                               "budgie-desktop",
-                                               "deepin-session-shell"})
+_IGNORE_EXACT: frozenset[str] = frozenset({
+    "base", "base-devel", "linux", "linux-firmware", "grub",
+    "efibootmgr", "systemd", "glibc", "sudo",
+    "networkmanager", "wpa_supplicant", "iwd", "dhcpcd", "dhclient",
+    "pipewire", "pipewire-audio", "pipewire-alsa", "pipewire-jack",
+    "pipewire-pulse", "pipewire-v4l2", "pipewire-zeroconf",
+    "wireplumber", "gst-plugin-pipewire", "libpipewire",
+    "pulseaudio", "pulseaudio-alsa", "pulseaudio-bluetooth",
+    "pulseaudio-jack", "pulseaudio-zeroconf",
+    "libpulse", "alsa-utils", "alsa-lib", "alsa-firmware",
+    "plasma-desktop", "plasma-workspace",
+    "gnome-shell", "gnome-session", "gnome-settings-daemon",
+    "xfce4-session", "xfce4-panel", "xfdesktop", "xfwm4",
+    "lxqt-session", "lxsession",
+    "cinnamon", "mate-session-manager",
+    "budgie-desktop", "deepin-session-shell",
+    "sddm", "gdm", "lightdm", "lxdm",
+    "xorg-server", "xwayland",
+    "libappindicator-gtk3", "libappindicator-gtk2",
+    "btrfs-progs", "e2fsprogs", "xfsprogs", "f2fs-tools",
+    "dosfstools", "exfatprogs", "ntfs-3g", "jfsutils",
+    "nilfs-utils", "bcachefs-tools", "reiserfsprogs",
+})
+
+_IGNORE_PREFIXES: tuple[str, ...] = (
+    "plasma-",
+    "kf5-", "kf6-",
+    "pipewire-",
+    "pulseaudio-",
+    "xfce4-",
+    "gnome-",
+    "libappindicator",
+)
 
 
 def _get_sm_managed_packages(helper: LinuxDistroHelper) -> frozenset:
@@ -132,6 +160,51 @@ def _get_sm_managed_packages(helper: LinuxDistroHelper) -> frozenset:
     return frozenset(pkgs)
 
 
+_DE_META_PKGS: tuple[str, ...] = (
+    "plasma-desktop", "plasma-meta", "plasma-workspace", "gnome-shell",
+    "gnome-session", "xfce4-session", "lxqt-session", "lxsession",
+    "cinnamon", "mate-session-manager"
+)
+_DEP_VER_RE = re.compile(r"[>=<]\S*")
+
+
+def _get_arch_de_deps(helper: LinuxDistroHelper) -> frozenset[str]:
+    if helper.family() != "arch":
+        return frozenset()
+
+    result: set[str] = set()
+    for meta in _DE_META_PKGS:
+        try:
+            r = subprocess.run(["env", "LC_ALL=C", "pacman", "-Qi", meta],
+                               capture_output=True, text=True, timeout=15)
+            lines = r.stdout.splitlines()
+        except (RuntimeError, subprocess.SubprocessError, OSError):
+            continue
+
+        if not lines:
+            continue
+
+        in_depends = False
+        for line in lines:
+            if line.startswith("Depends On"):
+                in_depends = True
+                _, _, val = line.partition(":")
+                for tok in val.split():
+                    name = _DEP_VER_RE.sub("", tok).strip()
+                    if name and name != "None":
+                        result.add(name)
+            elif in_depends:
+                if not line.startswith((" ", "\t")):
+                    break
+
+                for tok in line.split():
+                    name = _DEP_VER_RE.sub("", tok).strip()
+                    if name and name != "None":
+                        result.add(name)
+
+    return frozenset(result)
+
+
 _OP_SERVICE_ALL: dict[str, str] = {"enable_bluetooth_service": "bluetooth",
                                    "enable_atd_service": "atd",
                                    "enable_firewall": "ufw",
@@ -175,9 +248,9 @@ def _service_is_active(name: str) -> bool:
 
 def _collect_verify_paths() -> list[str]:
     paths: list[str] = []
-    for sf in active_system_files():
+    for sf in active_dotfiles():
         for key in ("source", "destination"):
-            v = sf.get(key, "").strip()
+            v = _first_path(sf.get(key, "")).strip()
             if v: paths.append(str(_ep(v)))
     for entry in S.entries:
         if isinstance(entry, dict):
@@ -197,51 +270,21 @@ class _CaptureWorker(QThread):
         self._h = helper
 
     def run(self) -> None:
-        fam = self._h.family()
         res: dict = {"basic": [], "aur": [], "specific": [], "sys_files": [], "services": [], "error": ""}
         self.progress.emit("Scanning installed packages…")
         try:
-            if fam == "arch":
-                unrequired = set(_run(["pacman", "-Qqet"]))
-                foreign = set(_run(["pacman", "-Qqm"]))
-                explicit = set(_run(["pacman", "-Qqe"]))
-                aur_explicit = foreign & explicit
-                res["aur"] = sorted(aur_explicit)
-                res["basic"] = sorted(unrequired - foreign)
-            elif fam == "debian":
-                res["basic"] = sorted(_run(["apt-mark", "showmanual"]))
-            elif fam == "fedora":
-                raw = _run(["sh", "-c", "dnf repoquery --userinstalled -q --qf '%{name}' 2>/dev/null"])
-                res["basic"] = sorted(set(raw))
-            elif fam == "suse":
-                raw = _run(["sh", "-c",
-                            "zypper se --installed-only 2>/dev/null "
-                            "| awk -F'|' '/^i /{gsub(/ /,\"\",$2);if($2)print $2}'"])
-                res["basic"] = sorted(raw)
-            elif fam == "void":
-                res["basic"] = sorted(_strip_ver(l) for l in _run(["xbps-query", "-m"]) if l)
-            elif fam == "alpine":
-                res["basic"] = sorted(_run(["apk", "info"]))
-            elif fam == "gentoo":
-                res["basic"] = sorted(_run(["sh", "-c", "qlist -I -C 2>/dev/null"]))
-            elif fam == "nixos":
-                res["basic"] = sorted(_strip_ver(l) for l in _run(["nix-env", "-q"]) if l)
-            elif fam == "slackware":
-                raw = _run(["sh", "-c", "ls /var/log/packages/ 2>/dev/null"])
-                res["basic"] = sorted(_strip_ver(l) for l in raw if l)
-            elif fam == "solus":
-                res["basic"] = sorted(_run(["eopkg", "li", "-N"]))
-            else:
-                res["error"] = f"Package detection not supported for distro family '{fam}'."
+            res["basic"], res["aur"] = self._h.get_explicitly_installed_packages()
+        except RuntimeError as exc:
+            res["error"] = str(exc)
         except Exception as exc:
             res["error"] = str(exc)
             logger.error("CaptureWorker: %s", exc)
 
-        self.progress.emit("Checking system files…")
+        self.progress.emit("Checking dotfiles…")
         try:
-            for sf in active_system_files():
-                src_raw = sf.get("source", "").strip()
-                dst_raw = sf.get("destination", "").strip()
+            for sf in active_dotfiles():
+                src_raw = _first_path(sf.get("source", "")).strip()
+                dst_raw = _first_path(sf.get("destination", "")).strip()
                 if not src_raw or not dst_raw:
                     continue
                 src = _ep(src_raw)
@@ -252,14 +295,20 @@ class _CaptureWorker(QThread):
                 elif not dst.exists():
                     status = "dst_missing"
                 else:
-                    h_src, h_dst = _sha256(src), _sha256(dst)
+                    def _hash_v(p: Path) -> Optional[str]:
+                        try:
+                            st = p.stat()
+                            return _sha256_cached(str(p), st.st_mtime_ns, st.st_size)
+                        except OSError:
+                            return None
+                    h_src, h_dst = _hash_v(src), _hash_v(dst)
                     if h_src and h_dst:
                         status = "ok" if h_src == h_dst else "changed"
                     else:
                         status = "ok" if _mtime(dst) >= _mtime(src) - 2 else "changed"
                 res["sys_files"].append({"name": name, "status": status, "src": str(src), "dst": str(dst)})
         except Exception as exc:
-            logger.warning("CaptureWorker: system file check failed: %s", exc)
+            logger.warning("CaptureWorker: dotfile check failed: %s", exc)
 
         self.progress.emit("Scanning active services…")
         try:
@@ -323,12 +372,12 @@ class _VerifyWorker(QThread):
             missing = set(self._h.filter_not_installed(names))
             res["pkgs"] = [{"name": n, "kind": k, "installed": n not in missing} for n, k in all_pkgs]
 
-        self.progress.emit("Checking system files…")
-        for sf in S.system_files:
+        self.progress.emit("Checking dotfiles…")
+        for sf in S.dotfiles:
             if not isinstance(sf, dict) or sf.get("disabled"):
                 continue
-            src_raw = sf.get("source", "").strip()
-            dst_raw = sf.get("destination", "").strip()
+            src_raw = _first_path(sf.get("source", "")).strip()
+            dst_raw = _first_path(sf.get("destination", "")).strip()
             if not src_raw or not dst_raw:
                 continue
             src = _ep(src_raw)
@@ -339,7 +388,13 @@ class _VerifyWorker(QThread):
             elif not dst.exists():
                 status = "dst_missing"
             else:
-                h_src, h_dst = _sha256(src), _sha256(dst)
+                def _hash_v(p: Path) -> Optional[str]:
+                    try:
+                        st = p.stat()
+                        return _sha256_cached(str(p), st.st_mtime_ns, st.st_size)
+                    except OSError:
+                        return None
+                h_src, h_dst = _hash_v(src), _hash_v(dst)
                 if h_src and h_dst:
                     status = "ok" if h_src == h_dst else "changed"
                 else:
@@ -352,11 +407,13 @@ class _VerifyWorker(QThread):
             if not isinstance(entry, dict):
                 continue
             issues: list[str] = []
+            from drive_utils import is_smb, is_ssh
+
             for s in entry.get("source", []):
-                if not _ep(s).exists():
+                if not is_smb(s) and not is_ssh(s) and not _ep(s).exists():
                     issues.append(f"Source missing: {s}")
             for d in entry.get("destination", []):
-                if not _ep(d).exists():
+                if not is_smb(d) and not is_ssh(d) and not _ep(d).exists():
                     issues.append(f"Destination missing: {d}")
             if not issues:
                 srcs, dsts = entry.get("source", []), entry.get("destination", [])
@@ -527,6 +584,7 @@ class _CaptureTab(QWidget):
         self._cbs: list[tuple[QCheckBox, str, str]] = []
         self._svc_cbs: list[tuple[QCheckBox, str, str]] = []
         self._sm_pkgs = _get_sm_managed_packages(helper)
+        self._de_deps = _get_arch_de_deps(helper)
         self._current_session = helper.detect_session() or SESSIONS[0]
         self._build_ui()
         self._start()
@@ -618,11 +676,17 @@ class _CaptureTab(QWidget):
         self._svc_cbs.clear()
 
         profile_all = all_profile_pkg_names()
-        _excluded = self._sm_pkgs | _SYSTEM_BASE_PKGS
-        new_basic = [p for p in res["basic"] if p not in profile_all and p not in _excluded]
-        new_aur = [p for p in res["aur"] if p not in profile_all and p not in _excluded]
+        _excluded = self._sm_pkgs | _IGNORE_EXACT | self._de_deps
+        new_basic = [p for p in res["basic"]
+                     if p not in profile_all and p not in _excluded
+                     and not any(p.startswith(pfx) for pfx in _IGNORE_PREFIXES)]
+        new_aur   = [p for p in res["aur"]
+                     if p not in profile_all and p not in _excluded
+                     and not any(p.startswith(pfx) for pfx in _IGNORE_PREFIXES)]
         has_new_pkgs = bool(new_basic or new_aur)
-        total = sum(1 for p in res["basic"] + res["aur"] if p not in _excluded)
+        total = sum(1 for p in res["basic"] + res["aur"]
+                    if p not in _excluded
+                    and not any(p.startswith(pfx) for pfx in _IGNORE_PREFIXES))
         already = total - len(new_basic) - len(new_aur)
 
         installed_basic_set = res.get("profile_installed_basic", set())
@@ -750,7 +814,7 @@ class _CaptureTab(QWidget):
             n_ok = sum(1 for f in sys_files if f["status"] == "ok")
             n_bad = len(sys_files) - n_ok
             color = t["error"] if n_bad else t["success"]
-            hdr = QLabel(f"<b>📄  System Files</b>  —  "
+            hdr = QLabel(f"<b>📄  Dotfiles</b>  —  "
                          f"<span style='color:{color};'>{n_ok}/{len(sys_files)} up to date</span>")
             hdr.setTextFormat(Qt.TextFormat.RichText)
             hdr.setStyleSheet(f"font-size:{font_sz(1)}px; padding:2px 0;")
@@ -793,9 +857,9 @@ class _CaptureTab(QWidget):
                 row_lay.addWidget(status_lbl)
                 sf_vl.addWidget(row_w)
             cl.addWidget(sf_frame)
-        elif S.system_files:
+        elif S.dotfiles:
             cl.addWidget(sep())
-            info = QLabel("📄  <i>No active system files configured.</i>")
+            info = QLabel("📄  <i>No active dotfiles configured.</i>")
             info.setTextFormat(Qt.TextFormat.RichText)
             info.setStyleSheet(f"color:{t['muted']};")
             cl.addWidget(info)
@@ -816,6 +880,8 @@ class _CaptureTab(QWidget):
         self._add_btn.setVisible(has_new_pkgs)
         if has_new_pkgs:
             self._btns.show()
+        else:
+            self._btns.hide()
 
     def _build_specific_section(self, all_basic: list[str], excluded: frozenset, t: dict) -> QWidget:
         wrapper = QWidget()
@@ -848,7 +914,11 @@ class _CaptureTab(QWidget):
         existing_specific = {p.get("package", "") for p in S.specific_packages if isinstance(p, dict)}
         existing_aur = {p.get("name", "") for p in S.aur_packages if isinstance(p, dict)}
 
-        eligible = [p for p in all_basic if p not in excluded and p not in existing_specific and p not in existing_aur]
+        eligible = [p for p in all_basic
+                    if p not in excluded
+                    and not any(p.startswith(pfx) for pfx in _IGNORE_PREFIXES)
+                    and p not in existing_specific
+                    and p not in existing_aur]
 
         if not eligible:
             no_lbl = QLabel("— No eligible packages found —")
@@ -1013,17 +1083,17 @@ class _CaptureTab(QWidget):
                 lines.append(f"  {_status}  {detail}")
 
         profile_all = all_profile_pkg_names()
-        _excluded = self._sm_pkgs | _SYSTEM_BASE_PKGS
+        _excluded = self._sm_pkgs | _IGNORE_EXACT | self._de_deps
         basic_pkgs = res.get("basic", [])
         aur_pkgs = res.get("aur", [])
         pkg_rows: list[tuple[str, str]] = []
         for name in basic_pkgs:
-            if name in _excluded:
+            if name in _excluded or any(name.startswith(p) for p in _IGNORE_PREFIXES):
                 continue
             status = "✓" if name in profile_all else "new"
             pkg_rows.append((status, f"{name} (basic)"))
         for name in aur_pkgs:
-            if name in _excluded:
+            if name in _excluded or any(name.startswith(p) for p in _IGNORE_PREFIXES):
                 continue
             status = "✓" if name in profile_all else "new"
             pkg_rows.append((status, f"{name} (aur)"))
@@ -1034,7 +1104,7 @@ class _CaptureTab(QWidget):
 
         _status_labels = {"ok": "OK", "changed": "Changed", "dst_missing": "Not backed up",
                           "src_missing": "Source missing"}
-        _section("System Files", [("✓" if f["status"] == "ok" else "⚠",
+        _section("Dotfiles", [("✓" if f["status"] == "ok" else "⚠",
                                    f"{f['name']}  [{_status_labels.get(f['status'], f['status'])}]  {f['src']} 🢥 {f['dst']}")
                                   for f in res.get("sys_files", [])])
 
@@ -1232,7 +1302,7 @@ class _VerifyTab(QWidget):
             n_ok = sum(1 for f in sys_files if f["status"] == "ok")
             n_bad = len(sys_files) - n_ok
             total_issues += n_bad
-            sec = _Section("📄", "System Files", n_ok, len(sys_files), t["success"], t["warning"])
+            sec = _Section("📄", "Dotfiles", n_ok, len(sys_files), t["success"], t["warning"])
             _status_map = {"changed": ("⚠", "Changed", "warning"), "dst_missing": ("❌", "Not backed up", "error"),
                            "src_missing": ("❓", "Source missing", "muted")}
             for f in sys_files:
@@ -1243,8 +1313,8 @@ class _VerifyTab(QWidget):
                     sec.add_row(ic, f["name"], f"{lbl}  —  {apply_replacements(f['src'])} 🢥 {apply_replacements(f['dst'])}", t[ck])
             cl.addWidget(sec)
         else:
-            sec = _Section("📄", "System Files", 0, 0, t["muted"], t["muted"])
-            msg = "No active system files" if S.system_files else "No system files in profile"
+            sec = _Section("📄", "Dotfiles", 0, 0, t["muted"], t["muted"])
+            msg = "No active dotfiles" if S.dotfiles else "No dotfiles in profile"
             sec.add_row("—", msg, "", t["muted"])
             cl.addWidget(sec)
 
@@ -1306,6 +1376,108 @@ class _VerifyTab(QWidget):
         self._summary.show()
 
 
+def _get_package_diff(helper: "LinuxDistroHelper") -> tuple[list[str], list[str]]:
+    try:
+        basic, aur = helper.get_explicitly_installed_packages()
+        explicit: set[str] = set(basic) | set(aur)
+    except RuntimeError:
+        explicit = set()
+
+    profile     = all_profile_pkg_names()
+    sm_managed = _get_sm_managed_packages(helper)
+    de_deps = _get_arch_de_deps(helper)
+
+    def _should_ignore(pkg: str) -> bool:
+        if pkg in _IGNORE_EXACT or pkg in sm_managed or pkg in de_deps:
+            return True
+        return any(pkg.startswith(p) for p in _IGNORE_PREFIXES)
+
+    not_tracked = sorted(p for p in explicit - profile if not _should_ignore(p))
+    missing     = sorted(set(helper.filter_not_installed(sorted(profile))))
+    return not_tracked, missing
+
+
+class _PackageDiffTab(QWidget):
+    def __init__(self, helper: "LinuxDistroHelper", parent=None) -> None:
+        super().__init__(parent)
+        self._helper = helper
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        t   = current_theme()
+        bg3 = t["bg3"];  _sep = t["header_sep"]
+        acc = t["accent"];  fg = t["text"];  dim = t["text_dim"]
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(12, 12, 12, 12)
+        lay.setSpacing(8)
+
+        hdr = QHBoxLayout()
+        title = QLabel("📦  Package Diff: System vs. Profile")
+        title.setStyleSheet(f"font-size:{font_sz(2)}px;font-weight:bold;color:{acc};")
+        self._run_btn = QPushButton("🔄 Check Now")
+        self._run_btn.setMinimumHeight(32)
+        self._run_btn.clicked.connect(self._run)
+        hdr.addWidget(title)
+        hdr.addStretch()
+        hdr.addWidget(self._run_btn)
+        lay.addLayout(hdr)
+
+        _list_ss = (f"QListWidget{{background:{bg3};border:1px solid {_sep};border-radius:4px;"
+                    f"font-size:{font_sz()}px;color:{fg};outline:none;}}"
+                    f"QListWidget::item{{padding:4px 8px;border-bottom:1px solid {_sep};}}")
+
+        cols = QHBoxLayout()
+        cols.setSpacing(10)
+
+        col_u = QVBoxLayout()
+        self._list_untracked_lbl = QLabel("⚠  Installed, not in profile (0)")
+        self._list_missing_lbl = QLabel("✗  In profile, not installed (0)")
+        self._list_untracked = QListWidget()
+        self._list_untracked.setStyleSheet(_list_ss)
+        col_u.addWidget(self._list_untracked_lbl)
+        col_u.addWidget(self._list_untracked, 1)
+        cols.addLayout(col_u, 1)
+
+        col_m = QVBoxLayout()
+        self._list_missing_lbl = QLabel("✗  In profile, not installed (0)")
+        self._list_missing_lbl.setStyleSheet(
+            f"font-weight:bold;color:{t['error']};font-size:{font_sz(1)}px;")
+        self._list_missing = QListWidget()
+        self._list_missing.setStyleSheet(_list_ss)
+        col_m.addWidget(self._list_missing_lbl)
+        col_m.addWidget(self._list_missing, 1)
+        cols.addLayout(col_m, 1)
+
+        lay.addLayout(cols, 1)
+
+        self._status = QLabel("Click ‘Check Now’ to compare System vs. Profile.")
+        self._status.setStyleSheet(f"color:{dim};font-size:{font_sz(-1)}px;")
+        lay.addWidget(self._status)
+
+    def _run(self) -> None:
+        self._run_btn.setEnabled(False)
+        self._status.setText("Analyzing…")
+        QApplication.processEvents()
+        not_tracked, missing = _get_package_diff(self._helper)
+
+        self._list_untracked.clear()
+        for p in not_tracked:
+            self._list_untracked.addItem(p)
+        self._list_untracked_lbl.setText(
+            f"⚠  Installed, not in profile ({len(not_tracked)})")
+
+        self._list_missing.clear()
+        for p in missing:
+            self._list_missing.addItem(p)
+        self._list_missing_lbl.setText(
+            f"✗  In profile, not installed ({len(missing)})")
+
+        self._status.setText(
+            f"{len(not_tracked)} not tracked  ·  {len(missing)} missing from the system")
+        self._run_btn.setEnabled(True)
+
+
 class ScanVerifyDialog(_StandardKeysMixin, QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -1318,8 +1490,8 @@ class ScanVerifyDialog(_StandardKeysMixin, QDialog):
         scr = QApplication.primaryScreen()
         if scr:
             sg = scr.availableGeometry()
-            w = min(max(950, sg.width() * 2 // 3), sg.width() - 60)
-            h = min(max(620, sg.height() * 3 // 4), sg.height() - 60)
+            w = min(max(1250, sg.width() * 2 // 3), sg.width() - 60)
+            h = min(max(850, sg.height() * 3 // 4), sg.height() - 60)
             self.resize(w, h)
         else:
             self.resize(950, 640)
@@ -1330,8 +1502,8 @@ class ScanVerifyDialog(_StandardKeysMixin, QDialog):
             scr = QApplication.primaryScreen()
             if not scr: return
             sg = scr.availableGeometry()
-            w = min(max(self.width(), 950), sg.width() - 60)
-            h = min(max(self.height(), 620), sg.height() - 60)
+            w = min(max(self.width(), 1250), sg.width() - 60)
+            h = min(max(self.height(), 850), sg.height() - 60)
             self.resize(w, h)
 
         QTimer.singleShot(60, _do_resize)
@@ -1352,6 +1524,7 @@ class ScanVerifyDialog(_StandardKeysMixin, QDialog):
         tabs = QTabWidget()
         tabs.addTab(_CaptureTab(self._helper), "🔍  System Scan")
         tabs.addTab(_VerifyTab(self._helper), "✅  Verify Profile")
+        tabs.addTab(_PackageDiffTab(self._helper), "📦  Package Diff")
         lay.addWidget(tabs, 1)
 
         close_btn = QPushButton("Close")

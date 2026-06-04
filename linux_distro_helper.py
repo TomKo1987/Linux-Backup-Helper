@@ -9,7 +9,7 @@ from typing import Any, Callable
 from constants import USER_SHELLS, ARCH_KERNEL_VARIANTS, PKG_NAME_RE
 from state import logger
 
-__all__ = ["LinuxDistroHelper", "SESSIONS", "USER_SHELLS", "ARCH_KERNEL_VARIANTS", "is_valid_pkg_name"]
+__all__ = ["LinuxDistroHelper", "SESSIONS", "USER_SHELLS", "ARCH_KERNEL_VARIANTS", "is_valid_pkg_name", "distro_family"]
 
 _MIN_PARALLEL = 5
 
@@ -21,6 +21,8 @@ _DISTROS_DEBIAN = {"debian", "ubuntu", "pop", "pop-os", "popos", "mint", "linuxm
                    "q4os", "linuxlite", "tails", "siduction", "sparky", "sparkylinux", "bodhi", "bunsenlabs", "pureos",
                    "ubuntu-budgie", "devuan", "refracta", "kubuntu", "xubuntu", "lubuntu", "ubuntu-mate"}
 
+_VER_PKG = re.compile(r"[-_]\d[\w.+~:-]*$")
+
 _DISTROS_FEDORA = {"fedora", "rhel", "centos", "rocky", "almalinux", "nobara", "ultramarine", "mageia", "openmandriva"}
 
 _DISTROS_SUSE = {"opensuse", "opensuse-leap", "opensuse-tumbleweed", "opensuse-slowroot", "suse", "sled", "sles"}
@@ -28,6 +30,15 @@ _DISTROS_SUSE = {"opensuse", "opensuse-leap", "opensuse-tumbleweed", "opensuse-s
 _DISTROS_GENTOO = {"gentoo", "funtoo", "calculate", "sabayon"}
 
 _DISTROS_SLACKWARE = {"slackware", "salix", "porteus", "slax"}
+
+
+def _run_capture(cmd: list[str], timeout: int = 25) -> list[str]:
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return [line.strip() for line in r.stdout.splitlines() if line.strip()]
+    except Exception as exc:
+        logger.warning("_run_capture %s: %s", cmd[0] if cmd else "?", exc)
+        return []
 
 
 def is_valid_pkg_name(name: str) -> bool:
@@ -481,6 +492,53 @@ class LinuxDistroHelper:
         except Exception as exc:
             logger.error("kernel headers pkg: %s", exc)
         return self._kernel_pkg
+
+    def get_explicitly_installed_packages(self) -> tuple[list[str], list[str]]:
+        fam = self.family()
+
+        if fam == "arch":
+            foreign = set(_run_capture(["pacman", "-Qqm"]))
+            explicit = set(_run_capture(["pacman", "-Qqe"]))
+            aur = sorted(foreign & explicit)
+            basic = sorted(explicit - foreign)
+            return basic, aur
+
+        if fam == "debian":
+            return sorted(_run_capture(["apt-mark", "showmanual"])), []
+
+        if fam == "fedora":
+            raw = _run_capture(["sh", "-c",
+                                "dnf repoquery --userinstalled -q --qf '%{name}' 2>/dev/null"])
+            return sorted(set(raw)), []
+
+        if fam == "suse":
+            raw = _run_capture(["sh", "-c",
+                                "zypper se --installed-only 2>/dev/null "
+                                "| awk -F'|' '/^i /{gsub(/ /,\"\",$2);if($2)print $2}'"])
+            return sorted(raw), []
+
+        if fam == "void":
+            raw = _run_capture(["xbps-query", "-m"])
+            return sorted(_VER_PKG.sub("", l).strip() for l in raw if l), []
+
+        if fam == "alpine":
+            return sorted(_run_capture(["apk", "info"])), []
+
+        if fam == "gentoo":
+            return sorted(_run_capture(["sh", "-c", "qlist -I -C 2>/dev/null"])), []
+
+        if fam == "nixos":
+            raw = _run_capture(["nix-env", "-q"])
+            return sorted(_VER_PKG.sub("", l).strip() for l in raw if l), []
+
+        if fam == "slackware":
+            raw = _run_capture(["sh", "-c", "ls /var/log/packages/ 2>/dev/null"])
+            return sorted(_VER_PKG.sub("", l).strip() for l in raw if l), []
+
+        if fam == "solus":
+            return sorted(_run_capture(["eopkg", "li", "-N"])), []
+
+        raise RuntimeError(f"Package detection not supported for distro family '{fam}'.")
 
     @staticmethod
     def detect_session() -> str | None:

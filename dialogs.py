@@ -14,7 +14,7 @@ from PyQt6.QtGui import QColor, QFont, QFontMetrics, QTextCursor
 from PyQt6.QtWidgets import (
     QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QWidget, QVBoxLayout,
     QListWidgetItem, QMessageBox, QPlainTextEdit, QPushButton, QSplitter, QSizePolicy,
-    QCheckBox, QColorDialog, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QTextEdit, QApplication
+    QCheckBox, QColorDialog, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame, QTextEdit, QApplication
 )
 
 from drive_utils import get_mounts, is_mounted
@@ -23,7 +23,7 @@ from state import (
     _atomic_write, apply_replacements,
 )
 from themes import current_theme, font_scale, font_sz, apply_tooltip
-from ui_utils import sep, hdr_label, ok_cancel_buttons, btn_row, ask_text, ask_profile_name, browse_field
+from ui_utils import sep, hdr_label, ok_cancel_buttons, btn_row, ask_text, ask_profile_name, browse_field, _StandardKeysMixin
 
 _ARCHIVE_MAX_PROFILE_BYTES = 1024 * 1024
 
@@ -100,6 +100,94 @@ class _HintResizer(QObject):
         return False
 
 
+class ExcludeDialog(QDialog):
+
+    def __init__(self, parent, src_abs: str, current_excludes: list[str]):
+        super().__init__(parent)
+        self.src_abs = src_abs
+        self.selected_excludes: list[str] = list(current_excludes)
+        self.setWindowTitle(f"Exclude items from: {src_abs}")
+        self.setMinimumSize(600, 500)
+        self._build(current_excludes)
+
+    def _build(self, current_excludes: list[str]) -> None:
+        t  = current_theme()
+        fs = font_scale()
+        layout = QVBoxLayout(self)
+        layout.setSpacing(8)
+        layout.setContentsMargins(12, 12, 12, 12)
+
+        lbl = QLabel(
+            f"<b style='color:{t['accent']};'>Select entries to exclude:</b><br>"
+            f"<span style='font-size:{fs['sm']}px;color:{t['text_dim']};'>"
+            f"Directory: {self.src_abs}</span>"
+        )
+        lbl.setTextFormat(Qt.TextFormat.RichText)
+        lbl.setWordWrap(True)
+        layout.addWidget(lbl)
+        layout.addWidget(sep())
+
+        self._checkboxes: list[tuple[QCheckBox, str]] = []
+        scroll_widget = QWidget()
+        scroll_layout = QVBoxLayout(scroll_widget)
+        scroll_layout.setSpacing(4)
+
+        try:
+            entries = sorted(os.scandir(self.src_abs), key=lambda e: (not e.is_dir(), e.name.lower()))
+        except (PermissionError, FileNotFoundError, OSError) as exc:
+            layout.addWidget(QLabel(f"Error reading the directory:\n{exc}"))
+            layout.addWidget(ok_cancel_buttons(self, self.accept))
+            return
+
+        for entry in entries:
+            icon = "📁 " if entry.is_dir(follow_symlinks=False) else "📄 "
+            cb = QCheckBox(icon + entry.name)
+            cb.setChecked(entry.name in current_excludes)
+            cb.setStyleSheet(
+                f"QCheckBox{{color:{t['text']};font-size:{fs['md']}px;}}"
+                f"QCheckBox::indicator:checked{{background:{t['warning']};border:1px solid {t['warning']};}}"
+            )
+            self._checkboxes.append((cb, entry.name))
+            scroll_layout.addWidget(cb)
+
+        scroll_layout.addStretch()
+
+        from PyQt6.QtWidgets import QScrollArea
+        scroll = QScrollArea()
+        scroll.setWidget(scroll_widget)
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet(f"QScrollArea{{border:1px solid {t['bg3']};background:{t['bg2']};}}")
+        layout.addWidget(scroll, 1)
+
+        btn_row_layout = QHBoxLayout()
+        btn_all = QPushButton("Select all")
+        btn_none = QPushButton("Select none")
+        for b in (btn_all, btn_none):
+            b.setFixedHeight(28)
+            b.setStyleSheet(f"font-size:{fs['sm']}px;")
+        def _check_all() -> None:
+            for _cb, _ in self._checkboxes:
+                _cb.setChecked(True)
+
+        def _check_none() -> None:
+            for _cb, _ in self._checkboxes:
+                _cb.setChecked(False)
+
+        btn_all.clicked.connect(_check_all)
+        btn_none.clicked.connect(_check_none)
+        btn_row_layout.addWidget(btn_all)
+        btn_row_layout.addWidget(btn_none)
+        btn_row_layout.addStretch()
+        layout.addLayout(btn_row_layout)
+
+        layout.addWidget(sep())
+        layout.addWidget(ok_cancel_buttons(self, self._accept))
+
+    def _accept(self) -> None:
+        self.selected_excludes = [name for cb, name in self._checkboxes if cb.isChecked()]
+        self.accept()
+
+
 # noinspection PyUnresolvedReferences
 class EntryDialog(QDialog):
     _COL_CLEAR = QColor(0, 0, 0, 0)
@@ -113,6 +201,8 @@ class EntryDialog(QDialog):
         self._entry_snapshot: dict  = entry or {}
         self._show_full_paths: bool = False
         self._pairs_provided: bool  = _pairs is not None
+        raw_excl: dict = (entry or {}).get("details", {}).get("exclude_paths", {})
+        self._pair_excludes: dict[str, list[str]] = {str(k): list(v) for k, v in raw_excl.items() if isinstance(v, list)}
         t = current_theme()
         self._COL_ACTIVE_BG  = QColor(t["info"])
         self._COL_ACTIVE_FG  = QColor(t["bg"])
@@ -262,11 +352,12 @@ class EntryDialog(QDialog):
         tb = QHBoxLayout()
         tb.setSpacing(6)
         for label, tip, fn in [
-            ("➕ Add Pair",  "Add a new source/destination pair",   self._add_pair),
-            ("✏️ Edit",      "Edit selected pair (or double-click)", self._edit_selected),
-            ("🗑 Remove",    "Remove selected pair",                 self._remove_selected),
-            ("▲ Move Up",   "Move selected pair up",                self._move_up),
-            ("▼ Move Down", "Move selected pair down",              self._move_down),
+            ("➕ Add Pair",  "Add a new source/destination pair",                    self._add_pair),
+            ("✏️ Edit",      "Edit selected pair (or double-click)",                  self._edit_selected),
+            ("🚫 Exclude",   "Exclude files/subdirs within the selected source dir",  self._exclude_selected),
+            ("🗑 Remove",    "Remove selected pair",                                  self._remove_selected),
+            ("▲ Move Up",   "Move selected pair up",                                 self._move_up),
+            ("▼ Move Down", "Move selected pair down",                               self._move_down),
         ]:
             b = QPushButton(label)
             b.setToolTip(tip)
@@ -296,7 +387,26 @@ class EntryDialog(QDialog):
         root.addLayout(flags)
 
         root.addWidget(sep())
-        root.addWidget(ok_cancel_buttons(self, self._accept))
+        hooks_btn = QPushButton("🪝 Hooks…")
+        hooks_btn.setToolTip("Configure pre/post shell hooks for this entry")
+        hooks_btn.clicked.connect(self._edit_hooks)
+
+        bot_row = QHBoxLayout()
+        bot_row.addWidget(hooks_btn)
+        bot_row.addStretch()
+        bot_row.addWidget(ok_cancel_buttons(self, self._accept))
+        root.addLayout(bot_row)
+
+    def _edit_hooks(self) -> None:
+        from pre_post_hooks import HooksDialog
+        entry = {**self.snapshot, "details": self._e.get("details", {})}
+        dlg = HooksDialog(self, entry)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            if not hasattr(self, "_e") or not isinstance(self._e, dict):
+                self._e = {}
+            self._e.setdefault("details", {}).update(
+                entry.get("details", {})
+            )
 
     def _populate_lists(self) -> None:
         self._src_list.clear()
@@ -473,12 +583,35 @@ class EntryDialog(QDialog):
             self._populate_lists()
             self._src_list.setCurrentRow(row + 1)
 
+    def _exclude_selected(self) -> None:
+        row = self._get_active_row()
+        if not (0 <= row < len(self.pairs)):
+            QMessageBox.information(self, "Exclude", "Please select a pair first.")
+            return
+        src_raw = self.pairs[row][0]
+        src_abs = os.path.abspath(os.path.expanduser(src_raw))
+        if not os.path.isdir(src_abs):
+            QMessageBox.information(
+                self, "Exclude",
+                "The source is not a directory.\nExclusions can only be defined for directories."
+            )
+            return
+        current_excludes = self._pair_excludes.get(src_abs, [])
+        dlg = ExcludeDialog(self, src_abs, current_excludes)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            if dlg.selected_excludes:
+                self._pair_excludes[src_abs] = dlg.selected_excludes
+            elif src_abs in self._pair_excludes:
+                del self._pair_excludes[src_abs]
+            self._populate_lists()
+
     def _toggle_layout(self) -> None:
         self._entry_snapshot = {
             **self._entry_snapshot,
             "header":  self.hdr.currentText().strip(),
             "title":   self.title_edit.text().strip(),
-            "details": {"no_backup":  self.no_backup.isChecked(), "no_restore": self.no_restore.isChecked()}}
+            "details": {"no_backup":  self.no_backup.isChecked(), "no_restore": self.no_restore.isChecked(),
+                        "exclude_paths": dict(self._pair_excludes)}}
         self.stacked = not self.stacked
         self.done(2)
 
@@ -497,9 +630,13 @@ class EntryDialog(QDialog):
         if hdr not in S.headers:
             S.headers[hdr] = {"inactive": False, "color": "#ffffff"}
 
+        valid_srcs = {os.path.abspath(os.path.expanduser(s)) for s, _ in valid_pairs}
+        clean_excludes = {k: v for k, v in self._pair_excludes.items() if k in valid_srcs and v}
+
         self.result = {"header": hdr, "title": title,
                        "source": [s for s, _ in valid_pairs], "destination": [d for _, d in valid_pairs],
-                       "details": {"no_backup":  self.no_backup.isChecked(), "no_restore": self.no_restore.isChecked()}}
+                       "details": {"no_backup":  self.no_backup.isChecked(), "no_restore": self.no_restore.isChecked(),
+                                   "exclude_paths": clean_excludes}}
         self.accept()
 
 
@@ -901,7 +1038,11 @@ class ProfilesDialog(QDialog):
         if dest.exists() and QMessageBox.question(self, "Overwrite?", f"Profile '{name}' already exists. Overwrite it?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
-        shutil.copy2(path, dest)
+        try:
+            shutil.copy2(path, dest)
+        except (OSError, shutil.Error) as exc:
+            QMessageBox.critical(self, "Import Failed", f"Could not copy profile:\n{exc}")
+            return
         self._refresh()
         if QMessageBox.question(self, "Import Complete", f"'{name}' imported successfully.\nLoad it now?",
                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
@@ -1100,7 +1241,7 @@ class SysInfoDialog(_TextViewDialog):
     done_sig = pyqtSignal(str)
 
     def __init__(self, parent):
-        super().__init__(parent, "System Information", (1350, 825), font_size=font_sz(2))
+        super().__init__(parent, "System Information", (1400, 875), font_size=font_sz(2))
         self.view.setPlainText("⏳ Loading system information…")
         self.done_sig.connect(self.view.setPlainText)
         self._closed = threading.Event()
@@ -1140,3 +1281,103 @@ class SysInfoDialog(_TextViewDialog):
             pass
         self._closed.set()
         super().closeEvent(event)
+
+class NotesDialog(_StandardKeysMixin, QDialog):
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._saved = False
+        from themes import current_theme, font_sz
+
+        profile = S.profile_name or "(no profile)"
+        self.setWindowTitle(f"Profile Notes — {profile}")
+        self.setMinimumSize(1500, 1000)
+
+        t       = current_theme()
+        bg      = t["bg"]
+        bg2     = t["bg2"]
+        bg3     = t["bg3"]
+        sep_col = t["header_sep"]
+        acc     = t["accent"]
+        fg      = t["text"]
+        dim     = t["text_dim"]
+        hi      = t["highlight"]
+        acc2    = t["accent2"]
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        hdr = QFrame()
+        hdr.setStyleSheet(f"background:{bg2};border-bottom:1px solid {sep_col};")
+        hl = QHBoxLayout(hdr)
+        hl.setContentsMargins(14, 10, 14, 10)
+        title_lbl = QLabel(f"📝  Notes  ·  {profile}")
+        title_lbl.setStyleSheet(
+            f"font-size:{font_sz(4)}px;font-weight:bold;"
+            f"color:{acc};background:transparent;"
+        )
+        hint_lbl = QLabel("Auto-saved on close")
+        hint_lbl.setStyleSheet(f"font-size:{font_sz(-2)}px;color:{dim};background:transparent;")
+        hl.addWidget(title_lbl)
+        hl.addStretch()
+        hl.addWidget(hint_lbl)
+
+        self._edit = QTextEdit()
+        self._edit.setPlaceholderText(
+            "Write notes about this profile here…\n\n"
+            "E.g.:\n"
+            "  • Last restore tested on …\n"
+            "  • Excluded paths / known issues\n"
+            "  • Destination host / credentials info"
+        )
+        self._edit.setStyleSheet(
+            f"QTextEdit{{background:{bg3};color:{fg};"
+            f"border:none;font-size:{font_sz()}px;padding:12px;}}"
+        )
+        self._edit.setPlainText(S.notes)
+
+        ftr = QFrame()
+        ftr.setStyleSheet(f"background:{bg2};border-top:1px solid {sep_col};")
+        fl = QHBoxLayout(ftr)
+        fl.setContentsMargins(12, 8, 12, 8)
+        fl.addStretch()
+
+        def _btn_style(primary: bool = False) -> str:
+            border = acc if primary else sep_col
+            return (
+                f"QPushButton{{background:{bg3};border:1px solid {border};"
+                f"border-radius:4px;color:{fg};padding:4px 16px;}}"
+                f"QPushButton:hover{{background:{bg2};border-color:{acc};color:{hi};}}"
+                f"QPushButton:focus{{border-color:{acc};color:{hi};outline:none;}}"
+                f"QPushButton:pressed{{background:{bg};border-color:{acc2};color:{acc2};}}"
+            )
+
+        save_btn = QPushButton("💾 Save && Close")
+        save_btn.setMinimumHeight(34)
+        save_btn.setStyleSheet(_btn_style(primary=True))
+        save_btn.clicked.connect(self._save_and_close)
+
+        discard_btn = QPushButton("Discard")
+        discard_btn.setMinimumHeight(34)
+        discard_btn.setStyleSheet(_btn_style())
+        discard_btn.clicked.connect(self.reject)
+
+        fl.addWidget(discard_btn)
+        fl.addWidget(save_btn)
+
+        layout.addWidget(hdr)
+        layout.addWidget(self._edit, 1)
+        layout.addWidget(ftr)
+        self.setStyleSheet(f"background:{bg};")
+
+    def _save_and_close(self) -> None:
+        S.notes = self._edit.toPlainText()
+        save_profile()
+        self._saved = True
+        self.accept()
+
+    def closeEvent(self, event) -> None:
+        if not self._saved and self.result() != QDialog.DialogCode.Rejected:
+            S.notes = self._edit.toPlainText()
+            save_profile()
+        event.accept()

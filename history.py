@@ -1,4 +1,6 @@
 import json
+import csv
+import io
 import os
 from datetime import datetime
 from pathlib import Path
@@ -11,12 +13,15 @@ from PyQt6.QtWidgets import (
 )
 
 from state import S, _LOG_HIST_DIR
-from themes import current_theme, font_sz
+from themes import current_theme, font_sz, register_style_listener, unregister_style_listener
 from ui_utils import _StandardKeysMixin
 
 
 def _history_path(profile_name: str) -> Path:
     return _LOG_HIST_DIR / f"{profile_name}.history.json"
+
+
+_MAX_HISTORY_ENTRIES = 500
 
 
 def append_history(operation: str, copied: int, skipped: int, errors: int, duration_s: int, cancelled: bool) -> None:
@@ -42,6 +47,8 @@ def append_history(operation: str, copied: int, skipped: int, errors: int, durat
                  "duration_s": duration_s,
                  "cancelled":  cancelled}
         existing.append(entry)
+        if len(existing) > _MAX_HISTORY_ENTRIES:
+            existing = existing[-_MAX_HISTORY_ENTRIES:]
         tmp_path = path.with_suffix(".tmp")
         try:
             tmp_path.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -62,6 +69,19 @@ def load_history(profile_name: str) -> list[dict]:
         return data if isinstance(data, list) else []
     except (json.JSONDecodeError, OSError):
         return []
+
+
+def export_history_csv(profile_name: str) -> str:
+    entries = load_history(profile_name)
+    out = io.StringIO()
+    writer = csv.DictWriter(
+        out,
+        fieldnames=["timestamp", "operation", "copied", "skipped", "errors", "duration_s", "cancelled"],
+        extrasaction="ignore",
+    )
+    writer.writeheader()
+    writer.writerows(entries)
+    return out.getvalue()
 
 
 from typing import NamedTuple
@@ -141,7 +161,7 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
     def __init__(self, parent) -> None:
         super().__init__(parent)
         self.setWindowTitle("History")
-        self.setMinimumSize(980, 580)
+        self.setMinimumSize(1250, 850)
         t   = current_theme()
         bg  = t["bg"]
         bg2 = t["bg2"]
@@ -221,12 +241,26 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
         bot_lay.addWidget(self._count_lbl)
         bot_lay.addStretch()
 
+        export_btn = QPushButton("📤 Export CSV")
+        export_btn.setMinimumHeight(32)
+        export_btn.setMinimumWidth(120)
+        export_btn.setStyleSheet(
+            f"QPushButton {{ background:{bg3}; border:1px solid {sep}; border-radius:4px;"
+            f"  color:{fg}; padding:2px 14px; }}"
+            f"QPushButton:hover {{ background:{bg2}; border-color:{acc}; color:{t['highlight']}; }}"
+            f"QPushButton:focus {{ border-color:{acc}; color:{t['highlight']}; outline:none; }}"
+            f"QPushButton:pressed {{ background:{bg}; border-color:{acc2}; color:{acc2}; }}")
+        export_btn.clicked.connect(self._export_history)
+        bot_lay.addWidget(export_btn)
+
         clear_btn = QPushButton("🗑 Clear History")
         clear_btn.setMinimumHeight(32)
         clear_btn.setMinimumWidth(130)
         clear_btn.setStyleSheet(f"QPushButton {{ background:{bg3}; border:1px solid {sep}; border-radius:4px;"
                                 f"  color:{t['error']}; padding:2px 14px; }}"
-                                f"QPushButton:hover {{ background:{bg2}; border-color:{t['error']}; }}")
+                                f"QPushButton:hover {{ background:{bg2}; border-color:{t['error']}; }}"
+                                f"QPushButton:focus {{ border-color:{t['error']}; outline:none; }}"
+                                f"QPushButton:pressed {{ background:{bg}; border-color:{t['error']}; }}")
         clear_btn.clicked.connect(self._clear_history)
         bot_lay.addWidget(clear_btn)
 
@@ -235,7 +269,9 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
         close_btn.setMinimumWidth(100)
         close_btn.setStyleSheet(f"QPushButton {{ background:{bg3}; border:1px solid {sep}; border-radius:4px;"
                                 f"  color:{fg}; padding:2px 18px; }}"
-                                f"QPushButton:hover {{ background:{bg2}; border-color:{acc}; }}")
+                                f"QPushButton:hover {{ background:{bg2}; border-color:{acc}; color:{t['highlight']}; }}"
+                                f"QPushButton:focus {{ border-color:{acc}; color:{t['highlight']}; outline:none; }}"
+                                f"QPushButton:pressed {{ background:{bg}; border-color:{acc2}; color:{acc2}; }}")
         close_btn.clicked.connect(self.accept)
         bot_lay.addWidget(close_btn)
 
@@ -247,8 +283,8 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
         lay.addWidget(bottom)
 
         self._entries: list[dict] = []
-        self._theme = t
         self._load()
+        register_style_listener(self._refresh_on_theme)
 
     def _load(self) -> None:
         name = S.profile_name or "(no profile)"
@@ -256,7 +292,7 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
         self._entries = load_history(S.profile_name or "")
         self._list.clear()
         self._detail.clear()
-        t   = self._theme
+        t   = current_theme()
         dim = t["text_dim"]
 
         if not self._entries:
@@ -301,8 +337,22 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
             self._list.addItem(item)
 
         n = len(self._entries)
-        self._count_lbl.setText(f"{n} run{'s' if n != 1 else ''}")
+        total_copied  = sum(e.get("copied",     0) for e in self._entries)
+        total_errors  = sum(e.get("errors",     0) for e in self._entries)
+        total_dur     = sum(e.get("duration_s", 0) for e in self._entries)
+        self._count_lbl.setText(
+            f"{n} run{'s' if n != 1 else ''}  ·  "
+            f"{total_copied:,} files copied total  ·  "
+            f"{total_errors:,} errors  ·  "
+            f"Total runtime: {_fmt_duration(total_dur)}"
+        )
         self._list.setCurrentRow(0)
+
+    def _refresh_on_theme(self) -> None:
+        row = self._list.currentRow()
+        self._load()
+        if 0 <= row < self._list.count():
+            self._list.setCurrentRow(row)
 
     def _clear_history(self) -> None:
         name = S.profile_name or ""
@@ -322,9 +372,36 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
             pass
         self._load()
 
+    def _export_history(self) -> None:
+        if not self._entries:
+            QMessageBox.information(self, "Export", "No history entries to export.")
+            return
+        from PyQt6.QtWidgets import QFileDialog
+        name = S.profile_name or "profile"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export history as a CSV file",
+            f"{name}_history.csv",
+            "CSV files (*.csv)"
+        )
+        if not path:
+            return
+        try:
+            csv_data = export_history_csv(S.profile_name or "")
+            Path(path).write_text(csv_data, encoding="utf-8")
+            QMessageBox.information(
+                self, "Export complete",
+                f"{len(self._entries)} Entries exported to:\n{path}"
+            )
+        except OSError as exc:
+            QMessageBox.critical(self, "Export failed", f"The file could not be written:\n{exc}")
+
+    def done(self, result: int) -> None:
+        unregister_style_listener(self._refresh_on_theme)
+        super().done(result)
+
     def _on_select(self, row: int) -> None:
         if row < 0 or row >= len(self._entries):
             self._detail.clear()
             return
-        e = self._entries[len(self._entries) - 1 - row]
-        self._detail.setHtml(_entry_detail_html(e, self._theme))
+        e = self._entries[-(row + 1)]
+        self._detail.setHtml(_entry_detail_html(e, current_theme()))

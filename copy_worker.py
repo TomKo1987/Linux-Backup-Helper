@@ -20,14 +20,16 @@ from urllib.parse import urlparse
 
 from PyQt6.QtCore import Qt, QElapsedTimer, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
-    QProgressBar, QPushButton, QScrollArea, QTabWidget, QVBoxLayout, QApplication, QWidget,
-    QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QSizePolicy, QSpinBox, QTextEdit,
+    QProgressBar, QPushButton, QScrollArea, QTabWidget, QVBoxLayout, QApplication, QWidget, QSpinBox,
+    QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QSizePolicy, QTextEdit,
 )
 
-from drive_utils import is_smb
+from drive_utils import is_smb, is_ssh, build_rsync_cmd
 from state import apply_replacements, logger
 from themes import current_theme, font_sz
 from ui_utils import _StandardKeysMixin
+from pre_post_hooks import run_hooks as _run_hooks
+
 
 _CHUNK           = 32 * 1024 * 1024
 _IO_BUF          =  8 * 1024 * 1024
@@ -83,14 +85,37 @@ _SMB_DOWN_RE = re.compile(
 
 
 def _notify(title: str, body: str, urgency: str = "normal") -> None:
-    if not shutil.which("notify-send"):
+    if not _NOTIFY_SEND:
         return
     try:
-        subprocess.Popen(["notify-send", f"--urgency={urgency}", "--expire-time=0", "--app-name=Backup Helper",
+        subprocess.Popen([_NOTIFY_SEND, f"--urgency={urgency}", "--expire-time=0", "--app-name=Backup Helper",
                           "--icon=drive-harddisk", title, body],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     except OSError:
         pass
+
+
+def _check_destination_space(tasks: list[tuple]) -> list[str]:
+    import shutil as _shutil
+    _MIN_FREE = 500 * 1024 * 1024  
+    checked: set[str] = set()
+    warnings: list[str] = []
+    for _src, dst_raw, title, *_ in tasks:
+        dst = dst_raw[0] if isinstance(dst_raw, list) else dst_raw
+        dst = str(dst).strip()
+        if not dst or dst in checked:
+            continue
+        checked.add(dst)
+        try:
+            usage = _shutil.disk_usage(dst)
+            if usage.free < _MIN_FREE:
+                free_mb = usage.free // (1024 * 1024)
+                warnings.append(
+                    f"• {dst!r}  —  only {free_mb:,} MB free"
+                )
+        except OSError:
+            pass
+    return warnings
 
 
 _CACHE_MISS = object()
@@ -101,6 +126,8 @@ _TIME_CHECK_EVERY = 32
 _seen_dirs_global: set[str] = set()
 _seen_dirs_lock = threading.Lock()
 _SHM_DIR: str | None = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else None
+
+_NOTIFY_SEND: str | None = shutil.which("notify-send")
 
 _smb_procs: dict[int, subprocess.Popen] = {}
 _smb_procs_lock = threading.Lock()
@@ -184,6 +211,7 @@ def _run_futures(futs: list, cancel: threading.Event, tag: str = "worker") -> No
 
 
 def _do_copy(entry, cancel: threading.Event, ok_l: list, sk_l: list, er_l: list, tc: dict) -> None:
+
     src, dst, title, src_st = entry
     try:
         status, aux, sz = _copy_file(src, dst, cancel)
@@ -310,6 +338,10 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
             os.ftruncate(wfd, 0)
         except OSError:
             pass
+        try:
+            os.lseek(rfd, 0, os.SEEK_SET)
+        except OSError:
+            pass
         rem = total
     if rem > 0:
         offset = total - rem
@@ -377,6 +409,11 @@ def _copy_file(src, dst, cancel):
 
             wfd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, st.st_mode & 0o777)
 
+            try:
+                os.fchmod(wfd, st.st_mode & 0o777)
+            except OSError as e:
+                logger.debug("Could not fchmod %s: %s", tmp, e)
+
             if st.st_size > 0:
                 try:
                     os.ftruncate(wfd, st.st_size)
@@ -390,12 +427,15 @@ def _copy_file(src, dst, cancel):
 
             try:
                 os.close(wfd)
-            finally:
-                wfd = None
+            except OSError:
+                pass
+            wfd = None
+
             try:
                 os.utime(tmp, ns=(st.st_atime_ns, st.st_mtime_ns))
             except OSError as e:
                 logger.debug("Could not preserve timestamps for %s: %s", tmp, e)
+
             os.replace(tmp, dst)
             success = True
             return "ok", dst, copied
@@ -410,16 +450,21 @@ def _copy_file(src, dst, cancel):
             return "error", str(exc), 0
         finally:
             if rfd is not None:
-                os.close(rfd)
+                try:
+                    os.close(rfd)
+                except OSError:
+                    pass
             if wfd is not None:
-                os.close(wfd)
+                try:
+                    os.close(wfd)
+                except OSError:
+                    pass
             if not success:
                 try:
                     os.unlink(tmp)
                 except OSError:
                     pass
-
-    return "error", "Incomplete copy after retry", 0
+    return "error", "Copy failed after retries", 0
 
 
 @dataclass
@@ -847,6 +892,7 @@ class _ShareProcessor:
                     break
                 with self._ri_lock:
                     self._ri_cache[key] = cached
+            assert isinstance(cached, dict)
             merged.update(cached)
         return merged
 
@@ -1005,13 +1051,14 @@ class CopyWorker(QThread):
         self._cancel = threading.Event()
 
     @staticmethod
-    def _normalize_tasks(tasks) -> list[tuple[str, str, str]]:
+    def _normalize_tasks(tasks) -> list[tuple[str, str, str, frozenset]]:
         result = []
         for t in tasks:
             if not isinstance(t, (list, tuple)) or len(t) < 2:
                 continue
             src_raw, dst_raw = t[0], t[1]
             title = str(t[2]) if len(t) > 2 else ""
+            raw_excl = t[3] if len(t) > 3 else {}
             srcs = [src_raw] if isinstance(src_raw, str) else src_raw
             dsts = [dst_raw] if isinstance(dst_raw, str) else dst_raw
             if not srcs or not dsts or len(srcs) != len(dsts):
@@ -1019,9 +1066,16 @@ class CopyWorker(QThread):
             for s, d in zip(srcs, dsts):
                 if s and d:
                     s_str, d_str = str(s), str(d)
-                    s_norm = s_str if is_smb(s_str) else os.path.abspath(os.path.expanduser(s_str))
-                    d_norm = d_str if is_smb(d_str) else os.path.abspath(os.path.expanduser(d_str))
-                    result.append((s_norm, d_norm, title))
+                    s_norm = s_str if (is_smb(s_str) or is_ssh(s_str)) else os.path.abspath(os.path.expanduser(s_str))
+                    d_norm = d_str if (is_smb(d_str) or is_ssh(d_str)) else os.path.abspath(os.path.expanduser(d_str))
+                    if isinstance(raw_excl, (set, frozenset)):
+                        exc_set: frozenset = frozenset(raw_excl)
+                    elif isinstance(raw_excl, dict):
+                        names: list = raw_excl.get(s_norm) or raw_excl.get(s_str) or []
+                        exc_set = frozenset(os.path.join(s_norm, n) for n in names)
+                    else:
+                        exc_set = frozenset()
+                    result.append((s_norm, d_norm, title, exc_set))
         return result
 
     def cancel(self) -> None:
@@ -1033,14 +1087,31 @@ class CopyWorker(QThread):
                 except OSError:
                     pass
 
+    @staticmethod
+    def _fire_hooks(entry_title: str, phase: str, hooks: list[str], abort: bool) -> bool:
+        if not hooks:
+            return True
+        ok, errors = _run_hooks(hooks, abort_on_error=abort, label=f"{entry_title}/{phase}")
+        if errors:
+            for err in errors:
+                logger.error("Hook error [%s]: %s", entry_title, err)
+        return ok or not abort
+
     def run(self) -> None:
         with _seen_dirs_lock:
             _seen_dirs_global.clear()
+        if hasattr(_tls, "seen_dirs"):
+            _tls.seen_dirs.clear()
         pw: "_SecurePw | None" = None
         try:
-            smb_tasks, local_tasks = [], []
-            for s, d, t in self.tasks:
-                (smb_tasks if is_smb(s) or is_smb(d) else local_tasks).append((s, d, t))
+            smb_tasks, ssh_tasks, local_tasks = [], [], []
+            for s, d, t, exc in self.tasks:
+                if is_smb(s) or is_smb(d):
+                    smb_tasks.append((s, d, t, exc))
+                elif is_ssh(s) or is_ssh(d):
+                    ssh_tasks.append((s, d, t, exc))
+                else:
+                    local_tasks.append((s, d, t, exc))
             user = ""
             if smb_tasks:
                 user, pw = _get_smb_credentials()
@@ -1054,13 +1125,16 @@ class CopyWorker(QThread):
                     self._scan_copy_local_pipelined(local_tasks, flusher, tracker)
                 else:
                     self.scan_finished.emit(0)
-
+                if ssh_tasks and not self._cancel.is_set():
+                    self._copy_ssh_tasks(ssh_tasks, flusher, tracker)
                 flusher.flush()
                 tracker.emit_all(self.entry_status)
-                self.finished_work.emit(flusher.copied, flusher.skipped, flusher.errors, self._cancel.is_set())
+                cancelled = self._cancel.is_set()
+                self.finished_work.emit(flusher.copied, flusher.skipped, flusher.errors, cancelled)
                 return
 
             local_items: list[tuple[str, str, str]] = []
+            local_not_found: list = []
             smb_expanded: list[_SmbJob] = []
             smb_errors: list[tuple[str, str]] = []
             _guest_box: list[bool] = [False]
@@ -1068,7 +1142,7 @@ class CopyWorker(QThread):
             def _phase1_local() -> None:
                 nonlocal local_items
                 if local_tasks and not self._cancel.is_set():
-                    local_items = self._scan_local_all(local_tasks)
+                    local_items = self._scan_local_all(local_tasks, not_found=local_not_found)
 
             def _phase1_smb() -> None:
                 if not smb_tasks or self._cancel.is_set():
@@ -1105,6 +1179,19 @@ class CopyWorker(QThread):
             def _phase2_local() -> None:
                 if local_items and not self._cancel.is_set():
                     self._copy_local_all(local_items, flusher, tracker, claim_size=cs, local_batch=lb, workers=cw)
+                if local_not_found and not self._cancel.is_set():
+                    flusher.push(
+                        sk=[(p, (f"Path does not exist — skipping ({_t})" if _t
+                                 else "Path does not exist — skipping"), 0)
+                            for p, _t in local_not_found],
+                        force=True,
+                    )
+                    nf_counts: dict = {}
+                    for _, nf_title in local_not_found:
+                        if nf_title:
+                            nf_counts.setdefault(nf_title, [0, 0, 0])[1] += 1
+                    if nf_counts:
+                        tracker.batch_update(nf_counts)
 
             def _phase2_smb() -> None:
                 if (smb_expanded or smb_errors) and not self._cancel.is_set():
@@ -1116,8 +1203,8 @@ class CopyWorker(QThread):
 
             flusher.flush()
             tracker.emit_all(self.entry_status)
-            self.finished_work.emit(flusher.copied, flusher.skipped, flusher.errors, self._cancel.is_set())
-
+            cancelled = self._cancel.is_set()
+            self.finished_work.emit(flusher.copied, flusher.skipped, flusher.errors, cancelled)
         except Exception as exc:
             logger.error("CopyWorker critical: %s", exc, exc_info=True)
             self.finished_work.emit(0, 0, 0, False)
@@ -1125,7 +1212,74 @@ class CopyWorker(QThread):
             if pw is not None:
                 pw.clear()
 
-    def _scan_local_all(self, tasks: list) -> list:
+    _RSYNC_PROGRESS_RE = re.compile(
+        r"^\s*([\d,]+)\s+(\d+)%\s+([\d.]+\w+/s)\s+([\d:]+)"
+    )
+
+    def _copy_ssh_tasks(
+        self,
+        tasks: list[tuple[str, str, str]],
+        flusher: "_Flusher",
+        tracker: "_EntryTracker",
+    ) -> None:
+        for src, dst, title, *_ in tasks:
+            if self._cancel.is_set():
+                break
+
+            self.scan_progress.emit(f"rsync  {title or src}", 0)
+            cmd = build_rsync_cmd(src, dst)
+            logger.debug("_copy_ssh_tasks: %s", " ".join(cmd))
+
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                )
+            except (OSError, FileNotFoundError) as exc:
+                logger.error("rsync launch failed for '%s': %s", src, exc)
+                flusher.push(er=[(src, str(exc), 0)])
+                tracker.batch_update({title: (0, 0, 1)} if title else {})
+                continue
+
+            assert proc.stdout is not None
+            last_pct = 0
+            try:
+                for line in proc.stdout:
+                    if self._cancel.is_set():
+                        proc.kill()
+                        break
+                    line = line.rstrip()
+                    m = self._RSYNC_PROGRESS_RE.match(line)
+                    if m:
+                        pct = int(m.group(2))
+                        if pct != last_pct:
+                            last_pct = pct
+                            self.scan_progress.emit(
+                                f"rsync  {title or src}  {pct}%  {m.group(3)}",
+                                pct,
+                            )
+                    elif line:
+                        logger.debug("rsync: %s", line)
+            except OSError as exc:
+                logger.warning("rsync read error for '%s': %s", src, exc)
+
+            proc.wait()
+            if self._cancel.is_set():
+                break
+
+            if proc.returncode == 0:
+                flusher.push(ok=[(src, dst, 0)])
+                tracker.batch_update({title: (1, 0, 0)} if title else {})
+                logger.info("rsync OK: %s → %s", src, dst)
+            else:
+                flusher.push(er=[(src, f"rsync exit {proc.returncode}", 0)])
+                tracker.batch_update({title: (0, 0, 1)} if title else {})
+                logger.error("rsync exit %d: %s → %s", proc.returncode, src, dst)
+
+    def _scan_local_all(self, tasks: list, not_found: "list | None" = None) -> list:
         cancel = self._cancel
         file_q = queue.SimpleQueue()
         work_q = queue.SimpleQueue()
@@ -1146,14 +1300,23 @@ class CopyWorker(QThread):
                 if pending[0] == 0:
                     all_done.set()
 
-        for src, dst, title in tasks:
-            _enqueue((src, dst, title))
+        for src, dst, title, *rest in tasks:
+            excludes = rest[0] if rest else frozenset()
+            if not os.path.exists(src):
+                if not_found is not None:
+                    not_found.append((src, title))
+            else:
+                _enqueue((src, dst, title, excludes))
+
+        with pend_lock:
+            if pending[0] == 0:
+                all_done.set()
 
         def _worker() -> None:
             local_n = 0
             while not cancel.is_set():
                 try:
-                    _src, _dst, _title = work_q.get(timeout=0.1)
+                    _src, _dst, _title, _excl = work_q.get(timeout=0.1)
                 except queue.Empty:
                     if all_done.is_set():
                         break
@@ -1165,9 +1328,11 @@ class CopyWorker(QThread):
                         for e in it:
                             if cancel.is_set():
                                 break
+                            if e.path in _excl:
+                                continue
                             if e.is_dir(follow_symlinks=False):
                                 if not _SKIP_RE.search(e.name):
-                                    _enqueue((e.path, os.path.join(_dst, e.name), _title))
+                                    _enqueue((e.path, os.path.join(_dst, e.name), _title, _excl))
                             elif e.is_file(follow_symlinks=False) and not _SKIP_RE.search(e.name):
                                 try:
                                     st = e.stat(follow_symlinks=False)
@@ -1246,15 +1411,27 @@ class CopyWorker(QThread):
                 if pending[0] == 0:
                     dir_done.set()
 
-        for src, dst, title in tasks:
-            _eq((src, dst, title))
+        for src, dst, title, *rest in tasks:
+            excludes = rest[0] if rest else frozenset()
+            if not os.path.exists(src):
+                _nf_reason = (f"Path does not exist — skipping ({title})" if title
+                              else "Path does not exist — skipping")
+                flusher.push(sk=[(src, _nf_reason, 0)])
+                if title:
+                    tracker.batch_update({title: (0, 1, 0)})
+            else:
+                _eq((src, dst, title, excludes))
+
+        with pend_lock:
+            if pending[0] == 0:
+                dir_done.set()
 
         def _scan_worker() -> None:
             local_n = 0
             batch: list = []
             while not cancel.is_set():
                 try:
-                    _src, _dst, _title = work_q.get(timeout=0.1)
+                    _src, _dst, _title, _excl = work_q.get(timeout=0.1)
                 except queue.Empty:
                     if dir_done.is_set():
                         break
@@ -1267,9 +1444,11 @@ class CopyWorker(QThread):
                         for e in it:
                             if cancel.is_set():
                                 break
+                            if e.path in _excl:
+                                continue
                             if e.is_dir(follow_symlinks=False):
                                 if not _SKIP_RE.search(e.name):
-                                    _eq((e.path, os.path.join(_dst, e.name), _title))
+                                    _eq((e.path, os.path.join(_dst, e.name), _title, _excl))
                             elif e.is_file(follow_symlinks=False) and not _SKIP_RE.search(e.name):
                                 try:
                                     entry_stat = e.stat(follow_symlinks=False)
@@ -1349,15 +1528,19 @@ class CopyWorker(QThread):
                 _pend_count = 0
                 _file_ctr   = 0
 
-            while not cancel.is_set():
+            while True:
                 try:
                     item = pipe_q.get(timeout=0.1)
                 except queue.Empty:
+                    if cancel.is_set():
+                        break
                     if (time.monotonic() - last_fl_t) >= _FLUSH_INTERVAL:
                         _fl()
                     continue
                 if item is sentinel:
                     break
+                if cancel.is_set():
+                    continue
                 with copy_params_lock:
                     lb = copy_params[0]
                 for entry in item:
@@ -1395,8 +1578,6 @@ class CopyWorker(QThread):
                         except queue.Empty:
                             break
                 for _ in range(_WORKERS):
-                    if cancel.is_set():
-                        break
                     inserted = False
                     while not inserted:
                         try:
@@ -1405,6 +1586,9 @@ class CopyWorker(QThread):
                         except queue.Full:
                             if cancel.is_set():
                                 break
+                            pass
+                    if cancel.is_set():
+                        break
 
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=1 + _WORKERS)
         try:
@@ -1420,7 +1604,7 @@ class CopyWorker(QThread):
         seen: set[tuple[str, str]] = set()
         shares: list = []
 
-        for s, d, _ in smb_tasks:
+        for s, d, *_ in smb_tasks:
             if self._cancel.is_set():
                 break
             h, sh, _ = _parse_smb(s if is_smb(s) else d)
@@ -1454,7 +1638,7 @@ class CopyWorker(QThread):
     def _filter_dead_tasks(smb_tasks, dead_shares, unreachable_shares) -> tuple[list, list]:
         alive: list = []
         errors: list = []
-        for s, d, t in smb_tasks:
+        for s, d, t, *_ in smb_tasks:
             h, sh, _ = _parse_smb(s if is_smb(s) else d)
             if (h, sh) in dead_shares:
                 reason = ("NT_STATUS_HOST_UNREACHABLE" if (h, sh) in unreachable_shares else "Authentication failed")
@@ -1812,7 +1996,7 @@ class _SummaryWidget(QWidget):
         self.total_lbl.setText(f"{total:,} files / {size_str}" if total > 0 else "")
         self._update_progress(done, total, finished, cancelled)
         self._update_segments(copied, skipped, errors)
-        self._update_timing(elapsed_s, done, total, finished, cancelled)
+        self._update_timing(elapsed_s, done, total, finished, cancelled, size_copied=size_copied)
 
     def on_entry_status(self, title: str, ok: int, skip: int, err: int) -> None:
         ec = self._entry_results.setdefault(title, [0, 0, 0])
@@ -1842,10 +2026,16 @@ class _SummaryWidget(QWidget):
             self._prog_pct.setText(f"{pct}%")
             self._progress_bar.setFormat(f"{pct}%  —  {done:,} / {total:,} files")
         else:
-            self._progress_bar.setRange(0, 0)
-            self._progress_bar.setValue(0)
-            self._prog_pct.setText("…")
-            self._progress_bar.setFormat("Scanning…")
+            if finished:
+                self._progress_bar.setRange(0, 1)
+                self._progress_bar.setValue(1)
+                self._prog_pct.setText("100%")
+                self._progress_bar.setFormat("100%  —  0 / 0 files")
+            else:
+                self._progress_bar.setRange(0, 0)
+                self._progress_bar.setValue(0)
+                self._prog_pct.setText("…")
+                self._progress_bar.setFormat("Scanning…")
 
     def _update_segments(self, copied: int, skipped: int, errors: int) -> None:
         segs  = (self._seg_copied, self._seg_skipped, self._seg_errors)
@@ -1858,7 +2048,8 @@ class _SummaryWidget(QWidget):
         for seg, count in zip(segs, (copied, skipped, errors)):
             seg.setFixedWidth(max(0, int(avail * count / total)))
 
-    def _update_timing(self, elapsed_s: int, done: int, total: int, finished: bool, cancelled: bool) -> None:
+    def _update_timing(self, elapsed_s: int, done: int, total: int, finished: bool, cancelled: bool,
+                       size_copied: int = 0) -> None:
         mins, secs = divmod(elapsed_s, 60)
         speed_str = "---"
         eta_str = "--:--"
@@ -1866,7 +2057,11 @@ class _SummaryWidget(QWidget):
             eta_str = "Cancelled" if cancelled else "Done"
         if elapsed_s > 0 and done > 0:
             rate = done / elapsed_s
-            speed_str = (f"{rate:,.1f} files/s" if rate >= 1 else f"1 file/{1 / rate:.1f}s")
+            if size_copied > 0:
+                mb_rate = size_copied / elapsed_s / (1024 * 1024)
+                speed_str = f"{mb_rate:.1f} MB/s"
+            else:
+                speed_str = (f"{rate:,.1f} files/s" if rate >= 1 else f"1 file/{1 / rate:.1f}s")
             if not finished and total > done:
                 eta_s = int((total - done) / rate)
                 eta_str = f"{eta_s // 60:02d}:{eta_s % 60:02d}"
@@ -1958,8 +2153,11 @@ class _LogWidget(QWidget):
                         f"padding:2px 5px; background:{t['bg3']}; color:{t['text']}; font-weight:bold}}"
                         f"QSpinBox:focus{{border:1px solid {t['accent']}; background:{t['bg2']}}}")
         style_muted  = f"color:{t['muted']}; font-size:{font_sz()}px; margin-left:10px;"
-        style_btn    = (f"QPushButton {{ background:{t['bg3']}; border:1px solid {t['header_sep']}; "
-                        f"border-radius:4px; padding:2px 8px; }} QPushButton:hover {{ background:{t['bg2']}; }}")
+        style_btn = (f"QPushButton {{ background:{t['bg3']}; border:1px solid {t['header_sep']}; "
+                     f"border-radius:4px; padding:2px 8px; color:{t['text']}; }}"
+                     f"QPushButton:hover {{ background:{t['bg2']}; border-color:{t['accent']}; color:{t['highlight']}; }}"
+                     f"QPushButton:focus {{ border-color:{t['accent']}; color:{t['highlight']}; outline:none; }}"
+                     f"QPushButton:pressed {{ background:{t['bg']}; border-color:{t['accent2']}; color:{t['accent2']}; }}")
 
         self._search = QLineEdit()
         self._search.setPlaceholderText(" 🔍  Search…")
@@ -2232,6 +2430,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         self._pending_sk = deque()
         self._pending_er = deque()
         self._size_copied = self._size_skipped = 0
+        self._not_found_paths: list[tuple[str, str]] = []
 
         self._summary = _SummaryWidget()
 
@@ -2260,8 +2459,12 @@ class CopyDialog(_StandardKeysMixin, QDialog):
 
         self.cancel_btn = QPushButton("⏹ Cancel")
         self.cancel_btn.setMinimumHeight(50)
-        self.cancel_btn.setStyleSheet(f"QPushButton {{background: {t['bg3']}; border: 1px solid {t['header_sep']}; "
-                                      f"border-radius: 4px}} QPushButton:hover {{ background: {t['bg2']}; }}")
+        self.cancel_btn.setStyleSheet(
+            f"QPushButton {{background: {t['bg3']}; border: 1px solid {t['header_sep']}; "
+            f"border-radius: 4px; color: {t['text']};}}"
+            f"QPushButton:hover {{background: {t['bg2']}; border-color: {t['accent']}; color: {t['highlight']};}}"
+            f"QPushButton:focus {{border-color: {t['accent']}; color: {t['highlight']}; outline: none;}}"
+            f"QPushButton:pressed {{background: {t['bg']}; border-color: {t['accent2']}; color: {t['accent2']};}}")
         self._cancel_connected = True
         self._accept_connected = False
         self.cancel_btn.clicked.connect(self.worker.cancel)
@@ -2286,6 +2489,16 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         self.worker.finished_work.connect(self._on_done)
         self.worker.scan_progress.connect(self._on_scan_progress)
         self.worker.entry_status.connect(self._summary.on_entry_status)
+
+        space_warnings = _check_destination_space(tasks)
+        if space_warnings:
+            QMessageBox.warning(
+                self,
+                "Low Disk Space",
+                "Warning: one or more destinations are running low on space:\n\n"
+                + "\n".join(space_warnings)
+                + "\n\nThe backup will still proceed.",
+            )
 
         self.worker.start()
         self._summary.update_stats(self._operation, 0, 0, 0, 0, 0, 0, 0, 0, False)
@@ -2350,7 +2563,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
     def _fmt_ok(s, d) -> str: return f"{apply_replacements(s)}\nCopied to ⤵\n{apply_replacements(d)}"
 
     @staticmethod
-    def _fmt_sk(p, r) -> str: return f"{apply_replacements(p)} ↷ {r}"
+    def _fmt_sk(p, r, _sz=0) -> str: return f"{apply_replacements(p)} ↷ {r}"
 
     @staticmethod
     def _fmt_er(p, m) -> str: return f"{apply_replacements(p)} ❌ {m}"
@@ -2368,6 +2581,10 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         for s, r, sz in sk:
             self._size_skipped += sz
             self._pending_sk.append((s, r))
+            if "does not exist" in r:
+                _nf_title = (r.rsplit(" (", 1)[1].rstrip(")")
+                             if (" (" in r and r.endswith(")")) else "")
+                self._not_found_paths.append((apply_replacements(s), _nf_title))
         self._pending_er.extend((s, m) for s, m, _sz in er)
 
         if total > 0:
@@ -2443,6 +2660,23 @@ class CopyDialog(_StandardKeysMixin, QDialog):
                     f"{c} file{'s' if c != 1 else ''} copied, {s} skipped",
                     urgency="normal",
                 )
+
+        if self._not_found_paths and not cancelled:
+            n = len(self._not_found_paths)
+            paths_text = "\n".join(
+                f"  \u2022 {p} ({t})" if t else f"  \u2022 {p}"
+                for p, t in self._not_found_paths
+            )
+            msg = (
+                f"{n} configured {'path was' if n == 1 else 'paths were'} not found "
+                f"and skipped:\n\n{paths_text}\n\n"
+                f"Please check these entries in your backup profile."
+            )
+
+            def _show_popup(_msg: str = msg) -> None:
+                QMessageBox.warning(self, "Missing Paths Detected", _msg)
+
+            QTimer.singleShot(0, _show_popup)
 
     def closeEvent(self, event) -> None:
         if self.worker.isRunning():

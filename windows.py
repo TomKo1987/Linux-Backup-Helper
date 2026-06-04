@@ -98,6 +98,10 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
             self.resize(min(hint.width() + 20, sg.width()), min(hint.height() + top_h, sg.height()))
 
     def _rebuild_top_controls(self) -> None:
+        t = current_theme()
+        self._top_wrap.setStyleSheet(
+            f"background:{t['bg2']};border-bottom:1px solid {t['header_sep']};")
+
         while self._top_hbox.count():
             item = self._top_hbox.takeAt(0)
             if w := item.widget():
@@ -253,12 +257,17 @@ class _CopyMixin:
         from copy_worker import CopyDialog
         from drive_utils import check_drives_to_mount, mount_required_drives
 
-        selected = [(src, dst, title) for cb, src, dst, title, *_ in self.checkbox_dirs if cb.isChecked()]
+        selected = []
+        for cb, src, dst, title, *rest in self.checkbox_dirs:
+            if cb.isChecked():
+                entry = rest[0] if rest else {}
+                excl = (entry or {}).get("details", {}).get("exclude_paths", {}) if isinstance(entry, dict) else {}
+                selected.append((src, dst, title, excl))
         if not selected:
             QMessageBox.information(self, "Note", "Nothing selected.")
             return
 
-        paths = [p for src, dst, _title in selected for p in src + dst]
+        paths = [p for src, dst, _title, *_ in selected for p in src + dst]
         drives_to_mount = check_drives_to_mount(paths)
         if not mount_required_drives(drives_to_mount, self):
             return
@@ -315,8 +324,8 @@ class SettingsWindow(_BaseCheckboxWindow):
     _cols_key     = "settings_window_columns"
 
     def __init__(self, parent) -> None:
-        self._entry_stacked: bool = False
         super().__init__(parent)
+        self._entry_stacked: bool = False
 
     def _extra_top_widgets(self) -> list: return [self._make_config_path_label()]
 
@@ -355,10 +364,12 @@ class SettingsWindow(_BaseCheckboxWindow):
                                 ("Profile Manager", self._manage_profiles)]), row, 0, 1, self.cols)
         row += 1
 
-        theme_btn = QPushButton("Change Theme")
-        theme_btn.clicked.connect(self._change_theme)
-        grid.addWidget(theme_btn, row, 0, 1, self.cols)
+        grid.addLayout(btn_row([("Auto-Backup", self._open_scheduler),
+                                ("Change Theme", self._change_theme),
+                                ("Disk Analyzer", self._open_disk_analyzer)]),
+                       row, 0, 1, self.cols)
         row += 1
+
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.close)
         grid.addWidget(close_btn, row, 0, 1, self.cols)
@@ -469,8 +480,17 @@ class SettingsWindow(_BaseCheckboxWindow):
         from system_manager_options import SystemManagerOptions
         SystemManagerOptions(self).exec()
 
+    def _open_scheduler(self) -> None:
+        from scheduler import SchedulerDialog
+        SchedulerDialog(self).exec()
+
+    def _open_disk_analyzer(self) -> None:
+        from disk_analyzer import DiskAnalyzerDialog
+        DiskAnalyzerDialog(self).exec()
+
     def _change_theme(self) -> None:
         dlg = _ThemeDialog(self)
+        self._theme_dlg = dlg
         dlg.changed.connect(self.done)
         dlg.show()
         dlg.raise_()
