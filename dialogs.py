@@ -199,6 +199,7 @@ class EntryDialog(QDialog):
         self.stacked: bool          = stacked
         self._suppress_sync: bool   = False
         self._entry_snapshot: dict  = entry or {}
+        self._e: dict = entry or {}
         self._show_full_paths: bool = False
         self._pairs_provided: bool  = _pairs is not None
         raw_excl: dict = (entry or {}).get("details", {}).get("exclude_paths", {})
@@ -633,10 +634,15 @@ class EntryDialog(QDialog):
         valid_srcs = {os.path.abspath(os.path.expanduser(s)) for s, _ in valid_pairs}
         clean_excludes = {k: v for k, v in self._pair_excludes.items() if k in valid_srcs and v}
 
+        _existing_details = getattr(self, "_e", self._entry_snapshot).get("details", {})
         self.result = {"header": hdr, "title": title,
-                       "source": [s for s, _ in valid_pairs], "destination": [d for _, d in valid_pairs],
-                       "details": {"no_backup":  self.no_backup.isChecked(), "no_restore": self.no_restore.isChecked(),
-                                   "exclude_paths": clean_excludes}}
+                       "source": [s for s, _ in valid_pairs],
+                       "destination": [d for _, d in valid_pairs],
+                       "details": {"no_backup": self.no_backup.isChecked(),
+                                   "no_restore": self.no_restore.isChecked(),
+                                   "exclude_paths": clean_excludes,
+                                   "pre_hooks": _existing_details.get("pre_hooks", []),
+                                   "post_hooks": _existing_details.get("post_hooks", [])}}
         self.accept()
 
 
@@ -671,7 +677,7 @@ class MountDialog(QDialog):
         self.name = _field("drive_name", "e.g. Backup 1")
         form.addRow(QLabel("Drive name:"))
         form.addRow(self.name)
-        self.mount_path = _field("mount_path", "e.g. smb://192.168.0.38/Backup Drive/")
+        self.mount_path = _field("mount_path", "e.g. smb://192.168.0.122/Backup Drive/")
         form.addRow(_info_label("󰔨 Mount path (optional)",
                                 "<u>Mount Path (optional)</u><br><br>"
                                 "Only needed if this drive cannot be detected automatically.<br><br>"

@@ -1432,7 +1432,8 @@ class _PackageDiffTab(QWidget):
 
         col_u = QVBoxLayout()
         self._list_untracked_lbl = QLabel("⚠  Installed, not in profile (0)")
-        self._list_missing_lbl = QLabel("✗  In profile, not installed (0)")
+        self._list_untracked_lbl.setStyleSheet(
+            f"font-weight:bold;color:{t['warning']};font-size:{font_sz(1)}px;")
         self._list_untracked = QListWidget()
         self._list_untracked.setStyleSheet(_list_ss)
         col_u.addWidget(self._list_untracked_lbl)

@@ -261,8 +261,11 @@ class _CopyMixin:
         for cb, src, dst, title, *rest in self.checkbox_dirs:
             if cb.isChecked():
                 entry = rest[0] if rest else {}
-                excl = (entry or {}).get("details", {}).get("exclude_paths", {}) if isinstance(entry, dict) else {}
-                selected.append((src, dst, title, excl))
+                details = (entry or {}).get("details", {}) if isinstance(entry, dict) else {}
+                excl = details.get("exclude_paths", {})
+                pre_hooks = details.get("pre_hooks", [])
+                post_hooks = details.get("post_hooks", [])
+                selected.append((src, dst, title, excl, pre_hooks, post_hooks))
         if not selected:
             QMessageBox.information(self, "Note", "Nothing selected.")
             return

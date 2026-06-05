@@ -1047,8 +1047,24 @@ class CopyWorker(QThread):
 
     def __init__(self, tasks) -> None:
         super().__init__()
+        self._hooks: dict[str, tuple[list, list]] = self._extract_hooks(tasks)
         self.tasks = self._normalize_tasks(tasks)
         self._cancel = threading.Event()
+
+    @staticmethod
+    def _extract_hooks(tasks) -> dict[str, tuple[list, list]]:
+        result: dict[str, tuple[list, list]] = {}
+        for t in tasks:
+            if not isinstance(t, (list, tuple)) or len(t) < 3:
+                continue
+            title = str(t[2]) if len(t) > 2 else ""
+            if not title or title in result:
+                continue
+            pre = list(t[4]) if len(t) > 4 and isinstance(t[4], list) else []
+            post = list(t[5]) if len(t) > 5 and isinstance(t[5], list) else []
+            if pre or post:
+                result[title] = (pre, post)
+        return result
 
     @staticmethod
     def _normalize_tasks(tasks) -> list[tuple[str, str, str, frozenset]]:
@@ -1122,7 +1138,27 @@ class CopyWorker(QThread):
                 flusher = _Flusher(self.batch_update, 0)
                 tracker = _EntryTracker()
                 if local_tasks and not self._cancel.is_set():
-                    self._scan_copy_local_pipelined(local_tasks, flusher, tracker)
+                    skip_titles: set[str] = set()
+                    seen_pre: set[str] = set()
+                    for _s, _d, _t, _exc in local_tasks:
+                        if _t and _t not in seen_pre:
+                            seen_pre.add(_t)
+                            _pre, _ = self._hooks.get(_t, ([], []))
+                            if _pre and not self._fire_hooks(_t, "pre", _pre, abort=True):
+                                skip_titles.add(_t)
+                    active_local = [(s, d, t, e) for s, d, t, e in local_tasks
+                                    if t not in skip_titles]
+                    if active_local and not self._cancel.is_set():
+                        self._scan_copy_local_pipelined(active_local, flusher, tracker)
+                    else:
+                        self.scan_finished.emit(0)
+                    seen_post: set[str] = set()
+                    for _s, _d, _t, _exc in local_tasks:
+                        if _t and _t not in seen_post:
+                            seen_post.add(_t)
+                            _, _post = self._hooks.get(_t, ([], []))
+                            if _post:
+                                self._fire_hooks(_t, "post", _post, abort=False)
                 else:
                     self.scan_finished.emit(0)
                 if ssh_tasks and not self._cancel.is_set():
@@ -1181,9 +1217,9 @@ class CopyWorker(QThread):
                     self._copy_local_all(local_items, flusher, tracker, claim_size=cs, local_batch=lb, workers=cw)
                 if local_not_found and not self._cancel.is_set():
                     flusher.push(
-                        sk=[(p, (f"Path does not exist — skipping ({_t})" if _t
+                        sk=[(p, (f"Path does not exist — skipping ({t_})" if t_
                                  else "Path does not exist — skipping"), 0)
-                            for p, _t in local_not_found],
+                            for p, t_ in local_not_found],
                         force=True,
                     )
                     nf_counts: dict = {}

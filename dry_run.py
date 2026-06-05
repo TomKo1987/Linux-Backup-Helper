@@ -44,52 +44,54 @@ class _DryRunWorker(QThread):
 
     def _analyse(self, sources: list[str], destinations: list[str], title: str) -> dict:
         to_copy: list[tuple[str, str]] = []
-        to_skip: list[str]             = []
-        errors:  list[tuple[str, str]] = []
+        to_skip: list[str] = []
+        errors: list[tuple[str, str]] = []
 
-        src_root = sources[0] if sources else ""
-        dst_root = destinations[0] if destinations else ""
-
-        if not src_root or not dst_root:
+        if not sources or not destinations:
             return dict(title=title, to_copy=to_copy,
                         to_skip=to_skip, errors=errors, src_total=0)
 
-        src_p = Path(src_root).expanduser()
-        dst_p = Path(dst_root).expanduser()
-
-        if not src_p.exists():
-            errors.append((src_root, "Source path does not exist"))
-            return dict(title=title, to_copy=to_copy,
-                        to_skip=to_skip, errors=errors, src_total=0)
-
-        for dirpath, _dirs, files in os.walk(src_p, followlinks=False):
+        for src_root, dst_root in zip(sources, destinations):
             if self._cancel.is_set():
                 break
-            for fname in files:
-                src_file = Path(dirpath) / fname
-                try:
-                    rel = src_file.relative_to(src_p)
-                except ValueError:
-                    continue
-                dst_file = dst_p / rel
-                try:
-                    src_stat = src_file.stat()
-                except OSError as e:
-                    errors.append((str(rel), str(e)))
-                    continue
+            if not src_root or not dst_root:
+                continue
 
-                if not dst_file.exists():
-                    to_copy.append((str(rel), "new"))
-                else:
+            src_p = Path(src_root).expanduser()
+            dst_p = Path(dst_root).expanduser()
+
+            if not src_p.exists():
+                errors.append((src_root, "Source path does not exist"))
+                continue
+
+            for dirpath, _dirs, files in os.walk(src_p, followlinks=False):
+                if self._cancel.is_set():
+                    break
+                for fname in files:
+                    src_file = Path(dirpath) / fname
                     try:
-                        dst_stat = dst_file.stat()
-                        if (src_stat.st_size != dst_stat.st_size
-                                or int(src_stat.st_mtime) > int(dst_stat.st_mtime)):
-                            to_copy.append((str(rel), "modified"))
-                        else:
-                            to_skip.append(str(rel))
+                        rel = src_file.relative_to(src_p)
+                    except ValueError:
+                        continue
+                    dst_file = dst_p / rel
+                    try:
+                        src_stat = src_file.stat()
                     except OSError as e:
                         errors.append((str(rel), str(e)))
+                        continue
+
+                    if not dst_file.exists():
+                        to_copy.append((str(rel), "new"))
+                    else:
+                        try:
+                            dst_stat = dst_file.stat()
+                            if (src_stat.st_size != dst_stat.st_size
+                                    or int(src_stat.st_mtime) > int(dst_stat.st_mtime)):
+                                to_copy.append((str(rel), "modified"))
+                            else:
+                                to_skip.append(str(rel))
+                        except OSError as e:
+                            errors.append((str(rel), str(e)))
 
         return dict(
             title=title,
