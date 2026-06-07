@@ -153,24 +153,27 @@ class _ScanWorker(QThread):
             n_found = 0
 
             if proc.stdout:
-                for line in proc.stdout:
-                    if self._cancel.is_set():
-                        proc.kill()
-                        break
-                    line = line.rstrip("\n")
-                    if not line:
-                        continue
-                    parts = line.split("\t", 1)
-                    if len(parts) == 2:
-                        try:
-                            sz = int(parts[0])
-                            path = Path(parts[1])
-                            if path != self._root:
-                                sizes[path] = sz
-                                n_found += 1
-                                self.progress.emit(f"Scanning\u2026 {n_found} entries found")
-                        except ValueError:
-                            pass
+                try:
+                    for line in proc.stdout:
+                        if self._cancel.is_set():
+                            proc.kill()
+                            break
+                        line = line.rstrip("\n")
+                        if not line:
+                            continue
+                        parts = line.split("\t", 1)
+                        if len(parts) == 2:
+                            try:
+                                sz = int(parts[0])
+                                path = Path(parts[1])
+                                if path != self._root:
+                                    sizes[path] = sz
+                                    n_found += 1
+                                    self.progress.emit(f"Scanning\u2026 {n_found} entries found")
+                            except ValueError:
+                                pass
+                finally:
+                    proc.stdout.close()
             proc.wait()
         except (OSError, subprocess.SubprocessError) as exc:
             logger.warning("DiskAnalyzer du: %s", exc)

@@ -1614,17 +1614,12 @@ class CopyWorker(QThread):
                         except queue.Empty:
                             break
                 for _ in range(_WORKERS):
-                    inserted = False
-                    while not inserted:
+                    while True:
                         try:
                             pipe_q.put(sentinel, timeout=0.1)
-                            inserted = True
+                            break
                         except queue.Full:
-                            if cancel.is_set():
-                                break
                             pass
-                    if cancel.is_set():
-                        break
 
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=1 + _WORKERS)
         try:

@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
 
 from linux_distro_helper import LinuxDistroHelper, SESSIONS, USER_SHELLS, ARCH_KERNEL_VARIANTS, is_valid_pkg_name
 from state import S, _HOME, _USER, apply_replacements, save_profile, sort_pkg_list, sort_specific_pkg_list, logger
+from dotfiles_manager import _first_path
 from sudo_password import SecureString
 from themes import (
     style_label_info, style_label_mono, style_op_label, tri_styles, apply_tooltip, style_sudo_checkbox,
@@ -768,7 +769,7 @@ class SystemManagerOptions(QDialog):
     def _edit_dotfiles(self) -> None:
         files = sorted(
             [f for f in (S.dotfiles or []) if isinstance(f, dict) and f.get("source") and f.get("destination")],
-            key=lambda f: Path(f["source"]).name.lower()
+            key=lambda f: Path(_first_path(f["source"])).name.lower()
         )
         checkboxes: list[tuple[TriCheckBox, dict]] = []
         rows: list[tuple[QFrame, TriCheckBox, dict]] = []
@@ -779,7 +780,7 @@ class SystemManagerOptions(QDialog):
         vlay.setSpacing(4)
 
         for idx, f in enumerate(files):
-            filename = Path(f["source"]).name or f["source"]
+            filename = Path(_first_path(f["source"])).name or _first_path(f["source"])
             tip = (f"<b>Source:</b><br>{f['source']}<br><br><b>Destination:</b><br>{f['destination']}<br><br>"
                    f"<i>Left-click to change status. Click + to expand &amp; edit.</i><br><br>{legend}")
             cb = _make_tri_cb(filename, f.get("disabled", False), tip)
