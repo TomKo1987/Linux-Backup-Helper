@@ -16,12 +16,11 @@ from themes import current_theme, font_sz, register_style_listener, unregister_s
 from ui_utils import _StandardKeysMixin
 
 
-def _fmt_bytes(n: int) -> str:
+def _fmt_bytes(n: int) -> str | None:
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if n < 1024 or unit == "TB":
             return f"{n:.1f} {unit}" if unit != "B" else f"{n} B"
         n /= 1024
-    return str(n)
 
 
 def _fmt_dur(s: int) -> str:
@@ -376,7 +375,7 @@ class BackupStatsDialog(_StandardKeysMixin, QDialog):
             ("🗂", str(total),             "Total Runs",       t["accent"]),
             ("✅", str(successful),         "Successful",       t["success"]),
             ("⚠️", str(failed + cancelled), "Failed/Cancelled", t["warning"] if failed == 0 else t["error"]),
-            ("📁", _fmt_bytes(total_copied), "Files Copied",    t["info"]),
+            ("📁", f"{total_copied:,}", "Files Copied",    t["info"]),
             ("⏭", str(total_skip),          "Files Skipped",   t["accent2"]),
             ("⏱",  _fmt_dur(avg_dur),        "Avg Duration",    t["accent2"]),
         ]:
