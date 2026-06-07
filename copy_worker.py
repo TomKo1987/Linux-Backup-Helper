@@ -14,8 +14,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from itertools import groupby, islice
 from pathlib import Path as _Path
-from typing import Callable
-from typing import Optional, Protocol
+from typing import Callable, Optional, Protocol
 from urllib.parse import urlparse
 
 from PyQt6.QtCore import Qt, QElapsedTimer, QThread, QTimer, pyqtSignal
@@ -25,11 +24,10 @@ from PyQt6.QtWidgets import (
 )
 
 from drive_utils import is_smb, is_ssh, build_rsync_cmd
+from pre_post_hooks import run_hooks as _run_hooks
 from state import apply_replacements, logger
 from themes import current_theme, font_sz
 from ui_utils import _StandardKeysMixin
-from pre_post_hooks import run_hooks as _run_hooks
-
 
 _CHUNK           = 32 * 1024 * 1024
 _IO_BUF          =  8 * 1024 * 1024
@@ -84,6 +82,9 @@ _SMB_DOWN_RE = re.compile(
 )
 
 
+_NOTIFY_SEND: str | None = shutil.which("notify-send")
+
+
 def _notify(title: str, body: str, urgency: str = "normal") -> None:
     if not _NOTIFY_SEND:
         return
@@ -126,8 +127,6 @@ _TIME_CHECK_EVERY = 32
 _seen_dirs_global: set[str] = set()
 _seen_dirs_lock = threading.Lock()
 _SHM_DIR: str | None = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else None
-
-_NOTIFY_SEND: str | None = shutil.which("notify-send")
 
 _smb_procs: dict[int, subprocess.Popen] = {}
 _smb_procs_lock = threading.Lock()
@@ -892,7 +891,9 @@ class _ShareProcessor:
                     break
                 with self._ri_lock:
                     self._ri_cache[key] = cached
-            assert isinstance(cached, dict)
+            if not isinstance(cached, dict):
+                logger.error("SMB remote index: unexpected cache value type %s for key %s", type(cached), key)
+                break
             merged.update(cached)
         return merged
 
@@ -1044,6 +1045,9 @@ class CopyWorker(QThread):
     scan_progress = pyqtSignal(str, int)
     entry_status = pyqtSignal(str, int, int, int)
     scan_finished = pyqtSignal(int)
+    _RSYNC_PROGRESS_RE = re.compile(
+        r"^\s*([\d,]+)\s+(\d+)%\s+([\d.]+\w+/s)\s+([\d:]+)"
+    )
 
     def __init__(self, tasks) -> None:
         super().__init__()
@@ -1247,10 +1251,6 @@ class CopyWorker(QThread):
         finally:
             if pw is not None:
                 pw.clear()
-
-    _RSYNC_PROGRESS_RE = re.compile(
-        r"^\s*([\d,]+)\s+(\d+)%\s+([\d.]+\w+/s)\s+([\d:]+)"
-    )
 
     def _copy_ssh_tasks(
         self,
@@ -2594,7 +2594,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
     def _fmt_ok(s, d) -> str: return f"{apply_replacements(s)}\nCopied to ⤵\n{apply_replacements(d)}"
 
     @staticmethod
-    def _fmt_sk(p, r, _sz=0) -> str: return f"{apply_replacements(p)} ↷ {r}"
+    def _fmt_sk(p, r) -> str: return f"{apply_replacements(p)} ↷ {r}"
 
     @staticmethod
     def _fmt_er(p, m) -> str: return f"{apply_replacements(p)} ❌ {m}"
@@ -2616,7 +2616,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
                 _nf_title = (r.rsplit(" (", 1)[1].rstrip(")")
                              if (" (" in r and r.endswith(")")) else "")
                 self._not_found_paths.append((apply_replacements(s), _nf_title))
-        self._pending_er.extend((s, m) for s, m, _sz in er)
+        self._pending_er.extend((s, m) for s, m, _ in er)
 
         if total > 0:
             self._summary.update_progress_bar(done, total)

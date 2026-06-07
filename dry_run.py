@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
 )
 
 from state import S
-from themes import current_theme, font_sz, register_style_listener, unregister_style_listener
+from themes import current_theme, font_sz
 from ui_utils import _StandardKeysMixin
 
 __all__ = ["DryRunDialog"]
@@ -494,17 +494,12 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         self._worker: Optional[_DryRunWorker] = None
         self._results: list[dict] = []
         self._build()
-        register_style_listener(self._refresh_style)
 
     def closeEvent(self, event) -> None:
         if self._worker and self._worker.isRunning():
             self._worker.cancel()
             self._worker.wait(3000)
-        unregister_style_listener(self._refresh_style)
         event.accept()
-
-    def _refresh_style(self) -> None:
-        pass
 
     def _build(self) -> None:
         t   = current_theme()

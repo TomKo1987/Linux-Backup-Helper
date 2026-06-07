@@ -1,6 +1,8 @@
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+if TYPE_CHECKING:
+    from sudo_password import SecureString
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
@@ -12,7 +14,6 @@ from PyQt6.QtWidgets import (
 from linux_distro_helper import LinuxDistroHelper, SESSIONS, USER_SHELLS, ARCH_KERNEL_VARIANTS, is_valid_pkg_name
 from state import S, _HOME, _USER, apply_replacements, save_profile, sort_pkg_list, sort_specific_pkg_list, logger
 from dotfiles_manager import _first_path
-from sudo_password import SecureString
 from themes import (
     style_label_info, style_label_mono, style_op_label, tri_styles, apply_tooltip, style_sudo_checkbox,
     current_theme, font_sz, style_checkbox_muted, style_checkbox_select_all, tri_state_legend_html
@@ -1570,7 +1571,7 @@ class SystemManagerLauncher:
         self._sm_thread = SystemManagerThread(pw, distro=self._distro)
         self._sm_dialog = SystemManagerDialog(self.parent)
         t, d = self._sm_thread, self._sm_dialog
-        t.thread_started.connect(lambda: d.exec(),Qt.ConnectionType.QueuedConnection)
+        t.thread_started.connect(lambda: d.exec(), Qt.ConnectionType.QueuedConnection)
         t.outputReceived.connect(d.on_output)
         t.taskListReady.connect(d.on_task_list)
         t.taskStatusChanged.connect(d.on_task_status)

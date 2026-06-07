@@ -1,6 +1,6 @@
-import json
 import csv
 import io
+import json
 import os
 from datetime import datetime
 from pathlib import Path
@@ -87,12 +87,6 @@ def export_history_csv(profile_name: str) -> str:
     return out.getvalue()
 
 
-from typing import NamedTuple
-
-class _OpKind(NamedTuple):
-    is_backup: bool
-    is_restore: bool
-
 def _fmt_duration(s: int) -> str:
     s = max(0, s)
     if s < 60:
@@ -103,10 +97,10 @@ def _fmt_duration(s: int) -> str:
     m = (s % 3600) // 60
     return f"{h}h {m:02d}m {s % 60:02d}s"
 
-def _op_classify(op: str) -> _OpKind:
+def _op_classify(op: str) -> tuple[bool, bool]:
     lo = op.lower()
     is_restore = "restore" in lo
-    return _OpKind(is_backup="backup" in lo and not is_restore, is_restore=is_restore)
+    return "backup" in lo and not is_restore, is_restore
 
 
 def _entry_detail_html(e: dict, t: dict) -> str:

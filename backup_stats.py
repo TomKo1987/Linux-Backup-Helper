@@ -11,37 +11,10 @@ from PyQt6.QtWidgets import (
     QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
-from state import S, _LOG_HIST_DIR
+from history import load_history as _load_all_history, _fmt_duration as _fmt_dur
+from state import S
 from themes import current_theme, font_sz, register_style_listener, unregister_style_listener
 from ui_utils import _StandardKeysMixin
-
-
-def _fmt_bytes(n: int) -> str | None:
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if n < 1024 or unit == "TB":
-            return f"{n:.1f} {unit}" if unit != "B" else f"{n} B"
-        n /= 1024
-
-
-def _fmt_dur(s: int) -> str:
-    s = max(0, s)
-    if s < 60:
-        return f"{s}s"
-    if s < 3600:
-        return f"{s // 60}m {s % 60:02d}s"
-    return f"{s // 3600}h {(s % 3600) // 60:02d}m"
-
-
-def _load_all_history(profile_name: str) -> list[dict]:
-    import json
-    path = _LOG_HIST_DIR / f"{profile_name}.history.json"
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, list) else []
-    except (json.JSONDecodeError, OSError, ValueError):
-        return []
 
 
 def _parse_ts(ts: str) -> Optional[datetime]:

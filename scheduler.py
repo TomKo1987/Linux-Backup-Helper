@@ -1,3 +1,5 @@
+import base64 as _b64
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -70,7 +72,6 @@ def install_timer(interval_key: str, backup_headers: list[str], *, on_calendar: 
         return False, "No OnCalendar expression provided."
 
     exe = Path(__file__).resolve().parent / "main.py"
-    import json, base64 as _b64
     headers_b64 = _b64.b64encode(json.dumps(backup_headers).encode()).decode()
 
     ac_condition = "ConditionACPower=true\n" if only_on_ac else ""
@@ -167,7 +168,7 @@ def get_ac_only() -> bool:
     svc_path, _ = _unit_names()
     try:
         return "ConditionACPower=true" in svc_path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return False
 
 

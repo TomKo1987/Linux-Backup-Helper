@@ -1,4 +1,4 @@
-from typing import Type, Optional
+from typing import Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFontDatabase
@@ -561,7 +561,7 @@ class _ThemeDialog(_StandardKeysMixin, QDialog):
         super().reject()
 
 
-_WINDOW_MAP: "dict[str, Type[_BaseCheckboxWindow]]" = {
+_WINDOW_MAP: dict[str, type[_BaseCheckboxWindow]] = {
     "Backup": BackupWindow, "Restore": RestoreWindow, "Settings": SettingsWindow}
 
 

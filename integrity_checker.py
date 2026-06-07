@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
 )
 
 from state import S
-from themes import current_theme, font_sz, register_style_listener, unregister_style_listener
+from themes import current_theme, font_sz
 from ui_utils import _StandardKeysMixin
 
 __all__ = ["IntegrityCheckerDialog"]
@@ -225,17 +225,12 @@ class IntegrityCheckerDialog(_StandardKeysMixin, QDialog):
         self.setMinimumSize(1500, 1000)
         self._worker: Optional[_CheckWorker] = None
         self._build()
-        register_style_listener(self._refresh_style)
 
     def closeEvent(self, event) -> None:
         if self._worker and self._worker.isRunning():
             self._worker.quit()
             self._worker.wait(2000)
-        unregister_style_listener(self._refresh_style)
         super().closeEvent(event)
-
-    def _refresh_style(self) -> None:
-        pass
 
     def _build(self) -> None:
         t = current_theme()
