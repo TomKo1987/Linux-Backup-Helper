@@ -6,10 +6,9 @@ import re
 from dataclasses import dataclass, field, fields as _dc_fields
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from constants import USER_SHELLS, ARCH_KERNEL_VARIANTS
-
 
 RESTART_DIALOG: int = 2
 _USER = pwd.getpwuid(os.getuid()).pw_name
@@ -146,7 +145,7 @@ S = State()
 _KNOWN_UI_KEYS = frozenset(S.ui.keys())
 
 
-def _atomic_write(path: Path, data: dict) -> None:
+def _atomic_write(path: Path, data: dict | list) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(".tmp")
     try:
@@ -218,7 +217,7 @@ def _norm_paths(raw: Any) -> list[str]:
 def _valid_hex_color(value: Any) -> bool: return isinstance(value, str) and bool(_HEX_COLOR_RE.match(value))
 
 
-def _parse_entry(raw: dict) -> Optional[dict]:
+def _parse_entry(raw: dict) -> dict | None:
     if not isinstance(raw, dict):
         return None
     header = raw.get("header", "").strip()
@@ -331,7 +330,7 @@ def _load_profile_from_data(path: Path, data: dict) -> bool:
         return False
 
 
-def save_profile(path: Optional[Path] = None) -> bool:
+def save_profile(path: Path | None = None) -> bool:
     resolved = path or (_PROFILES_DIR / f"{S.profile_name}.json" if S.profile_name else None)
     if not resolved:
         return False

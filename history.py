@@ -1,18 +1,17 @@
 import csv
 import io
 import json
-import os
 from datetime import datetime
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QDialog, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
+    QApplication, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
     QMessageBox, QPushButton, QTextEdit, QVBoxLayout
 )
 
-from state import S, _LOG_HIST_DIR
+from state import S, _LOG_HIST_DIR, _atomic_write, logger
 from themes import current_theme, font_sz, register_style_listener, unregister_style_listener
 from ui_utils import _StandardKeysMixin
 
@@ -49,18 +48,9 @@ def append_history(operation: str, copied: int, skipped: int, errors: int, durat
         existing.append(entry)
         if len(existing) > _MAX_HISTORY_ENTRIES:
             existing = existing[-_MAX_HISTORY_ENTRIES:]
-        tmp_path = path.with_suffix(".tmp")
-        try:
-            with open(tmp_path, "w", encoding="utf-8") as _fh:
-                _fh.write(json.dumps(existing, indent=2, ensure_ascii=False))
-                _fh.flush()
-                os.fsync(_fh.fileno())
-            os.replace(tmp_path, path)
-        except (OSError, PermissionError):
-            tmp_path.unlink(missing_ok=True)
-            raise
-    except (OSError, PermissionError):
-        pass
+        _atomic_write(path, existing)
+    except (OSError, PermissionError) as exc:
+        logger.warning("append_history: could not write history for '%s': %s", name, exc)
 
 
 def load_history(profile_name: str) -> list[dict]:
@@ -158,7 +148,15 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
     def __init__(self, parent) -> None:
         super().__init__(parent)
         self.setWindowTitle("History")
-        self.setMinimumSize(1250, 850)
+        screen = QApplication.primaryScreen()
+        geo    = screen.availableGeometry() if screen else None
+        if geo:
+            self.setMinimumSize(
+                min(1250, int(geo.width()  * 0.85)),
+                min(850,  int(geo.height() * 0.85)),
+            )
+        else:
+            self.setMinimumSize(1000, 650)
         t   = current_theme()
         bg  = t["bg"]
         bg2 = t["bg2"]
@@ -373,7 +371,6 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
         if not self._entries:
             QMessageBox.information(self, "Export", "No history entries to export.")
             return
-        from PyQt6.QtWidgets import QFileDialog
         name = S.profile_name or "profile"
         path, _ = QFileDialog.getSaveFileName(
             self, "Export history as a CSV file",

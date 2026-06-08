@@ -1,5 +1,3 @@
-from typing import Optional
-
 from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout
 
@@ -87,7 +85,7 @@ class SudoPasswordDialog(QDialog):
 class SecureString:
     __slots__ = ("_buf",)
 
-    def __init__(self, value: Optional[str] = None) -> None: self._buf = bytearray(value.encode("utf-8")) if value else bytearray()
+    def __init__(self, value: str | None = None) -> None: self._buf = bytearray(value.encode("utf-8")) if value else bytearray()
 
     def get(self) -> str: return self._buf.decode("utf-8") if self._buf else ""
 

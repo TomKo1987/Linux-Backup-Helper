@@ -5,7 +5,6 @@ import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QColor, QFont
@@ -20,7 +19,7 @@ from themes import current_theme, font_sz, register_style_listener, unregister_s
 from ui_utils import _StandardKeysMixin
 
 
-def _first_path(v) -> str:
+def first_path(v) -> str:
     if isinstance(v, list):
         return str(v[0]) if v else ""
     return str(v) if v else ""
@@ -30,7 +29,7 @@ def _expand(path: str) -> Path:
     return Path(os.path.expandvars(os.path.expanduser(path)))
 
 
-def _read_safe(path: Path) -> Optional[str]:
+def _read_safe(path: Path) -> str | None:
     try:
         return path.read_text(encoding="utf-8", errors="replace")
     except PermissionError:
@@ -112,8 +111,8 @@ class _DeployWorker(QThread):
     def run(self) -> None:
         ok = err = 0
         for f in self._files:
-            src = _expand(_first_path(f.get("source", "")))
-            dst = _expand(_first_path(f.get("destination", "")))
+            src = _expand(first_path(f.get("source", "")))
+            dst = _expand(first_path(f.get("destination", "")))
             if not src.exists():
                 self.progress.emit(f"  ✗ Source not found: {src}", True)
                 err += 1
@@ -158,7 +157,7 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
         self.setWindowTitle("Dotfiles Manager")
         self.setMinimumSize(1500, 1000)
         self._files:  list[dict]     = []
-        self._worker: Optional[_DeployWorker] = None
+        self._worker: _DeployWorker | None = None
         self._build_ui()
         self._load_files()
         register_style_listener(self._refresh_styles)
@@ -355,8 +354,8 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
         for f in self._files:
             src_raw = f.get("source", "")
             dst_raw = f.get("destination", "")
-            src = _expand(_first_path(src_raw))
-            dst = _expand(_first_path(dst_raw))
+            src = _expand(first_path(src_raw))
+            dst = _expand(first_path(dst_raw))
 
             title = f.get("title", src.name)
             src_text = _read_safe(src)
@@ -404,8 +403,8 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
         t       = current_theme()
         src_raw = f.get("source", "")
         dst_raw = f.get("destination", "")
-        src = _expand(_first_path(src_raw))
-        dst = _expand(_first_path(dst_raw))
+        src = _expand(first_path(src_raw))
+        dst = _expand(first_path(dst_raw))
 
         self._diff_title.setText(f.get("title", src.name))
 
@@ -462,7 +461,7 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
             return
 
         names = "\n".join(
-            f"  • {f.get('title', _expand(_first_path(f.get('source', ''))).name) or f.get('source', '?')}"
+            f"  • {f.get('title', _expand(first_path(f.get('source', ''))).name) or f.get('source', '?')}"
             for f in files
         )
         ans = QMessageBox.question(
@@ -514,8 +513,8 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
                 continue
             src_raw = f.get("source", "")
             dst_raw = f.get("destination", "")
-            src = _expand(_first_path(src_raw))
-            dst = _expand(_first_path(dst_raw))
+            src = _expand(first_path(src_raw))
+            dst = _expand(first_path(dst_raw))
             src_text = _read_safe(src)
             if src_text is None:
                 continue

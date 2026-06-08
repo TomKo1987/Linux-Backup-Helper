@@ -7,7 +7,6 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Optional
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QPoint
 from PyQt6.QtGui import QColor, QCloseEvent, QKeySequence, QShortcut
@@ -93,7 +92,7 @@ def _get_disk_info(path: Path) -> dict:
         try:
             real = os.path.realpath(str(path))
             best_mnt = ""
-            with open("/proc/mounts") as f:
+            with open("/proc/mounts", encoding="utf-8", errors="replace") as f:
                 for line in f:
                     cols = line.split()
                     if len(cols) >= 3:
@@ -130,7 +129,7 @@ class _ScanWorker(QThread):
 
         mount_points: set[str] = set()
         try:
-            with open("/proc/mounts") as f:
+            with open("/proc/mounts", encoding="utf-8", errors="replace") as f:
                 for line in f:
                     cols = line.split()
                     if len(cols) >= 2:
@@ -299,8 +298,7 @@ class _DiskInfoBar(QFrame):
         )
 
         bar_width = 40
-        filled    = max(0, min(bar_width, int(info["fraction_used"] * bar_width)))
-        bar       = "█" * filled + "░" * (bar_width - filled)
+        bar = _bar(info["fraction_used"], bar_width)
 
         if pct > 90:
             bar_color = "#ff5555"
@@ -330,7 +328,7 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
         self.setWindowTitle("Disk Usage Analyzer")
         self.setMinimumSize(1200, 1100)
 
-        self._worker:       Optional[_ScanWorker] = None
+        self._worker:       _ScanWorker | None = None
         self._cancel        = threading.Event()
         self._results:      list[tuple] = []
         self._item_paths:   list[Path]  = []

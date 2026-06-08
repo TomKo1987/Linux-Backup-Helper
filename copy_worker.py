@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from itertools import groupby, islice
 from pathlib import Path as _Path
-from typing import Callable, Optional, Protocol
+from typing import Callable, Protocol
 from urllib.parse import urlparse
 
 from PyQt6.QtCore import Qt, QElapsedTimer, QThread, QTimer, pyqtSignal
@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
 from drive_utils import is_smb, is_ssh, build_rsync_cmd
 from pre_post_hooks import run_hooks as _run_hooks
 from state import apply_replacements, logger
-from themes import current_theme, font_sz
+from themes import current_theme, font_sz, register_cache_invalidation_hook as _reg_cache_hook
 from ui_utils import _StandardKeysMixin
 
 _CHUNK           = 32 * 1024 * 1024
@@ -43,6 +43,7 @@ _SCAN_PIPE_BATCH = 128
 _LOCAL_BATCH     = 256
 _CLAIM_SIZE      = 32
 _PIPE_MAXSIZE    = 1024
+_MIN_FREE        = 500 * 1024 * 1024
 
 
 def _scale_params(total: int) -> tuple[int, int, int, int, int]:
@@ -97,18 +98,16 @@ def _notify(title: str, body: str, urgency: str = "normal") -> None:
 
 
 def _check_destination_space(tasks: list[tuple]) -> list[str]:
-    import shutil as _shutil
-    _MIN_FREE = 500 * 1024 * 1024  
     checked: set[str] = set()
     warnings: list[str] = []
-    for _src, dst_raw, title, *_ in tasks:
+    for _src, dst_raw, _title, *_ in tasks:
         dst = dst_raw[0] if isinstance(dst_raw, list) else dst_raw
         dst = str(dst).strip()
         if not dst or dst in checked:
             continue
         checked.add(dst)
         try:
-            usage = _shutil.disk_usage(dst)
+            usage = shutil.disk_usage(dst)
             if usage.free < _MIN_FREE:
                 free_mb = usage.free // (1024 * 1024)
                 warnings.append(
@@ -163,7 +162,6 @@ def _cached_mono_style(size: int, color: str, bold: bool = False, extra: str = "
 
 def _invalidate_copy_worker_caches() -> None: _cached_mono_style.cache_clear()
 
-from themes import register_cache_invalidation_hook as _reg_cache_hook
 _reg_cache_hook(_invalidate_copy_worker_caches)
 del _reg_cache_hook
 
@@ -211,7 +209,7 @@ def _run_futures(futs: list, cancel: threading.Event, tag: str = "worker") -> No
 
 def _do_copy(entry, cancel: threading.Event, ok_l: list, sk_l: list, er_l: list, tc: dict) -> None:
 
-    src, dst, title, src_st = entry
+    src, dst, title, _ = entry
     try:
         status, aux, sz = _copy_file(src, dst, cancel)
     except Exception as exc:
@@ -1280,7 +1278,11 @@ class CopyWorker(QThread):
                 tracker.batch_update({title: (0, 0, 1)} if title else {})
                 continue
 
-            assert proc.stdout is not None
+            if proc.stdout is None:
+                logger.error("rsync stdout is None for '%s'", src)
+                flusher.push(er=[(src, "rsync stdout unavailable", 0)])
+                tracker.batch_update({title: (0, 0, 1)} if title else {})
+                continue
             last_pct = 0
             try:
                 for line in proc.stdout:
@@ -2456,7 +2458,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         self.worker     = CopyWorker(tasks)
         self.copied = self.skipped = self.errors = 0
         self._done  = self._total = 0
-        self._final_elapsed: Optional[int] = None
+        self._final_elapsed: int | None = None
         self._pending_ok = deque()
         self._pending_sk = deque()
         self._pending_er = deque()
@@ -2536,7 +2538,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
 
     def _elapsed_s(self) -> int: return self._final_elapsed if self._final_elapsed is not None else self.timer.elapsed() // 1000
 
-    def _status_badge(self, icon: str, label: str, color: str, border: "Optional[str]" = None) -> str:
+    def _status_badge(self, icon: str, label: str, color: str, border: "str | None" = None) -> str:
         border = border or color
         return (f"<span style='display:inline-block; font-size:{self._status_fs}px; font-weight:bold; "
                 f"font-family:monospace; color:{color};background:{self._t['bg2']}; border-left:5px solid {border}; "

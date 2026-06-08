@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QTextCursor
@@ -32,7 +32,7 @@ def sep() -> QFrame:
     return line
 
 
-def hdr_label(text: str, color: str = "", size: Optional[int] = None) -> QLabel:
+def hdr_label(text: str, color: str = "", size: int | None = None) -> QLabel:
     from themes import current_theme, font_sz
     lbl = QLabel(text)
     sz  = size if size is not None else font_sz(3)
@@ -113,7 +113,7 @@ def ask_text(parent, title: str, label: str, default: str = "", min_width: int =
     return edit.text(), accepted
 
 
-def ask_profile_name(title: str, default: str, parent=None) -> Optional[str]:
+def ask_profile_name(title: str, default: str, parent=None) -> str | None:
     while True:
         name, ok = ask_text(parent, title, "Profile name:", default=default)
         if not ok:

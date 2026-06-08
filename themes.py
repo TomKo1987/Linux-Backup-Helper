@@ -1,7 +1,6 @@
 import base64
 import threading as _threading
 from functools import lru_cache
-from typing import Optional
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
@@ -438,7 +437,7 @@ QFrame[frameShape="4"], QFrame[frameShape="5"] {{
 """
 
 
-_style_cache: Optional[tuple] = None
+_style_cache: tuple | None = None
 _style_cache_lock = _threading.Lock()
 
 

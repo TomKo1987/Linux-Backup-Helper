@@ -5,12 +5,10 @@ import subprocess
 import threading
 import time
 from functools import lru_cache
-from typing import Optional
 
 from PyQt6.QtWidgets import QMessageBox
 
 from state import S, logger, _USER
-
 
 _DRIVE_NAME_RE = re.compile(r"^[\w\- .()@:]+$")
 
@@ -51,8 +49,9 @@ def get_mounts(max_age: float = 0.5) -> list[tuple[str, str]]:
         with _mounts_cache_lock:
             return _mounts_cache[1]
     with _mounts_cache_lock:
-        if now >= _mounts_cache[0]:
+        if now > _mounts_cache[0]:
             _mounts_cache = (now, mounts)
+            return mounts
         return _mounts_cache[1]
 
 
@@ -138,7 +137,7 @@ def _execute_drive_op(drive: dict, cmd_key: str, timeout: int) -> tuple[bool, st
         return False, str(e)
 
 
-def is_mounted(opt: dict, mounts: Optional[list[tuple[str, str]]] = None) -> bool:
+def is_mounted(opt: dict, mounts: list[tuple[str, str]] | None = None) -> bool:
     name = opt.get("drive_name", "")
     mount_path = opt.get("mount_path", "").strip()
 

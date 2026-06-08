@@ -1,10 +1,11 @@
 import re
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from sudo_password import SecureString
 
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QFont, QFontMetrics
 from PyQt6.QtWidgets import (
     QFrame, QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea, QSizePolicy,
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QTextEdit,
@@ -13,7 +14,7 @@ from PyQt6.QtWidgets import (
 
 from linux_distro_helper import LinuxDistroHelper, SESSIONS, USER_SHELLS, ARCH_KERNEL_VARIANTS, is_valid_pkg_name
 from state import S, _HOME, _USER, apply_replacements, save_profile, sort_pkg_list, sort_specific_pkg_list, logger
-from dotfiles_manager import _first_path
+from dotfiles_manager import first_path
 from themes import (
     style_label_info, style_label_mono, style_op_label, tri_styles, apply_tooltip, style_sudo_checkbox,
     current_theme, font_sz, style_checkbox_muted, style_checkbox_select_all, tri_state_legend_html
@@ -150,8 +151,8 @@ def _add_select_all_tri(layout, checkboxes: list[TriCheckBox], cols: int = 1) ->
         layout.addWidget(sa)
 
 
-def _compute_op_status(distro: LinuxDistroHelper, has_yay: bool, system_default_variant: Optional[str],
-                       installed_kernels: Optional[set] = None) -> dict[str, bool]:
+def _compute_op_status(distro: LinuxDistroHelper, has_yay: bool, system_default_variant: str | None,
+                       installed_kernels: set | None = None) -> dict[str, bool]:
     import pwd as _pwd
 
     status: dict[str, bool] = {}
@@ -191,10 +192,10 @@ def _compute_op_status(distro: LinuxDistroHelper, has_yay: bool, system_default_
     return status
 
 
-def _build_op_text(distro: LinuxDistroHelper, session: Optional[str] = None, has_yay: Optional[bool] = None,
-                   system_default_variant: Optional[str] = None, op_status: Optional[dict] = None,
-                   installed_kernels: Optional[set] = None, kernels_to_install_override: Optional[list] = None,
-                   default_kernel_override: Optional[str] = None) -> dict[str, tuple[str, str]]:
+def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, has_yay: bool | None = None,
+                   system_default_variant: str | None = None, op_status: dict | None = None,
+                   installed_kernels: set | None = None, kernels_to_install_override: list | None = None,
+                   default_kernel_override: str | None = None) -> dict[str, tuple[str, str]]:
 
     tips = sm_tooltips()
     _NO_CHANGE = " (No changes necessary.)"
@@ -203,7 +204,7 @@ def _build_op_text(distro: LinuxDistroHelper, session: Optional[str] = None, has
         return _NO_CHANGE if (op_status and op_status.get(key)) else ""
 
     def _tip(key: str) -> str:
-        return tips.get(key, "")
+        return tips.get(key, "") if tips is not None else ""
 
     def pkglist(fn) -> str:
         try:
@@ -312,7 +313,7 @@ def _read_import_file(parent, path: str) -> list[str] | None:
         return None
 
 
-def _pkg_form_dialog(parent, title: str, *, prefill_name: str = "", prefill_sess: Optional[str] = None) -> Optional[tuple]:
+def _pkg_form_dialog(parent, title: str, *, prefill_name: str = "", prefill_sess: str | None = None) -> tuple | None:
     with_session = prefill_sess is not None
     dlg = QDialog(parent)
     dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
@@ -770,7 +771,7 @@ class SystemManagerOptions(QDialog):
     def _edit_dotfiles(self) -> None:
         files = sorted(
             [f for f in (S.dotfiles or []) if isinstance(f, dict) and f.get("source") and f.get("destination")],
-            key=lambda f: Path(_first_path(f["source"])).name.lower()
+            key=lambda f: Path(first_path(f["source"])).name.lower()
         )
         checkboxes: list[tuple[TriCheckBox, dict]] = []
         rows: list[tuple[QFrame, TriCheckBox, dict]] = []
@@ -781,7 +782,7 @@ class SystemManagerOptions(QDialog):
         vlay.setSpacing(4)
 
         for idx, f in enumerate(files):
-            filename = Path(_first_path(f["source"])).name or _first_path(f["source"])
+            filename = Path(first_path(f["source"])).name or first_path(f["source"])
             tip = (f"<b>Source:</b><br>{f['source']}<br><br><b>Destination:</b><br>{f['destination']}<br><br>"
                    f"<i>Left-click to change status. Click + to expand &amp; edit.</i><br><br>{legend}")
             cb = _make_tri_cb(filename, f.get("disabled", False), tip)
@@ -895,7 +896,6 @@ class SystemManagerOptions(QDialog):
         dlg, lay = _scroll_dlg(self, "Dotfiles", body, _save)
 
         if files:
-            from PyQt6.QtGui import QFont, QFontMetrics
             fm = QFontMetrics(QFont("monospace"))
             longest = max(max(len(f.get("source", "")), len(f.get("destination", "")))
                           for f in files)
@@ -1186,7 +1186,7 @@ class SystemManagerOptions(QDialog):
         dlg.exec()
 
     def _edit_pkg_entry(self, cb_pkg: tuple, pkg_type: str, parent_dlg) -> None:
-        cb, p = cb_pkg
+        _, p = cb_pkg
         if p is None:
             return
         is_specific = _is_specific(pkg_type)

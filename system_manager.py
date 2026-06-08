@@ -14,7 +14,6 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Optional
 
 from PyQt6.QtCore import Qt, QElapsedTimer, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QIcon, QTextCursor
@@ -23,7 +22,7 @@ from PyQt6.QtWidgets import (
     QListWidget, QListWidgetItem, QPushButton, QTextEdit, QVBoxLayout, QWidget,
 )
 
-from dotfiles_manager import _first_path
+from dotfiles_manager import first_path
 from linux_distro_helper import LinuxDistroHelper, ARCH_KERNEL_VARIANTS
 from state import S, _HOME, _USER, logger, apply_replacements, _ANSI_RE, active_pkg_names, active_dotfiles
 from themes import current_theme, font_sz
@@ -415,20 +414,20 @@ class SystemManagerThread(QThread):
     passwordSuccess   = pyqtSignal()
     inputRequested    = pyqtSignal(str)
 
-    def __init__(self, sudo_password, distro: Optional[LinuxDistroHelper] = None) -> None:
+    def __init__(self, sudo_password, distro: LinuxDistroHelper | None = None) -> None:
         super().__init__()
         from sudo_password import SecureString
         self._pw = sudo_password if isinstance(sudo_password, SecureString) else SecureString(sudo_password or "")
         self._stop = threading.Event()
         self._stop_keepalive = threading.Event()
-        self._keepalive: Optional[_SudoKeepalive] = None
+        self._keepalive: _SudoKeepalive | None = None
         self._enabled_tasks: dict[str, tuple] = {}
         self._input_event: threading.Event = threading.Event()
         self._input_value: str = ""
         self._env_snapshot: dict = os.environ.copy()
         self._env_snapshot.update({"LC_ALL": "C", "LANG": "C", "LANGUAGE": "C"})
-        self.distro: Optional[LinuxDistroHelper] = None
-        self._pkg_cache: Optional[_PackageCache] = None
+        self.distro: LinuxDistroHelper | None = None
+        self._pkg_cache: _PackageCache | None = None
         try:
             if distro is not None:
                 self.distro = distro
@@ -542,8 +541,8 @@ class SystemManagerThread(QThread):
             return ["sudo", "-S"] + cmd[1:]
         return cmd
 
-    def _exec(self, cmd: list[str] | str, stream: bool = False, timeout: Optional[int] = 15,
-              cwd: Optional[str] = None) -> SimpleNamespace:
+    def _exec(self, cmd: list[str] | str, stream: bool = False, timeout: int | None = 15,
+              cwd: str | None = None) -> SimpleNamespace:
 
         if self.terminated:
             return SimpleNamespace(returncode=1, stdout="", stderr="")
@@ -1025,7 +1024,7 @@ class SystemManagerThread(QThread):
         for drive in check_drives_to_mount(
                 [os.path.expandvars(os.path.expanduser(p))
                  for f in files
-                 for p in (_first_path(f.get("source", "")), _first_path(f.get("destination", "")))
+                 for p in (first_path(f.get("source", "")), first_path(f.get("destination", "")))
                  if p]):
             name = drive.get("drive_name", "?")
             self.outputReceived.emit(f"Mounting drive: '{name}'…", "info")
@@ -1035,8 +1034,8 @@ class SystemManagerThread(QThread):
 
         overall = True
         for f in files:
-            src = os.path.expandvars(os.path.expanduser(_first_path(f.get("source", "")).strip()))
-            dst = os.path.expandvars(os.path.expanduser(_first_path(f.get("destination", "")).strip()))
+            src = os.path.expandvars(os.path.expanduser(first_path(f.get("source", "")).strip()))
+            dst = os.path.expandvars(os.path.expanduser(first_path(f.get("destination", "")).strip()))
             if not Path(src).exists():
                 self.outputReceived.emit(f"Source not found: {src}", "error")
                 overall = False

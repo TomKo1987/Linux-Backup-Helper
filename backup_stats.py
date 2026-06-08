@@ -1,5 +1,4 @@
 from datetime import datetime, timedelta
-from typing import Optional
 
 from PyQt6.QtCore import Qt, QPointF
 from PyQt6.QtGui import (
@@ -7,7 +6,7 @@ from PyQt6.QtGui import (
     QLinearGradient,
 )
 from PyQt6.QtWidgets import (
-    QComboBox, QDialog, QFrame, QHBoxLayout, QLabel,
+    QApplication, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel,
     QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
@@ -17,7 +16,7 @@ from themes import current_theme, font_sz, register_style_listener, unregister_s
 from ui_utils import _StandardKeysMixin
 
 
-def _parse_ts(ts: str) -> Optional[datetime]:
+def _parse_ts(ts: str) -> datetime | None:
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
         try:
             return datetime.strptime(ts, fmt)
@@ -240,7 +239,15 @@ class BackupStatsDialog(_StandardKeysMixin, QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Backup Statistics")
-        self.setMinimumSize(1500, 1000)
+        screen = QApplication.primaryScreen()
+        geo    = screen.availableGeometry() if screen else None
+        if geo:
+            self.setMinimumSize(
+                min(1500, int(geo.width()  * 0.85)),
+                min(1000, int(geo.height() * 0.85)),
+            )
+        else:
+            self.setMinimumSize(1200, 700)
         self._history: list[dict] = []
         self._build_shell()
         self._reload()

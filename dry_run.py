@@ -1,7 +1,6 @@
 import os
 import threading
 from pathlib import Path
-from typing import Optional
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSortFilterProxyModel
 from PyQt6.QtGui import QColor, QStandardItemModel, QStandardItem
@@ -294,10 +293,11 @@ class _OverviewTab(QWidget):
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.setAlternatingRowColors(True)
         v_header = self._table.verticalHeader()
-        assert v_header is not None
-        v_header.setVisible(False)
+        if v_header is not None:
+            v_header.setVisible(False)
         h_header = self._table.horizontalHeader()
-        assert h_header is not None
+        if h_header is None:
+            return
         h_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         for col in (1, 2, 3):
             h_header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
@@ -491,7 +491,7 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         else:
             self.setMinimumSize(1200, 700)
 
-        self._worker: Optional[_DryRunWorker] = None
+        self._worker: _DryRunWorker | None = None
         self._results: list[dict] = []
         self._build()
 

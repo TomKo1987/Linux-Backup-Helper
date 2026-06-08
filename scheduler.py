@@ -18,13 +18,13 @@ _SYSTEMD_USER_DIR = Path.home() / ".config" / "systemd" / "user"
 _SERVICE_NAME = "backup-helper-auto"
 
 
-_INTERVALS: dict[str, tuple[str, str]] = {
-    "Hourly":        ("hourly",   "*-*-* *:00:00"),
-    "Daily":         ("daily",    "*-*-* 02:00:00"),
-    "Every 2 days":  ("2day",     "*-*-*/2 02:00:00"),
-    "Weekly":        ("weekly",   "Mon *-*-* 02:00:00"),
-    "Monthly":       ("monthly",  "*-*-01 02:00:00"),
-    "Custom time …": ("custom",   ""),
+_INTERVALS: dict[str, str] = {
+    "Hourly":        "*-*-* *:00:00",
+    "Daily":         "*-*-* 02:00:00",
+    "Every 2 days":  "*-*-*/2 02:00:00",
+    "Weekly":        "Mon *-*-* 02:00:00",
+    "Monthly":       "*-*-01 02:00:00",
+    "Custom time …": "",
 }
 
 
@@ -155,7 +155,7 @@ def get_active_interval() -> str:
         for line in text.splitlines():
             if line.strip().startswith("OnCalendar="):
                 on_cal = line.split("=", 1)[1].strip()
-                for label, (_, cal) in _INTERVALS.items():
+                for label, cal in _INTERVALS.items():
                     if cal and cal == on_cal:
                         return label
                 return on_cal
@@ -289,9 +289,7 @@ class SchedulerDialog(_StandardKeysMixin, QDialog):
         mm = t.minute()
         time_str = f"{hh:02d}:{mm:02d}:00"
 
-        if interval_key == "Custom time …":
-            return f"*-*-* {time_str}"
-        if interval_key == "Daily":
+        if interval_key in ("Custom time …", "Daily"):
             return f"*-*-* {time_str}"
         if interval_key == "Every 2 days":
             return f"*-*-*/2 {time_str}"
@@ -299,7 +297,7 @@ class SchedulerDialog(_StandardKeysMixin, QDialog):
             return f"Mon *-*-* {time_str}"
         if interval_key == "Monthly":
             return f"*-*-01 {time_str}"
-        return _INTERVALS[interval_key][1]
+        return _INTERVALS[interval_key]
 
     def _install(self) -> None:
         interval_key = self._combo.currentText()

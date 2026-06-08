@@ -1,11 +1,10 @@
 import os
 import time
 from pathlib import Path
-from typing import Optional
 
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtWidgets import (
-    QDialog, QFrame, QHBoxLayout, QLabel, QProgressBar,
+    QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QProgressBar,
     QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
@@ -16,7 +15,7 @@ from ui_utils import _StandardKeysMixin
 __all__ = ["IntegrityCheckerDialog"]
 
 
-def _quick_scan(path_str: str) -> Optional[dict]:
+def _quick_scan(path_str: str) -> dict | None:
     root = Path(os.path.expanduser(os.path.expandvars(path_str)))
     if not root.exists():
         return None
@@ -57,7 +56,7 @@ def _top_level_names(path_str: str) -> set[str]:
         return set()
 
 
-def _fmt_bytes(n: int) -> str:
+def _fmt_bytes(n: int | float) -> str:
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if n < 1024 or unit == "TB":
             return f"{n:.1f} {unit}" if unit != "B" else f"{n} B"
@@ -222,8 +221,16 @@ class IntegrityCheckerDialog(_StandardKeysMixin, QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Backup Integrity Check")
-        self.setMinimumSize(1500, 1000)
-        self._worker: Optional[_CheckWorker] = None
+        screen = QApplication.primaryScreen()
+        geo    = screen.availableGeometry() if screen else None
+        if geo:
+            self.setMinimumSize(
+                min(1500, int(geo.width()  * 0.85)),
+                min(1000, int(geo.height() * 0.85)),
+            )
+        else:
+            self.setMinimumSize(1200, 700)
+        self._worker: _CheckWorker | None = None
         self._build()
 
     def closeEvent(self, event) -> None:

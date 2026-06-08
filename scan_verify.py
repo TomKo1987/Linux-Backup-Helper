@@ -3,7 +3,6 @@ import re
 import subprocess
 from functools import lru_cache as _lru_cache
 from pathlib import Path
-from typing import Optional
 
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -12,7 +11,7 @@ from PyQt6.QtWidgets import (
     QTabWidget, QVBoxLayout, QWidget, QListWidget
 )
 
-from dotfiles_manager import _first_path
+from dotfiles_manager import first_path
 from drive_utils import check_drives_to_mount, mount_required_drives
 from linux_distro_helper import LinuxDistroHelper, USER_SHELLS, ARCH_KERNEL_VARIANTS, SESSIONS
 from state import (
@@ -51,7 +50,7 @@ def _mtime(path: Path) -> float:
         return 0.0
 
 
-def _sha256(path: Path, limit: int = 8 * 1024 * 1024) -> Optional[str]:
+def _sha256(path: Path, limit: int = 8 * 1024 * 1024) -> str | None:
     try:
         if path.stat().st_size > limit:
             return None
@@ -65,7 +64,7 @@ def _sha256(path: Path, limit: int = 8 * 1024 * 1024) -> Optional[str]:
 
 
 @_lru_cache(maxsize=1024)
-def _sha256_cached(path_str: str, _mtime_ns: int, _size: int) -> Optional[str]:
+def _sha256_cached(path_str: str, _mtime_ns: int, _size: int) -> str | None:
     return _sha256(Path(path_str))
 
 
@@ -250,7 +249,7 @@ def _collect_verify_paths() -> list[str]:
     paths: list[str] = []
     for sf in active_dotfiles():
         for key in ("source", "destination"):
-            v = _first_path(sf.get(key, "")).strip()
+            v = first_path(sf.get(key, "")).strip()
             if v: paths.append(str(_ep(v)))
     for entry in S.entries:
         if isinstance(entry, dict):
@@ -283,8 +282,8 @@ class _CaptureWorker(QThread):
         self.progress.emit("Checking dotfiles…")
         try:
             for sf in active_dotfiles():
-                src_raw = _first_path(sf.get("source", "")).strip()
-                dst_raw = _first_path(sf.get("destination", "")).strip()
+                src_raw = first_path(sf.get("source", "")).strip()
+                dst_raw = first_path(sf.get("destination", "")).strip()
                 if not src_raw or not dst_raw:
                     continue
                 src = _ep(src_raw)
@@ -295,7 +294,7 @@ class _CaptureWorker(QThread):
                 elif not dst.exists():
                     status = "dst_missing"
                 else:
-                    def _hash_v(p: Path) -> Optional[str]:
+                    def _hash_v(p: Path) -> str | None:
                         try:
                             st = p.stat()
                             return _sha256_cached(str(p), st.st_mtime_ns, st.st_size)
@@ -376,8 +375,8 @@ class _VerifyWorker(QThread):
         for sf in S.dotfiles:
             if not isinstance(sf, dict) or sf.get("disabled"):
                 continue
-            src_raw = _first_path(sf.get("source", "")).strip()
-            dst_raw = _first_path(sf.get("destination", "")).strip()
+            src_raw = first_path(sf.get("source", "")).strip()
+            dst_raw = first_path(sf.get("destination", "")).strip()
             if not src_raw or not dst_raw:
                 continue
             src = _ep(src_raw)
@@ -388,7 +387,7 @@ class _VerifyWorker(QThread):
             elif not dst.exists():
                 status = "dst_missing"
             else:
-                def _hash_v(p: Path) -> Optional[str]:
+                def _hash_v(p: Path) -> str | None:
                     try:
                         st = p.stat()
                         return _sha256_cached(str(p), st.st_mtime_ns, st.st_size)
@@ -580,7 +579,7 @@ class _CaptureTab(QWidget):
     def __init__(self, helper: LinuxDistroHelper) -> None:
         super().__init__()
         self._helper = helper
-        self._worker: Optional[_CaptureWorker] = None
+        self._worker: _CaptureWorker | None = None
         self._cbs: list[tuple[QCheckBox, str, str]] = []
         self._svc_cbs: list[tuple[QCheckBox, str, str]] = []
         self._sm_pkgs = _get_sm_managed_packages(helper)
@@ -1213,7 +1212,7 @@ class _VerifyTab(QWidget):
     def __init__(self, helper: LinuxDistroHelper) -> None:
         super().__init__()
         self._helper = helper
-        self._worker: Optional[_VerifyWorker] = None
+        self._worker: _VerifyWorker | None = None
         self._build_ui()
         self._start()
 

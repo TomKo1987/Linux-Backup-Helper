@@ -1,4 +1,4 @@
-from typing import Optional
+
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFontDatabase
@@ -55,7 +55,7 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
         self._setup_ui()
         register_style_listener(self._refresh_styles)
 
-    def _entry_filter(self, entry: dict) -> bool:
+    def _entry_filter(self, _entry: dict) -> bool:
         return True
 
     def _refresh_styles(self) -> None:
@@ -66,12 +66,12 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
                 block_set(cb, saved[id(e)])
         self._sync_select_all()
 
-    def _tips(self) -> dict: return backup_tooltips()
+    def _tips(self) -> dict | None: return backup_tooltips()
 
     def _src_dst(self, entry: dict) -> tuple[list, list]:
         return entry.get("source", []), entry.get("destination", [])
 
-    def _exclusion_note(self, entry: dict) -> str: return ""
+    def _exclusion_note(self, _entry: dict) -> str: return ""
 
     def _add_action_buttons(self, grid: QGridLayout, row: int) -> None: pass
 
@@ -316,7 +316,7 @@ class RestoreWindow(_CopyMixin, _BaseCheckboxWindow):
     def _entry_filter(self, entry: dict) -> bool:
         return not entry.get("details", {}).get("no_restore", False)
 
-    def _tips(self) -> dict: return restore_tooltips()
+    def _tips(self) -> dict | None: return restore_tooltips()
 
     def _src_dst(self, entry: dict) -> tuple[list, list]:
         return entry.get("destination", []), entry.get("source", [])
@@ -377,7 +377,7 @@ class SettingsWindow(_BaseCheckboxWindow):
         close_btn.clicked.connect(self.close)
         grid.addWidget(close_btn, row, 0, 1, self.cols)
 
-    def _run_entry_dialog(self, initial_entry: Optional[dict], window_title: Optional[str] = None) -> Optional[dict]:
+    def _run_entry_dialog(self, initial_entry: dict | None, window_title: str | None = None) -> dict | None:
         current_entry     = initial_entry
         pairs: list[list[str]] = []
         pairs_initialised = False

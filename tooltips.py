@@ -2,13 +2,13 @@ import html as _html
 import threading
 from collections import defaultdict
 from pathlib import Path
-from typing import Optional
+from typing import Any
 
 from linux_distro_helper import LinuxDistroHelper
 from state import S, apply_replacements, logger, register_invalidate_hook, active_pkg_names, active_dotfiles
 from themes import current_theme, font_sz
 
-_cache: Optional[tuple[dict, dict, dict]] = None
+_cache: tuple[dict, dict, dict | None] | None = None
 _cache_lock = threading.Lock()
 
 _session_lock = threading.Lock()
@@ -24,13 +24,13 @@ def _reset_cache() -> None:
 register_invalidate_hook(_reset_cache)
 
 
-def backup_tooltips() -> dict:
+def backup_tooltips() -> dict | None:
     return generate_tooltip()[0]
 
-def restore_tooltips() -> dict:
+def restore_tooltips() -> dict | None:
     return generate_tooltip()[1]
 
-def sm_tooltips() -> dict:
+def sm_tooltips() -> dict | None:
     return generate_tooltip()[2]
 
 
@@ -89,7 +89,7 @@ def _packages_tooltip_html(label: str, pkg_names: list, t: dict, font_sz_fn) -> 
             f"{header}{''.join(rows)}</table>")
 
 
-def _specific_pkgs_tooltip_html(sp_active: list, session: Optional[str], t: dict, font_sz_fn) -> str:
+def _specific_pkgs_tooltip_html(sp_active: list, session: str | None, t: dict, font_sz_fn) -> str:
     sp_groups: dict[str, list[str]] = defaultdict(list)
     for p in sp_active:
         sp_groups[p.get("session", "?")].append(_html.escape(p.get("package", "")))
@@ -114,7 +114,7 @@ def _specific_pkgs_tooltip_html(sp_active: list, session: Optional[str], t: dict
             f"{header}{''.join(rows)}</table>")
 
 
-def generate_tooltip() -> tuple[dict, dict, dict]:
+def generate_tooltip() -> tuple[dict, dict, dict | None] | tuple[dict[Any, str], dict[Any, str], dict]:
     global _cache, _cached_session, _session_detected
 
     with _cache_lock:

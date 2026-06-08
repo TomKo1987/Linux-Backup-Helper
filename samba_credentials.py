@@ -4,7 +4,6 @@ import shutil
 import subprocess
 import threading
 from functools import lru_cache
-from typing import Optional
 
 import keyring
 from PyQt6.QtCore import Qt
@@ -58,7 +57,7 @@ class _VerifyPasswordDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Samba — Verify Password")
         self.setMinimumWidth(550)
-        self._stored_pw: Optional[SecureString] = stored_pw
+        self._stored_pw: SecureString | None = stored_pw
         self._attempts  = 0
 
         t      = current_theme()
@@ -139,11 +138,11 @@ class _VerifyPasswordDialog(QDialog):
 class SambaPasswordManager:
 
     def __init__(self) -> None:
-        self._cached_kwallet_entry: Optional[str] = None
+        self._cached_kwallet_entry: str | None = None
         _init_keyring()
 
     @staticmethod
-    def _run_kwallet(args: list[str], input_data: Optional[str] = None) -> Optional[str]:
+    def _run_kwallet(args: list[str], input_data: str | None = None) -> str | None:
         if not _kwallet_available():
             return None
         try:
@@ -158,7 +157,7 @@ class SambaPasswordManager:
             logger.debug("kwallet-query error: %s", exc)
             return None
 
-    def _find_kwallet_entry(self) -> Optional[str]:
+    def _find_kwallet_entry(self) -> str | None:
         if self._cached_kwallet_entry:
             return self._cached_kwallet_entry
         out = self._run_kwallet(["--list-entries", _KWALLET_WALLET])
@@ -169,7 +168,7 @@ class SambaPasswordManager:
                     return line
         return None
 
-    def _read_from_kwallet(self) -> tuple[Optional[str], Optional[str]]:
+    def _read_from_kwallet(self) -> tuple[str | None, str | None]:
         entry = self._find_kwallet_entry()
         if not entry:
             return None, None
@@ -193,7 +192,7 @@ class SambaPasswordManager:
             raise RuntimeError("Failed to write credentials to KWallet")
         logger.info("Updated Samba credentials in KWallet entry: %s", entry)
 
-    def get_credentials(self) -> tuple[Optional[str], Optional[SecureString], bool]:
+    def get_credentials(self) -> tuple[str | None, SecureString | None, bool]:
         username, password = self._read_from_kwallet()
         if password:
             logger.info("Retrieved Samba credentials from KWallet")
@@ -270,15 +269,15 @@ class SambaPasswordDialog(_StandardKeysMixin, QDialog):
                 return
             cls(parent, manager, _USER, False, first_setup=True, kwallet_available=has_kw).exec()
 
-    def __init__(self, parent=None, manager: Optional[SambaPasswordManager] = None, username: str = "",
+    def __init__(self, parent=None, manager: SambaPasswordManager | None = None, username: str = "",
                  from_kwallet: bool = False, *, has_credentials: bool = False, first_setup: bool = False,
                  kwallet_available: bool = False) -> None:
 
         super().__init__(parent)
-        self._username_field: Optional[QLineEdit] = None
-        self._password_field: Optional[QLineEdit] = None
-        self._confirm_password_field: Optional[QLineEdit] = None
-        self._store_in_kwallet: Optional[QCheckBox] = None
+        self._username_field: QLineEdit | None = None
+        self._password_field: QLineEdit | None = None
+        self._confirm_password_field: QLineEdit | None = None
+        self._store_in_kwallet: QCheckBox | None = None
         self.setWindowTitle("Samba Credentials")
         self.setMinimumSize(750, 400)
 

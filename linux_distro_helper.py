@@ -558,7 +558,7 @@ class LinuxDistroHelper:
                     if _count > _MAX_PROCS:
                         break
                     try:
-                        comm = Path(f"/proc/{entry.name}/comm").read_text().strip().lower()
+                        comm = Path(f"/proc/{entry.name}/comm").read_text(encoding="utf-8", errors="replace").strip().lower()
                     except OSError:
                         continue
                     if comm in _WM_PROCS:

@@ -7,7 +7,6 @@ import tarfile
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal, QObject, QEvent
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QTextCursor
@@ -23,7 +22,8 @@ from state import (
     _atomic_write, apply_replacements,
 )
 from themes import current_theme, font_scale, font_sz, apply_tooltip
-from ui_utils import sep, hdr_label, ok_cancel_buttons, btn_row, ask_text, ask_profile_name, browse_field, _StandardKeysMixin
+from ui_utils import sep, hdr_label, ok_cancel_buttons, btn_row, ask_text, ask_profile_name, browse_field, \
+    _StandardKeysMixin
 
 _ARCHIVE_MAX_PROFILE_BYTES = 1024 * 1024
 
@@ -192,7 +192,7 @@ class ExcludeDialog(QDialog):
 class EntryDialog(QDialog):
     _COL_CLEAR = QColor(0, 0, 0, 0)
 
-    def __init__(self, parent, entry: Optional[dict], *, stacked: bool = False, _pairs: Optional[list[list[str]]] = None):
+    def __init__(self, parent, entry: dict | None, *, stacked: bool = False, _pairs: list[list[str]] | None = None):
         super().__init__(parent)
         self.result: dict           = {}
         self.pairs: list[list[str]] = list(_pairs) if _pairs is not None else []
@@ -450,7 +450,7 @@ class EntryDialog(QDialog):
         finally:
             self._suppress_sync = False
 
-    def _pair_dialog(self, src: str = "", dst: str = "", title: str = "Add Entry") -> Optional[tuple[str, str]]:
+    def _pair_dialog(self, src: str = "", dst: str = "", title: str = "Add Entry") -> tuple[str, str] | None:
         scr       = QApplication.primaryScreen()
         screen    = scr.availableGeometry() if scr else None
         dlg_w     = max(700, min((screen.width() - 80) if screen else 900, 1200))
@@ -648,7 +648,7 @@ class EntryDialog(QDialog):
 
 class MountDialog(QDialog):
 
-    def __init__(self, parent, opt: Optional[dict]):
+    def __init__(self, parent, opt: dict | None):
         super().__init__(parent)
         self.result: dict = {}
         self.setWindowTitle("Edit Drive" if opt else "New Drive")
@@ -817,7 +817,7 @@ class HeaderSettingsDialog(QDialog):
         if 0 <= row < self.item_list.count():
             self.item_list.setCurrentRow(row)
 
-    def _selected_name(self) -> Optional[str]:
+    def _selected_name(self) -> str | None:
         item = self.item_list.currentItem()
         return item.data(Qt.ItemDataRole.UserRole) if item else None
 
@@ -945,7 +945,7 @@ class ProfilesDialog(QDialog):
             self.item_list.addItem(item)
         if 0 <= row < self.item_list.count(): self.item_list.setCurrentRow(row)
 
-    def _selected_name(self) -> Optional[str]:
+    def _selected_name(self) -> str | None:
         item = self.item_list.currentItem()
         return item.data(Qt.ItemDataRole.UserRole) if item else None
 
@@ -1292,7 +1292,6 @@ class NotesDialog(_StandardKeysMixin, QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._saved = False
-        from themes import current_theme, font_sz
 
         profile = S.profile_name or "(no profile)"
         self.setWindowTitle(f"Profile Notes — {profile}")

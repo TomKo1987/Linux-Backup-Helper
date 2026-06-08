@@ -3,7 +3,7 @@ import subprocess
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QDialog, QHBoxLayout, QInputDialog,
+    QAbstractItemView, QApplication, QDialog, QHBoxLayout, QInputDialog,
     QLabel, QListWidget, QListWidgetItem, QMessageBox,
     QPushButton, QVBoxLayout, QWidget,
 )
@@ -185,7 +185,15 @@ class HooksDialog(_StandardKeysMixin, QDialog):
         super().__init__(parent)
         self._entry = entry
         self.setWindowTitle(f"Hooks — {entry.get('title', '?')}")
-        self.setMinimumSize(1500, 1000)
+        screen = QApplication.primaryScreen()
+        geo    = screen.availableGeometry() if screen else None
+        if geo:
+            self.setMinimumSize(
+                min(1500, int(geo.width()  * 0.85)),
+                min(1000, int(geo.height() * 0.85)),
+            )
+        else:
+            self.setMinimumSize(1200, 700)
         self._build()
 
     def _build(self) -> None:
