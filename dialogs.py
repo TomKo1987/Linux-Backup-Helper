@@ -101,66 +101,54 @@ class _HintResizer(QObject):
 
 
 class ExcludeDialog(QDialog):
-
     def __init__(self, parent, src_abs: str, current_excludes: list[str]):
         super().__init__(parent)
         self.src_abs = src_abs
         self.selected_excludes: list[str] = list(current_excludes)
         self.setWindowTitle(f"Exclude items from: {src_abs}")
-        self.setMinimumSize(600, 500)
-        self._build(current_excludes)
+        self.setMinimumSize(1250, 1000)
+        self._current_rel: str = ""
+        self._build_ui()
+        self._populate()
 
-    def _build(self, current_excludes: list[str]) -> None:
+    def _build_ui(self) -> None:
+        from PyQt6.QtWidgets import QScrollArea
         t  = current_theme()
         fs = font_scale()
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
         layout.setContentsMargins(12, 12, 12, 12)
 
-        lbl = QLabel(
-            f"<b style='color:{t['accent']};'>Select entries to exclude:</b><br>"
-            f"<span style='font-size:{fs['sm']}px;color:{t['text_dim']};'>"
-            f"Directory: {self.src_abs}</span>"
-        )
-        lbl.setTextFormat(Qt.TextFormat.RichText)
-        lbl.setWordWrap(True)
-        layout.addWidget(lbl)
+        self._header_lbl = QLabel()
+        self._header_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self._header_lbl.setWordWrap(True)
+        layout.addWidget(self._header_lbl)
+
+        nav_row = QHBoxLayout()
+        self._up_btn = QPushButton("↑ Up")
+        self._up_btn.setFixedHeight(26)
+        self._up_btn.setFixedWidth(70)
+        self._up_btn.clicked.connect(self._go_up)
+        self._path_lbl = QLabel()
+        self._path_lbl.setStyleSheet(f"color:{t['text_dim']};font-size:{fs['sm']}px;")
+        nav_row.addWidget(self._up_btn)
+        nav_row.addWidget(self._path_lbl, 1)
+        layout.addLayout(nav_row)
         layout.addWidget(sep())
 
+        self._scroll_widget = QWidget()
+        self._scroll_layout = QVBoxLayout(self._scroll_widget)
+        self._scroll_layout.setSpacing(4)
         self._checkboxes: list[tuple[QCheckBox, str]] = []
-        scroll_widget = QWidget()
-        scroll_layout = QVBoxLayout(scroll_widget)
-        scroll_layout.setSpacing(4)
 
-        try:
-            entries = sorted(os.scandir(self.src_abs), key=lambda e: (not e.is_dir(), e.name.lower()))
-        except (PermissionError, FileNotFoundError, OSError) as exc:
-            layout.addWidget(QLabel(f"Error reading the directory:\n{exc}"))
-            layout.addWidget(ok_cancel_buttons(self, self.accept))
-            return
-
-        for entry in entries:
-            icon = "📁 " if entry.is_dir(follow_symlinks=False) else "📄 "
-            cb = QCheckBox(icon + entry.name)
-            cb.setChecked(entry.name in current_excludes)
-            cb.setStyleSheet(
-                f"QCheckBox{{color:{t['text']};font-size:{fs['md']}px;}}"
-                f"QCheckBox::indicator:checked{{background:{t['warning']};border:1px solid {t['warning']};}}"
-            )
-            self._checkboxes.append((cb, entry.name))
-            scroll_layout.addWidget(cb)
-
-        scroll_layout.addStretch()
-
-        from PyQt6.QtWidgets import QScrollArea
         scroll = QScrollArea()
-        scroll.setWidget(scroll_widget)
+        scroll.setWidget(self._scroll_widget)
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet(f"QScrollArea{{border:1px solid {t['bg3']};background:{t['bg2']};}}")
         layout.addWidget(scroll, 1)
 
         btn_row_layout = QHBoxLayout()
-        btn_all = QPushButton("Select all")
+        btn_all  = QPushButton("Select all")
         btn_none = QPushButton("Select none")
         for b in (btn_all, btn_none):
             b.setFixedHeight(28)
@@ -168,11 +156,9 @@ class ExcludeDialog(QDialog):
         def _check_all() -> None:
             for _cb, _ in self._checkboxes:
                 _cb.setChecked(True)
-
         def _check_none() -> None:
             for _cb, _ in self._checkboxes:
                 _cb.setChecked(False)
-
         btn_all.clicked.connect(_check_all)
         btn_none.clicked.connect(_check_none)
         btn_row_layout.addWidget(btn_all)
@@ -183,8 +169,103 @@ class ExcludeDialog(QDialog):
         layout.addWidget(sep())
         layout.addWidget(ok_cancel_buttons(self, self._accept))
 
+    def _populate(self) -> None:
+        t  = current_theme()
+        fs = font_scale()
+
+        self._header_lbl.setText(
+            f"<b style='color:{t['accent']};font-size:{fs['md']}px;'>Select entries to exclude:</b>"
+            f"<br><span style='font-size:{fs['sm']}px;color:{t['text_dim']};'>Root: {self.src_abs}</span>"
+        )
+        rel_display = self._current_rel if self._current_rel else "(root)"
+        self._path_lbl.setText(f"Browsing: {rel_display}")
+        self._up_btn.setEnabled(bool(self._current_rel))
+
+        while self._scroll_layout.count():
+            item = self._scroll_layout.takeAt(0)
+            if item:
+                w = item.widget()
+                if w:
+                    w.deleteLater()
+        self._checkboxes.clear()
+
+        abs_current = os.path.join(self.src_abs, self._current_rel) if self._current_rel else self.src_abs
+        try:
+            entries = sorted(os.scandir(abs_current), key=lambda e: (not e.is_dir(), e.name.lower()))
+        except (PermissionError, FileNotFoundError, OSError) as exc:
+            lbl = QLabel(f"Cannot read directory: {exc}")
+            lbl.setStyleSheet(f"color:{t['warning']};")
+            self._scroll_layout.addWidget(lbl)
+            self._scroll_layout.addStretch()
+            return
+
+        for entry in entries:
+            is_dir   = entry.is_dir(follow_symlinks=False)
+            name: str = str(entry.name)
+            rel_path: str = (self._current_rel + "/" + name) if self._current_rel else name
+
+            is_checked = rel_path in self.selected_excludes
+            has_sub    = is_dir and any(ex.startswith(rel_path + "/") for ex in self.selected_excludes)
+
+            row_widget = QWidget()
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(4)
+
+            icon  = "📁" if is_dir else "📄"
+            label = f"{icon} {name}" + ("  ✦" if has_sub else "")
+            cb    = QCheckBox(label)
+            cb.setChecked(is_checked)
+            cb.setStyleSheet(
+                f"QCheckBox{{color:{t['warning'] if is_checked else t['text']};font-size:{fs['md']}px;}}"
+                f"QCheckBox::indicator:checked{{background:{t['warning']};border:1px solid {t['warning']};}}"
+            )
+            if is_dir:
+                def _on_check(state: int, rp: str = rel_path) -> None:
+                    if state:
+                        self.selected_excludes = [ex for ex in self.selected_excludes if not ex.startswith(rp + "/")]
+                cb.stateChanged.connect(_on_check)
+
+            row_layout.addWidget(cb, 1)
+
+            if is_dir:
+                nav_btn = QPushButton("▶")
+                nav_btn.setFixedSize(28, 24)
+                nav_btn.setToolTip(f"Browse into {name}")
+                nav_btn.setStyleSheet(
+                    f"QPushButton{{font-size:{fs['sm']}px;color:{t['accent']};"
+                    f"background:{t['bg3']};border:1px solid {t['bg3']};border-radius:3px;}}"
+                    f"QPushButton:hover{{background:{t['accent']};color:{t['bg2']};}}"
+                )
+                nav_btn.clicked.connect(lambda _=False, rp=rel_path: self._enter_dir(rp))
+                row_layout.addWidget(nav_btn)
+
+            self._checkboxes.append((cb, rel_path))
+            self._scroll_layout.addWidget(row_widget)
+
+        self._scroll_layout.addStretch()
+
+    def _save_current_view(self) -> None:
+        for cb, rel_path in self._checkboxes:
+            if cb.isChecked():
+                if rel_path not in self.selected_excludes:
+                    self.selected_excludes.append(rel_path)
+            else:
+                if rel_path in self.selected_excludes:
+                    self.selected_excludes.remove(rel_path)
+
+    def _enter_dir(self, rel_path: str) -> None:
+        self._save_current_view()
+        self._current_rel = rel_path
+        self._populate()
+
+    def _go_up(self) -> None:
+        self._save_current_view()
+        self._current_rel = self._current_rel.rsplit("/", 1)[0] if "/" in self._current_rel else ""
+        self._populate()
+
     def _accept(self) -> None:
-        self.selected_excludes = [name for cb, name in self._checkboxes if cb.isChecked()]
+        self._save_current_view()
         self.accept()
 
 
