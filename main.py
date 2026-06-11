@@ -1,10 +1,13 @@
+import base64 as _b64
 import shutil
 import sys
 import threading
 from pathlib import Path
 
+from PyQt6.QtCore import QByteArray
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QAction
+from PyQt6.QtGui import QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QMenu, QMessageBox, QPushButton, QSystemTrayIcon, QWidget,
     QApplication, QInputDialog, QMainWindow, QGridLayout,
@@ -15,6 +18,7 @@ from backup_stats import BackupStatsDialog
 from dialogs import LogViewer, SysInfoDialog, NotesDialog
 from drive_utils import get_mounts, is_mounted, unmount_drive, get_session_managed_mounts
 from dry_run import DryRunDialog
+from icons import _ICON_B64
 from integrity_checker import IntegrityCheckerDialog
 from scan_verify import ScanVerifyDialog
 from state import S, _HOME, _PROFILES_DIR, _PROFILE_RE, RESTART_DIALOG, save_profile, logger, startup_load
@@ -22,6 +26,14 @@ from status_panel import StatusPanel
 from themes import apply_style, register_style_listener, unregister_style_listener
 from ui_utils import _StandardKeysMixin, ask_profile_name
 from windows import base_window
+
+
+def _make_icon() -> QIcon:
+    raw = _b64.b64decode(_ICON_B64)
+    pix = QPixmap()
+    pix.loadFromData(QByteArray(raw), "ICO")
+    return QIcon(pix)
+
 
 if sys.platform != "linux":
     print("This program can only be run on Linux.")
@@ -374,6 +386,7 @@ def main():
     args, _ = parser.parse_known_args()
 
     app = QApplication(sys.argv)
+    app.setWindowIcon(_make_icon())
     app.setApplicationName("Backup Helper")
 
     def _excepthook(exc_type, exc_value, exc_tb):
@@ -397,12 +410,12 @@ def main():
 
     if args.headless_headers is not None or args.headless_b64 is not None:
         import json
-        import base64 as _b64
+        import base64 as b64_
         import binascii
 
         if args.headless_b64 is not None:
             try:
-                headers = json.loads(_b64.b64decode(args.headless_b64).decode())
+                headers = json.loads(b64_.b64decode(args.headless_b64).decode())
                 if not isinstance(headers, list):
                     headers = []
             except (json.JSONDecodeError, ValueError, binascii.Error, UnicodeDecodeError):
