@@ -124,12 +124,7 @@ def _add_select_all_tri(layout, checkboxes: list[TriCheckBox], cols: int = 1) ->
     all_active = all(cb.checkState() == _STATE_ACTIVE for cb in checkboxes)
     sa.setCheckState(_STATE_ACTIVE if all_active else _STATE_DISABLED)
     _update_tri_style(sa)
-    def _toggle(_state=None):
-        target = sa.checkState()
-        for cb in checkboxes:
-            cb.setCheckState(target)
-            _update_tri_style(cb)
-    sa.stateChanged.connect(_toggle)
+
     def _sync_sa(*_):
         states = {cb.checkState() for cb in checkboxes}
         if len(states) == 1:
@@ -140,8 +135,20 @@ def _add_select_all_tri(layout, checkboxes: list[TriCheckBox], cols: int = 1) ->
         sa.setCheckState(new_state)
         sa.blockSignals(False)
         _update_tri_style(sa)
+
+    def _toggle(_state=None):
+        target = sa.checkState()
+        for cb in checkboxes:
+            cb.blockSignals(True)
+            cb.setCheckState(target)
+            _update_tri_style(cb)
+            cb.blockSignals(False)
+        _sync_sa()
+
+    sa.stateChanged.connect(_toggle)
     for cb in checkboxes:
         cb.stateChanged.connect(_sync_sa)
+
     if isinstance(layout, QGridLayout):
         row = layout.rowCount()
         layout.addWidget(sep(), row, 0, 1, cols)

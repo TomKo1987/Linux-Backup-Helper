@@ -306,7 +306,7 @@ def _wipe_smb_cred(tmp_dir: str, path: str) -> None:
 def _is_up_to_date_local(dst: str, src_st: "os.stat_result") -> bool:
     try:
         d = os.stat(dst)
-        return d.st_size == src_st.st_size and d.st_mtime_ns >= src_st.st_mtime_ns - 2_000_000_000
+        return d.st_size == src_st.st_size and abs(d.st_mtime_ns - src_st.st_mtime_ns) <= 2_000_000_000
     except OSError:
         return False
 
@@ -333,8 +333,8 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
             pass
         try:
             os.ftruncate(wfd, 0)
-        except OSError:
-            pass
+        except OSError as _e:
+            logger.debug("ftruncate fallback failed for wfd: %s", _e)
         try:
             os.lseek(rfd, 0, os.SEEK_SET)
         except OSError:

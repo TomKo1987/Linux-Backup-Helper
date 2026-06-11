@@ -67,7 +67,7 @@ def install_timer(interval_key: str, backup_headers: list[str], *, on_calendar: 
     if interval_key not in _INTERVALS:
         return False, "Unknown interval"
 
-    on_cal = on_calendar.strip()
+    on_cal = on_calendar.strip().replace("\n", "").replace("\r", "")
     if not on_cal:
         return False, "No OnCalendar expression provided."
 

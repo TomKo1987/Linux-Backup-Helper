@@ -62,14 +62,20 @@ def _dotfiles_tooltip_html(sys_files: list, t: dict, font_sz_fn) -> str:
     cells = []
     for sf in sys_files:
         src = sf.get("source", "")
+        if isinstance(src, list): src = src[0] if src else ""
         dst = sf.get("destination", "")
-        cells.append(f"<td style='padding:4px 6px;border:1px solid {t['header_sep']};white-space:nowrap;vertical-align:top;'>"
-                     f"<span style='color:{t['accent2']};font-weight:bold;'>{_html.escape(Path(src).name)}</span><br>"
-                     f"<span style='font-size:{font_sz_fn(-3)}px;color:{t['success']};'>"
-                     f"{_html.escape(apply_replacements(src))}<br>⤵<br>"
-                     f"{_html.escape(apply_replacements(dst))}</span></td>")
+        if isinstance(dst, list): dst = dst[0] if dst else ""
+
+        cells.append(
+            f"<td style='padding:4px 6px;border:1px solid {t['header_sep']};white-space:nowrap;vertical-align:top;'>"
+            f"<span style='color:{t['accent2']};font-weight:bold;'>{_html.escape(Path(src).name)}</span><br>"
+            f"<span style='font-size:{font_sz_fn(-3)}px;color:{t['success']};'>"
+            f"{_html.escape(apply_replacements(str(src)))}<br>⤵<br>"
+            f"{_html.escape(apply_replacements(str(dst)))}</span></td>")
+
     rows = [f"<tr style='background-color:{t['bg2'] if (i // cols) % 2 == 0 else t['bg3']};'>"
             f"{''.join(cells[i:i + cols])}</tr>" for i in range(0, len(cells), cols)]
+
     return (f"<table style='white-space:nowrap; font-family:monospace;font-size:{font_sz_fn(-2)}px;'>"
             f"{header}{''.join(rows)}</table>")
 

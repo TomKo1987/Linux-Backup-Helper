@@ -333,6 +333,7 @@ def _load_profile_from_data(path: Path, data: dict) -> bool:
 def save_profile(path: Path | None = None) -> bool:
     resolved = path or (_PROFILES_DIR / f"{S.profile_name}.json" if S.profile_name else None)
     if not resolved:
+        logger.warning("save_profile: called with no path and no active profile name")
         return False
     is_active = (resolved.stem == S.profile_name)
 

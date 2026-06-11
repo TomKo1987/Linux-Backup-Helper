@@ -344,15 +344,30 @@ class SettingsWindow(_BaseCheckboxWindow):
 
     def _exclusion_note(self, entry: dict) -> str:
         details = entry.get("details", {})
-        no_b    = details.get("no_backup",  False)
-        no_r    = details.get("no_restore", False)
+        no_b = details.get("no_backup", False)
+        no_r = details.get("no_restore", False)
+        excl_paths = details.get("exclude_paths", {})
+
+        has_path_excl = False
+        path_excl_count = 0
+        if isinstance(excl_paths, dict):
+            for paths in excl_paths.values():
+                if isinstance(paths, list) and paths:
+                    has_path_excl = True
+                    path_excl_count += len(paths)
+
+        parts = []
         if no_b and no_r:
-            return "Excluded from backup and restore"
-        if no_b:
-            return "Excluded from backup"
-        if no_r:
-            return "Excluded from restore"
-        return ""
+            parts.append("Excluded from backup and restore")
+        elif no_b:
+            parts.append("Excluded from backup")
+        elif no_r:
+            parts.append("Excluded from restore")
+
+        if has_path_excl:
+            parts.append(f"Contains {path_excl_count} excluded subpath{'s' if path_excl_count > 1 else ''}")
+
+        return " | ".join(parts)
 
     def _add_action_buttons(self, grid: QGridLayout, row: int) -> None:
         grid.addLayout(btn_row([("System Manager Options", self._open_sm_options)]), row, 0, 1, self.cols)

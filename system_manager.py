@@ -957,7 +957,9 @@ class SystemManagerThread(QThread):
     def _install_with_retry(self, pkgs: list[str], bulk_fn, single_fn) -> list[str]:
         if not self.distro:
             return pkgs
-        bulk_fn(pkgs)
+        result = bulk_fn(pkgs)
+        if result is not None and result.returncode != 0 and self.terminated:
+            return pkgs
         still_missing = self.distro.filter_not_installed(pkgs)
         for p in pkgs:
             if p not in still_missing and self._pkg_cache: self._pkg_cache.mark_installed(p)

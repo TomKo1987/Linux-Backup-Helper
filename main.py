@@ -9,9 +9,8 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QAction
 from PyQt6.QtGui import QIcon, QPixmap
 from PyQt6.QtWidgets import (
-    QMenu, QMessageBox, QPushButton, QSystemTrayIcon, QWidget,
-    QApplication, QInputDialog, QMainWindow, QGridLayout,
-    QFileDialog, QVBoxLayout,
+    QMenu, QMessageBox, QPushButton, QSystemTrayIcon, QWidget, QApplication,
+    QInputDialog, QMainWindow, QGridLayout, QFileDialog, QVBoxLayout
 )
 
 from backup_stats import BackupStatsDialog
