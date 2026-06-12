@@ -30,7 +30,7 @@ from windows import base_window
 def _make_icon() -> QIcon:
     raw = _b64.b64decode(_ICON_B64)
     pix = QPixmap()
-    pix.loadFromData(QByteArray(raw), "ICO")
+    pix.loadFromData(QByteArray(raw), "PNG")
     return QIcon(pix)
 
 
