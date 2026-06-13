@@ -201,12 +201,19 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
 
     def _quick_backup(self, header: str | None) -> None:
         from copy_worker import CopyDialog
-        tasks = [
-            (e["source"], e["destination"], e["title"])
-            for e in S.entries
-            if not e.get("details", {}).get("no_backup")
-               and (header is None or e.get("header") == header)
-        ]
+        tasks = []
+        for e in S.entries:
+            details = e.get("details", {})
+            if details.get("no_backup"):
+                continue
+            if header is not None and e.get("header") != header:
+                continue
+            tasks.append((
+                e["source"], e["destination"], e["title"],
+                details.get("exclude_paths", {}),
+                details.get("pre_hooks", []),
+                details.get("post_hooks", []),
+            ))
         if not tasks:
             QMessageBox.information(None, "Quick Backup", "No backup entries found for this group.")
             return
@@ -428,12 +435,19 @@ def main():
                 headers = [h.strip() for h in _raw.split(",") if h.strip()]
 
         from copy_worker import CopyDialog
-        tasks = [
-            (e["source"], e["destination"], e["title"])
-            for e in S.entries
-            if not e.get("details", {}).get("no_backup")
-            and (not headers or e.get("header") in headers)
-        ]
+        tasks = []
+        for e in S.entries:
+            details = e.get("details", {})
+            if details.get("no_backup"):
+                continue
+            if headers and e.get("header") not in headers:
+                continue
+            tasks.append((
+                e["source"], e["destination"], e["title"],
+                details.get("exclude_paths", {}),
+                details.get("pre_hooks", []),
+                details.get("post_hooks", []),
+            ))
         if tasks:
             CopyDialog(None, tasks, "Backup (scheduled)").exec()
         sys.exit(0)

@@ -2,6 +2,7 @@ import base64 as _b64
 import json
 import os
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 from PyQt6.QtCore import QTime
@@ -57,7 +58,11 @@ def get_next_run_time() -> str:
             if line.startswith("NextElapseUSecRealtime="):
                 val = line.split("=", 1)[1].strip()
                 if val and val != "0":
-                    return val
+                    try:
+                        dt = datetime.fromtimestamp(int(val) / 1_000_000)
+                        return dt.strftime("%Y-%m-%d %H:%M:%S")
+                    except (ValueError, OSError, OverflowError):
+                        return val
     except (subprocess.SubprocessError, OSError):
         pass
     return ""

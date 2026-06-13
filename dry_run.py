@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QStackedWidget,
 )
 
+from copy_worker import _SKIP_RE
 from state import S
 from themes import current_theme, font_sz
 from ui_utils import _StandardKeysMixin
@@ -23,7 +24,7 @@ class _DryRunWorker(QThread):
     entry_done = pyqtSignal(dict)
     finished   = pyqtSignal()
 
-    def __init__(self, tasks: list[tuple[list[str], list[str], str]]) -> None:
+    def __init__(self, tasks: list[tuple[list[str], list[str], str, dict]]) -> None:
         super().__init__()
         self._tasks  = tasks
         self._cancel = threading.Event()
@@ -33,15 +34,17 @@ class _DryRunWorker(QThread):
 
     def run(self) -> None:
         total = len(self._tasks)
-        for idx, (sources, destinations, title) in enumerate(self._tasks):
+        for idx, task in enumerate(self._tasks):
             if self._cancel.is_set():
                 break
+            sources, destinations, title = task[0], task[1], task[2]
+            excludes = task[3] if len(task) > 3 else {}
             self.progress.emit(idx, total)
-            self.entry_done.emit(self._analyse(sources, destinations, title))
+            self.entry_done.emit(self._analyse(sources, destinations, title, excludes))
         self.progress.emit(total, total)
         self.finished.emit()
 
-    def _analyse(self, sources: list[str], destinations: list[str], title: str) -> dict:
+    def _analyse(self, sources: list[str], destinations: list[str], title: str, excludes: dict | set | frozenset | None = None) -> dict:
         to_copy: list[tuple[str, str]] = []
         to_skip: list[str] = []
         errors: list[tuple[str, str]] = []
@@ -63,11 +66,30 @@ class _DryRunWorker(QThread):
                 errors.append((src_root, "Source path does not exist"))
                 continue
 
-            for dirpath, _dirs, files in os.walk(src_p, followlinks=False):
+            src_abs = str(src_p.resolve())
+            if isinstance(excludes, dict):
+                excl_names = excludes.get(src_abs) or excludes.get(src_root) or excludes.get(str(src_p)) or []
+                excl_set = {os.path.join(src_abs, n) for n in excl_names}
+            elif isinstance(excludes, (set, frozenset, list, tuple)):
+                excl_set = set(excludes)
+            else:
+                excl_set = set()
+
+            for dirpath, dirs, files in os.walk(src_p, followlinks=False):
                 if self._cancel.is_set():
                     break
+                dirpath_abs = str(Path(dirpath).resolve())
+                dirs[:] = [
+                    d for d in dirs
+                    if not _SKIP_RE.search(d)
+                    and os.path.join(dirpath_abs, d) not in excl_set
+                ]
                 for fname in files:
+                    if _SKIP_RE.search(fname):
+                        continue
                     src_file = Path(dirpath) / fname
+                    if str(src_file.resolve()) in excl_set:
+                        continue
                     try:
                         rel = src_file.relative_to(src_p)
                     except ValueError:
@@ -625,9 +647,10 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         self._tabs.setCurrentIndex(1)
 
     def _start(self) -> None:
-        tasks: list[tuple[list[str], list[str], str]] = []
+        tasks: list[tuple[list[str], list[str], str, dict]] = []
         for e in S.entries:
-            if e.get("details", {}).get("no_backup"):
+            details = e.get("details", {})
+            if details.get("no_backup"):
                 continue
             src = e.get("source", [])
             dst = e.get("destination", [])
@@ -636,7 +659,7 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
             if isinstance(dst, str):
                 dst = [dst]
             if src and dst:
-                tasks.append((src, dst, e.get("title", "?")))
+                tasks.append((src, dst, e.get("title", "?"), details.get("exclude_paths", {})))
 
         if not tasks:
             QMessageBox.information(self, "Dry Run", "No backup entries configured.")
@@ -644,7 +667,7 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
 
         from drive_utils import check_drives_to_mount, mount_required_drives
         all_paths: list[str] = []
-        for src_list, dst_list, _ in tasks:
+        for src_list, dst_list, _title, _excl in tasks:
             all_paths.extend(src_list)
             all_paths.extend(dst_list)
         needed = check_drives_to_mount(all_paths)
