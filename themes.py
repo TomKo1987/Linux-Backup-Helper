@@ -162,9 +162,10 @@ def current_theme() -> dict[str, str]: return THEMES.get(_current_theme_name, TH
 
 def _base_font_size() -> int:
     try:
-        return int(S.ui.get("font_size", 14))
+        size = int(S.ui.get("font_size", 14))
     except (ValueError, TypeError):
         return 14
+    return min(max(size, 8), 48)
 
 
 def _font_sizes(base: int) -> dict[str, int]:

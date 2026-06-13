@@ -1,6 +1,12 @@
+import binascii
+import sys
+
+if sys.platform != "linux":
+    print("This program can only be run on Linux.")
+    sys.exit(1)
+
 import base64 as _b64
 import shutil
-import sys
 import threading
 from pathlib import Path
 
@@ -28,15 +34,15 @@ from windows import base_window
 
 
 def _make_icon() -> QIcon:
-    raw = _b64.b64decode(_ICON_B64)
-    pix = QPixmap()
-    pix.loadFromData(QByteArray(raw), "PNG")
-    return QIcon(pix)
-
-
-if sys.platform != "linux":
-    print("This program can only be run on Linux.")
-    sys.exit(1)
+    try:
+        raw = _b64.b64decode(_ICON_B64)
+        pix = QPixmap()
+        if not pix.loadFromData(QByteArray(raw), "PNG"):
+            return QIcon()
+        return QIcon(pix)
+    except (binascii.Error, TypeError) as e:
+        logger.debug("Icon could not be decoded: %s", e)
+        return QIcon()
 
 
 class MainWindow(_StandardKeysMixin, QMainWindow):
@@ -139,6 +145,8 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
     def _open_settings(self) -> None:
         self._open(base_window, "Settings", setup_fn=lambda d: d.changed.connect(apply_style))
         self._build_ui()
+        if hasattr(self, "tray"):
+            self._build_tray_menu()
         self._refresh_status_panel()
 
     def _launch_scan_verify(self) -> None:
@@ -170,6 +178,11 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
         icon = _style.standardIcon(QStyle.StandardPixmap.SP_DriveHDIcon) if _style else QIcon()
         self.tray = QSystemTrayIcon(icon, self)
         self.tray.setToolTip("Backup Helper")
+        self._build_tray_menu()
+        self.tray.activated.connect(self._on_tray_activated)
+        self.tray.show()
+
+    def _build_tray_menu(self) -> None:
         menu = QMenu()
 
         show_act = QAction("🏠 Show Backup Helper", self)
@@ -195,9 +208,11 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
             act = QAction(label, self)
             act.triggered.connect(fn)
             menu.addAction(act)
+
+        old_menu = self.tray.contextMenu()
         self.tray.setContextMenu(menu)
-        self.tray.activated.connect(self._on_tray_activated)
-        self.tray.show()
+        if old_menu is not None:
+            old_menu.deleteLater()
 
     def _quick_backup(self, header: str | None) -> None:
         from copy_worker import CopyDialog
@@ -400,8 +415,13 @@ def main():
             sys.__excepthook__(exc_type, exc_value, exc_tb)
             return
         logger.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_tb))
-        QMessageBox.critical(None, "Critical Error",
-                             f"Unexpected error:\n\n{exc_value}\n\nCheck logs for details.")
+        try:
+            QMessageBox.critical(None, "Critical Error",
+                                 f"Unexpected error:\n\n{exc_value}\n\nCheck logs for details.")
+        except RuntimeError as error:
+            logger.error("Unable to display the GUI error dialog (RuntimeError): %s", error)
+        except Exception as error:
+            logger.error("Secondary error when displaying the dialog: %s", error)
 
     def _thread_excepthook(_args):
         if _args.exc_type and issubclass(_args.exc_type, KeyboardInterrupt):
@@ -450,6 +470,8 @@ def main():
             ))
         if tasks:
             CopyDialog(None, tasks, "Backup (scheduled)").exec()
+        else:
+            logger.warning("Headless backup: no matching tasks found (headers=%s)", headers)
         sys.exit(0)
 
     win = MainWindow()

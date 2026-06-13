@@ -55,15 +55,16 @@ def _path_exists(path: Path) -> bool:
         return False
 
 
-def _make_backup(dst: Path) -> None:
+def _make_backup(dst: Path) -> bool:
     if not dst.exists():
-        return
+        return True
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     bak = dst.with_suffix(f"{dst.suffix}.bak_{ts}")
     try:
         shutil.copy2(dst, bak)
+        return True
     except OSError:
-        return
+        return False
 
 
 def _colored_diff_html(src_lines: list[str], dst_lines: list[str], theme: dict) -> str:
@@ -78,6 +79,11 @@ def _colored_diff_html(src_lines: list[str], dst_lines: list[str], theme: dict) 
     if not diff:
         return (f"<p style='color:{add_col};font-family:monospace;font-size:{fs}px;'>"
                 f"✓  Files are identical — nothing to deploy.</p>")
+
+    truncated = False
+    if len(diff) > 2000:
+        diff = diff[:2000]
+        truncated = True
 
     rows = []
     for line in diff:
@@ -94,9 +100,13 @@ def _colored_diff_html(src_lines: list[str], dst_lines: list[str], theme: dict) 
         rows.append(f"<p style='margin:0;color:{color};font-family:monospace;font-size:{fs}px;"
                     f"white-space:pre;'>{esc}</p>")
 
-    return (f"<div style='background:{bg};padding:8px;border-radius:4px;'>"
+    html = (f"<div style='background:{bg};padding:8px;border-radius:4px;'>"
             + "\n".join(rows)
             + "</div>")
+    if truncated:
+        html += (f"<p style='color:{ctx_col};font-family:monospace;font-size:{fs}px;'>"
+                 f"… diff truncated (more than 2000 lines)</p>")
+    return html
 
 
 class _DeployWorker(QThread):
@@ -119,7 +129,10 @@ class _DeployWorker(QThread):
                 continue
             try:
                 if self._backup:
-                    _make_backup(dst)
+                    if not _make_backup(dst):
+                        self.progress.emit(f"  ✗ {src.name}: backup failed, skipping overwrite", True)
+                        err += 1
+                        continue
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dst)
                 self.progress.emit(f"  ✓ {src.name}  →  {dst}", False)
@@ -127,10 +140,16 @@ class _DeployWorker(QThread):
             except PermissionError:
                 try:
                     if self._backup and _path_exists(dst):
-                        subprocess.run(
-                            ["sudo", "cp", "--backup=numbered", str(dst),
-                             str(dst.with_suffix(dst.suffix + ".bak"))],
-                            check=False, timeout=15)
+                        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        bak_path = dst.with_suffix(dst.suffix + f".bak_{ts}")
+                        bres = subprocess.run(
+                            ["sudo", "cp", "-p", str(dst), str(bak_path)],
+                            capture_output=True, text=True, timeout=15)
+                        if bres.returncode != 0:
+                            self.progress.emit(
+                                f"  ✗ {src.name}: sudo backup failed: {bres.stderr.strip()}, skipping overwrite", True)
+                            err += 1
+                            continue
                     r = subprocess.run(
                         ["sudo", "cp", str(src), str(dst)],
                         capture_output=True, text=True, timeout=30)
@@ -141,6 +160,9 @@ class _DeployWorker(QThread):
                         self.progress.emit(
                             f"  ✗ {src.name}: sudo cp failed: {r.stderr.strip()}", True)
                         err += 1
+                except subprocess.TimeoutExpired:
+                    self.progress.emit(f"  ✗ {src.name}: sudo cp timed out", True)
+                    err += 1
                 except Exception as exc2:
                     self.progress.emit(f"  ✗ {src.name}: {exc2}", True)
                     err += 1
@@ -365,12 +387,8 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
                 icon, color_key = "✗ ", "error"
                 missing += 1
             elif dst_text is None:
-                if _path_exists(dst):
-                    icon, color_key = "★ ", "warning"
-                    changed += 1
-                else:
-                    icon, color_key = "★ ", "warning"
-                    changed += 1
+                icon, color_key = "★ ", "warning"
+                changed += 1
             elif src_text == dst_text:
                 icon, color_key = "✓ ", "success"
                 identical += 1
