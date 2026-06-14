@@ -601,6 +601,29 @@ class LinuxDistroHelper:
 
     @staticmethod
     def detect_esp() -> Path:
+        try:
+            out = subprocess.check_output(
+                ["bootctl", "--print-esp-path"],
+                stderr=subprocess.DEVNULL, text=True
+            ).strip()
+            if out:
+                p = Path(out)
+                if p.is_dir():
+                    return p
+        except (subprocess.SubprocessError, FileNotFoundError):
+            pass
+
+        try:
+            with open("/proc/mounts", encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    parts = line.split()
+                    if len(parts) >= 3 and parts[2].lower() in ("vfat", "fat", "msdos"):
+                        mp = Path(parts[1])
+                        if (mp / "EFI").is_dir() or (mp / "loader" / "loader.conf").exists():
+                            return mp
+        except OSError:
+            pass
+
         for candidate in (Path("/efi"), Path("/boot/efi"), Path("/boot")):
             if (candidate / "loader" / "loader.conf").exists() or (candidate / "EFI").is_dir():
                 return candidate
@@ -616,12 +639,105 @@ class LinuxDistroHelper:
             return False
 
     @staticmethod
+    def _iter_esp_candidates() -> list["Path"]:
+        seen: set[Path] = set()
+        candidates: list[Path] = []
+
+        def _add(_p: Path) -> None:
+            try:
+                r = _p.resolve()
+            except OSError:
+                r = _p
+            if r not in seen and _p.exists():
+                seen.add(r)
+                candidates.append(_p)
+
+        for cmd in (["bootctl", "--print-esp-path"],
+                    ["sudo", "-n", "bootctl", "--print-esp-path"]):
+            try:
+                out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, text=True).strip()
+                if out:
+                    _add(Path(out))
+                    break
+            except (subprocess.SubprocessError, FileNotFoundError, OSError):
+                pass
+
+        try:
+            with open("/proc/mounts", encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    parts = line.split()
+                    if len(parts) < 2:
+                        continue
+                    mp = Path(parts[1])
+                    fstype = parts[2].lower() if len(parts) >= 3 else ""
+                    if fstype in ("vfat", "fat", "fat32", "msdos", "exfat"):
+                        _add(mp)
+                    elif mp.name in ("efi", "esp", "boot") or str(mp) in ("/efi", "/boot/efi", "/esp"):
+                        _add(mp)
+        except OSError:
+            pass
+
+        for p in (Path("/efi"), Path("/esp"), Path("/boot/efi"), Path("/boot")):
+            _add(p)
+
+        return candidates
+
+    @staticmethod
+    def _path_has_systemd_boot(esp: Path) -> bool:
+        try:
+            if (esp / "loader" / "loader.conf").exists():
+                return True
+            if (esp / "loader" / "entries").is_dir():
+                return True
+            efi_linux = esp / "EFI" / "Linux"
+            if efi_linux.is_dir() and any(efi_linux.glob("*.efi")):
+                return True
+            for sd_efi in (
+                esp / "EFI" / "systemd" / "systemd-bootx64.efi",
+                esp / "EFI" / "systemd" / "systemd-bootaa64.efi",
+                esp / "EFI" / "BOOT" / "BOOTX64.EFI",
+            ):
+                if sd_efi.exists():
+                    if "BOOT" in str(sd_efi):
+                        if not (sd_efi.parent / "grubx64.efi").exists():
+                            return True
+                    else:
+                        return True
+        except OSError:
+            pass
+        return False
+
+    @staticmethod
     def detect_bootloader() -> str:
+        for cmd in (["bootctl", "--print-esp-path"],
+                    ["sudo", "-n", "bootctl", "--print-esp-path"]):
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True)
+                if r.returncode == 0 and r.stdout.strip():
+                    return "systemd-boot"
+            except FileNotFoundError:
+                break
+            except OSError:
+                pass
+
+        for esp in LinuxDistroHelper._iter_esp_candidates():
+            if LinuxDistroHelper._path_has_systemd_boot(esp):
+                return "systemd-boot"
+
+        if (Path("/sys/firmware/efi/efivars").exists()
+                and not Path("/boot/grub/grub.cfg").exists()):
+            try:
+                out = subprocess.check_output(
+                    ["efibootmgr"], stderr=subprocess.DEVNULL, text=True
+                )
+                if "Linux Boot Manager" in out or "systemd" in out.lower():
+                    return "systemd-boot"
+            except (FileNotFoundError, subprocess.SubprocessError, OSError):
+                pass
+
         if Path("/boot/grub/grub.cfg").exists():
             return "grub"
-        for esp in (Path("/efi"), Path("/boot/efi"), Path("/boot")):
-            if (esp / "loader" / "loader.conf").exists() or (esp / "loader" / "entries").is_dir():
-                return "systemd-boot"
+
         return "unknown"
 
     def get_ucode_package(self) -> str | None:
