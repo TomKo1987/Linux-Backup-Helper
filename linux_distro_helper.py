@@ -429,6 +429,7 @@ class LinuxDistroHelper:
     def get_find_orphans_cmd(self)              -> str: return self._orphans
 
     def get_batch_install_cmd(self, packages: list[str]) -> str:
+        safe_pkgs = " ".join(shlex.quote(p) for p in packages)
         if not packages:
             return ""
         fam = self.family()
@@ -436,7 +437,7 @@ class LinuxDistroHelper:
             return "nix-env -iA " + " ".join(f"nixpkgs.{p}" for p in packages)
         if fam == "slackware":
             return "sudo slackpkg install " + " ".join(packages)
-        return self._install.format(p=" ".join(packages))
+        return self._install.format(p=safe_pkgs)
 
     def parse_orphan_output(self, raw: str) -> list[str]:
         fam   = self.family()

@@ -7,6 +7,8 @@ from dataclasses import dataclass, field, fields as _dc_fields
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
+import threading
+_state_lock = threading.Lock()
 
 from constants import USER_SHELLS, ARCH_KERNEL_VARIANTS
 
@@ -146,25 +148,26 @@ _KNOWN_UI_KEYS = frozenset(S.ui.keys())
 
 
 def _atomic_write(path: Path, data: dict | list) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(".tmp")
-    try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, path)
+    with _state_lock:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_suffix(".tmp")
         try:
-            dfd = os.open(str(path.parent), os.O_RDONLY)
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, path)
             try:
-                os.fsync(dfd)
-            finally:
-                os.close(dfd)
-        except OSError:
-            pass
-    except (OSError, TypeError, ValueError):
-        tmp_path.unlink(missing_ok=True)
-        raise
+                dfd = os.open(str(path.parent), os.O_RDONLY)
+                try:
+                    os.fsync(dfd)
+                finally:
+                    os.close(dfd)
+            except OSError:
+                pass
+        except (OSError, TypeError, ValueError):
+            tmp_path.unlink(missing_ok=True)
+            raise
 
 
 def _normalise_pkg(p) -> dict:

@@ -686,9 +686,10 @@ class SystemManagerThread(QThread):
                             line = raw.decode("utf-8", errors="replace").rstrip("\r")
                             clean = _ANSI_RE.sub("", line).strip()
                             if clean:
-                                if re.search(r"Enter a number|Enter a selection", clean, re.IGNORECASE):
+                                clean_lower = clean.lower()
+                                if "enter a number" in clean_lower or "enter a selection" in clean_lower:
                                     out_q.put((_is_err, clean, "select"))
-                                elif re.search(r"\[N]one\s+\[A]ll", clean, re.IGNORECASE):
+                                elif "[n]one" in clean_lower and "[a]ll" in clean_lower:
                                     out_q.put((_is_err, clean, "auto_none"))
                                 else:
                                     out_q.put((_is_err, clean, None))
@@ -696,20 +697,21 @@ class SystemManagerThread(QThread):
                         if buf:
                             decoded = buf.decode("utf-8", errors="replace")
                             clean = _ANSI_RE.sub("", decoded)
+                            clean_lower = clean.lower()
 
-                            if "[sudo]" in clean.lower() and "password" in clean.lower():
+                            if "[sudo]" in clean_lower and "password" in clean_lower:
                                 out_q.put((_is_err, clean, "sudo_pw"))
                                 buf = b""
 
-                            elif re.search(r"Enter a number|Enter a selection", clean, re.IGNORECASE):
+                            elif "enter a number" in clean_lower or "enter a selection" in clean_lower:
                                 out_q.put((_is_err, clean, "select"))
                                 buf = b""
 
-                            elif "[y/n]" in clean.lower():
+                            elif "[y/n]" in clean_lower:
                                 out_q.put((_is_err, clean, "confirm"))
                                 buf = b""
 
-                            elif re.search(r"\[N]one\s+\[A]ll", clean, re.IGNORECASE):
+                            elif "[n]one" in clean_lower and "[a]ll" in clean_lower:
                                 out_q.put((_is_err, clean, "auto_none"))
                                 buf = b""
 

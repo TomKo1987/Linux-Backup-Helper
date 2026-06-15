@@ -1,6 +1,7 @@
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from sudo_password import SecureString
 
@@ -22,9 +23,9 @@ from themes import (
 from tooltips import sm_tooltips, sudo_checkbox_tooltip
 from ui_utils import ask_text, ok_cancel_buttons, sep, browse_field
 
-_STATE_ACTIVE   = Qt.CheckState.Checked
+_STATE_ACTIVE = Qt.CheckState.Checked
 _STATE_DISABLED = Qt.CheckState.PartiallyChecked
-_STATE_DELETE   = Qt.CheckState.Unchecked
+_STATE_DELETE = Qt.CheckState.Unchecked
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
 
 
@@ -36,14 +37,16 @@ class TriCheckBox(QCheckBox):
 
     def nextCheckState(self) -> None:
         s = self.checkState()
-        next_state = (_STATE_DISABLED if s == _STATE_ACTIVE else _STATE_DELETE if s == _STATE_DISABLED else _STATE_ACTIVE)
+        next_state = (
+            _STATE_DISABLED if s == _STATE_ACTIVE else _STATE_DELETE if s == _STATE_DISABLED else _STATE_ACTIVE)
         self.setCheckState(next_state)
         _update_tri_style(self)
 
 
 def _update_tri_style(cb: QCheckBox) -> None:
     ss_active, ss_disabled, ss_delete = tri_styles()
-    cb.setStyleSheet({_STATE_ACTIVE: ss_active, _STATE_DISABLED: ss_disabled, _STATE_DELETE: ss_delete}[cb.checkState()])
+    cb.setStyleSheet(
+        {_STATE_ACTIVE: ss_active, _STATE_DISABLED: ss_disabled, _STATE_DELETE: ss_delete}[cb.checkState()])
 
 
 def _make_tri_cb(text: str, disabled: bool, tooltip: str = "") -> TriCheckBox:
@@ -166,7 +169,7 @@ def _compute_op_status(distro: LinuxDistroHelper, has_yay: bool, system_default_
 
     try:
         target = S.effective_shell
-        binary  = distro.get_shell_binary_name(target)
+        binary = distro.get_shell_binary_name(target)
         current = _pwd.getpwnam(_USER).pw_shell
         status["shell_ok"] = (Path(current).name == binary)
     except (KeyError, OSError):
@@ -177,7 +180,8 @@ def _compute_op_status(distro: LinuxDistroHelper, has_yay: bool, system_default_
 
     _ik: set = installed_kernels if installed_kernels is not None else distro.detect_installed_kernel_variants()
     targets_kti = S.effective_kernels
-    status["kernels_all_installed"] = (not targets_kti or all(v in _ik for v in targets_kti if v in ARCH_KERNEL_VARIANTS))
+    status["kernels_all_installed"] = (
+                not targets_kti or all(v in _ik for v in targets_kti if v in ARCH_KERNEL_VARIANTS))
 
     if distro.family() == "arch":
         future_kernels = _ik.union(set(targets_kti))
@@ -194,7 +198,8 @@ def _compute_op_status(distro: LinuxDistroHelper, has_yay: bool, system_default_
     status["yay_installed"] = has_yay
 
     effective_dk = (S.default_kernel or system_default_variant or "").strip()
-    status["default_kernel_ok"] = bool(effective_dk and system_default_variant and effective_dk == system_default_variant)
+    status["default_kernel_ok"] = bool(
+        effective_dk and system_default_variant and effective_dk == system_default_variant)
 
     return status
 
@@ -203,7 +208,6 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, has_ya
                    system_default_variant: str | None = None, op_status: dict | None = None,
                    installed_kernels: set | None = None, kernels_to_install_override: list | None = None,
                    default_kernel_override: str | None = None) -> dict[str, tuple[str, str]]:
-
     tips = sm_tooltips()
     _NO_CHANGE = " (No changes necessary.)"
 
@@ -253,8 +257,9 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, has_ya
             if ARCH_KERNEL_VARIANTS.get(v) and len(ARCH_KERNEL_VARIANTS[v]) >= 2 and not distro.package_is_installed(
                 ARCH_KERNEL_VARIANTS[v][1])
         ]
-        headers_text = ("Install kernel headers: (Headers for installed kernel(s) already installed. No changes necessary.)" if not _missing_hdrs
-                        else f"Install kernel headers: {', '.join(_missing_hdrs)}")
+        headers_text = (
+            "Install kernel headers: (Headers for installed kernel(s) already installed. No changes necessary.)" if not _missing_hdrs
+            else f"Install kernel headers: {', '.join(_missing_hdrs)}")
     else:
         _hpkg = distro.get_kernel_headers_pkg() or "linux-headers"
         _hdr_done = " (No changes necessary)" if (op_status and op_status.get("kernel_headers_installed")) else ""
@@ -263,40 +268,64 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, has_ya
     dk = ((default_kernel_override if default_kernel_override is not None else S.default_kernel) or "")
     dk_pkg = dk or system_default_variant or "(not selected)"
     sys_def_info = f" [System default: {system_default_variant}]" if system_default_variant and system_default_variant != dk_pkg else ""
-    dk_note = " (Is already default. No changes necessary.)" if (op_status and op_status.get("default_kernel_ok")) else sys_def_info
+    dk_note = " (Is already default. No changes necessary.)" if (
+                op_status and op_status.get("default_kernel_ok")) else sys_def_info
 
     return {"copy_dotfiles": ("Copy 'Dotfiles' (Using 'sudo cp')", _tip("copy_dotfiles")),
-            "update_mirrors": ("Mirror update<br>(Install 'reflector' and get the 10 fastest servers in your country, or worldwide if location is not detected)",
-                               _tip("update_mirrors")),
-        "set_user_shell": (f"Change shell for current user (Install shell package and set as default.){_done('shell_ok')}",
-                           _tip("set_user_shell")),
-        "update_system": (f"System update (Using '{'yay --noconfirm' if has_yay else distro.get_update_system_cmd()}')", _tip("update_system")),
-        "install_ucode": (f"Install {cpu_label} CPU microcode updates (Package: '{ucode_pkg}'){_done('ucode_installed')}", _tip("install_ucode")),
-        "install_kernels": (kernels_text, _tip("install_kernels")),
-        "install_kernel_headers": (headers_text, _tip("install_kernel_headers")),
-        "set_default_kernel": (f"Set default boot kernel to: {dk_pkg}{dk_note}", _tip("set_default_kernel")),
-        "install_basic_packages": (f"Install 'Basic Packages' (Using '{install_cmd}')", _tip("install_basic_packages")),
-        "install_yay": (f"Install 'yay' (required for 'AUR Packages'){_done('yay_installed')}", _tip("install_yay")),
-        "install_aur_packages": ("Install 'AUR Packages' ('yay' required. Using 'yay -S --needed ...')", _tip("install_aur_packages")),
-        "install_specific_packages": (f"Install 'Specific Packages' for {session} (Using '{install_cmd}')", _tip("install_specific_packages")),
-        "enable_flatpak_integration": (f"Enable Flatpak integration (Install '{pkglist(distro.get_flatpak_packages)}' and add Flathub remote)",
-                                       _tip("enable_flatpak_integration")),
-        "enable_printer_support": (f"Initialise printer support<br>(Install '{pkglist(distro.get_printer_packages)}'. Enable & start 'cups.service')",
-                                   _tip("enable_printer_support")),
-        "enable_ssh_service": (f"Initialise SSH server (Install '{pkglist(distro.get_ssh_packages)}'. Enable & start '{distro.get_ssh_service_name()}.service')",
-                               _tip("enable_ssh_service")),
-        "enable_samba_network_filesharing": (f"Initialise Samba (network file-sharing). (Install '{pkglist(distro.get_samba_packages)}'. "
-                                             f"Enable & start '{distro.get_samba_service_name()}.service')", _tip("enable_samba_network_filesharing")),
-        "enable_bluetooth_service": (f"Initialise Bluetooth (Install '{pkglist(distro.get_bluetooth_packages)}'. Enable & start 'bluetooth.service')",
-                                     _tip("enable_bluetooth_service")),
-        "enable_atd_service": (f"Initialise atd (Install '{pkglist(distro.get_at_packages)}'. Enable & start 'atd.service')", _tip("enable_atd_service")),
-        "enable_cronie_service": (f"Initialise {cron_svc} (Install '{pkglist(distro.get_cron_packages)}'. Enable & start '{cron_svc}.service')",
-                                  _tip("enable_cronie_service")),
-        "install_snap": (f"Initialise Snap (Install '{pkglist(distro.get_snap_packages)}'. Enable & start 'snapd.service')", _tip("install_snap")),
-        "enable_firewall": (f"Initialise firewall (Install '{pkglist(distro.get_firewall_packages)}'. Enable & start 'ufw.service', set to 'deny all by default')",
-                            _tip("enable_firewall")),
-        "remove_orphaned_packages": ("Remove orphaned package(s)", _tip("remove_orphaned_packages")),
-        "clean_cache": (f"Clean cache (for '{pm_name}'" + (" and 'yay')" if distro.has_aur else ")"), _tip("clean_cache"))}
+            "update_mirrors": (
+                "Mirror update<br>(Install 'reflector' and get the 10 fastest servers in your country, or worldwide if location is not detected)",
+                _tip("update_mirrors")),
+            "set_user_shell": (
+                f"Change shell for current user (Install shell package and set as default.){_done('shell_ok')}",
+                _tip("set_user_shell")),
+            "update_system": (
+                f"System update (Using '{'yay --noconfirm' if has_yay else distro.get_update_system_cmd()}')",
+                _tip("update_system")),
+            "install_ucode": (
+                f"Install {cpu_label} CPU microcode updates (Package: '{ucode_pkg}'){_done('ucode_installed')}",
+                _tip("install_ucode")),
+            "install_kernels": (kernels_text, _tip("install_kernels")),
+            "install_kernel_headers": (headers_text, _tip("install_kernel_headers")),
+            "set_default_kernel": (f"Set default boot kernel to: {dk_pkg}{dk_note}", _tip("set_default_kernel")),
+            "install_basic_packages": (f"Install 'Basic Packages' (Using '{install_cmd}')",
+                                       _tip("install_basic_packages")),
+            "install_yay": (f"Install 'yay' (required for 'AUR Packages'){_done('yay_installed')}",
+                            _tip("install_yay")),
+            "install_aur_packages": ("Install 'AUR Packages' ('yay' required. Using 'yay -S --needed ...')",
+                                     _tip("install_aur_packages")),
+            "install_specific_packages": (f"Install 'Specific Packages' for {session} (Using '{install_cmd}')",
+                                          _tip("install_specific_packages")),
+            "enable_flatpak_integration": (
+                f"Enable Flatpak integration (Install '{pkglist(distro.get_flatpak_packages)}' and add Flathub remote)",
+                _tip("enable_flatpak_integration")),
+            "enable_printer_support": (
+                f"Initialise printer support<br>(Install '{pkglist(distro.get_printer_packages)}'. Enable & start 'cups.service')",
+                _tip("enable_printer_support")),
+            "enable_ssh_service": (
+                f"Initialise SSH server (Install '{pkglist(distro.get_ssh_packages)}'. Enable & start '{distro.get_ssh_service_name()}.service')",
+                _tip("enable_ssh_service")),
+            "enable_samba_network_filesharing": (
+                f"Initialise Samba (network file-sharing). (Install '{pkglist(distro.get_samba_packages)}'. "
+                f"Enable & start '{distro.get_samba_service_name()}.service')",
+                _tip("enable_samba_network_filesharing")),
+            "enable_bluetooth_service": (
+                f"Initialise Bluetooth (Install '{pkglist(distro.get_bluetooth_packages)}'. Enable & start 'bluetooth.service')",
+                _tip("enable_bluetooth_service")),
+            "enable_atd_service": (
+                f"Initialise atd (Install '{pkglist(distro.get_at_packages)}'. Enable & start 'atd.service')",
+                _tip("enable_atd_service")),
+            "enable_cronie_service": (
+                f"Initialise {cron_svc} (Install '{pkglist(distro.get_cron_packages)}'. Enable & start '{cron_svc}.service')",
+                _tip("enable_cronie_service")),
+            "install_snap": (
+                f"Initialise Snap (Install '{pkglist(distro.get_snap_packages)}'. Enable & start 'snapd.service')",
+                _tip("install_snap")),
+            "enable_firewall": (
+                f"Initialise firewall (Install '{pkglist(distro.get_firewall_packages)}'. Enable & start 'ufw.service', set to 'deny all by default')",
+                _tip("enable_firewall")),
+            "remove_orphaned_packages": ("Remove orphaned package(s)", _tip("remove_orphaned_packages")),
+            "clean_cache": (f"Clean cache (for '{pm_name}'" + (" and 'yay')" if distro.has_aur else ")"),
+                            _tip("clean_cache"))}
 
 
 def _raw_to_label_html(raw: dict[str, tuple[str, str]]) -> dict[str, str]:
@@ -425,9 +454,11 @@ class SystemManagerOptions(QDialog):
             self._yay_installed = _check_yay_installed(self._distro)
         return bool(self._yay_installed)
 
-    def _reopen_pkgs(self, pkg_type: str) -> None: QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
+    def _reopen_pkgs(self, pkg_type: str) -> None:
+        QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
 
-    def _reopen_dotfiles(self) -> None: QTimer.singleShot(0, self._edit_dotfiles)
+    def _reopen_dotfiles(self) -> None:
+        QTimer.singleShot(0, self._edit_dotfiles)
 
     def _edit_ops(self):
         bootloader, current_variant, _system_default_variant = _detect_boot_info()
@@ -530,71 +561,73 @@ class SystemManagerOptions(QDialog):
                     apply_tooltip(cb, _cb_tip)
 
                 is_arch = key in arch_only
+
                 if is_arch and not self._distro.has_aur:
-                    cb.setEnabled(False)
-                    cb.setStyleSheet(style_checkbox_muted() + "QCheckBox{margin-left:14px;}")
+                    cb.setVisible(False)
                 else:
                     cb.setChecked(key in S.system_manager_ops)
 
                 if key == "install_kernels":
                     _install_kernels_cb = cb
-                    grid.addWidget(cb, grid_row, 0, 1, 2)
-                    grid_row += 1
+                    if not (is_arch and not self._distro.has_aur):
+                        grid.addWidget(cb, grid_row, 0, 1, 2)
+                        grid_row += 1
 
-                    saved_kti = set(S.kernels_to_install or [])
-                    sub_enabled = cb.isEnabled() and cb.isChecked()
+                        saved_kti = set(S.kernels_to_install or [])
+                        sub_enabled = cb.isEnabled() and cb.isChecked()
 
-                    sub_widget = QWidget()
-                    sub_grid = QGridLayout(sub_widget)
-                    sub_grid.setHorizontalSpacing(6)
-                    sub_grid.setVerticalSpacing(2)
-                    sub_grid.setContentsMargins(28, 0, 0, 0)
+                        sub_widget = QWidget()
+                        sub_grid = QGridLayout(sub_widget)
+                        sub_grid.setHorizontalSpacing(6)
+                        sub_grid.setVerticalSpacing(2)
+                        sub_grid.setContentsMargins(28, 0, 0, 0)
 
-                    for i in range(0, len(_KERNEL_VARIANTS), 2):
-                        for col_off, variant in enumerate(_KERNEL_VARIANTS[i:i + 2]):
-                            is_current = (variant == current_variant)
-                            is_installed = (variant in _installed_kernels)
+                        for i in range(0, len(_KERNEL_VARIANTS), 2):
+                            for col_off, variant in enumerate(_KERNEL_VARIANTS[i:i + 2]):
+                                is_current = (variant == current_variant)
+                                is_installed = (variant in _installed_kernels)
 
-                            suffixes = []
-                            if is_current: suffixes.append("running")
-                            if variant == _system_default_variant: suffixes.append("default")
-                            if is_installed and not is_current: suffixes.append("installed")
+                                suffixes = []
+                                if is_current: suffixes.append("running")
+                                if variant == _system_default_variant: suffixes.append("default")
+                                if is_installed and not is_current: suffixes.append("installed")
 
-                            if is_current:
-                                tip = "Currently running kernel — already installed, will be skipped."
-                            elif is_installed:
-                                tip = f"{variant} is already installed — will be skipped."
-                            else:
-                                tip = f"Include {variant} in the kernel installation."
+                                if is_current:
+                                    tip = "Currently running kernel — already installed, will be skipped."
+                                elif is_installed:
+                                    tip = f"{variant} is already installed — will be skipped."
+                                else:
+                                    tip = f"Include {variant} in the kernel installation."
 
-                            icon_sub = "󰔨  " if tip else ""
+                                icon_sub = "󰔨  " if tip else ""
 
-                            display_label = variant + (f"   ← {' ← '.join(suffixes)}" if suffixes else "")
-                            sub_cb = QCheckBox(f"{icon_sub}{display_label}")
-                            never_saved = not S.kernels_to_install
-                            sub_cb.setChecked(variant in saved_kti or (never_saved and is_installed))
-                            sub_cb.setEnabled(sub_enabled)
+                                display_label = variant + (f"   ← {' ← '.join(suffixes)}" if suffixes else "")
+                                sub_cb = QCheckBox(f"{icon_sub}{display_label}")
+                                never_saved = not S.kernels_to_install
+                                sub_cb.setChecked(variant in saved_kti or (never_saved and is_installed))
+                                sub_cb.setEnabled(sub_enabled)
 
-                            apply_tooltip(sub_cb, tip)
+                                apply_tooltip(sub_cb, tip)
 
-                            if is_installed:
-                                sub_cb.setStyleSheet(style_checkbox_muted() + "QCheckBox{font-style:italic;}")
-                            sub_grid.addWidget(sub_cb, i // 2, col_off)
-                            _kernel_sub_cbs[variant] = sub_cb
+                                if is_installed:
+                                    sub_cb.setStyleSheet(style_checkbox_muted() + "QCheckBox{font-style:italic;}")
+                                sub_grid.addWidget(sub_cb, i // 2, col_off)
+                                _kernel_sub_cbs[variant] = sub_cb
 
-                    grid.addWidget(sub_widget, grid_row, 0, 1, 2)
-                    grid_row += (len(_KERNEL_VARIANTS) + 1) // 2
+                        grid.addWidget(sub_widget, grid_row, 0, 1, 2)
+                        grid_row += (len(_KERNEL_VARIANTS) + 1) // 2
 
                 elif key == "set_default_kernel":
                     _set_default_cb = cb
-                    grid.addWidget(cb, grid_row, 0)
-                    combo = QComboBox()
-                    combo.setMinimumHeight(30)
-                    combo.setFixedWidth(200)
-                    combo.setEnabled(cb.isEnabled() and cb.isChecked())
-                    grid.addWidget(combo, grid_row, 1)
-                    _default_kernel_combo = combo
-                    grid_row += 1
+                    if not (is_arch and not self._distro.has_aur):
+                        grid.addWidget(cb, grid_row, 0)
+                        combo = QComboBox()
+                        combo.setMinimumHeight(30)
+                        combo.setFixedWidth(200)
+                        combo.setEnabled(cb.isEnabled() and cb.isChecked())
+                        grid.addWidget(combo, grid_row, 1)
+                        _default_kernel_combo = combo
+                        grid_row += 1
 
                 elif key == "set_user_shell":
                     _set_shell_cb = cb
@@ -611,8 +644,9 @@ class SystemManagerOptions(QDialog):
                     grid_row += 1
 
                 else:
-                    grid.addWidget(cb, grid_row, 0, 1, 2)
-                    grid_row += 1
+                    if not (is_arch and not self._distro.has_aur):
+                        grid.addWidget(cb, grid_row, 0, 1, 2)
+                        grid_row += 1
 
                 widgets.append((cb, key))
 
@@ -722,10 +756,10 @@ class SystemManagerOptions(QDialog):
 
         yay_cb = next((c for c, k in widgets if k == "install_yay"), None)
         aur_cb = next((c for c, k in widgets if k == "install_aur_packages"), None)
-        enabled_widgets = [c for c, _ in widgets if c.isEnabled()]
+        enabled_widgets = [c for c, _ in widgets if c.isEnabled() and c.isVisible()]
 
         def _sync_sa():
-            currently_enabled = [c for c in enabled_widgets if c.isEnabled()]
+            currently_enabled = [c for c in enabled_widgets if c.isEnabled() and c.isVisible()]
             if not currently_enabled: return
             n = sum(c.isChecked() for c in currently_enabled)
             sa.blockSignals(True)
@@ -746,7 +780,7 @@ class SystemManagerOptions(QDialog):
             checked = Qt.CheckState(state if state is not None else 0) != Qt.CheckState.Unchecked
             for _cb, _ in widgets:
                 _cb.blockSignals(True)
-                if checked and _cb.isEnabled():
+                if checked and _cb.isEnabled() and _cb.isVisible():
                     _cb.setChecked(True)
                 elif not checked:
                     _cb.setChecked(False)
@@ -761,7 +795,7 @@ class SystemManagerOptions(QDialog):
         _sync_aur_dep()
 
         def _save(dlg):
-            S.system_manager_ops = [k for cb_, k in widgets if cb_.isChecked()]
+            S.system_manager_ops = [k for cb_, k in widgets if cb_.isChecked() and cb_.isVisible()]
             S.kernels_to_install = [v for v in _KERNEL_VARIANTS if
                                     _kernel_sub_cbs.get(v) and _kernel_sub_cbs[v].isChecked()
                                     and _kernel_sub_cbs[v].isEnabled()]
@@ -861,6 +895,7 @@ class SystemManagerOptions(QDialog):
                     visible = not _det.isVisible()
                     _det.setVisible(visible)
                     _hint.setText("-" if visible else "+")
+
                 return _toggle
 
             _toggle_fn = _make_toggle()
@@ -994,7 +1029,8 @@ class SystemManagerOptions(QDialog):
                 added.append(src_path.name)
 
         if added:
-            S.dotfiles.sort(key=lambda x: Path(x.get("source", "")).name.lower() if isinstance(x, dict) else str(x).lower())
+            S.dotfiles.sort(
+                key=lambda x: Path(x.get("source", "")).name.lower() if isinstance(x, dict) else str(x).lower())
             save_profile()
             QMessageBox.information(self, "Success", f"Added {len(added)} item(s).")
         QTimer.singleShot(0, self._edit_dotfiles)
@@ -1038,7 +1074,8 @@ class SystemManagerOptions(QDialog):
             added += 1
 
         if added:
-            S.dotfiles.sort(key=lambda x: Path(x.get("source", "")).name.lower() if isinstance(x, dict) else str(x).lower())
+            S.dotfiles.sort(
+                key=lambda x: Path(x.get("source", "")).name.lower() if isinstance(x, dict) else str(x).lower())
             save_profile()
 
         parts_msg = [f"Imported: {added}"]
@@ -1158,7 +1195,8 @@ class SystemManagerOptions(QDialog):
 
             return slot
 
-        for lbl, fn in [("➕ Add", lambda: self._add_pkg(pkg_type)), ("➕➕ Batch Add", lambda: self._batch_add(pkg_type))]:
+        for lbl, fn in [("➕ Add", lambda: self._add_pkg(pkg_type)),
+                        ("➕➕ Batch Add", lambda: self._batch_add(pkg_type))]:
             b = QPushButton(lbl)
             b.clicked.connect(make_add_slot(fn))
             btn_add_row.addWidget(b)
@@ -1175,7 +1213,8 @@ class SystemManagerOptions(QDialog):
 
             return slot
 
-        for lbl, fn in [("📥 Import", lambda: self._import_pkgs(pkg_type)), ("📤 Export", lambda: self._export_pkgs(pkg_type))]:
+        for lbl, fn in [("📥 Import", lambda: self._import_pkgs(pkg_type)),
+                        ("📤 Export", lambda: self._export_pkgs(pkg_type))]:
             b = QPushButton(lbl)
             b.clicked.connect(make_io_slot(fn, lbl))
             io_row.addWidget(b)
@@ -1397,7 +1436,8 @@ class SystemManagerOptions(QDialog):
         existing: set
         if is_specific:
             existing = {(p.get("package"), p.get("session")) for p in current if isinstance(p, dict)}
-            existing.update({(str(p), SESSIONS[0] if SESSIONS else "unknown") for p in current if not isinstance(p, dict)})
+            existing.update(
+                {(str(p), SESSIONS[0] if SESSIONS else "unknown") for p in current if not isinstance(p, dict)})
         else:
             existing = {p.get("name") if isinstance(p, dict) else str(p) for p in current}
 
@@ -1439,11 +1479,11 @@ class SystemManagerOptions(QDialog):
 class SystemManagerLauncher:
 
     def __init__(self, parent=None):
-        self.parent          = parent
+        self.parent = parent
         self.failed_attempts = getattr(parent, "sm_failed_attempts", 0)
-        self._distro         = LinuxDistroHelper()
-        self._distro_name    = self._distro.distro_pretty_name
-        self._session        = self._distro.detect_session()
+        self._distro = LinuxDistroHelper()
+        self._distro_name = self._distro.distro_pretty_name
+        self._session = self._distro.detect_session()
         self._sudo_checkbox: QCheckBox | None = None
         self._op_text: dict[str, str] | None = None
         self._op_tips: dict[str, str] | None = None
@@ -1480,8 +1520,10 @@ class SystemManagerLauncher:
             _ik.add(_current_variant)
             _op_status = _compute_op_status(self._distro, self.yay_installed, _sys_default, installed_kernels=_ik)
             _kti_override = [] if "install_kernels" not in ops else None
-            _raw = _build_op_text(self._distro, self._session, has_yay=self.yay_installed, system_default_variant=_sys_default,
-                                  op_status=_op_status, installed_kernels=_ik, kernels_to_install_override=_kti_override)
+            _raw = _build_op_text(self._distro, self._session, has_yay=self.yay_installed,
+                                  system_default_variant=_sys_default,
+                                  op_status=_op_status, installed_kernels=_ik,
+                                  kernels_to_install_override=_kti_override)
             self._op_text = _raw_to_label_html(_raw)
             self._op_tips = _raw_to_tips(_raw)
         if not self._op_text:
@@ -1497,7 +1539,8 @@ class SystemManagerLauncher:
             yay_info = f"   |   AUR Helper: 'yay' {'detected' if self.yay_installed else 'not detected'}"
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
-        distro_lbl = QLabel(f"Recognized Linux distribution: {self._distro_name}   |   Session: {self._session}{yay_info}")
+        distro_lbl = QLabel(
+            f"Recognized Linux distribution: {self._distro_name}   |   Session: {self._session}{yay_info}")
         distro_lbl.setStyleSheet(style_label_info(bold=True) + f"font-size:{font_sz()}px")
         distro_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         content_layout.addWidget(distro_lbl)

@@ -78,6 +78,8 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
     def _extra_top_widgets(self) -> list: return []
 
     def _setup_ui(self) -> None:
+        if self.scroll_area.widget():
+            self.scroll_area.widget().deleteLater()  
         self.checkbox_dirs.clear()
         self._rebuild_top_controls()
 

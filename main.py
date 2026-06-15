@@ -10,7 +10,7 @@ import shutil
 import threading
 from pathlib import Path
 
-from PyQt6.QtCore import QByteArray
+from PyQt6.QtCore import QByteArray, QThread
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QAction
 from PyQt6.QtGui import QIcon, QPixmap
@@ -416,8 +416,10 @@ def main():
             return
         logger.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_tb))
         try:
-            QMessageBox.critical(None, "Critical Error",
-                                 f"Unexpected error:\n\n{exc_value}\n\nCheck logs for details.")
+            if QThread.currentThread() is app.thread():
+                QMessageBox.critical(None, "Critical Error", f"Unexpected error:\n{exc_value}")
+            else:
+                logger.critical(f"Critical background error: {exc_value}")
         except RuntimeError as error:
             logger.error("Unable to display the GUI error dialog (RuntimeError): %s", error)
         except Exception as error:
