@@ -172,7 +172,6 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
     def _setup_tray(self) -> None:
         if not QSystemTrayIcon.isSystemTrayAvailable():
             return
-        from PyQt6.QtGui import QIcon
         from PyQt6.QtWidgets import QStyle
         _style = QApplication.style()
         icon = _style.standardIcon(QStyle.StandardPixmap.SP_DriveHDIcon) if _style else QIcon()
@@ -419,7 +418,7 @@ def main():
             if QThread.currentThread() is app.thread():
                 QMessageBox.critical(None, "Critical Error", f"Unexpected error:\n{exc_value}")
             else:
-                logger.critical(f"Critical background error: {exc_value}")
+                logger.critical("Critical background error: %s", exc_value)
         except RuntimeError as error:
             logger.error("Unable to display the GUI error dialog (RuntimeError): %s", error)
         except Exception as error:
@@ -438,12 +437,10 @@ def main():
 
     if args.headless_headers is not None or args.headless_b64 is not None:
         import json
-        import base64 as b64_
-        import binascii
 
         if args.headless_b64 is not None:
             try:
-                headers = json.loads(b64_.b64decode(args.headless_b64).decode())
+                headers = json.loads(_b64.b64decode(args.headless_b64).decode())
                 if not isinstance(headers, list):
                     headers = []
             except (json.JSONDecodeError, ValueError, binascii.Error, UnicodeDecodeError):

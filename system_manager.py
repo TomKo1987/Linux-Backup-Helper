@@ -402,7 +402,11 @@ class SystemManagerDialog(_StandardKeysMixin, QDialog):
         self._input_edit.clear()
         self.inputProvided.emit(answer)
 
-    def closeEvent(self, event) -> None: super().closeEvent(event) if (self._done or self._auth_failed) else event.ignore()
+    def closeEvent(self, event) -> None:
+        if self._done or self._auth_failed:
+            super().closeEvent(event)
+        else:
+            event.ignore()
 
 
 class SystemManagerThread(QThread):
@@ -488,15 +492,20 @@ class SystemManagerThread(QThread):
 
     def _base_tasks(self) -> dict:
         return {"copy_dotfiles": ("Copying Dotfiles…", self._copy_dotfiles),
-                "update_mirrors": ("Updating mirrors…", self._update_mirrors), "update_system": ("Updating system…", self._update_system),
+                "update_mirrors": ("Updating mirrors…", self._update_mirrors),
+                "update_system": ("Updating system…", self._update_system),
                 "set_user_shell": ("Setting user shell…", self._set_shell),
                 "install_ucode": ("Installing CPU microcode…", self._install_ucode),
                 "install_kernels": ("Installing kernel(s)…", self._install_kernels),
                 "install_kernel_headers": ("Installing headers…", self._install_kernel_headers),
                 "set_default_kernel": ("Setting default boot kernel…", self._set_default_kernel),
-                "install_basic_packages": ("Installing Basic Packages…", lambda: self._batch_install(S.basic_packages, "Basic Package")),
-                "install_yay": ("Installing yay…", self._install_yay),
-                "install_aur_packages": ("Installing AUR Packages with yay…", lambda: self._batch_install(S.aur_packages, "AUR Package", use_aur=True)),
+                "install_basic_packages": ("Installing Basic Packages…",
+                                           lambda: self._batch_install(S.basic_packages, "Basic Package")),
+
+                "install_aur_helper": (f"Installing {S.aur_helper}…", self._install_aur_helper),
+                "install_aur_packages": (f"Installing AUR Packages with {S.aur_helper}…",
+                                         lambda: self._batch_install(S.aur_packages, "AUR Package", use_aur=True)),
+
                 "install_specific_packages": ("Installing Specific Packages…", self._install_specific),
                 "enable_flatpak_integration": ("Enabling Flatpak integration…", self._install_flatpak)}
 
@@ -554,9 +563,9 @@ class SystemManagerThread(QThread):
 
         pw_to_send = None
         if self._pw and isinstance(cmd, list):
-            if cmd[:2] == ["sudo", "-S"] or cmd[:1] == ["yay"]:
+            if cmd[:2] == ["sudo", "-S"] or cmd[:1] in (["yay"], ["paru"]):
                 pw_to_send = self._pw
-                if cmd[:1] == ["yay"] and "--sudoflags=-S" not in cmd:
+                if cmd[:1] in (["yay"], ["paru"]) and "--sudoflags=-S" not in cmd:
                     cmd.append("--sudoflags=-S")
 
         if not stream:
@@ -1002,8 +1011,9 @@ class SystemManagerThread(QThread):
 
         failed = []
         if use_aur:
-            bulk = lambda b: self._exec(["yay", "-S", "--needed", "--noconfirm"] + b, stream=True)
-            single = lambda _p: self._exec(["yay", "-S", "--needed", "--noconfirm", _p], stream=True)
+            helper = S.aur_helper
+            bulk = lambda b: self._exec([helper, "-S", "--needed", "--noconfirm"] + b, stream=True)
+            single = lambda _p: self._exec([helper, "-S", "--needed", "--noconfirm", _p], stream=True)
         else:
             _distro = self.distro
             bulk = lambda b: self._exec(_distro.get_batch_install_cmd(b), stream=True)
@@ -1094,17 +1104,24 @@ class SystemManagerThread(QThread):
 
     def _update_system(self) -> bool:
         if not self.distro: return False
-        if self.distro.has_aur and self._pkg_cache and self._pkg_cache.is_installed("yay"):
-            ok = (self._exec(["yay", "--noconfirm"], stream=True).returncode == 0)
+        if self.distro.has_aur and self._pkg_cache:
+            _eff_helper = None
+            if self._pkg_cache.is_installed("paru"):
+                _eff_helper = "paru"
+            elif self._pkg_cache.is_installed("yay"):
+                _eff_helper = "yay"
+            if _eff_helper:
+                ok = (self._exec([_eff_helper, "--noconfirm"], stream=True).returncode == 0)
+                self._emit_result(ok, "System successfully updated", "System update failed")
+                return ok
+        cmd_str = self.distro.get_update_system_cmd()
+        if any(seq in cmd_str for seq in ("&&", "||", " | ")):
+            _stripped = cmd_str.lstrip()
+            inner_cmd = _stripped[5:] if _stripped.startswith("sudo ") else _stripped
+            cmd = ["sudo", "sh", "-c", inner_cmd]
         else:
-            cmd_str = self.distro.get_update_system_cmd()
-            if any(seq in cmd_str for seq in ("&&", "||", " | ")):
-                _stripped = cmd_str.lstrip()
-                inner_cmd = _stripped[5:] if _stripped.startswith("sudo ") else _stripped
-                cmd = ["sudo", "sh", "-c", inner_cmd]
-            else:
-                cmd = shlex.split(cmd_str)
-            ok = (self._exec(cmd, stream=True, timeout=None).returncode == 0)
+            cmd = shlex.split(cmd_str)
+        ok = (self._exec(cmd, stream=True, timeout=None).returncode == 0)
         self._emit_result(ok, "System successfully updated", "System update failed")
         return ok
 
@@ -1558,40 +1575,52 @@ class SystemManagerThread(QThread):
         r = self._exec(["sudo", "cat", str(path)], stream=False)
         return r.stdout if r.returncode == 0 else None
 
-    def _install_yay(self) -> bool:
+    def _install_aur_helper(self) -> bool:
+        helper = S.aur_helper
         if not self.distro or not self.distro.has_aur:
-            self.outputReceived.emit("yay is not supported on this distribution", "warning")
+            self.outputReceived.emit(f"{helper} is not supported on this distribution", "warning")
             return True
-        if self._pkg_cache and self._pkg_cache.is_installed("yay"):
-            self.outputReceived.emit("yay already installed", "success")
+        if self._pkg_cache and self._pkg_cache.is_installed(helper):
+            self.outputReceived.emit(f"{helper} already installed", "success")
             return True
 
-        build_deps = ("base-devel", "git", "go")
+        build_deps = ["base-devel", "git"]
+        if helper == "paru":
+            build_deps.append("rust")
+            repo_url = "https://aur.archlinux.org/paru.git"
+        else:
+            build_deps.append("go")
+            repo_url = "https://aur.archlinux.org/yay.git"
+
         missing_deps = [p for p in build_deps if not self.distro.package_is_installed(p)]
         freshly_added = set(missing_deps)
 
         if missing_deps and self._exec(self.distro.get_batch_install_cmd(missing_deps), stream=True).returncode != 0:
             return False
 
-        yay_dir = _HOME / "yay"
-        shutil.rmtree(yay_dir, ignore_errors=True)
-        for msg, cmd, kw in [("Cloning yay…", ["git", "clone", "https://aur.archlinux.org/yay.git"], {"cwd": str(_HOME)}),
-                             ("Building yay…", ["makepkg", "-c", "--noconfirm"], {"cwd": str(yay_dir)})]:
+        target_dir = _HOME / helper
+        shutil.rmtree(target_dir, ignore_errors=True)
+        for msg, cmd, kw in [(f"Cloning {helper}…", ["git", "clone", repo_url], {"cwd": str(_HOME)}),
+                             (f"Building {helper}…", ["makepkg", "-c", "--noconfirm"], {"cwd": str(target_dir)})]:
             self.outputReceived.emit(msg, "subprocess")
             if self._exec(cmd, stream=True, **kw).returncode != 0:
-                shutil.rmtree(yay_dir, ignore_errors=True)
+                shutil.rmtree(target_dir, ignore_errors=True)
                 return False
 
         to_remove = []
-        if "go" in freshly_added and self.distro.package_is_installed("go"):
+        if helper == "yay" and "go" in freshly_added and self.distro.package_is_installed("go"):
             to_remove.append("go")
             self._exec(["go", "clean", "-modcache"], timeout=30)
             for d in (_HOME / ".config" / "go", _HOME / "go"):
                 shutil.rmtree(d, ignore_errors=True)
+        elif helper == "paru" and "rust" in freshly_added and self.distro.package_is_installed("rust"):
+            to_remove.append("rust")
+            for d in (_HOME / ".cargo" / "registry", _HOME / ".cargo" / "git"):
+                shutil.rmtree(d, ignore_errors=True)
 
-        if self.distro.package_is_installed("yay-debug"): to_remove.append("yay-debug")
+        if self.distro.package_is_installed(f"{helper}-debug"): to_remove.append(f"{helper}-debug")
         if to_remove and self._exec(["sudo", "pacman", "-R", "--noconfirm"] + to_remove, stream=True).returncode != 0:
-            logger.warning("_install_yay: cleanup of %s failed", to_remove)
+            logger.warning("_install_aur_helper: cleanup of %s failed", to_remove)
 
         def _pkg_key(f):
             try:
@@ -1599,16 +1628,17 @@ class SystemManagerThread(QThread):
             except OSError:
                 mtime = 0
             return 0 if "-debug-" not in f.name else 1, mtime
-        pkgs = sorted((f for f in yay_dir.iterdir() if ".pkg.tar." in f.name), key=_pkg_key)
+
+        pkgs = sorted((f for f in target_dir.iterdir() if ".pkg.tar." in f.name), key=_pkg_key)
 
         if not pkgs:
-            self.outputReceived.emit("No yay package file found after build", "error")
+            self.outputReceived.emit(f"No {helper} package file found after build", "error")
             return False
 
         ok = (self._exec(["sudo", "pacman", "-U", "--noconfirm", str(pkgs[0])], stream=True).returncode == 0)
-        shutil.rmtree(yay_dir, ignore_errors=True)
-        if ok and self._pkg_cache: self._pkg_cache.mark_installed("yay")
-        self._emit_result(ok, "yay successfully installed", "yay installation failed")
+        shutil.rmtree(target_dir, ignore_errors=True)
+        if ok and self._pkg_cache: self._pkg_cache.mark_installed(helper)
+        self._emit_result(ok, f"{helper} successfully installed", f"{helper} installation failed")
         return ok
 
     def _install_specific(self) -> str | bool:
@@ -1695,11 +1725,12 @@ class SystemManagerThread(QThread):
         self.outputReceived.emit(f"Cleaning {pm} cache", "info")
         ok = (self._exec(self.distro.get_clean_cache_cmd(), stream=True).returncode == 0)
         self._emit_result(ok, f"{pm} cache successfully cleaned", f"{pm} cache cleaning failed")
-        if ok and self._pkg_cache and self._pkg_cache.is_installed("yay"):
+        if ok and self._pkg_cache and self._pkg_cache.is_installed(S.aur_helper):
             self.outputReceived.emit("", "info")
-            self.outputReceived.emit("Cleaning yay cache", "info")
-            yay_ok = (self._exec(["yay", "-Scc", "--noconfirm"], stream=True).returncode == 0)
-            self._emit_result(yay_ok, "yay cache successfully cleaned", "yay cache cleaning failed")
-            if not yay_ok:
-                logger.warning("_clean_cache: yay cache cleaning failed (non-critical)")
+            self.outputReceived.emit(f"Cleaning {S.aur_helper} cache", "info")
+            helper_ok = (self._exec([S.aur_helper, "-Scc", "--noconfirm"], stream=True).returncode == 0)
+            self._emit_result(helper_ok, f"{S.aur_helper} cache successfully cleaned",
+                              f"{S.aur_helper} cache cleaning failed")
+            if not helper_ok:
+                logger.warning("_clean_cache: %s cache cleaning failed (non-critical)", S.aur_helper)
         return ok

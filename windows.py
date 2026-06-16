@@ -279,8 +279,6 @@ class _CopyMixin:
 
         dlg_copy = CopyDialog(self, selected, self._op_label)  # type: ignore[attr-defined]
         dlg_copy.exec()
-        self._last_copied = getattr(dlg_copy, "copied", 0)
-        self._last_errors = getattr(dlg_copy, "errors", 0)
 
     def _add_action_buttons(self: "_BaseCheckboxWindow", grid: QGridLayout, row: int) -> None:
         fs          = font_scale()

@@ -1,4 +1,5 @@
 import re
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -8,9 +9,9 @@ if TYPE_CHECKING:
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QFontMetrics
 from PyQt6.QtWidgets import (
-    QFrame, QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea, QSizePolicy,
-    QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QTextEdit,
-    QFileDialog, QFormLayout, QGridLayout, QHBoxLayout, QVBoxLayout, QWidget,
+    QFrame, QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea, QTextEdit,
+    QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QSizePolicy,
+    QFileDialog, QFormLayout, QGridLayout, QHBoxLayout, QVBoxLayout, QWidget, QRadioButton
 )
 
 from linux_distro_helper import LinuxDistroHelper, SESSIONS, USER_SHELLS, ARCH_KERNEL_VARIANTS, is_valid_pkg_name
@@ -161,7 +162,7 @@ def _add_select_all_tri(layout, checkboxes: list[TriCheckBox], cols: int = 1) ->
         layout.addWidget(sa)
 
 
-def _compute_op_status(distro: LinuxDistroHelper, has_yay: bool, system_default_variant: str | None,
+def _compute_op_status(distro: LinuxDistroHelper, aur_helper_installed: bool, system_default_variant: str | None,
                        installed_kernels: set | None = None) -> dict[str, bool]:
     import pwd as _pwd
 
@@ -195,7 +196,7 @@ def _compute_op_status(distro: LinuxDistroHelper, has_yay: bool, system_default_
         hpkg = distro.get_kernel_headers_pkg()
         status["kernel_headers_installed"] = bool(hpkg and distro.package_is_installed(hpkg))
 
-    status["yay_installed"] = has_yay
+    status["aur_helper_installed"] = aur_helper_installed
 
     effective_dk = (S.default_kernel or system_default_variant or "").strip()
     status["default_kernel_ok"] = bool(
@@ -204,10 +205,12 @@ def _compute_op_status(distro: LinuxDistroHelper, has_yay: bool, system_default_
     return status
 
 
-def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, has_yay: bool | None = None,
+def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, aur_helper_installed: bool | None = None,
                    system_default_variant: str | None = None, op_status: dict | None = None,
                    installed_kernels: set | None = None, kernels_to_install_override: list | None = None,
-                   default_kernel_override: str | None = None) -> dict[str, tuple[str, str]]:
+                   default_kernel_override: str | None = None, aur_helper_override: str | None = None) -> dict[str, tuple[str, str]]:
+
+    helper = aur_helper_override or S.aur_helper
     tips = sm_tooltips()
     _NO_CHANGE = " (No changes necessary.)"
 
@@ -224,8 +227,19 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, has_ya
         except (OSError, AttributeError):
             return "—"
 
-    if has_yay is None:
-        has_yay = distro.has_aur and distro.package_is_installed("yay")
+    if aur_helper_installed is None:
+        aur_helper_installed = distro.has_aur and (
+                distro.package_is_installed(helper) or shutil.which(helper) is not None
+        )
+        if op_status is not None:
+            op_status.setdefault("aur_helper_installed", aur_helper_installed)
+
+    _installed_helper_for_update = None
+    if distro.has_aur:
+        for _candidate in ("paru", "yay"):
+            if distro.package_is_installed(_candidate) or shutil.which(_candidate) is not None:
+                _installed_helper_for_update = _candidate
+                break
 
     install_cmd = distro.get_pkg_install_cmd("...")
     if session is None:
@@ -279,7 +293,8 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, has_ya
                 f"Change shell for current user (Install shell package and set as default.){_done('shell_ok')}",
                 _tip("set_user_shell")),
             "update_system": (
-                f"System update (Using '{'yay --noconfirm' if has_yay else distro.get_update_system_cmd()}')",
+                f"System update (Using '{_installed_helper_for_update} -Syu --noconfirm')" if _installed_helper_for_update else
+                f"System update (Using '{distro.get_update_system_cmd()}')",
                 _tip("update_system")),
             "install_ucode": (
                 f"Install {cpu_label} CPU microcode updates (Package: '{ucode_pkg}'){_done('ucode_installed')}",
@@ -289,9 +304,9 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, has_ya
             "set_default_kernel": (f"Set default boot kernel to: {dk_pkg}{dk_note}", _tip("set_default_kernel")),
             "install_basic_packages": (f"Install 'Basic Packages' (Using '{install_cmd}')",
                                        _tip("install_basic_packages")),
-            "install_yay": (f"Install 'yay' (required for 'AUR Packages'){_done('yay_installed')}",
-                            _tip("install_yay")),
-            "install_aur_packages": ("Install 'AUR Packages' ('yay' required. Using 'yay -S --needed ...')",
+            "install_aur_helper": (f"Install '{helper}' (required for 'AUR Packages'){_done('aur_helper_installed')}",
+                                   _tip("install_aur_helper")),
+            "install_aur_packages": (f"Install 'AUR Packages' ('{helper}' required. Using '{helper} -S --needed ...')",
                                      _tip("install_aur_packages")),
             "install_specific_packages": (f"Install 'Specific Packages' for {session} (Using '{install_cmd}')",
                                           _tip("install_specific_packages")),
@@ -324,8 +339,8 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, has_ya
                 f"Initialise firewall (Install '{pkglist(distro.get_firewall_packages)}'. Enable & start 'ufw.service', set to 'deny all by default')",
                 _tip("enable_firewall")),
             "remove_orphaned_packages": ("Remove orphaned package(s)", _tip("remove_orphaned_packages")),
-            "clean_cache": (f"Clean cache (for '{pm_name}'" + (" and 'yay')" if distro.has_aur else ")"),
-                            _tip("clean_cache"))}
+            "clean_cache": (f"Clean cache (for '{pm_name}'" + (f" and '{_installed_helper_for_update}')"
+                                                               if _installed_helper_for_update else ")"), _tip("clean_cache"))}
 
 
 def _raw_to_label_html(raw: dict[str, tuple[str, str]]) -> dict[str, str]:
@@ -386,8 +401,13 @@ def _pkg_form_dialog(parent, title: str, *, prefill_name: str = "", prefill_sess
     return (name,)
 
 
-def _check_yay_installed(distro: LinuxDistroHelper) -> bool:
-    return distro.has_aur and distro.package_is_installed("yay")
+def _check_aur_helper_installed(distro: LinuxDistroHelper) -> bool:
+    if not distro.has_aur:
+        return False
+    helper = S.aur_helper
+    if distro.package_is_installed(helper):
+        return True
+    return shutil.which(helper) is not None
 
 
 class SystemManagerOptions(QDialog):
@@ -398,14 +418,25 @@ class SystemManagerOptions(QDialog):
         self.setMinimumSize(1200, 680)
         self._distro = distro or LinuxDistroHelper()
         self._session = self._distro.detect_session()
-        self._yay_installed: bool | None = None
+        self._aur_helper_installed: bool | None = None
         self._build()
 
     def _build(self) -> None:
         lay = QVBoxLayout(self)
-        yay_info = f"   |   AUR Helper: 'yay' {'detected' if self.yay_installed else 'not detected'}"
+        if self._distro.has_aur:
+            _detected_helper = S.aur_helper if self.aur_helper_installed else None
+            if _detected_helper:
+                aur_helper_info = f"   |   AUR Helper: '{_detected_helper}' detected"
+            else:
+                _alt = "paru" if S.aur_helper == "yay" else "yay"
+                if shutil.which(_alt) or self._distro.package_is_installed(_alt):
+                    aur_helper_info = f"   |   AUR Helper: '{_alt}' detected"
+                else:
+                    aur_helper_info = f"   |   AUR Helper: '{S.aur_helper}' not detected"
+        else:
+            aur_helper_info = ""
         info = QLabel(
-            f"Recognized Linux distribution: {self._distro.distro_pretty_name}   |   Session: {self._session}{yay_info}")
+            f"Recognized Linux distribution: {self._distro.distro_pretty_name}   |   Session: {self._session}{aur_helper_info}")
         info.setStyleSheet(style_label_info(bold=True) + f"font-size:{font_sz()}px")
         info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(info)
@@ -420,7 +451,7 @@ class SystemManagerOptions(QDialog):
             f"Tips:\n\n"
             f"'Basic Packages' will be installed using '{cmd}'.\n\n"
             f"'AUR Packages' provides access to the Arch User Repository. "
-            f"Therefore 'yay' must and will be installed."
+            f"Therefore an AUR helper ({S.aur_helper}) must and will be installed."
             f"\nThis feature is available only on Arch Linux based distributions.\n\n"
             f"You can also define 'Specific Packages'. These packages will be installed only (using '{cmd}')\n"
             f"if the corresponding session has been recognized.\n"
@@ -449,10 +480,10 @@ class SystemManagerOptions(QDialog):
         lay.addWidget(close)
 
     @property
-    def yay_installed(self) -> bool:
-        if self._yay_installed is None:
-            self._yay_installed = _check_yay_installed(self._distro)
-        return bool(self._yay_installed)
+    def aur_helper_installed(self) -> bool:
+        if self._aur_helper_installed is None:
+            self._aur_helper_installed = _check_aur_helper_installed(self._distro)
+        return bool(self._aur_helper_installed)
 
     def _reopen_pkgs(self, pkg_type: str) -> None:
         QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
@@ -466,7 +497,7 @@ class SystemManagerOptions(QDialog):
 
         _saved_default_variant = S.default_kernel or _system_default_variant
 
-        arch_only = {"update_mirrors", "install_yay", "install_aur_packages", "install_kernels", "set_default_kernel"}
+        arch_only = {"update_mirrors", "install_aur_helper", "install_aur_packages", "install_kernels", "set_default_kernel"}
         _installed_kernels = self._distro.detect_installed_kernel_variants()
         _installed_kernels.add(current_variant)
 
@@ -476,10 +507,10 @@ class SystemManagerOptions(QDialog):
         else:
             _variants_with_headers = set()
 
-        _op_status = _compute_op_status(self._distro, self.yay_installed, _system_default_variant,
+        _op_status = _compute_op_status(self._distro, self.aur_helper_installed, _system_default_variant,
                                         installed_kernels=_installed_kernels)
 
-        _raw_op = _build_op_text(self._distro, self._session, has_yay=self.yay_installed,
+        _raw_op = _build_op_text(self._distro, self._session, aur_helper_installed=self.aur_helper_installed,
                                  system_default_variant=_system_default_variant, op_status=_op_status,
                                  installed_kernels=_installed_kernels)
 
@@ -490,7 +521,7 @@ class SystemManagerOptions(QDialog):
         _OP_GROUPS = [("🖥  System", ["copy_dotfiles", "update_mirrors", "update_system", "set_user_shell",
                                      "install_ucode", "install_kernels", "install_kernel_headers",
                                      "set_default_kernel"]),
-                      ("📦  Packages", ["install_basic_packages", "install_yay", "install_aur_packages",
+                      ("📦  Packages", ["install_basic_packages", "install_aur_helper", "install_aur_packages",
                                        "install_specific_packages", "enable_flatpak_integration"]),
                       ("🔧  Services",
                        ["enable_printer_support", "enable_ssh_service", "enable_samba_network_filesharing",
@@ -504,6 +535,8 @@ class SystemManagerOptions(QDialog):
         grid = QGridLayout(body)
         grid.setVerticalSpacing(3)
         grid.setContentsMargins(10, 8, 10, 8)
+        grid.setColumnStretch(0, 3)
+        grid.setColumnStretch(1, 1)
 
         t = current_theme()
 
@@ -512,7 +545,20 @@ class SystemManagerOptions(QDialog):
         sa.setStyleSheet(style_checkbox_select_all())
 
         bl_color = t["success"] if bootloader != "unknown" else t["warning"]
-        bl_lbl = QLabel(f"Detected bootloader: <b style='color:{bl_color};'>{bl_label}</b>   |   "
+        if self._distro.has_aur:
+            _eff_helper = S.aur_helper
+            _helper_ok = (self._distro.package_is_installed(_eff_helper) or shutil.which(_eff_helper) is not None)
+            if not _helper_ok:
+                _alt2 = "paru" if _eff_helper == "yay" else "yay"
+                if self._distro.package_is_installed(_alt2) or shutil.which(_alt2) is not None:
+                    _eff_helper = _alt2
+                    _helper_ok = True
+            _aur_color = t["success"] if _helper_ok else t["warning"]
+            _aur_status = "detected" if _helper_ok else "not detected"
+            _aur_prefix = f"AUR Helper: <b style='color:{_aur_color};'>'{_eff_helper}' {_aur_status}</b>   |   "
+        else:
+            _aur_prefix = ""
+        bl_lbl = QLabel(f"{_aur_prefix}Detected bootloader: <b style='color:{bl_color};'>{bl_label}</b>   |   "
                         f"Running kernel: <b style='color:{t['accent2']};'>{current_variant}</b>")
         bl_lbl.setTextFormat(Qt.TextFormat.RichText)
         bl_lbl.setStyleSheet(f"font-size:{font_sz(-1)}px; padding:2px 4px;")
@@ -534,6 +580,7 @@ class SystemManagerOptions(QDialog):
 
         _set_shell_cb: QCheckBox | None = None
         _user_shell_combo: QComboBox | None = None
+        _aur_helper_radios: tuple[QRadioButton, QRadioButton] | None = None
 
         for group_label, keys in _OP_GROUPS:
             sep_line = QFrame()
@@ -567,7 +614,34 @@ class SystemManagerOptions(QDialog):
                 else:
                     cb.setChecked(key in S.system_manager_ops)
 
-                if key == "install_kernels":
+                if key == "install_aur_helper":
+                    if not (is_arch and not self._distro.has_aur):
+                        _paru_inst = self._distro.package_is_installed("paru") or bool(shutil.which("paru"))
+                        _yay_inst  = self._distro.package_is_installed("yay")  or bool(shutil.which("yay"))
+                        _default_rb_helper = "paru" if _paru_inst else ("yay" if _yay_inst else S.aur_helper)
+
+                        rb_yay = QRadioButton("yay")
+                        rb_paru = QRadioButton("paru")
+                        if _default_rb_helper == "paru":
+                            rb_paru.setChecked(True)
+                        else:
+                            rb_yay.setChecked(True)
+
+                        row_w = QWidget()
+                        row_w.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+                        row_l = QHBoxLayout(row_w)
+                        row_l.setContentsMargins(0, 0, 0, 0)
+                        row_l.setSpacing(16)
+                        row_l.addWidget(cb)
+                        row_l.addStretch(1)
+                        row_l.addWidget(rb_yay)
+                        row_l.addWidget(rb_paru)
+                        row_l.addStretch(1)
+                        grid.addWidget(row_w, grid_row, 0, 1, 2)
+                        _aur_helper_radios = (rb_yay, rb_paru)
+                        grid_row += 1
+
+                elif key == "install_kernels":
                     _install_kernels_cb = cb
                     if not (is_arch and not self._distro.has_aur):
                         grid.addWidget(cb, grid_row, 0, 1, 2)
@@ -655,7 +729,16 @@ class SystemManagerOptions(QDialog):
                 currently_selected = [v for v, sub in _kernel_sub_cbs.items() if sub.isChecked() and sub.isEnabled()]
                 dk_override = (_default_kernel_combo.currentData() or "") if _default_kernel_combo is not None else None
 
+                aur_override = None
+                if _aur_helper_radios is not None:
+                    aur_override = "paru" if _aur_helper_radios[1].isChecked() else "yay"
+
                 _dyn_status = dict(_op_status)
+                if aur_override is not None:
+                    _dyn_status["aur_helper_installed"] = (
+                        self._distro.package_is_installed(aur_override)
+                        or shutil.which(aur_override) is not None
+                    )
                 _dyn_status["kernels_all_installed"] = not any(
                     v for v in currently_selected if v not in _installed_kernels)
                 if self._distro.family() == "arch":
@@ -680,15 +763,18 @@ class SystemManagerOptions(QDialog):
                         _dyn_status["shell_ok"] = False
 
                 _refreshed_raw = _build_op_text(
-                    self._distro, self._session, has_yay=self.yay_installed,
+                    self._distro, self._session, aur_helper_installed=None,
                     system_default_variant=_system_default_variant, op_status=_dyn_status,
                     installed_kernels=_installed_kernels,
                     kernels_to_install_override=currently_selected,
                     default_kernel_override=dk_override,
+                    aur_helper_override=aur_override
                 )
                 _refreshed_text = _raw_to_checkbox_text(_refreshed_raw)
 
-                _dyn_keys = {"install_kernels", "install_kernel_headers", "set_default_kernel", "set_user_shell"}
+                _dyn_keys = {"install_kernels", "install_kernel_headers", "set_default_kernel",
+                             "set_user_shell", "install_aur_helper", "install_aur_packages",
+                             "clean_cache"}
                 for _cb, _key in widgets:
                     if _key not in _dyn_keys or _key not in _refreshed_text:
                         continue
@@ -697,6 +783,10 @@ class SystemManagerOptions(QDialog):
                     _cb.setText(f"{_icon}{_BR_RE.sub(' ', _text).replace('&', '&&')}")
             except Exception as e:
                 logger.error("_refresh_labels: %s", e, exc_info=True)
+
+        if _aur_helper_radios is not None:
+            _aur_helper_radios[0].toggled.connect(lambda _: _refresh_labels())
+            _aur_helper_radios[1].toggled.connect(lambda _: _refresh_labels())
 
         def _populate_default_combo():
             if _default_kernel_combo is None: return
@@ -754,7 +844,6 @@ class SystemManagerOptions(QDialog):
             _user_shell_combo.currentIndexChanged.connect(lambda _: _refresh_labels())
             _sync_sh_combo()
 
-        yay_cb = next((c for c, k in widgets if k == "install_yay"), None)
         aur_cb = next((c for c, k in widgets if k == "install_aur_packages"), None)
         enabled_widgets = [c for c, _ in widgets if c.isEnabled() and c.isVisible()]
 
@@ -767,12 +856,15 @@ class SystemManagerOptions(QDialog):
             else Qt.CheckState.PartiallyChecked)
             sa.blockSignals(False)
 
+        helper_cb = next((c for c, k in widgets if k == "install_aur_helper"), None)
+        aur_cb = next((c for c, k in widgets if k == "install_aur_packages"), None)
+
         def _sync_aur_dep():
-            if aur_cb and yay_cb and self._distro.supports_aur():
+            if aur_cb and helper_cb and self._distro.supports_aur():
                 force = aur_cb.isChecked()
-                yay_cb.setChecked(force or yay_cb.isChecked())
-                yay_cb.setEnabled(not force)
-                yay_cb.setStyleSheet(
+                helper_cb.setChecked(force or helper_cb.isChecked())
+                helper_cb.setEnabled(not force)
+                helper_cb.setStyleSheet(
                     style_checkbox_muted() + "QCheckBox{margin-left:14px;}" if force else "QCheckBox{margin-left:14px;}")
             _sync_sa()
 
@@ -796,6 +888,8 @@ class SystemManagerOptions(QDialog):
 
         def _save(dlg):
             S.system_manager_ops = [k for cb_, k in widgets if cb_.isChecked() and cb_.isVisible()]
+            if _aur_helper_radios is not None:
+                S.aur_helper = "paru" if _aur_helper_radios[1].isChecked() else "yay"
             S.kernels_to_install = [v for v in _KERNEL_VARIANTS if
                                     _kernel_sub_cbs.get(v) and _kernel_sub_cbs[v].isChecked()
                                     and _kernel_sub_cbs[v].isEnabled()]
@@ -1492,9 +1586,9 @@ class SystemManagerLauncher:
         self._sm_dialog = None
 
     @property
-    def yay_installed(self) -> bool:
+    def aur_helper_installed(self) -> bool:
         if self._yay_installed is None:
-            self._yay_installed = _check_yay_installed(self._distro)
+            self._yay_installed = _check_aur_helper_installed(self._distro)
         return bool(self._yay_installed)
 
     def launch(self) -> None:
@@ -1518,14 +1612,16 @@ class SystemManagerLauncher:
             _bootloader, _current_variant, _sys_default = _detect_boot_info()
             _ik = self._distro.detect_installed_kernel_variants()
             _ik.add(_current_variant)
-            _op_status = _compute_op_status(self._distro, self.yay_installed, _sys_default, installed_kernels=_ik)
+            _op_status = _compute_op_status(self._distro, self.aur_helper_installed, _sys_default,
+                                            installed_kernels=_ik)
             _kti_override = [] if "install_kernels" not in ops else None
-            _raw = _build_op_text(self._distro, self._session, has_yay=self.yay_installed,
+            _raw = _build_op_text(self._distro, self._session, aur_helper_installed=self.aur_helper_installed,
                                   system_default_variant=_sys_default,
                                   op_status=_op_status, installed_kernels=_ik,
                                   kernels_to_install_override=_kti_override)
             self._op_text = _raw_to_label_html(_raw)
             self._op_tips = _raw_to_tips(_raw)
+
         if not self._op_text:
             return
         op_text: dict[str, str] = self._op_text
@@ -1534,13 +1630,21 @@ class SystemManagerLauncher:
         dialog.setWindowTitle("System Manager")
         outer = QVBoxLayout(dialog)
         outer.setContentsMargins(0, 0, 0, 0)
-        yay_info = ""
+        aur_helper_info = ""
         if self._distro.has_aur:
-            yay_info = f"   |   AUR Helper: 'yay' {'detected' if self.yay_installed else 'not detected'}"
+            _lnch_helper = S.aur_helper
+            _lnch_ok = (self._distro.package_is_installed(_lnch_helper) or shutil.which(_lnch_helper) is not None)
+            if not _lnch_ok:
+                _lnch_alt = "paru" if _lnch_helper == "yay" else "yay"
+                if self._distro.package_is_installed(_lnch_alt) or shutil.which(_lnch_alt) is not None:
+                    _lnch_helper = _lnch_alt
+                    _lnch_ok = True
+            aur_helper_info = f"   |   AUR Helper: '{_lnch_helper}' {'detected' if _lnch_ok else 'not detected'}"
+
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
         distro_lbl = QLabel(
-            f"Recognized Linux distribution: {self._distro_name}   |   Session: {self._session}{yay_info}")
+            f"Recognized Linux distribution: {self._distro_name}   |   Session: {self._session}{aur_helper_info}")
         distro_lbl.setStyleSheet(style_label_info(bold=True) + f"font-size:{font_sz()}px")
         distro_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         content_layout.addWidget(distro_lbl)
@@ -1621,13 +1725,13 @@ class SystemManagerLauncher:
         self._sm_thread = SystemManagerThread(pw, distro=self._distro)
         self._sm_dialog = SystemManagerDialog(self.parent)
         t, d = self._sm_thread, self._sm_dialog
-        t.thread_started.connect(lambda: d.exec(), Qt.ConnectionType.QueuedConnection)
+        t.thread_started.connect(d.exec, Qt.ConnectionType.QueuedConnection)
         t.outputReceived.connect(d.on_output)
         t.taskListReady.connect(d.on_task_list)
         t.taskStatusChanged.connect(d.on_task_status)
         t.passwordFailed.connect(lambda: self._on_fail(t, d))
         t.passwordSuccess.connect(self._on_ok)
-        t.finished.connect(lambda: d.mark_done())
+        t.finished.connect(d.mark_done)
         d.cancelRequested.connect(lambda: setattr(t, "terminated", True))
         t.inputRequested.connect(d.on_input_requested, Qt.ConnectionType.QueuedConnection)
         d.inputProvided.connect(t.provide_input)

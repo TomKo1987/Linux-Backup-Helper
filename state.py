@@ -120,6 +120,7 @@ class State:
     aur_packages:       list[dict]      = field(default_factory=list)
     specific_packages:  list[dict]      = field(default_factory=list)
     user_shell:         str             = "bash"
+    aur_helper:         str             = "yay"
     default_kernel:     str             = ""
     kernels_to_install: list[str]       = field(default_factory=list)
     ui: dict = field(default_factory=lambda: {"theme": "Tokyo Night", "font_family": "", "font_size": 14,
@@ -251,14 +252,22 @@ def _load_profile_from_data(path: Path, data: dict) -> bool:
             data = {**data, "dotfiles": data["system_files"]}
             _needs_migration = True
             logger.info("Migration: 'system_files' → 'dotfiles' in profile '%s'", path.stem)
+
         raw_ops = data.get("system_manager_operations", [])
-        if isinstance(raw_ops, list) and "copy_system_files" in raw_ops:
-            data = {**data, "system_manager_operations": [
-                "copy_dotfiles" if op == "copy_system_files" else op
-                for op in raw_ops
-            ]}
-            _needs_migration = True
-            logger.info("Migration: 'copy_system_files' → 'copy_dotfiles' in profile '%s'", path.stem)
+        if isinstance(raw_ops, list):
+            migrated_ops = []
+            for op in raw_ops:
+                if op == "copy_system_files":
+                    migrated_ops.append("copy_dotfiles")
+                    _needs_migration = True
+                    logger.info("Migration: 'copy_system_files' → 'copy_dotfiles' in profile '%s'", path.stem)
+                elif op == "install_yay":
+                    migrated_ops.append("install_aur_helper")
+                    _needs_migration = True
+                    logger.info("Migration: 'install_yay' → 'install_aur_helper' in profile '%s'", path.stem)
+                else:
+                    migrated_ops.append(op)
+            data = {**data, "system_manager_operations": migrated_ops}
 
         def _resolve_color(v: dict) -> str:
             raw = v.get("header_color") or v.get("color") or "#ffffff"
@@ -274,22 +283,27 @@ def _load_profile_from_data(path: Path, data: dict) -> bool:
             v = data.get(key)
             return v if isinstance(v, list) else []
 
-        new_sm_ops    = _as_list("system_manager_operations")
+        new_sm_ops = _as_list("system_manager_operations")
         new_sys_files = _as_list("dotfiles")
-        new_basic     = _norm_pkgs(_as_list("basic_packages"))
-        new_aur       = _norm_pkgs(_as_list("aur_packages"))
+        new_basic = _norm_pkgs(_as_list("basic_packages"))
+        new_aur = _norm_pkgs(_as_list("aur_packages"))
 
         new_specific = _norm_specific_pkgs(_as_list("specific_packages"))
 
-        raw_shell     = data.get("user_shell", "bash")
+        raw_shell = data.get("user_shell", "bash")
         _s = raw_shell.strip() if isinstance(raw_shell, str) else ""
         new_shell = _s if _s in USER_SHELLS else "bash"
+
+        raw_aur_helper = data.get("aur_helper", "yay")
+        new_aur_helper = raw_aur_helper if isinstance(raw_aur_helper, str) and raw_aur_helper in ("yay",
+                                                                                                  "paru") else "yay"
 
         raw_dk = data.get("default_kernel", "")
         new_dk = raw_dk if isinstance(raw_dk, str) and (not raw_dk or raw_dk in ARCH_KERNEL_VARIANTS) else ""
 
-        raw_kti   = data.get("kernels_to_install", [])
-        new_kti = [k for k in raw_kti if isinstance(k, str) and k in ARCH_KERNEL_VARIANTS] if isinstance(raw_kti, list) else []
+        raw_kti = data.get("kernels_to_install", [])
+        new_kti = [k for k in raw_kti if isinstance(k, str) and k in ARCH_KERNEL_VARIANTS] if isinstance(raw_kti,
+                                                                                                         list) else []
 
         new_ui = dict(S.ui)
         raw_ui = data.get("ui_settings", {})
@@ -303,20 +317,21 @@ def _load_profile_from_data(path: Path, data: dict) -> bool:
 
         new_notes = str(data.get("notes", ""))
 
-        S.profile_name       = new_name
-        S.headers            = new_headers
-        S.entries            = new_entries
-        S.mount_options      = new_mount
+        S.profile_name = new_name
+        S.headers = new_headers
+        S.entries = new_entries
+        S.mount_options = new_mount
         S.system_manager_ops = new_sm_ops
-        S.dotfiles       = new_sys_files
-        S.basic_packages     = new_basic
-        S.aur_packages       = new_aur
-        S.specific_packages  = new_specific
-        S.user_shell         = new_shell
-        S.default_kernel     = new_dk
+        S.dotfiles = new_sys_files
+        S.basic_packages = new_basic
+        S.aur_packages = new_aur
+        S.specific_packages = new_specific
+        S.user_shell = new_shell
+        S.aur_helper = new_aur_helper
+        S.default_kernel = new_dk
         S.kernels_to_install = new_kti
-        S.ui                 = new_ui
-        S.notes              = new_notes
+        S.ui = new_ui
+        S.notes = new_notes
 
         if _needs_migration:
             try:
@@ -354,24 +369,25 @@ def save_profile(path: Path | None = None) -> bool:
 
     data = {
         **({"is_default": True} if is_active else {}),
-            "notes": S.notes,
-            "mount_options": S.mount_options,
-            "default_kernel": S.default_kernel,
-            "kernels_to_install": S.kernels_to_install,
-            "header": {k: {"inactive": v.get("inactive", False), "header_color": v.get("color", "#ffffff")}
-                       for k, v in S.headers.items()},
-            "system_manager_operations": S.system_manager_ops,
-            "dotfiles":   S.dotfiles,
-            "basic_packages": S.basic_packages,
-            "aur_packages":   S.aur_packages,
-            "specific_packages": sorted(
-                S.specific_packages, key=lambda x: str(x.get("package", "") if isinstance(x, dict) else x).lower()),
-            "ui_settings": S.ui,
-            "user_shell":  S.user_shell,
-            "entries": sorted(
-                S.entries,
-                key=lambda e: (e.get("header", "").lower(), e.get("title", "").lower(), str(e.get("source", "")))
-            )}
+        "notes": S.notes,
+        "mount_options": S.mount_options,
+        "default_kernel": S.default_kernel,
+        "kernels_to_install": S.kernels_to_install,
+        "header": {k: {"inactive": v.get("inactive", False), "header_color": v.get("color", "#ffffff")}
+                   for k, v in S.headers.items()},
+        "system_manager_operations": S.system_manager_ops,
+        "dotfiles": S.dotfiles,
+        "basic_packages": S.basic_packages,
+        "aur_packages": S.aur_packages,
+        "specific_packages": sorted(
+            S.specific_packages, key=lambda x: str(x.get("package", "") if isinstance(x, dict) else x).lower()),
+        "ui_settings": S.ui,
+        "user_shell": S.user_shell,
+        "aur_helper": S.aur_helper, 
+        "entries": sorted(
+            S.entries,
+            key=lambda e: (e.get("header", "").lower(), e.get("title", "").lower(), str(e.get("source", "")))
+        )}
     try:
         _atomic_write(resolved, data)
         invalidate_tooltip_cache()
