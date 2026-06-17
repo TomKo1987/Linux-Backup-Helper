@@ -5,6 +5,14 @@ if sys.platform != "linux":
     print("This program can only be run on Linux.")
     sys.exit(1)
 
+import os as _os
+if _os.getuid() == 0:
+    print("Warning: Running Backup Helper as root is not recommended.")
+    print("Your profile and config will be stored in /root/.config instead of your user home.")
+    response = input("Continue anyway? [y/N] ").strip().lower()
+    if response not in ("y", "yes"):
+        sys.exit(1)
+
 import base64 as _b64
 import shutil
 import threading
@@ -32,7 +40,6 @@ from themes import apply_style, register_style_listener, unregister_style_listen
 from ui_utils import _StandardKeysMixin, ask_profile_name
 from windows import base_window
 
-
 def _make_icon() -> QIcon:
     try:
         raw = _b64.b64decode(_ICON_B64)
@@ -43,7 +50,6 @@ def _make_icon() -> QIcon:
     except (binascii.Error, TypeError) as e:
         logger.debug("Icon could not be decoded: %s", e)
         return QIcon()
-
 
 class MainWindow(_StandardKeysMixin, QMainWindow):
     def __init__(self):
@@ -309,7 +315,6 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
             event.ignore()
             self._exit()
 
-
 def _first_run_wizard(parent) -> bool:
     msg = QMessageBox(parent)
     msg.setWindowTitle("Welcome to Backup Helper")
@@ -397,7 +402,6 @@ def _first_run_wizard(parent) -> bool:
     save_profile()
     return True
 
-
 def main():
     import argparse
     parser = argparse.ArgumentParser(add_help=False)
@@ -479,7 +483,6 @@ def main():
     if not has_profile:
         QTimer.singleShot(200, lambda: _first_run_wizard(win))
     sys.exit(app.exec())
-
 
 if __name__ == "__main__":
     main()

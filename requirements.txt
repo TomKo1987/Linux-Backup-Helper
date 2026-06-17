@@ -1,4 +1,3 @@
-# Requires Python >= 3.10
-PyQt6>=6.4
-keyring>=23.0
-secretstorage>=3.3
+PyQt6>=6.4,<7
+keyring>=23.0,<26
+secretstorage>=3.3,<4

@@ -27,7 +27,6 @@ from ui_utils import sep, hdr_label, ok_cancel_buttons, btn_row, ask_text, ask_p
 
 _ARCHIVE_MAX_PROFILE_BYTES = 1024 * 1024
 
-
 class _ListDialog(QDialog):
 
     def __init__(self, parent, title: str, size: tuple[int, int], hdr_text: str,
@@ -54,7 +53,6 @@ class _ListDialog(QDialog):
     def _selected_data(self):
         item = self.item_list.currentItem()
         return item.data(Qt.ItemDataRole.UserRole) if item else None
-
 
 class _TextViewDialog(QDialog):
 
@@ -88,7 +86,6 @@ class _TextViewDialog(QDialog):
             bl.addWidget(b)
         layout.addWidget(bot)
 
-
 class _HintResizer(QObject):
     def __init__(self, watched, hint_label):
         super().__init__(watched)
@@ -98,7 +95,6 @@ class _HintResizer(QObject):
         if event.type() == QEvent.Type.Resize:
             self._hint.setGeometry(obj.rect())
         return False
-
 
 class ExcludeDialog(QDialog):
     def __init__(self, parent, src_abs: str, current_excludes: list[str]):
@@ -268,8 +264,6 @@ class ExcludeDialog(QDialog):
         self._save_current_view()
         self.accept()
 
-
-# noinspection PyUnresolvedReferences
 class EntryDialog(QDialog):
     _COL_CLEAR = QColor(0, 0, 0, 0)
 
@@ -384,12 +378,12 @@ class EntryDialog(QDialog):
             f"<table cellspacing='0' cellpadding='4' align='center' style='text-align:left;'>"
             f"<tr><td style='white-space:nowrap;padding-right:20px;vertical-align:top;'>Local file:</td>"
             f"    <td>~/Documents/notes.txt<br>"
-            f"        <span style='color:{t['muted']};'> or /home/user/Documents/notes.txt</span></td></tr>"
+            f"        <span style='color:{t['muted']};'> or {_HOME}/Documents/notes.txt</span></td></tr>"
             f"<tr><td style='white-space:nowrap;padding-right:20px;vertical-align:top;'>Local folder:</td>"
             f"    <td>~/.config/app/<br>"
-            f"        <span style='color:{t['muted']};'>or /home/user/.config/app/</span></td></tr>"
+            f"        <span style='color:{t['muted']};'>or {_HOME}/.config/app/</span></td></tr>"
             f"<tr><td colspan='2' style='font-size:{fs['xs']}px;padding-top:4px;padding-bottom:8px;'>"
-            f"(Replace 'user' with your actual username if using full paths)<br></td></tr>"
+            f"(You can use ~ or the full path {_HOME}/…)<br></td></tr>"
             f"<tr><td style='white-space:nowrap;padding-right:20px;vertical-align:top;'>Samba Shares:</td>"
             f"    <td>smb://192.168.0.53/share/data/</td></tr>"
             f"</table><br><br></div>")
@@ -509,6 +503,8 @@ class EntryDialog(QDialog):
     def _set_row_colours(lw: QListWidget, row: int, bg: QColor, fg: QColor) -> None:
         if 0 <= row < lw.count():
             item = lw.item(row)
+            if item is None:
+                return
             item.setData(Qt.ItemDataRole.BackgroundRole, bg)
             item.setData(Qt.ItemDataRole.ForegroundRole, fg)
 
@@ -516,8 +512,11 @@ class EntryDialog(QDialog):
         for lw in (self._src_list, self._dst_list):
             fg = lw.palette().color(lw.foregroundRole())
             for i in range(lw.count()):
-                lw.item(i).setData(Qt.ItemDataRole.BackgroundRole, self._COL_CLEAR)
-                lw.item(i).setData(Qt.ItemDataRole.ForegroundRole, fg)
+                _item = lw.item(i)
+                if _item is None:
+                    continue
+                _item.setData(Qt.ItemDataRole.BackgroundRole, self._COL_CLEAR)
+                _item.setData(Qt.ItemDataRole.ForegroundRole, fg)
 
     def _on_selection(self, active: QListWidget, partner: QListWidget, row: int) -> None:
         if self._suppress_sync or row < 0:
@@ -564,13 +563,16 @@ class EntryDialog(QDialog):
             ph_lines = placeholder.count("\n") + 1
 
             def _adjust():
-                doc_h = int(ed.document().size().height())
+                doc = ed.document()
+                doc_h = int(doc.size().height()) if doc is not None else 0
                 eff   = max(doc_h, ph_lines if not ed.toPlainText() else 1)
                 new_h = max(min(eff * line_h + 12, dlg_max_h // 3), line_h + 12)
                 ed.setFixedHeight(new_h)
                 dlg.adjustSize()
 
-            ed.document().contentsChanged.connect(_adjust)
+            _doc = ed.document()
+            if _doc is not None:
+                _doc.contentsChanged.connect(_adjust)
             _adjust()
             return ed
 
@@ -589,7 +591,8 @@ class EntryDialog(QDialog):
         dst_ed = _path_row("Destination path:", dst, "Enter path or use '📄 File' or '📁 Directory'")
 
         vl.addWidget(sep())
-        bb     = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
+        _buttons = QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel  # type: ignore[attr-defined]
+        bb     = QDialogButtonBox(_buttons)
         bb.accepted.connect(dlg.accept)
         bb.rejected.connect(dlg.reject)
         vl.addWidget(bb)
@@ -726,7 +729,6 @@ class EntryDialog(QDialog):
                                    "post_hooks": _existing_details.get("post_hooks", [])}}
         self.accept()
 
-
 class MountDialog(QDialog):
 
     def __init__(self, parent, opt: dict | None):
@@ -806,7 +808,6 @@ class MountDialog(QDialog):
                        "mount_command": self.mount.text().strip(), "unmount_command": self.unmnt.text().strip()}
         self.accept()
 
-
 class MountsDialog(_ListDialog):
 
     def __init__(self, parent):
@@ -858,7 +859,6 @@ class MountsDialog(_ListDialog):
         save_profile()
         self.was_changed = True
         self._refresh()
-
 
 class HeaderSettingsDialog(QDialog):
 
@@ -965,7 +965,6 @@ class HeaderSettingsDialog(QDialog):
     def _move_down(self) -> None:
         if self._move_header(+1): self.was_changed = True
 
-
 def _clear_default_flag(profile_name: str, caller: str) -> None:
     if not profile_name:
         return
@@ -976,7 +975,6 @@ def _clear_default_flag(profile_name: str, caller: str) -> None:
             _atomic_write(path, data)
     except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
         logger.warning("%s: could not clear is_default in '%s': %s", caller, path.name, exc)
-
 
 class ProfilesDialog(QDialog):
 
@@ -1218,7 +1216,8 @@ class ProfilesDialog(QDialog):
             bg.addButton(rb_all)
             vl.addWidget(rb_sel)
             vl.addWidget(rb_all)
-            bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)  # type: ignore
+            _buttons = QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel  # type: ignore[attr-defined]
+            bb = QDialogButtonBox(_buttons)
             bb.accepted.connect(choice_dlg.accept)
             bb.rejected.connect(choice_dlg.reject)
             vl.addWidget(bb)
@@ -1260,7 +1259,6 @@ class ProfilesDialog(QDialog):
         if path:
             shutil.copy2(src, path)
             QMessageBox.information(self, "Exported", f"Profile '{name}' exported to:\n{path}")
-
 
 class LogViewer(_TextViewDialog):
 
@@ -1322,7 +1320,6 @@ class LogViewer(_TextViewDialog):
                 QMessageBox.warning(self, "Error", f"Could not clear log: {e}")
                 return
             self._load()
-
 
 class SysInfoDialog(_TextViewDialog):
     done_sig = pyqtSignal(str)

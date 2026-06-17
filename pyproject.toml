@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "linux-backup-helper"
+version = "1.0.0"
+description = "Graphical backup and system management tool for Linux"
+readme = "README.md"
+license = { file = "LICENSE.txt" }
+requires-python = ">=3.10"
+dependencies = [
+    "PyQt6>=6.4,<7",
+    "keyring>=23.0,<26",
+    "secretstorage>=3.3,<4",
+]
+
+[project.scripts]
+backup-helper = "main:main"
+
+[tool.setuptools]
+py-modules = [
+    "backup_stats",
+    "constants",
+    "copy_worker",
+    "dialogs",
+    "disk_analyzer",
+    "dotfiles_manager",
+    "drive_utils",
+    "dry_run",
+    "history",
+    "icons",
+    "integrity_checker",
+    "linux_distro_helper",
+    "main",
+    "pre_post_hooks",
+    "samba_credentials",
+    "scan_verify",
+    "scheduler",
+    "state",
+    "status_panel",
+    "sudo_password",
+    "system_manager",
+    "system_manager_options",
+    "themes",
+    "tooltips",
+    "ui_utils",
+    "windows",
+]
+
+[tool.setuptools.package-data]
+"*" = ["images/*.png"]

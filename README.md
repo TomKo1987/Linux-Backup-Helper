@@ -3,7 +3,7 @@
 **Linux-Backup-Helper** is a graphical Python tool for backups and system management under Linux.  
 The idea behind this project is to automatically configure a newly installed Linux system — packages, services, system files, and all the configuration you need, with a single click.
 
-> Since this is my first project and I’m still new to programming, I’d really appreciate any feedback or suggestions. I’m still learning, so please don’t expect everything to be perfect. But at least on my system, it runs very quickly and smoothly. Of course, this app was created with the help of AI, mainly using Claude.
+> Since this is my first project and I'm still new to programming, I'd really appreciate any feedback or suggestions. I'm still learning, so please don't expect everything to be perfect. But at least on my system, it runs very quickly and smoothly. Of course, this app was created with the help of AI, mainly using Claude.
 
 ---
 
@@ -164,21 +164,41 @@ chmod +x install.sh
 
 The script installs `inxi` and all Python dependencies automatically. It will also ask whether you want to install `smbclient` for SMB/Samba share support.
 
+### Install as a package (pip)
+
+This method installs the app as a proper Python package and registers the `backup-helper` command system-wide.
+
+```bash
+git clone https://github.com/TomKo1987/Linux-Backup-Helper.git
+cd Linux-Backup-Helper
+pip install --user .
+```
+
+After installation, the app can be launched from anywhere:
+
+```bash
+backup-helper
+```
+
+To uninstall:
+
+```bash
+pip uninstall linux-backup-helper
+```
+
+> **Note:** `inxi` and optionally `smbclient` still need to be installed separately via your system package manager (see Quick install above or the Requirements section).
+
 ### Manual install
 
 ```bash
-# 1. Clone
 git clone https://github.com/TomKo1987/Linux-Backup-Helper.git
 cd Linux-Backup-Helper
 
-# 2. (Optional) Create a virtual environment
 python3 -m venv venv
 source venv/bin/activate
 
-# 3. Install Python dependencies
 pip install -r requirements.txt
 
-# 4. Run
 python3 main.py
 ```
 

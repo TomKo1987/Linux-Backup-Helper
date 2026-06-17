@@ -1,10 +1,8 @@
-#!/bin/bash
-
+#!/usr/bin/env bash
 set -e
 
 echo "=== Linux-Backup-Helper: Installation ==="
 
-# Ensure the script is run from the project root (requirements.txt must be present)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ ! -f "$SCRIPT_DIR/requirements.txt" ]; then
     echo "Error: requirements.txt not found."
@@ -12,7 +10,6 @@ if [ ! -f "$SCRIPT_DIR/requirements.txt" ]; then
     exit 1
 fi
 
-# ── Detect distro ─────────────────────────────────────────────────────────────
 if [ -f /etc/arch-release ]; then
     DISTRO="arch"
 elif [ -f /etc/debian_version ]; then
@@ -34,7 +31,6 @@ fi
 
 echo "Detected distribution family: $DISTRO"
 
-# ── Python version check ──────────────────────────────────────────────────────
 PY_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "0.0")
 PY_MAJOR=$(echo "$PY_VER" | cut -d. -f1)
 PY_MINOR=$(echo "$PY_VER" | cut -d. -f2)
@@ -46,7 +42,6 @@ if [ "$PY_MAJOR" -lt 3 ] || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 10 ]; }
 fi
 echo "Python $PY_VER detected — OK"
 
-# ── inxi ──────────────────────────────────────────────────────────────────────
 if ! command -v inxi &> /dev/null; then
     echo "Installing inxi..."
     case "$DISTRO" in
@@ -61,7 +56,6 @@ else
     echo "inxi already installed."
 fi
 
-# ── smbclient (optional – only required for SMB/Samba share support) ──────────
 if ! command -v smbclient &> /dev/null; then
     echo ""
     echo "smbclient was not found on your system."
@@ -87,7 +81,6 @@ else
     echo "smbclient already installed."
 fi
 
-# ── Python dependencies ───────────────────────────────────────────────────────
 echo ""
 echo "Installing Python dependencies..."
 
@@ -124,9 +117,11 @@ case "$DISTRO" in
     *)
         echo "Unknown distro — attempting pip install..."
         if command -v pip3 &> /dev/null; then
-            pip3 install --user -r "$SCRIPT_DIR/requirements.txt"
+            pip3 install --user --break-system-packages -r "$SCRIPT_DIR/requirements.txt" \
+            || pip3 install --user -r "$SCRIPT_DIR/requirements.txt"
         elif command -v python3 &> /dev/null; then
-            python3 -m pip install --user -r "$SCRIPT_DIR/requirements.txt"
+            python3 -m pip install --user --break-system-packages -r "$SCRIPT_DIR/requirements.txt" \
+            || python3 -m pip install --user -r "$SCRIPT_DIR/requirements.txt"
         else
             echo "Error: No pip3 or Python 3 found."
             echo "Please install the following packages manually:"

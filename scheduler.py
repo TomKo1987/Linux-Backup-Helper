@@ -11,13 +11,12 @@ from PyQt6.QtWidgets import (
     QPushButton, QVBoxLayout, QCheckBox, QTimeEdit, QFrame,
     QGridLayout, )
 
-from state import S, logger
+from state import S, logger, _HOME
 from themes import current_theme, font_sz
 from ui_utils import _StandardKeysMixin
 
-_SYSTEMD_USER_DIR = Path.home() / ".config" / "systemd" / "user"
+_SYSTEMD_USER_DIR = _HOME / ".config" / "systemd" / "user"
 _SERVICE_NAME = "backup-helper-auto"
-
 
 _INTERVALS: dict[str, str] = {
     "Hourly":        "*-*-* *:00:00",
@@ -28,13 +27,11 @@ _INTERVALS: dict[str, str] = {
     "Custom time …": "",
 }
 
-
 def _unit_names() -> tuple[Path, Path]:
     return (
         _SYSTEMD_USER_DIR / f"{_SERVICE_NAME}.service",
         _SYSTEMD_USER_DIR / f"{_SERVICE_NAME}.timer",
     )
-
 
 def is_timer_active() -> bool:
     try:
@@ -45,7 +42,6 @@ def is_timer_active() -> bool:
         return r.returncode == 0
     except (subprocess.SubprocessError, OSError):
         return False
-
 
 def get_next_run_time() -> str:
     try:
@@ -66,7 +62,6 @@ def get_next_run_time() -> str:
     except (subprocess.SubprocessError, OSError):
         pass
     return ""
-
 
 def install_timer(interval_key: str, backup_headers: list[str], *, on_calendar: str = "", only_on_ac: bool = False) -> tuple[bool, str]:
     if interval_key not in _INTERVALS:
@@ -135,7 +130,6 @@ def install_timer(interval_key: str, backup_headers: list[str], *, on_calendar: 
     except Exception as exc:
         return False, str(exc)
 
-
 def remove_timer() -> tuple[bool, str]:
     try:
         subprocess.run(
@@ -152,7 +146,6 @@ def remove_timer() -> tuple[bool, str]:
     except Exception as exc:
         return False, str(exc)
 
-
 def get_active_interval() -> str:
     _, tmr_path = _unit_names()
     try:
@@ -168,14 +161,12 @@ def get_active_interval() -> str:
         pass
     return ""
 
-
 def get_ac_only() -> bool:
     svc_path, _ = _unit_names()
     try:
         return "ConditionACPower=true" in svc_path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return False
-
 
 class SchedulerDialog(_StandardKeysMixin, QDialog):
     def __init__(self, parent=None) -> None:
