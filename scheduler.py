@@ -1,5 +1,6 @@
 import base64 as _b64
 import json
+import sys
 import os
 import subprocess
 from datetime import datetime
@@ -37,9 +38,9 @@ def is_timer_active() -> bool:
     try:
         r = subprocess.run(
             ["systemctl", "--user", "is-enabled", f"{_SERVICE_NAME}.timer"],
-            capture_output=True, text=True, timeout=5
+            capture_output=True, text=True, timeout=5,
         )
-        return r.returncode == 0
+        return r.returncode == 0 and r.stdout.strip() not in ("disabled", "masked", "invalid")
     except (subprocess.SubprocessError, OSError):
         return False
 
@@ -84,7 +85,7 @@ def install_timer(interval_key: str, backup_headers: list[str], *, on_calendar: 
         "\n"
         "[Service]\n"
         "Type=oneshot\n"
-        f"ExecStart=/usr/bin/python3 \"{exe}\" --headless-backup-b64 \"{headers_b64}\"\n"
+        f"ExecStart={sys.executable} \"{exe}\" --headless-backup-b64 \"{headers_b64}\"\n"
     )
 
     timer = (

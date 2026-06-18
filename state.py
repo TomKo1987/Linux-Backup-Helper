@@ -206,7 +206,15 @@ def _norm_paths(raw: Any) -> list[str]:
     if not raw:
         return []
     if isinstance(raw, list):
-        return [s for x in raw if isinstance(x, str) and (s := x.strip())]
+        result = []
+        for x in raw:
+            if not isinstance(x, str):
+                continue
+            for part in re.split(r'\r\n|\r|\n', x):
+                s = part.strip()
+                if s:
+                    result.append(s)
+        return result
     s = str(raw).strip()
     if not s:
         return []

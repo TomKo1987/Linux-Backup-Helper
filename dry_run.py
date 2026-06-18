@@ -107,7 +107,7 @@ class _DryRunWorker(QThread):
                         try:
                             dst_stat = dst_file.stat()
                             if (src_stat.st_size != dst_stat.st_size
-                                    or int(src_stat.st_mtime) > int(dst_stat.st_mtime)):
+                                    or abs(src_stat.st_mtime_ns - dst_stat.st_mtime_ns) > 2_000_000_000):
                                 to_copy.append((str(rel), "modified"))
                             else:
                                 to_skip.append(str(rel))

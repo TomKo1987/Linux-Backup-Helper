@@ -113,8 +113,8 @@ def _check_destination_space(tasks: list[tuple]) -> list[str]:
                 warnings.append(
                     f"• {dst!r}  —  only {free_mb:,} MB free"
                 )
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.debug("_check_destination_space: cannot check %r: %s", dst, exc)
     return warnings
 
 
@@ -376,7 +376,7 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
         except InterruptedError:
             raise
         except OSError as exc:
-            logger.error("read/write fallback failed after %d/%d bytes: %s", total - rem, total, exc)
+            logger.warning("read/write fallback failed after %d/%d bytes: %s", total - rem, total, exc)
     return total - rem
 
 
