@@ -1106,10 +1106,12 @@ class SystemManagerThread(QThread):
         if not self.distro: return False
         if self.distro.has_aur and self._pkg_cache:
             _eff_helper = None
-            if self._pkg_cache.is_installed("paru"):
-                _eff_helper = "paru"
-            elif self._pkg_cache.is_installed("yay"):
-                _eff_helper = "yay"
+            if self._pkg_cache.is_installed(S.aur_helper):
+                _eff_helper = S.aur_helper
+            else:
+                _fallback = "paru" if S.aur_helper == "yay" else "yay"
+                if self._pkg_cache.is_installed(_fallback):
+                    _eff_helper = _fallback
             if _eff_helper:
                 ok = (self._exec([_eff_helper, "--noconfirm"], stream=True).returncode == 0)
                 self._emit_result(ok, "System successfully updated", "System update failed")
@@ -1731,12 +1733,13 @@ class SystemManagerThread(QThread):
         self.outputReceived.emit(f"Cleaning {pm} cache", "info")
         ok = (self._exec(self.distro.get_clean_cache_cmd(), stream=True).returncode == 0)
         self._emit_result(ok, f"{pm} cache successfully cleaned", f"{pm} cache cleaning failed")
-        if ok and self._pkg_cache and self._pkg_cache.is_installed(S.aur_helper):
-            self.outputReceived.emit("", "info")
-            self.outputReceived.emit(f"Cleaning {S.aur_helper} cache", "info")
-            helper_ok = (self._exec([S.aur_helper, "-Scc", "--noconfirm"], stream=True).returncode == 0)
-            self._emit_result(helper_ok, f"{S.aur_helper} cache successfully cleaned",
-                              f"{S.aur_helper} cache cleaning failed")
-            if not helper_ok:
-                logger.warning("_clean_cache: %s cache cleaning failed (non-critical)", S.aur_helper)
+        if ok and self._pkg_cache:
+            for _helper in ("paru", "yay"):
+                if self._pkg_cache.is_installed(_helper):
+                    self.outputReceived.emit(f"Cleaning {_helper} cache", "info")
+                    helper_ok = (self._exec([_helper, "-Scc", "--noconfirm"], stream=True).returncode == 0)
+                    self._emit_result(helper_ok, f"{_helper} cache successfully cleaned",
+                                      f"{_helper} cache cleaning failed")
+                    if not helper_ok:
+                        logger.warning("_clean_cache: %s cache cleaning failed (non-critical)", _helper)
         return ok

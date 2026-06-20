@@ -16,8 +16,8 @@ from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QFontMetrics
 from PyQt6.QtWidgets import (
     QFrame, QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea, QTextEdit,
-    QFileDialog, QFormLayout, QGridLayout, QHBoxLayout, QVBoxLayout, QWidget, QRadioButton,
-    QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QSizePolicy, QProgressDialog
+    QFileDialog, QFormLayout, QGridLayout, QHBoxLayout, QVBoxLayout, QProgressDialog,
+    QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QSizePolicy, QWidget
 )
 
 from linux_distro_helper import LinuxDistroHelper, SESSIONS, USER_SHELLS, ARCH_KERNEL_VARIANTS, is_valid_pkg_name
@@ -241,11 +241,15 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, aur_he
             op_status.setdefault("aur_helper_installed", aur_helper_installed)
 
     _installed_helper_for_update = None
+    _installed_helpers_for_cache: list[str] = []
     if distro.has_aur:
         for _candidate in ("paru", "yay"):
             if distro.package_is_installed(_candidate) or shutil.which(_candidate) is not None:
-                _installed_helper_for_update = _candidate
-                break
+                if _installed_helper_for_update is None:
+                    _installed_helper_for_update = _candidate
+                _installed_helpers_for_cache.append(_candidate)
+        if aur_helper_override and aur_helper_override not in _installed_helpers_for_cache:
+            _installed_helpers_for_cache.append(aur_helper_override)
 
     install_cmd = distro.get_pkg_install_cmd("...")
     if session is None:
@@ -345,8 +349,10 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, aur_he
                 f"Initialise firewall (Install '{pkglist(distro.get_firewall_packages)}'. Enable & start 'ufw.service', set to 'deny all by default')",
                 _tip("enable_firewall")),
             "remove_orphaned_packages": ("Remove orphaned package(s)", _tip("remove_orphaned_packages")),
-            "clean_cache": (f"Clean cache (for '{pm_name}'" + (f" and '{_installed_helper_for_update}')"
-                                                               if _installed_helper_for_update else ")"), _tip("clean_cache"))}
+            "clean_cache": ("Clean cache (for '" + pm_name + "'"
+                + (", '" + "', '".join(_installed_helpers_for_cache[:-1]) + "' and '" + _installed_helpers_for_cache[
+                -1] + "'" if len(_installed_helpers_for_cache) > 1 else (" and '" + _installed_helpers_for_cache[0] + "'"
+                if _installed_helpers_for_cache else "")) + ")", _tip("clean_cache"))}
 
 
 def _raw_to_label_html(raw: dict[str, tuple[str, str]]) -> dict[str, str]:
@@ -693,7 +699,7 @@ class SystemManagerOptions(QDialog):
 
         _set_shell_cb: QCheckBox | None = None
         _user_shell_combo: QComboBox | None = None
-        _aur_helper_radios: tuple[QRadioButton, QRadioButton] | None = None
+        _aur_helper_combo: QComboBox | None = None
 
         for group_label, keys in _OP_GROUPS:
             sep_line = QFrame()
@@ -730,28 +736,19 @@ class SystemManagerOptions(QDialog):
                 if key == "install_aur_helper":
                     if not (is_arch and not self._distro.has_aur):
                         _paru_inst = self._distro.package_is_installed("paru") or bool(shutil.which("paru"))
-                        _yay_inst  = self._distro.package_is_installed("yay")  or bool(shutil.which("yay"))
-                        _default_rb_helper = "paru" if _paru_inst else ("yay" if _yay_inst else S.aur_helper)
+                        _yay_inst = self._distro.package_is_installed("yay") or bool(shutil.which("yay"))
+                        _default_combo_helper = "paru" if _paru_inst else ("yay" if _yay_inst else S.aur_helper)
 
-                        rb_yay = QRadioButton("yay")
-                        rb_paru = QRadioButton("paru")
-                        if _default_rb_helper == "paru":
-                            rb_paru.setChecked(True)
-                        else:
-                            rb_yay.setChecked(True)
+                        aur_combo = QComboBox()
+                        aur_combo.addItems(["yay", "paru"])
+                        aur_combo.setCurrentText(_default_combo_helper)
+                        aur_combo.setMinimumHeight(30)
+                        aur_combo.setFixedWidth(200)
+                        aur_combo.setEnabled(cb.isEnabled() and cb.isChecked())
 
-                        row_w = QWidget()
-                        row_w.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-                        row_l = QHBoxLayout(row_w)
-                        row_l.setContentsMargins(0, 0, 0, 0)
-                        row_l.setSpacing(16)
-                        row_l.addWidget(cb)
-                        row_l.addStretch(1)
-                        row_l.addWidget(rb_yay)
-                        row_l.addWidget(rb_paru)
-                        row_l.addStretch(1)
-                        grid.addWidget(row_w, grid_row, 0, 1, 2)
-                        _aur_helper_radios = (rb_yay, rb_paru)
+                        grid.addWidget(cb, grid_row, 0)
+                        grid.addWidget(aur_combo, grid_row, 1)
+                        _aur_helper_combo = aur_combo
                         grid_row += 1
 
                 elif key == "install_kernels":
@@ -843,8 +840,8 @@ class SystemManagerOptions(QDialog):
                 dk_override = (_default_kernel_combo.currentData() or "") if _default_kernel_combo is not None else None
 
                 aur_override = None
-                if _aur_helper_radios is not None:
-                    aur_override = "paru" if _aur_helper_radios[1].isChecked() else "yay"
+                if _aur_helper_combo is not None:
+                    aur_override = _aur_helper_combo.currentText()
 
                 _dyn_status = dict(_op_status)
                 if aur_override is not None:
@@ -897,9 +894,8 @@ class SystemManagerOptions(QDialog):
             except Exception as e:
                 logger.error("_refresh_labels: %s", e, exc_info=True)
 
-        if _aur_helper_radios is not None:
-            _aur_helper_radios[0].toggled.connect(lambda _: _refresh_labels())
-            _aur_helper_radios[1].toggled.connect(lambda _: _refresh_labels())
+        if _aur_helper_combo is not None:
+            _aur_helper_combo.currentIndexChanged.connect(lambda _: _refresh_labels())
 
         def _populate_default_combo():
             if _default_kernel_combo is None: return
@@ -957,6 +953,17 @@ class SystemManagerOptions(QDialog):
             _user_shell_combo.currentIndexChanged.connect(lambda _: _refresh_labels())
             _sync_sh_combo()
 
+        _found_aur_cb = next((c for c, k in widgets if k == "install_aur_helper"), None)
+        if _aur_helper_combo is not None and _found_aur_cb is not None:
+            _aur_cmb, _aur_cb = _aur_helper_combo, _found_aur_cb
+
+            def _sync_aur_combo():
+                _aur_cmb.setEnabled(_aur_cb.isChecked() and _aur_cb.isEnabled())
+                _refresh_labels()
+
+            _aur_cb.stateChanged.connect(lambda _: _sync_aur_combo())
+            _sync_aur_combo()
+
         aur_cb = next((c for c, k in widgets if k == "install_aur_packages"), None)
         enabled_widgets = [c for c, _ in widgets if c.isEnabled() and c.isVisible()]
 
@@ -973,7 +980,7 @@ class SystemManagerOptions(QDialog):
         aur_cb = next((c for c, k in widgets if k == "install_aur_packages"), None)
 
         def _sync_aur_dep():
-            if aur_cb and helper_cb and self._distro.supports_aur():
+            if aur_cb and helper_cb and self._distro.has_aur:
                 force = aur_cb.isChecked()
                 helper_cb.setChecked(force or helper_cb.isChecked())
                 helper_cb.setEnabled(not force)
@@ -1001,8 +1008,8 @@ class SystemManagerOptions(QDialog):
 
         def _save(dlg):
             S.system_manager_ops = [k for cb_, k in widgets if cb_.isChecked() and cb_.isVisible()]
-            if _aur_helper_radios is not None:
-                S.aur_helper = "paru" if _aur_helper_radios[1].isChecked() else "yay"
+            if _aur_helper_combo is not None:
+                S.aur_helper = _aur_helper_combo.currentText()
             S.kernels_to_install = [v for v in _KERNEL_VARIANTS if
                                     _kernel_sub_cbs.get(v) and _kernel_sub_cbs[v].isChecked()
                                     and _kernel_sub_cbs[v].isEnabled()]
