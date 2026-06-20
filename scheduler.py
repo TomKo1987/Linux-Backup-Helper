@@ -116,7 +116,7 @@ def install_timer(interval_key: str, backup_headers: list[str], *, on_calendar: 
                         os.fsync(dfd)
                     finally:
                         os.close(dfd)
-                except OSError:
+                except (subprocess.SubprocessError, OSError):
                     pass
             except Exception:
                 tmp.unlink(missing_ok=True)
@@ -172,7 +172,7 @@ def get_ac_only() -> bool:
 class SchedulerDialog(_StandardKeysMixin, QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Automatic backup")
+        self.setWindowTitle("Automatic Backup")
         self.setMinimumWidth(900)
         self._build_ui()
 
@@ -182,7 +182,7 @@ class SchedulerDialog(_StandardKeysMixin, QDialog):
         lay.setSpacing(12)
         lay.setContentsMargins(18, 18, 18, 18)
 
-        title = QLabel("⏰  Set up automatic backup")
+        title = QLabel("⏰  Automatic Backup")
         title.setStyleSheet(
             f"font-size:{font_sz(3)}px;font-weight:bold;color:{t['accent']};"
         )

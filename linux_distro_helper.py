@@ -836,8 +836,8 @@ class LinuxDistroHelper:
                             if line.startswith("saved_entry="):
                                 default_val = line.split("=", 1)[1].lower()
                                 break
-                    except (subprocess.SubprocessError, FileNotFoundError):
-                        pass
+                    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+                        default_val = ""
 
                 if "lts" in default_val:
                     found = "linux-lts"

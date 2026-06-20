@@ -1,17 +1,23 @@
+import concurrent.futures
+import json
 import re
 import shutil
+import subprocess
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from sudo_password import SecureString
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QFontMetrics
 from PyQt6.QtWidgets import (
     QFrame, QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea, QTextEdit,
-    QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QSizePolicy,
-    QFileDialog, QFormLayout, QGridLayout, QHBoxLayout, QVBoxLayout, QWidget, QRadioButton
+    QFileDialog, QFormLayout, QGridLayout, QHBoxLayout, QVBoxLayout, QWidget, QRadioButton,
+    QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QSizePolicy, QProgressDialog
 )
 
 from linux_distro_helper import LinuxDistroHelper, SESSIONS, USER_SHELLS, ARCH_KERNEL_VARIANTS, is_valid_pkg_name
@@ -408,6 +414,113 @@ def _check_aur_helper_installed(distro: LinuxDistroHelper) -> bool:
     if distro.package_is_installed(helper):
         return True
     return shutil.which(helper) is not None
+
+
+class PackageVerifierThread(QThread):
+    progress = pyqtSignal(int, int)
+    result = pyqtSignal(list, list)
+
+    def __init__(self, packages, pkg_type, distro_family):
+        super().__init__()
+        self.packages = packages
+        self.pkg_type = pkg_type
+        self.distro_family = distro_family
+        self._is_cancelled = False
+
+    def cancel(self):
+        self._is_cancelled = True
+
+    def run(self):
+        valid = []
+        invalid = []
+
+        names = []
+        is_specific = (self.pkg_type == "specific_packages")
+        for p in self.packages:
+            name = p.get("package" if is_specific else "name", "") if isinstance(p, dict) else str(p)
+            if name:
+                names.append(name)
+        names = list(set(names))
+        total = len(names)
+        processed = 0
+
+        if not names:
+            self.result.emit([], [])
+            return
+
+        if self.pkg_type == "aur_packages":
+            batch_size = 100
+            for i in range(0, total, batch_size):
+                if self._is_cancelled: break
+                batch = names[i:i + batch_size]
+                args = "&".join(f"arg[]={urllib.parse.quote(p)}" for p in batch)
+                url = f"https://aur.archlinux.org/rpc/v5/info?{args}"
+
+                try:
+                    req = urllib.request.Request(url, headers={'User-Agent': 'BackupHelper-Verifier'})
+                    with urllib.request.urlopen(req, timeout=10) as r:
+                        data = json.loads(r.read().decode("utf-8"))
+                        found = {res.get("Name") for res in data.get("results", [])}
+                        for p in batch:
+                            if p in found:
+                                valid.append(p)
+                            else:
+                                invalid.append(p)
+                except (urllib.error.URLError, json.JSONDecodeError, OSError) as e:
+                    logger.warning("AUR Verify error: %s", e)
+                    valid.extend(batch)
+
+                processed += len(batch)
+                self.progress.emit(processed, total)
+        else:
+            def check_pkg(_pkg):
+                if self._is_cancelled: return _pkg, True
+                cmd = None
+                fam = self.distro_family
+
+                if fam == "arch":
+                    cmd = ["pacman", "-Si", _pkg]
+                elif fam == "debian":
+                    cmd = ["apt-cache", "show", _pkg]
+                elif fam == "fedora":
+                    cmd = ["dnf", "info", _pkg]
+                elif fam == "suse":
+                    cmd = ["zypper", "info", _pkg]
+                elif fam == "void":
+                    cmd = ["xbps-query", "-R", _pkg]
+                elif fam == "alpine":
+                    cmd = ["apk", "info", _pkg]
+                elif fam == "solus":
+                    cmd = ["eopkg", "info", _pkg]
+
+                if cmd is None: return _pkg, True
+
+                try:
+                    res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+                    return _pkg, (res.returncode == 0)
+                except (OSError, subprocess.SubprocessError):
+                    return _pkg, True
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+                futures = [pool.submit(check_pkg, p) for p in names]
+                for fut in concurrent.futures.as_completed(futures):
+                    if self._is_cancelled: break
+                    try:
+                        pkg, is_valid = fut.result()
+                        if is_valid:
+                            valid.append(pkg)
+                        else:
+                            invalid.append(pkg)
+                    except (concurrent.futures.CancelledError, concurrent.futures.TimeoutError):
+                        pass
+                    except Exception as e:
+                        logger.debug("Verification error: %s", e)
+
+                    processed += 1
+                    self.progress.emit(processed, total)
+
+        if not self._is_cancelled:
+            self.result.emit(valid, invalid)
 
 
 class SystemManagerOptions(QDialog):
@@ -1308,7 +1421,9 @@ class SystemManagerOptions(QDialog):
             return slot
 
         for lbl, fn in [("📥 Import", lambda: self._import_pkgs(pkg_type)),
-                        ("📤 Export", lambda: self._export_pkgs(pkg_type))]:
+                        ("📤 Export", lambda: self._export_pkgs(pkg_type)),
+                        ("🔎 Verify Package(s)", lambda: self._verify_pkgs(pkg_type, dlg))]:
+
             b = QPushButton(lbl)
             b.clicked.connect(make_io_slot(fn, lbl))
             io_row.addWidget(b)
@@ -1568,6 +1683,63 @@ class SystemManagerOptions(QDialog):
             _commit_pkgs(pkg_type, current)
             QMessageBox.information(self, "Import Complete", f"Successfully imported {added} packages.")
         QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
+
+    def _verify_pkgs(self, pkg_type: str, parent_dlg: QDialog) -> None:
+        packages = getattr(S, pkg_type, []) or []
+        if not packages:
+            QMessageBox.information(parent_dlg, "Verify", "There are no packages available for verification.")
+            return
+
+        progress = QProgressDialog("Verifying packages...", "Cancel", 0, len(packages), parent_dlg)
+        progress.setMinimumSize(500, 150)
+        progress.setWindowTitle("Package Verification")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setAutoClose(True)
+        progress.setValue(0)
+
+        self._verifier_thread = PackageVerifierThread(packages, pkg_type, self._distro.family())
+
+        def on_progress(current, total):
+            if not progress.wasCanceled():
+                progress.setMaximum(total)
+                progress.setValue(current)
+
+        def on_result(_valid, invalid):
+            if progress.wasCanceled():
+                return
+            progress.setValue(progress.maximum())
+
+            if not invalid:
+                QMessageBox.information(parent_dlg, "Verification Complete",
+                                        "All packages are valid and available in the repositories!")
+                return
+
+            msg = f"{len(invalid)} invalid or missing package(s) detected:\n\n" + "\n".join(
+                f"  • {p}" for p in invalid[:15])
+            if len(invalid) > 15:
+                msg += f"\n  ... and {len(invalid) - 15} more."
+            msg += "\n\nWould you like to permanently remove this/these invalid package(s) from your profile?"
+
+            ans = QMessageBox.question(parent_dlg, "Verification Complete", msg,
+                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+
+            if ans == QMessageBox.StandardButton.Yes:
+                invalid_set = set(invalid)
+                is_specific = _is_specific(pkg_type)
+                new_pkgs = []
+                for p in packages:
+                    name = p.get("package" if is_specific else "name", "") if isinstance(p, dict) else str(p)
+                    if name not in invalid_set:
+                        new_pkgs.append(p)
+
+                _commit_pkgs(pkg_type, new_pkgs)
+                parent_dlg.accept()
+                QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
+
+        self._verifier_thread.progress.connect(on_progress)
+        self._verifier_thread.result.connect(on_result)
+        progress.canceled.connect(self._verifier_thread.cancel)
+        self._verifier_thread.start()
 
 
 class SystemManagerLauncher:

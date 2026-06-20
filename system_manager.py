@@ -1712,9 +1712,15 @@ class SystemManagerThread(QThread):
         self.outputReceived.emit(f"Found orphaned packages: {', '.join(pkgs)}", "info")
         fam = self.distro.family()
         if fam == "nixos":
-            cmd = f"nix-env -e {' '.join(pkgs)}"
+            cmd_str = f"nix-env -e {' '.join(pkgs)}"
+            cmd = shlex.split(cmd_str)
         else:
-            cmd = self.distro.get_pkg_remove_cmd(" ".join(pkgs))
+            raw_cmd = self.distro.get_pkg_remove_cmd(" ".join(pkgs))
+            if isinstance(raw_cmd, str):
+                cmd = shlex.split(raw_cmd)
+            else:
+                cmd = raw_cmd
+
         ok = (self._exec(cmd, stream=True).returncode == 0)
         self._emit_result(ok, "Orphaned packages successfully removed", "Could not remove orphaned packages")
         return ok
