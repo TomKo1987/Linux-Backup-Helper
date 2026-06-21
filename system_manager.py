@@ -1717,7 +1717,7 @@ class SystemManagerThread(QThread):
             cmd_str = f"nix-env -e {' '.join(pkgs)}"
             cmd = shlex.split(cmd_str)
         else:
-            raw_cmd = self.distro.get_pkg_remove_cmd(" ".join(pkgs))
+            raw_cmd = self.distro.get_pkg_remove_cmd(" ".join(shlex.quote(p) for p in pkgs))
             if isinstance(raw_cmd, str):
                 cmd = shlex.split(raw_cmd)
             else:

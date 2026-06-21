@@ -92,6 +92,13 @@ class _CheckWorker(QThread):
             issues: list[str] = []
             ok = True
 
+            if len(sources) != len(dests):
+                issues.append(
+                    f"Source/destination count mismatch ({len(sources)} source(s) vs "
+                    f"{len(dests)} destination(s)) — extra entries were not checked"
+                )
+                ok = False
+
             for src_raw, dst_raw in zip(sources, dests):
                 src_info = _quick_scan(src_raw)
                 dst_info = _quick_scan(dst_raw)

@@ -16,7 +16,7 @@ from state import S
 from themes import current_theme, font_sz
 from ui_utils import _StandardKeysMixin
 
-__all__ = ["DryRunDialog"]
+__all__ = ["DryRunDialog", "DryRunModeDialog", "launch_dry_run"]
 
 
 class _DryRunWorker(QThread):
@@ -52,6 +52,13 @@ class _DryRunWorker(QThread):
         if not sources or not destinations:
             return dict(title=title, to_copy=to_copy,
                         to_skip=to_skip, errors=errors, src_total=0)
+
+        if len(sources) != len(destinations):
+            errors.append((
+                title,
+                f"Source/destination count mismatch ({len(sources)} source(s) vs "
+                f"{len(destinations)} destination(s)) — extra entries were not checked",
+            ))
 
         for src_root, dst_root in zip(sources, destinations):
             if self._cancel.is_set():
@@ -500,9 +507,11 @@ class _GlobalViewTab(QWidget):
 # noinspection PyUnresolvedReferences
 class DryRunDialog(_StandardKeysMixin, QDialog):
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, mode: str = "backup") -> None:
         super().__init__(parent)
-        self.setWindowTitle("🔎  Dry Run — Backup Preview")
+        self._mode = mode  # "backup" or "restore"
+        title_suffix = "Backup Preview" if mode == "backup" else "Restore Preview"
+        self.setWindowTitle(f"🔎  Dry Run — {title_suffix}")
         screen = QApplication.primaryScreen()
         geo    = screen.availableGeometry() if screen else None
         if geo:
@@ -529,17 +538,47 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         lay.setContentsMargins(16, 14, 16, 14)
         lay.setSpacing(10)
 
-        hdr = QLabel("🔎  Backup Dry Run — Preview only, nothing will be changed")
+        if self._mode == "backup":
+            mode_icon  = "💾"
+            mode_label = "Backup"
+            mode_color = t["accent"]
+            hdr_text   = "🔎  Backup Dry Run — Preview only, nothing will be changed"
+            info_text  = (
+                "Scans your backup source paths and compares them with the destinations. "
+                "Files marked <b>new</b> don't exist at the destination yet. "
+                "Files marked <b>modified</b> are newer or differ in size."
+            )
+        else:
+            mode_icon  = "🔁"
+            mode_label = "Restore"
+            mode_color = t.get("warning", t["info"])
+            hdr_text   = "🔁  Restore Dry Run — Preview only, nothing will be changed"
+            info_text  = (
+                "Scans your backup destinations and compares them with your local source paths. "
+                "Files marked <b>new</b> would be newly created locally on restore. "
+                "Files marked <b>modified</b> would overwrite a differing local file."
+            )
+
+        hdr_row = QHBoxLayout()
+        hdr_row.setSpacing(12)
+
+        hdr = QLabel(hdr_text)
         hdr.setStyleSheet(
             f"font-size:{font_sz(3)}px;font-weight:bold;color:{t['accent']};"
         )
-        lay.addWidget(hdr)
+        hdr_row.addWidget(hdr, 1)
 
-        info = QLabel(
-            "Scans your backup source paths and compares them with the destinations. "
-            "Files marked <b>new</b> don't exist at the destination yet. "
-            "Files marked <b>modified</b> are newer or differ in size."
+        mode_pill = QLabel(f"{mode_icon}  {mode_label} Mode")
+        mode_pill.setStyleSheet(
+            f"color:{mode_color};font-size:{font_sz(-1)}px;font-weight:bold;"
+            f"background:{mode_color}22;border:1px solid {mode_color}55;"
+            f"border-radius:10px;padding:3px 12px;"
         )
+        mode_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hdr_row.addWidget(mode_pill)
+        lay.addLayout(hdr_row)
+
+        info = QLabel(info_text)
         info.setTextFormat(Qt.TextFormat.RichText)
         info.setWordWrap(True)
         info.setStyleSheet(f"color:{t['text_dim']};font-size:{font_sz(-1)}px;")
@@ -561,7 +600,7 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         self._prog_bar.setTextVisible(False)
         self._prog_bar.setStyleSheet(
             f"QProgressBar{{background:{t['pb_bg']};border-radius:4px;border:none;}}"
-            f"QProgressBar::chunk{{background:{t['pb_chunk']};border-radius:4px;}}"
+            f"QProgressBar::chunk{{background:{mode_color};border-radius:4px;}}"
         )
         self._prog_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         prog_row.addWidget(self._prog_label)
@@ -600,7 +639,7 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
             f"padding:6px 14px;margin-right:2px;}}"
             f"QTabWidget#DryRunTabs QTabBar::tab:selected{{"
             f"background:{t['bg2']};color:{t['text']};font-weight:bold;"
-            f"border-bottom:2px solid {t['accent']};}}"
+            f"border-bottom:2px solid {mode_color};}}"
             f"QTabWidget#DryRunTabs QTabBar::tab:hover:!selected{{"
             f"background:{t['bg2']};color:{t['text']};}}"
             f"QTabWidget#DryRunTabs QTabBar::scroller{{width:24px;}}"
@@ -621,14 +660,32 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         self._cancel_btn.setMinimumHeight(34)
         self._cancel_btn.setEnabled(False)
         self._cancel_btn.clicked.connect(self._cancel)
+
+        self._switch_btn = QPushButton(
+            "🔁  Switch to Restore Mode" if self._mode == "backup" else "💾  Switch to Backup Mode"
+        )
+        self._switch_btn.setMinimumHeight(34)
+        self._switch_btn.setToolTip("Close this window and open Dry Run in the other mode")
+        self._switch_btn.clicked.connect(self._switch_mode)
+        switch_btn = self._switch_btn
+
         close_btn = QPushButton("Close")
         close_btn.setMinimumHeight(34)
         close_btn.clicked.connect(self.accept)
         btn_row.addWidget(self._start_btn)
         btn_row.addWidget(self._cancel_btn)
+        btn_row.addWidget(switch_btn)
         btn_row.addStretch()
         btn_row.addWidget(close_btn)
         lay.addLayout(btn_row)
+
+    def _switch_mode(self) -> None:
+        if self._worker and self._worker.isRunning():
+            self._worker.cancel()
+            self._worker.wait(3000)
+        new_mode = "restore" if self._mode == "backup" else "backup"
+        self.accept()
+        DryRunDialog(self.parent(), mode=new_mode).exec()
 
     def _stat_btn(self, text: str, color: str, page: int) -> QPushButton:
         btn = QPushButton(text)
@@ -648,9 +705,11 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
 
     def _start(self) -> None:
         tasks: list[tuple[list[str], list[str], str, dict]] = []
+        is_restore = self._mode == "restore"
+        skip_flag  = "no_restore" if is_restore else "no_backup"
         for e in S.entries:
             details = e.get("details", {})
-            if details.get("no_backup"):
+            if details.get(skip_flag):
                 continue
             src = e.get("source", [])
             dst = e.get("destination", [])
@@ -659,10 +718,14 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
             if isinstance(dst, str):
                 dst = [dst]
             if src and dst:
-                tasks.append((src, dst, e.get("title", "?"), details.get("exclude_paths", {})))
+                if is_restore:
+                    tasks.append((dst, src, e.get("title", "?"), details.get("exclude_paths", {})))
+                else:
+                    tasks.append((src, dst, e.get("title", "?"), details.get("exclude_paths", {})))
 
         if not tasks:
-            QMessageBox.information(self, "Dry Run", "No backup entries configured.")
+            label = "restore" if is_restore else "backup"
+            QMessageBox.information(self, "Dry Run", f"No {label} entries configured.")
             return
 
         from drive_utils import check_drives_to_mount, mount_required_drives
@@ -685,7 +748,9 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         self._prog_bar.setRange(0, len(tasks))
         self._start_btn.setEnabled(False)
         self._cancel_btn.setEnabled(True)
-        self._prog_label.setText(f"Scanning 0 / {len(tasks)} …")
+        self._switch_btn.setEnabled(False)
+        verb = "Scanning (restore direction)" if is_restore else "Scanning"
+        self._prog_label.setText(f"{verb} 0 / {len(tasks)} …")
         self._lbl_copy.setText("Scanning…")
         self._lbl_skip.setText("")
         self._lbl_error.setText("")
@@ -700,12 +765,14 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         if self._worker:
             self._worker.cancel()
         self._cancel_btn.setEnabled(False)
+        self._switch_btn.setEnabled(True)
         self._prog_label.setText("Cancelling…")
 
     def _on_progress(self, done: int, total: int) -> None:
         self._prog_bar.setRange(0, max(total, 1))
         self._prog_bar.setValue(done)
-        self._prog_label.setText(f"Scanning {done} / {total} …")
+        verb = "Scanning (restore direction)" if self._mode == "restore" else "Scanning"
+        self._prog_label.setText(f"{verb} {done} / {total} …")
 
     def _on_entry_done(self, result: dict) -> None:
         self._results.append(result)
@@ -718,6 +785,7 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         self._prog_bar.setValue(self._prog_bar.maximum())
         self._start_btn.setEnabled(True)
         self._cancel_btn.setEnabled(False)
+        self._switch_btn.setEnabled(True)
         for i, r in enumerate(self._results):
             if r["errors"]:
                 self._tabs.setCurrentIndex(i + 2)
@@ -763,3 +831,141 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         _upd(self._lbl_error, f"{total_error:,}  errors",      t["error"])
 
         self._global_view.update_data(self._results)
+
+
+class _ModeCard(QWidget):
+
+    def __init__(self, icon: str, title: str, subtitle: str, color: str, parent=None) -> None:
+        super().__init__(parent)
+        t = current_theme()
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._color = color
+
+        self._frame = QFrame(self)
+        self._frame.setObjectName("ModeCard")
+        self._frame.setStyleSheet(
+            f"QFrame#ModeCard{{background:{t['bg2']};border:2px solid {t['header_sep']};"
+            f"border-radius:10px;padding:6px;}}"
+            f"QFrame#ModeCard:hover{{border-color:{color};}}"
+        )
+
+        inner = QVBoxLayout(self._frame)
+        inner.setContentsMargins(20, 18, 20, 18)
+        inner.setSpacing(6)
+        inner.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        icon_lbl = QLabel(icon)
+        icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_lbl.setStyleSheet("font-size:36px;background:transparent;border:none;")
+        inner.addWidget(icon_lbl)
+
+        title_lbl = QLabel(title)
+        title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_lbl.setStyleSheet(
+            f"font-size:{font_sz(2)}px;font-weight:bold;color:{color};"
+            f"background:transparent;border:none;"
+        )
+        inner.addWidget(title_lbl)
+
+        sub_lbl = QLabel(subtitle)
+        sub_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sub_lbl.setWordWrap(True)
+        sub_lbl.setStyleSheet(
+            f"font-size:{font_sz(-1)}px;color:{t['text_dim']};"
+            f"background:transparent;border:none;"
+        )
+        inner.addWidget(sub_lbl)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._frame)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            parent = self.parent()
+            if isinstance(parent, DryRunModeDialog):
+                parent.card_clicked(self)
+        super().mousePressEvent(event)
+
+
+class DryRunModeDialog(_StandardKeysMixin, QDialog):
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("🔎  Dry Run — Select Mode")
+        self.setFixedSize(850, 550)
+        self._chosen: str | None = None
+        self._build()
+
+    def _build(self) -> None:
+        t = current_theme()
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(28, 24, 28, 20)
+        lay.setSpacing(16)
+
+        hdr = QLabel("🔎  Dry Run")
+        hdr.setStyleSheet(
+            f"font-size:{font_sz(4)}px;font-weight:bold;color:{t['accent']};"
+        )
+        hdr.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(hdr)
+
+        sub = QLabel("Select the direction to simulate.\nNothing will be written to disk.")
+        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sub.setWordWrap(True)
+        sub.setStyleSheet(f"color:{t['text_dim']};font-size:{font_sz(0)}px;")
+        lay.addWidget(sub)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f"background:{t['header_sep']};border:none;")
+        sep.setFixedHeight(1)
+        lay.addWidget(sep)
+
+        cards_row = QHBoxLayout()
+        cards_row.setSpacing(20)
+
+        self._backup_card = _ModeCard(
+            "💾",
+            "Backup Dry Run",
+            "Preview what would be copied\nfrom your sources to the backup.",
+            t["accent"],
+            self,
+        )
+        self._restore_card = _ModeCard(
+            "🔁",
+            "Restore Dry Run",
+            "Preview what would be restored\nfrom the backup to your local paths.",
+            t.get("warning", t["info"]),
+            self,
+        )
+        cards_row.addWidget(self._backup_card)
+        cards_row.addWidget(self._restore_card)
+        lay.addLayout(cards_row, 1)
+
+        cancel_row = QHBoxLayout()
+        cancel_row.addStretch()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setMinimumHeight(30)
+        cancel_btn.clicked.connect(self.reject)
+        cancel_row.addWidget(cancel_btn)
+        lay.addLayout(cancel_row)
+
+    def card_clicked(self, card: "_ModeCard") -> None:
+        if card is self._backup_card:
+            self._chosen = "backup"
+        else:
+            self._chosen = "restore"
+        self.accept()
+
+    def chosen_mode(self) -> str | None:
+        return self._chosen
+
+
+def launch_dry_run(parent=None) -> None:
+    chooser = DryRunModeDialog(parent)
+    if chooser.exec() != QDialog.DialogCode.Accepted:
+        return
+    mode = chooser.chosen_mode()
+    if mode:
+        DryRunDialog(parent, mode=mode).exec()

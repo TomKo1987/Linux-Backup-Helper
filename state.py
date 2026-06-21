@@ -3,11 +3,12 @@ import logging
 import os
 import pwd
 import re
+import threading
 from dataclasses import dataclass, field, fields as _dc_fields
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
-import threading
+
 _state_lock = threading.Lock()
 
 from constants import USER_SHELLS, ARCH_KERNEL_VARIANTS
@@ -251,97 +252,120 @@ def load_profile(path: Path) -> bool:
         return False
 
 
+def _parse_profile_data(path: Path, data: dict) -> tuple[dict, bool]:
+    new_name = path.stem
+
+    _needs_migration = False
+    if "system_files" in data and "dotfiles" not in data:
+        data = {**data, "dotfiles": data["system_files"]}
+        _needs_migration = True
+        logger.info("Migration: 'system_files' → 'dotfiles' in profile '%s'", path.stem)
+
+    raw_ops = data.get("system_manager_operations", [])
+    if isinstance(raw_ops, list):
+        migrated_ops = []
+        for op in raw_ops:
+            if op == "copy_system_files":
+                migrated_ops.append("copy_dotfiles")
+                _needs_migration = True
+                logger.info("Migration: 'copy_system_files' → 'copy_dotfiles' in profile '%s'", path.stem)
+            elif op == "install_yay":
+                migrated_ops.append("install_aur_helper")
+                _needs_migration = True
+                logger.info("Migration: 'install_yay' → 'install_aur_helper' in profile '%s'", path.stem)
+            else:
+                migrated_ops.append(op)
+        data = {**data, "system_manager_operations": migrated_ops}
+
+    def _resolve_color(v: dict) -> str:
+        raw = v.get("header_color") or v.get("color") or "#ffffff"
+        return raw if _valid_hex_color(raw) else "#ffffff"
+
+    new_headers = {k: {"inactive": bool(v.get("inactive")), "color": _resolve_color(v)}
+                   for k, v in data.get("header", {}).items() if isinstance(v, dict)}
+
+    new_entries = [e for raw in data.get("entries", []) if (e := _parse_entry(raw)) is not None]
+    new_mount = [o for o in data.get("mount_options", []) if isinstance(o, dict)]
+
+    def _as_list(key: str) -> list:
+        v = data.get(key)
+        return v if isinstance(v, list) else []
+
+    new_sm_ops = _as_list("system_manager_operations")
+    new_sys_files = _as_list("dotfiles")
+    new_basic = _norm_pkgs(_as_list("basic_packages"))
+    new_aur = _norm_pkgs(_as_list("aur_packages"))
+
+    new_specific = _norm_specific_pkgs(_as_list("specific_packages"))
+
+    raw_shell = data.get("user_shell", "bash")
+    _s = raw_shell.strip() if isinstance(raw_shell, str) else ""
+    new_shell = _s if _s in USER_SHELLS else "bash"
+
+    raw_aur_helper = data.get("aur_helper", "yay")
+    new_aur_helper = raw_aur_helper if isinstance(raw_aur_helper, str) and raw_aur_helper in ("yay",
+                                                                                              "paru") else "yay"
+
+    raw_dk = data.get("default_kernel", "")
+    new_dk = raw_dk if isinstance(raw_dk, str) and (not raw_dk or raw_dk in ARCH_KERNEL_VARIANTS) else ""
+
+    raw_kti = data.get("kernels_to_install", [])
+    new_kti = [k for k in raw_kti if isinstance(k, str) and k in ARCH_KERNEL_VARIANTS] if isinstance(raw_kti,
+                                                                                                     list) else []
+
+    new_ui = dict(S.ui)
+    raw_ui = data.get("ui_settings", {})
+    if isinstance(raw_ui, dict):
+        if "font_size" in raw_ui:
+            try:
+                raw_ui = {**raw_ui, "font_size": max(8, min(48, int(raw_ui["font_size"])))}
+            except (ValueError, TypeError):
+                raw_ui = {k: v for k, v in raw_ui.items() if k != "font_size"}
+        new_ui.update({k: v for k, v in raw_ui.items() if k in _KNOWN_UI_KEYS})
+
+    new_notes = str(data.get("notes", ""))
+
+    fields = {
+        "profile_name": new_name,
+        "headers": new_headers,
+        "entries": new_entries,
+        "mount_options": new_mount,
+        "system_manager_ops": new_sm_ops,
+        "dotfiles": new_sys_files,
+        "basic_packages": new_basic,
+        "aur_packages": new_aur,
+        "specific_packages": new_specific,
+        "user_shell": new_shell,
+        "aur_helper": new_aur_helper,
+        "default_kernel": new_dk,
+        "kernels_to_install": new_kti,
+        "ui": new_ui,
+        "notes": new_notes,
+    }
+    return fields, _needs_migration
+
+
 def _load_profile_from_data(path: Path, data: dict) -> bool:
     try:
-        new_name = path.stem
+        fields, needs_migration = _parse_profile_data(path, data)
 
-        _needs_migration = False
-        if "system_files" in data and "dotfiles" not in data:
-            data = {**data, "dotfiles": data["system_files"]}
-            _needs_migration = True
-            logger.info("Migration: 'system_files' → 'dotfiles' in profile '%s'", path.stem)
+        S.profile_name = fields["profile_name"]
+        S.headers = fields["headers"]
+        S.entries = fields["entries"]
+        S.mount_options = fields["mount_options"]
+        S.system_manager_ops = fields["system_manager_ops"]
+        S.dotfiles = fields["dotfiles"]
+        S.basic_packages = fields["basic_packages"]
+        S.aur_packages = fields["aur_packages"]
+        S.specific_packages = fields["specific_packages"]
+        S.user_shell = fields["user_shell"]
+        S.aur_helper = fields["aur_helper"]
+        S.default_kernel = fields["default_kernel"]
+        S.kernels_to_install = fields["kernels_to_install"]
+        S.ui = fields["ui"]
+        S.notes = fields["notes"]
 
-        raw_ops = data.get("system_manager_operations", [])
-        if isinstance(raw_ops, list):
-            migrated_ops = []
-            for op in raw_ops:
-                if op == "copy_system_files":
-                    migrated_ops.append("copy_dotfiles")
-                    _needs_migration = True
-                    logger.info("Migration: 'copy_system_files' → 'copy_dotfiles' in profile '%s'", path.stem)
-                elif op == "install_yay":
-                    migrated_ops.append("install_aur_helper")
-                    _needs_migration = True
-                    logger.info("Migration: 'install_yay' → 'install_aur_helper' in profile '%s'", path.stem)
-                else:
-                    migrated_ops.append(op)
-            data = {**data, "system_manager_operations": migrated_ops}
-
-        def _resolve_color(v: dict) -> str:
-            raw = v.get("header_color") or v.get("color") or "#ffffff"
-            return raw if _valid_hex_color(raw) else "#ffffff"
-
-        new_headers = {k: {"inactive": bool(v.get("inactive")), "color": _resolve_color(v)}
-                       for k, v in data.get("header", {}).items() if isinstance(v, dict)}
-
-        new_entries = [e for raw in data.get("entries", []) if (e := _parse_entry(raw)) is not None]
-        new_mount = [o for o in data.get("mount_options", []) if isinstance(o, dict)]
-
-        def _as_list(key: str) -> list:
-            v = data.get(key)
-            return v if isinstance(v, list) else []
-
-        new_sm_ops = _as_list("system_manager_operations")
-        new_sys_files = _as_list("dotfiles")
-        new_basic = _norm_pkgs(_as_list("basic_packages"))
-        new_aur = _norm_pkgs(_as_list("aur_packages"))
-
-        new_specific = _norm_specific_pkgs(_as_list("specific_packages"))
-
-        raw_shell = data.get("user_shell", "bash")
-        _s = raw_shell.strip() if isinstance(raw_shell, str) else ""
-        new_shell = _s if _s in USER_SHELLS else "bash"
-
-        raw_aur_helper = data.get("aur_helper", "yay")
-        new_aur_helper = raw_aur_helper if isinstance(raw_aur_helper, str) and raw_aur_helper in ("yay",
-                                                                                                  "paru") else "yay"
-
-        raw_dk = data.get("default_kernel", "")
-        new_dk = raw_dk if isinstance(raw_dk, str) and (not raw_dk or raw_dk in ARCH_KERNEL_VARIANTS) else ""
-
-        raw_kti = data.get("kernels_to_install", [])
-        new_kti = [k for k in raw_kti if isinstance(k, str) and k in ARCH_KERNEL_VARIANTS] if isinstance(raw_kti,
-                                                                                                         list) else []
-
-        new_ui = dict(S.ui)
-        raw_ui = data.get("ui_settings", {})
-        if isinstance(raw_ui, dict):
-            if "font_size" in raw_ui:
-                try:
-                    raw_ui = {**raw_ui, "font_size": max(8, min(48, int(raw_ui["font_size"])))}
-                except (ValueError, TypeError):
-                    raw_ui = {k: v for k, v in raw_ui.items() if k != "font_size"}
-            new_ui.update({k: v for k, v in raw_ui.items() if k in _KNOWN_UI_KEYS})
-
-        new_notes = str(data.get("notes", ""))
-
-        S.profile_name = new_name
-        S.headers = new_headers
-        S.entries = new_entries
-        S.mount_options = new_mount
-        S.system_manager_ops = new_sm_ops
-        S.dotfiles = new_sys_files
-        S.basic_packages = new_basic
-        S.aur_packages = new_aur
-        S.specific_packages = new_specific
-        S.user_shell = new_shell
-        S.aur_helper = new_aur_helper
-        S.default_kernel = new_dk
-        S.kernels_to_install = new_kti
-        S.ui = new_ui
-        S.notes = new_notes
-
-        if _needs_migration:
+        if needs_migration:
             try:
                 save_profile(path)
                 logger.info("Migration: profile '%s' auto-saved with updated keys", S.profile_name)
@@ -354,6 +378,17 @@ def _load_profile_from_data(path: Path, data: dict) -> bool:
     except Exception as exc:
         logger.error("load_profile failed: %s", exc)
         return False
+
+
+def snapshot_profile(name: str) -> dict | None:
+    path = _PROFILES_DIR / f"{name}.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        fields, _ = _parse_profile_data(path, data)
+        return fields
+    except Exception as exc:
+        logger.error("snapshot_profile failed for '%s': %s", name, exc)
+        return None
 
 
 def save_profile(path: Path | None = None) -> bool:

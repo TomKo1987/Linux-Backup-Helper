@@ -64,6 +64,9 @@ def get_next_run_time() -> str:
         pass
     return ""
 
+def _systemd_escape_percent(value: str) -> str:
+    return value.replace("%", "%%")
+
 def install_timer(interval_key: str, backup_headers: list[str], *, on_calendar: str = "", only_on_ac: bool = False) -> tuple[bool, str]:
     if interval_key not in _INTERVALS:
         return False, "Unknown interval"
@@ -77,6 +80,9 @@ def install_timer(interval_key: str, backup_headers: list[str], *, on_calendar: 
 
     ac_condition = "ConditionACPower=true\n" if only_on_ac else ""
 
+    python_exe = _systemd_escape_percent(sys.executable)
+    exe_path = _systemd_escape_percent(str(exe))
+
     service = (
         "[Unit]\n"
         "Description=Backup Helper Automatic Backup\n"
@@ -85,7 +91,7 @@ def install_timer(interval_key: str, backup_headers: list[str], *, on_calendar: 
         "\n"
         "[Service]\n"
         "Type=oneshot\n"
-        f"ExecStart={sys.executable} \"{exe}\" --headless-backup-b64 \"{headers_b64}\"\n"
+        f"ExecStart={python_exe} \"{exe_path}\" --headless-backup-b64 \"{headers_b64}\"\n"
     )
 
     timer = (

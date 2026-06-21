@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
 )
 
 from drive_utils import get_mounts, is_mounted
+from profile_compare import ProfileCompareDialog
 from state import (
     _norm_paths, list_profiles, load_profile, save_profile, logger, S, _HOME, _LOG_FILE, _PROFILES_DIR, _PROFILE_RE,
     _atomic_write, apply_replacements,
@@ -997,6 +998,7 @@ class ProfilesDialog(QDialog):
         layout.addLayout(btn_row([("▶ Load", self._load), ("🆕 New", self._new),
                                    ("⎘ Duplicate", self._copy), ("✕ Delete", self._del)]))
         layout.addLayout(btn_row([("⬆ Import", self._import), ("⬇ Export", self._export)]))
+        layout.addLayout(btn_row([("⚖ Compare", self._compare_profiles)]))
         layout.addWidget(sep())
         close_btn = QPushButton("✕ Close")
         close_btn.clicked.connect(self.accept)
@@ -1027,6 +1029,12 @@ class ProfilesDialog(QDialog):
     def _selected_name(self) -> str | None:
         item = self.item_list.currentItem()
         return item.data(Qt.ItemDataRole.UserRole) if item else None
+
+    def _compare_profiles(self) -> None:
+        if len(list_profiles()) < 2:
+            QMessageBox.information(self, "Profile Compare", "You need at least two saved profiles to compare.")
+            return
+        ProfileCompareDialog(self).exec()
 
     def _load(self) -> None:
         name = self._selected_name()

@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (
 from backup_stats import BackupStatsDialog
 from dialogs import LogViewer, SysInfoDialog, NotesDialog
 from drive_utils import get_mounts, is_mounted, unmount_drive, get_session_managed_mounts
-from dry_run import DryRunDialog
+from dry_run import launch_dry_run
 from icons import _ICON_B64
 from integrity_checker import IntegrityCheckerDialog
 from scan_verify import ScanVerifyDialog
@@ -169,7 +169,7 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
         IntegrityCheckerDialog(self).exec()
 
     def _launch_dry_run(self) -> None:
-        DryRunDialog(self).exec()
+        launch_dry_run(self)
 
     def _launch_system_manager(self) -> None:
         from system_manager_options import SystemManagerLauncher
