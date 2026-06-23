@@ -584,7 +584,6 @@ class EntryDialog(QDialog):
         def _path_row(label: str, prefill: str, placeholder: str) -> QPlainTextEdit:
             vl.addWidget(QLabel(label))
             ed = _make_editor(prefill, placeholder)
-            vl.addWidget(ed)
             vl.addWidget(browse_field(dlg, ed))
             return ed
 
