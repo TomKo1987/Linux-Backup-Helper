@@ -9,9 +9,16 @@ import os as _os
 if _os.getuid() == 0:
     print("Warning: Running Backup Helper as root is not recommended.")
     print("Your profile and config will be stored in /root/.config instead of your user home.")
-    response = input("Continue anyway? [y/N] ").strip().lower()
-    if response not in ("y", "yes"):
-        sys.exit(1)
+    if sys.stdin.isatty():
+        try:
+            response = input("Continue anyway? [y/N] ").strip().lower()
+            if response not in ("y", "yes"):
+                sys.exit(1)
+        except EOFError:
+            print("Standard input closed. Exiting safely.")
+            sys.exit(1)
+    else:
+        print("Running in non-interactive environment. Proceeding automatically...")
 
 import base64 as _b64
 import shutil

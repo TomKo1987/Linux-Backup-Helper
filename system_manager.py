@@ -32,7 +32,12 @@ from ui_utils import _StandardKeysMixin
 def _zero(buf: bytearray) -> None: buf[:] = bytearray(len(buf))
 
 
-def _pw_bytes(pw) -> bytearray: return bytearray(pw.get_bytes() + b"\n") if pw else bytearray()
+def _pw_bytes(pw) -> bytearray:
+    if not pw:
+        return bytearray()
+    buf = pw.get_bytes()
+    buf.append(ord('\n'))
+    return buf
 
 
 _INFO_RE = re.compile(

@@ -822,16 +822,18 @@ class LinuxDistroHelper:
                 grub_def_path = Path("/etc/default/grub")
                 default_val = ""
                 if grub_def_path.exists():
-                    text = grub_def_path.read_text(encoding="utf-8", errors="replace")
-                    for line in text.splitlines():
-                        if line.strip().upper().startswith("GRUB_DEFAULT="):
-                            default_val = line.split("=", 1)[1].strip().strip('"\'').lower()
-                            break
+                    try:
+                        with open(grub_def_path, "r", encoding="utf-8", errors="replace") as f:
+                            for line in f:
+                                if line.strip().upper().startswith("GRUB_DEFAULT="):
+                                    default_val = line.split("=", 1)[1].strip().strip('"\'').lower()
+                                    break
+                    except OSError:
+                        default_val = ""
 
                 if default_val == "saved":
                     try:
-                        output = subprocess.check_output(["grub-editenv", "list"],
-                                                         stderr=subprocess.DEVNULL, text=True)
+                        output = subprocess.check_output(["grub-editenv", "list"], stderr=subprocess.DEVNULL, text=True)
                         for line in output.splitlines():
                             if line.startswith("saved_entry="):
                                 default_val = line.split("=", 1)[1].lower()

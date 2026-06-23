@@ -247,7 +247,7 @@ def _smb_cred_file(user: str, pw: "_SecurePw") -> "tuple[str, str]":
         cred_path = os.path.join(tmp_dir, "cred")
         fd = os.open(cred_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
-            f_obj = os.fdopen(fd, 'w')
+            f_obj = os.fdopen(fd, 'wb')
             fd = -1
         except BaseException:
             os.close(fd)
@@ -255,15 +255,16 @@ def _smb_cred_file(user: str, pw: "_SecurePw") -> "tuple[str, str]":
         with f_obj as f:
             if "\\" in user:
                 domain, plain_user = user.split("\\", 1)
-                f.write(f"username = {plain_user}\n")
-                f.write(f"domain = {domain}\n")
+                f.write(f"username = {plain_user}\n".encode("utf-8"))
+                f.write(f"domain = {domain}\n".encode("utf-8"))
             else:
-                f.write(f"username = {user}\n")
+                f.write(f"username = {user}\n".encode("utf-8"))
+
             pwd_bytes = pw.get_bytes()
             try:
-                f.write("password = ")
-                f.write(pwd_bytes.decode("utf-8"))
-                f.write("\n")
+                f.write(b"password = ")
+                f.write(pwd_bytes)  
+                f.write(b"\n")
             finally:
                 for i in range(len(pwd_bytes)):
                     pwd_bytes[i] = 0
