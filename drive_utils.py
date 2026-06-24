@@ -49,9 +49,8 @@ def get_mounts(max_age: float = 0.5) -> list[tuple[str, str]]:
         with _mounts_cache_lock:
             return _mounts_cache[1]
     with _mounts_cache_lock:
-        if now > _mounts_cache[0]:
+        if now >= _mounts_cache[0]:
             _mounts_cache = (now, mounts)
-            return mounts
         return _mounts_cache[1]
 
 

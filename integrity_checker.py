@@ -238,6 +238,7 @@ class IntegrityCheckerDialog(_StandardKeysMixin, QDialog):
         else:
             self.setMinimumSize(1200, 700)
         self._worker: _CheckWorker | None = None
+        self._results: list[dict] = []
         self._build()
 
     def closeEvent(self, event) -> None:
