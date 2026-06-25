@@ -586,6 +586,10 @@ class _CaptureTab(QWidget):
         self._de_deps = _get_arch_de_deps(helper)
         self._current_session = helper.detect_session() or SESSIONS[0]
         self._build_ui()
+        self._last_result: dict = {}
+        self._spec_sess_cb: QComboBox | None = None
+        self._spec_grid: QGridLayout | None = None
+        self._spec_cbs: list = []
         self._start()
 
     def _save_and_notify(self, ok_msg: str, on_success=None) -> None:

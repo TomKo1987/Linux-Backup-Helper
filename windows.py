@@ -1,9 +1,7 @@
-
-
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtWidgets import (
-    QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget, QScrollArea,
+    QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget, QScrollArea,
     QApplication, QCheckBox, QComboBox, QDialog, QMessageBox, QPushButton
 )
 
@@ -49,7 +47,7 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         self.main_layout.addWidget(self.scroll_area, 1)
 
         self._setup_ui()
@@ -329,6 +327,7 @@ class SettingsWindow(_BaseCheckboxWindow):
     def __init__(self, parent) -> None:
         super().__init__(parent)
         self._entry_stacked: bool = False
+        self._theme_dlg: "_ThemeDialog | None" = None
 
     def _extra_top_widgets(self) -> list: return [self._make_config_path_label()]
 
@@ -453,9 +452,22 @@ class SettingsWindow(_BaseCheckboxWindow):
             result = self._run_entry_dialog(original_entry, window_title=title)
             if result is not None:
                 idx = next((j for j, e in enumerate(S.entries) if e is original_entry), None)
+                if idx is None:
+                    h, t_ = original_entry.get("header", ""), original_entry.get("title", "")
+                    idx = next(
+                        (j for j, e in enumerate(S.entries)
+                         if e.get("header") == h and e.get("title") == t_),
+                        None,
+                    )
                 if idx is not None:
                     S.entries[idx] = result
                     changed_any    = True
+                else:
+                    QMessageBox.warning(
+                        self, "Edit Failed",
+                        f"Could not locate entry '{original_entry.get('title', '?')}' "
+                        "in the current profile.\nPlease re-select and try again.",
+                    )
 
         if changed_any:
             save_profile()

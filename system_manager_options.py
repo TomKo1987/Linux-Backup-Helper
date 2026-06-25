@@ -539,7 +539,7 @@ class SystemManagerOptions(QDialog):
         self._session = self._distro.detect_session()
         self._aur_helper_installed: bool | None = None
         self._build()
-
+        
     def _build(self) -> None:
         lay = QVBoxLayout(self)
         if self._distro.has_aur:

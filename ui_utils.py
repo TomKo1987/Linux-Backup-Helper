@@ -12,8 +12,7 @@ from PyQt6.QtWidgets import (
 from state import _HOME, _PROFILE_RE
 
 if TYPE_CHECKING:
-    from PyQt6.QtWidgets import QWidget as _QWidgetBase
-    _MixinBase = _QWidgetBase
+    _MixinBase = QWidget
 else:
     _MixinBase = object
 

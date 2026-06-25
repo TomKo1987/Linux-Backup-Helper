@@ -146,7 +146,10 @@ class State:
 S = State()
 
 
-_KNOWN_UI_KEYS = frozenset(S.ui.keys())
+def _known_ui_keys() -> frozenset:
+    return frozenset(State().ui.keys())
+
+_KNOWN_UI_KEYS = _known_ui_keys()
 
 
 def _atomic_write(path: Path, data: dict | list) -> None:
@@ -321,7 +324,7 @@ def _parse_profile_data(path: Path, data: dict) -> tuple[dict, bool]:
                 raw_ui = {**raw_ui, "font_size": max(8, min(48, int(raw_ui["font_size"])))}
             except (ValueError, TypeError):
                 raw_ui = {k: v for k, v in raw_ui.items() if k != "font_size"}
-        new_ui.update({k: v for k, v in raw_ui.items() if k in _KNOWN_UI_KEYS})
+        new_ui.update({k: v for k, v in raw_ui.items() if k in _known_ui_keys()})
 
     new_notes = str(data.get("notes", ""))
 

@@ -476,14 +476,12 @@ class EntryDialog(QDialog):
 
     def _edit_hooks(self) -> None:
         from pre_post_hooks import HooksDialog
-        entry = {**self.snapshot, "details": self._e.get("details", {})}
+        if not hasattr(self, "_e") or not isinstance(self._e, dict):
+            self._e = {}
+        entry = {**self.snapshot, "details": dict(self._e.get("details", {}))}
         dlg = HooksDialog(self, entry)
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            if not hasattr(self, "_e") or not isinstance(self._e, dict):
-                self._e = {}
-            self._e.setdefault("details", {}).update(
-                entry.get("details", {})
-            )
+            self._e.setdefault("details", {}).update(entry.get("details", {}))
 
     def _populate_lists(self) -> None:
         self._src_list.clear()
@@ -841,11 +839,20 @@ class MountsDialog(_ListDialog):
         dlg = MountDialog(self, opt)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             idx = next((i for i, o in enumerate(S.mount_options) if o is opt), None)
+            if idx is None:
+                name = opt.get("drive_name")
+                if name:
+                    idx = next((i for i, o in enumerate(S.mount_options)
+                                if o.get("drive_name") == name), None)
             if idx is not None:
                 S.mount_options[idx] = dlg.result
-            save_profile()
-            self.was_changed = True
-            self._refresh()
+                save_profile()
+                self.was_changed = True
+                self._refresh()
+            else:
+                QMessageBox.warning(self, "Edit Failed",
+                                    "Could not locate the selected drive in the current profile.\n"
+                                    "Please re-select the entry and try again.")
 
     def _del(self) -> None:
         opt = self._selected_data()
@@ -855,7 +862,10 @@ class MountsDialog(_ListDialog):
         if QMessageBox.question(self, "Remove Drive", f"Really remove '{name}' from mount options?",
                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
+        before = len(S.mount_options)
         S.mount_options = [o for o in S.mount_options if o is not opt]
+        if len(S.mount_options) == before and name != "?":
+            S.mount_options = [o for o in S.mount_options if o.get("drive_name") != name]
         save_profile()
         self.was_changed = True
         self._refresh()
@@ -877,8 +887,12 @@ class HeaderSettingsDialog(QDialog):
         layout.addLayout(btn_row([("🆕 New", self._new), ("🎨 Color", self._color), ("⏸ Toggle active", self._toggle),
                                    ("✕ Delete", self._delete), ("↑ Up", self._move_up), ("↓ Down", self._move_down)]))
         layout.addWidget(sep())
-        layout.addWidget(ok_cancel_buttons(self, self.accept, "Save && Close"))
+        layout.addWidget(ok_cancel_buttons(self, self._save_and_close, "Save && Close"))
         self._refresh()
+
+    def _save_and_close(self) -> None:
+        save_profile()
+        self.accept()
 
     def reject(self) -> None:
         S.headers = self._headers_backup

@@ -37,6 +37,8 @@ def get_mounts(max_age: float = 0.5) -> list[tuple[str, str]]:
     with _mounts_cache_lock:
         if now - _mounts_cache[0] < max_age:
             return _mounts_cache[1]
+        stale_ts = _mounts_cache[0]
+
     mounts: list[tuple[str, str]] = []
     try:
         with open("/proc/mounts", encoding="utf-8", errors="replace") as fh:
@@ -48,8 +50,9 @@ def get_mounts(max_age: float = 0.5) -> list[tuple[str, str]]:
         logger.warning("get_mounts: /proc/mounts not available: %s", e)
         with _mounts_cache_lock:
             return _mounts_cache[1]
+
     with _mounts_cache_lock:
-        if now >= _mounts_cache[0]:
+        if _mounts_cache[0] == stale_ts:
             _mounts_cache = (now, mounts)
         return _mounts_cache[1]
 
