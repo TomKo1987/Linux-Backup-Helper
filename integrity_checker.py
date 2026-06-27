@@ -39,8 +39,7 @@ def _quick_scan(path_str: str) -> dict | None:
                 else:
                     fc += 1
                     total += st.st_size
-                if st.st_mtime > newest:
-                    newest = st.st_mtime
+                newest = max(newest, st.st_mtime)
             except OSError:
                 pass
     except OSError:

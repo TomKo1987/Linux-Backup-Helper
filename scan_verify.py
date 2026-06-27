@@ -74,8 +74,7 @@ def _surface_mtime(path: Path) -> float:
         try:
             for child in path.iterdir():
                 t = _mtime(child)
-                if t > best:
-                    best = t
+                best = max(best, t)
         except OSError:
             pass
     return best

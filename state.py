@@ -9,9 +9,10 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
+from constants import USER_SHELLS, ARCH_KERNEL_VARIANTS
+
 _state_lock = threading.Lock()
 
-from constants import USER_SHELLS, ARCH_KERNEL_VARIANTS
 
 RESTART_DIALOG: int = 2
 _USER = pwd.getpwuid(os.getuid()).pw_name

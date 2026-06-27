@@ -445,7 +445,7 @@ class SettingsWindow(_BaseCheckboxWindow):
         changed_any = False
         total       = len(checked)
 
-        for i, (cb, original_entry) in enumerate(checked):
+        for i, (_, original_entry) in enumerate(checked):
             if not original_entry:
                 continue
             title  = f"Edit Entry ({i + 1}/{total}) — {original_entry['title']}" if total > 1 else None

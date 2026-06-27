@@ -397,7 +397,7 @@ class LinuxDistroHelper:
     def _parallel_check(self, packages: list[str]) -> list[str]:
         workers = min(4, len(packages))
         adaptive_timeout = max(15, len(packages) * 2)
-        results: dict[str, bool] = {pkg: False for pkg in packages}
+        results: dict[str, bool] = dict.fromkeys(packages, False)
         done: set[str] = set()
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
@@ -447,7 +447,7 @@ class LinuxDistroHelper:
             pkgs = []
             for line in lines:
                 line = line.strip()
-                if line.startswith("i ") or line.startswith("i+"):
+                if line.startswith(("i ", "i+")):
                     parts = [p.strip() for p in line.split("|")]
                     if len(parts) >= 2:
                         name = parts[1].strip()
