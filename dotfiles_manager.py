@@ -184,6 +184,12 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
         self._load_files()
         register_style_listener(self._refresh_styles)
 
+    def closeEvent(self, event) -> None:
+        if isinstance(self._worker, QThread) and self._worker.isRunning():
+            self._worker.quit()
+            self._worker.wait(2000)
+        super().closeEvent(event)
+
     def _build_ui(self) -> None:
         t = current_theme()
         bg = t["bg"]
@@ -474,7 +480,7 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
         if not files:
             QMessageBox.information(self, "Nothing to deploy", "No files to deploy.")
             return
-        if self._worker and self._worker.isRunning():
+        if isinstance(self._worker, QThread) and self._worker.isRunning():
             QMessageBox.warning(self, "Busy", "Deployment already running.")
             return
 

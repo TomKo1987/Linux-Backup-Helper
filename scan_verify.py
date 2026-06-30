@@ -644,7 +644,7 @@ class _CaptureTab(QWidget):
         lay.addWidget(self._btns)
 
     def _start(self) -> None:
-        if self._worker and self._worker.isRunning():
+        if isinstance(self._worker, QThread) and self._worker.isRunning():
             return
         self._prog_widget.show()
         self._scroll.hide()
@@ -1248,7 +1248,7 @@ class _VerifyTab(QWidget):
         lay.addLayout(row)
 
     def _start(self) -> None:
-        if self._worker and self._worker.isRunning():
+        if isinstance(self._worker, QThread) and self._worker.isRunning():
             return
         self._scroll.hide()
         self._summary.hide()
@@ -1489,6 +1489,15 @@ class ScanVerifyDialog(_StandardKeysMixin, QDialog):
         self._build_ui()
         self._size_to_screen()
 
+    def closeEvent(self, event) -> None:
+        for tab in (getattr(self, "_capture_tab", None), getattr(self, "_verify_tab", None)):
+            if tab is not None:
+                worker = getattr(tab, "_worker", None)
+                if isinstance(worker, QThread) and worker.isRunning():
+                    worker.quit()
+                    worker.wait(2000)
+        super().closeEvent(event)
+
     def _size_to_screen(self) -> None:
         scr = QApplication.primaryScreen()
         if scr:
@@ -1525,8 +1534,10 @@ class ScanVerifyDialog(_StandardKeysMixin, QDialog):
         lay.addWidget(info)
 
         tabs = QTabWidget()
-        tabs.addTab(_CaptureTab(self._helper), "🔍  System Scan")
-        tabs.addTab(_VerifyTab(self._helper), "✅  Verify Profile")
+        self._capture_tab = _CaptureTab(self._helper)
+        self._verify_tab = _VerifyTab(self._helper)
+        tabs.addTab(self._capture_tab, "🔍  System Scan")
+        tabs.addTab(self._verify_tab, "✅  Verify Profile")
         tabs.addTab(_PackageDiffTab(self._helper), "📦  Package Diff")
         lay.addWidget(tabs, 1)
 
