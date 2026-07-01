@@ -562,7 +562,14 @@ class SystemManagerThread(QThread):
             return SimpleNamespace(returncode=1, stdout="", stderr="")
 
         if isinstance(cmd, str):
-            cmd = self._inject(shlex.split(cmd))
+            if any(seq in cmd for seq in ("&&", "||", " |", ">", "<", ";")):
+                inner_cmd = cmd.strip()
+                if inner_cmd.startswith("sudo "):
+                    inner_cmd = inner_cmd[5:]
+                inner_cmd = inner_cmd.replace("&& sudo ", "&& ").replace("|| sudo ", "|| ").replace("; sudo ", "; ")
+                cmd = ["sudo", "-S", "sh", "-c", inner_cmd]
+            else:
+                cmd = self._inject(shlex.split(cmd))
         elif isinstance(cmd, list):
             cmd = self._inject(list(cmd))
 
@@ -1121,14 +1128,9 @@ class SystemManagerThread(QThread):
                 ok = (self._exec([_eff_helper, "--noconfirm"], stream=True).returncode == 0)
                 self._emit_result(ok, "System successfully updated", "System update failed")
                 return ok
+
         cmd_str = self.distro.get_update_system_cmd()
-        if any(seq in cmd_str for seq in ("&&", "||", " | ")):
-            _stripped = cmd_str.lstrip()
-            inner_cmd = _stripped[5:] if _stripped.startswith("sudo ") else _stripped
-            cmd = ["sudo", "sh", "-c", inner_cmd]
-        else:
-            cmd = shlex.split(cmd_str)
-        ok = (self._exec(cmd, stream=True, timeout=None).returncode == 0)
+        ok = (self._exec(cmd_str, stream=True, timeout=None).returncode == 0)
         self._emit_result(ok, "System successfully updated", "System update failed")
         return ok
 
@@ -1690,19 +1692,45 @@ class SystemManagerThread(QThread):
         return (not packages or all(self._install_pkg(p, "Service Package") for p in packages)) and self._enable_service(service)
 
     def _enable_service(self, service: str) -> bool:
-        svc = f"{service}.service"
-        self.outputReceived.emit(f"Enabling {svc}", "info")
-        if self._exec(["systemctl", "is-active", "--quiet", svc]).returncode == 0:
-            self.outputReceived.emit(f"{svc} already active", "success")
+        if shutil.which("systemctl"):
+            svc = f"{service}.service"
+            self.outputReceived.emit(f"Enabling {svc} (systemd)", "info")
+            if self._exec(["systemctl", "is-active", "--quiet", svc]).returncode == 0:
+                self.outputReceived.emit(f"{svc} already active", "success")
+                return True
+            ok = (self._exec(["sudo", "systemctl", "enable", "--now", svc], stream=True).returncode == 0)
+
+        elif shutil.which("rc-update") and shutil.which("rc-service"):
+            self.outputReceived.emit(f"Enabling {service} (OpenRC)", "info")
+            if self._exec(["rc-service", service, "status"]).returncode == 0:
+                self.outputReceived.emit(f"{service} already active", "success")
+                return True
+            self._exec(["sudo", "rc-update", "add", service, "default"], stream=True)
+            ok = (self._exec(["sudo", "rc-service", service, "start"], stream=True).returncode == 0)
+
+        elif shutil.which("sv") and os.path.isdir("/var/service"):
+            self.outputReceived.emit(f"Enabling {service} (runit)", "info")
+            if os.path.exists(f"/var/service/{service}"):
+                self.outputReceived.emit(f"{service} already enabled", "success")
+                return True
+            ok = False
+            if os.path.isdir(f"/etc/sv/{service}"):
+                ok = (self._exec(["sudo", "ln", "-s", f"/etc/sv/{service}", "/var/service/"],
+                                 stream=True).returncode == 0)
+                if ok:
+                    self._exec(["sudo", "sv", "up", service], stream=True)
+
+        else:
+            self.outputReceived.emit(f"Unsupported init system. Please enable '{service}' manually.", "warning")
             return True
-        ok = (self._exec(["sudo", "systemctl", "enable", "--now", svc], stream=True).returncode == 0)
+
         if ok:
-            self.outputReceived.emit(f"{svc} successfully enabled", "success")
+            self.outputReceived.emit(f"{service} successfully enabled", "success")
             if service == "ufw":
                 for c in (["sudo", "ufw", "default", "deny"], ["sudo", "ufw", "enable"], ["sudo", "ufw", "reload"]):
                     if self._exec(c, stream=True).returncode != 0: return False
         else:
-            self.outputReceived.emit(f"Failed to enable {svc}", "error")
+            self.outputReceived.emit(f"Failed to enable {service}", "error")
         return ok
 
     def _remove_orphans(self) -> bool:
@@ -1738,9 +1766,10 @@ class SystemManagerThread(QThread):
         self.outputReceived.emit(f"Cleaning {pm} cache", "info")
         ok = (self._exec(self.distro.get_clean_cache_cmd(), stream=True).returncode == 0)
         self._emit_result(ok, f"{pm} cache successfully cleaned", f"{pm} cache cleaning failed")
-        if ok and self._pkg_cache:
+
+        if ok and self.distro.has_aur:
             for _helper in ("paru", "yay"):
-                if self._pkg_cache.is_installed(_helper):
+                if self.distro.package_is_installed(_helper) or shutil.which(_helper):
                     self.outputReceived.emit(f"Cleaning {_helper} cache", "info")
                     helper_ok = (self._exec([_helper, "-Scc", "--noconfirm"], stream=True).returncode == 0)
                     self._emit_result(helper_ok, f"{_helper} cache successfully cleaned",

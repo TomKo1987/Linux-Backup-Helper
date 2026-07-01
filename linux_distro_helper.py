@@ -71,7 +71,7 @@ SESSIONS = ["KDE", "GNOME", "XFCE", "Cinnamon", "MATE", "LXDE", "LXQt", "Budgie"
 _SESSION_LOWER: dict[str, str] = {s.lower(): s for s in SESSIONS}
 
 _PKG_MGR_NAME: dict[str, str] = {"arch": "pacman", "debian": "apt", "fedora": "dnf", "suse": "zypper", "solus": "eopkg",
-                                 "void": "xbps-install", "gentoo": "emerge", "nixos": "nix-env", "alpine": "apk",
+                                 "void": "xbps", "gentoo": "emerge", "nixos": "nix-env", "alpine": "apk",
                                  "slackware": "pkgtool", "unknown": "unknown"}
 
 
@@ -223,7 +223,7 @@ _SAMBA_PKGS: dict = {
     "solus":     ["samba"],
     None:        ["samba"],
 }
-_CRON_SVC = {"debian": "cron", None: "cronie"}
+_CRON_SVC = {"debian": "cron", "fedora": "crond", "suse": "cron", "alpine": "crond", None: "cronie"}
 _CRON_PKGS: dict = {
     "debian": ["cron"],
     "fedora": ["cronie", "cronie-anacron"],

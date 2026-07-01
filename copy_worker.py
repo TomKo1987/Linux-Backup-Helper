@@ -103,7 +103,7 @@ def _check_destination_space(tasks: list[tuple]) -> list[str]:
     for _src, dst_raw, _title, *_ in tasks:
         dst = dst_raw[0] if isinstance(dst_raw, list) else dst_raw
         dst = str(dst).strip()
-        if not dst or dst in checked:
+        if not dst or dst in checked or is_smb(dst) or is_ssh(dst):
             continue
         checked.add(dst)
         try:
