@@ -1,9 +1,12 @@
 import base64
+import re as _re
 import threading as _threading
 from functools import lru_cache
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import Qt, QEvent
+from PyQt6.QtWidgets import (
+    QApplication, QDialog, QVBoxLayout, QScrollArea, QLabel, QPushButton, QWidget,
+)
 
 from state import S, logger, invalidate_tooltip_cache
 
@@ -442,12 +445,121 @@ _style_cache: tuple | None = None
 _style_cache_lock = _threading.Lock()
 
 
-def apply_tooltip(widget, text: str) -> None:
+def _hard_wrap_html(html_text: str, chars_per_line: int = 90) -> str:
+    tokens = _re.findall(r'<[^>]+>|&[a-zA-Z]+;|&#\d+;|[^<&]', html_text)
+
+    out: list[str] = []
+    visible_len = 0
+    last_space_idx: int | None = None
+
+    for tok in tokens:
+        if tok.startswith('<') and tok.endswith('>'):
+            out.append(tok)
+            if tok.lower().replace(' ', '') in ('<br>', '<br/>'):
+                visible_len = 0
+                last_space_idx = None
+            continue
+        if tok.startswith('&'):
+            out.append(tok)
+            visible_len += 1
+            continue
+        if tok == '\n':
+            out.append(tok)
+            visible_len = 0
+            last_space_idx = None
+            continue
+        out.append(tok)
+        if tok in (' ', '\t'):
+            last_space_idx = len(out) - 1
+        visible_len += 1
+        if visible_len > chars_per_line:
+            if last_space_idx is not None:
+                out[last_space_idx] = '<br>'
+                visible_len = len(out) - 1 - last_space_idx
+                last_space_idx = None
+            else:
+                out.append('<br>')
+                visible_len = 0
+    return ''.join(out)
+
+
+class _TooltipDialog(QDialog):
+
+    def __init__(self, parent, html_text: str, max_width: int) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Info")
+        self.setModal(False)
+        self.setMinimumWidth(max_width + 40)
+
+        screen = QApplication.primaryScreen()
+        avail_h = screen.availableGeometry().height() if screen else 800
+        max_h = max(300, int(avail_h * 0.8))
+
+        layout = QVBoxLayout(self)
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        content = QLabel(html_text)
+        content.setTextFormat(Qt.TextFormat.RichText)
+        content.setWordWrap(True)
+        content.setContentsMargins(10, 10, 10, 10)
+        scroll.setWidget(content)
+        layout.addWidget(scroll)
+
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.close)
+        layout.addWidget(close_btn)
+
+        self.setMaximumHeight(max_h)
+        self.resize(max_width + 40, max_h)
+
+
+class _TooltipClickFilter(QWidget):
+
+    def __init__(self, host, html_text: str, max_width: int) -> None:
+        super().__init__(host)
+        self._host = host
+        self._html_text = html_text
+        self._max_width = max_width
+        self.hide()
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt override)
+        if obj is self._host and event.type() == QEvent.Type.MouseButtonRelease:
+            dlg = _TooltipDialog(self._host.window(), self._html_text, self._max_width)
+            dlg.show()
+            return False
+        return False
+
+
+_TOOLTIP_LONG_LINE_THRESHOLD = 28
+
+
+def apply_tooltip(widget, text: str, max_width: int | None = None) -> None:
     if not text:
         return
-    widget.setToolTip(text)
+    if max_width is None:
+        screen = QApplication.primaryScreen()
+        avail = screen.availableGeometry().width() if screen else 1024
+        max_width = max(320, min(720, int(avail * 0.6)))
+    chars_per_line = max(40, max_width // 8)
+    wrapped_text = _hard_wrap_html(text, chars_per_line)
+
+    approx_lines = wrapped_text.count('<br>') + wrapped_text.count('\n') + 1
+    is_long = approx_lines > _TOOLTIP_LONG_LINE_THRESHOLD
+
+    hover_text = wrapped_text
+    if is_long:
+        hover_text += "<br><br><i>(Click for full text in a scrollable window)</i>"
+
+    wrapped = f"<div style='width:{max_width}px; white-space:normal;'>{hover_text}</div>"
+    widget.setToolTip(wrapped)
     widget.setToolTipDuration(600_000)
     widget.setCursor(Qt.CursorShape.WhatsThisCursor)
+
+    if is_long:
+        full_html = f"<div style='width:{max_width}px; white-space:normal;'>{text}</div>"
+        click_filter = _TooltipClickFilter(widget, full_html, max_width)
+        widget.installEventFilter(click_filter)
+        widget._tooltip_click_filter = click_filter
 
 
 @lru_cache(maxsize=16)
