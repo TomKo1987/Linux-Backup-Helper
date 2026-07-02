@@ -312,6 +312,43 @@ def _is_up_to_date_local(dst: str, src_st: "os.stat_result") -> bool:
         return False
 
 
+def _is_symlink_up_to_date(dst: str, target: str) -> bool:
+    try:
+        return os.path.islink(dst) and os.readlink(dst) == target
+    except OSError:
+        return False
+
+
+def _copy_symlink(src: str, dst: str) -> tuple:
+    try:
+        target = os.readlink(src)
+    except OSError as exc:
+        return "error", f"Symlink unreadable: {exc}", 0
+
+    if _is_symlink_up_to_date(dst, target):
+        return "skip", "Up to date", 0
+
+    if not _ensure_dir(os.path.dirname(dst)):
+        return "error", "Directory could not be created", 0
+
+    tmp = f"{dst}.{_PID}.{threading.get_ident()}.lnk.part"
+    try:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        os.symlink(target, tmp)
+        os.replace(tmp, dst)
+        return "ok", dst, 0
+    except OSError as exc:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        logger.error("symlink %s → %s: %s", src, dst, exc)
+        return "error", str(exc), 0
+
+
 def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
     rem = total
     try:
@@ -382,6 +419,9 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
 
 
 def _copy_file(src, dst, cancel):
+    if os.path.islink(src):
+        return _copy_symlink(src, dst)
+
     for _attempt in range(2):
         tmp = f"{dst}.{_PID}.{threading.get_ident()}.part"
         rfd = wfd = None
@@ -765,6 +805,7 @@ class _SmbScanner:
     def _do_put_dir(self, src, host, share, rpath, title, expanded) -> None:
         lexp:  list = []
         stack: list = [src]
+        seen_real: set = {os.path.realpath(src)}
         while stack:
             if self._cancel.is_set():
                 break
@@ -772,10 +813,23 @@ class _SmbScanner:
                 current_dir = stack.pop()
                 with os.scandir(current_dir) as it:
                     for e in it:
-                        if e.is_dir(follow_symlinks=False):
-                            if not _SKIP_RE.search(e.name):
-                                stack.append(e.path)
-                        elif e.is_file(follow_symlinks=False) and not _SKIP_RE.search(e.name):
+                        if _SKIP_RE.search(e.name):
+                            continue
+                        try:
+                            is_dir_eff  = e.is_dir(follow_symlinks=True)
+                            is_file_eff = e.is_file(follow_symlinks=True)
+                        except OSError:
+                            continue
+                        if is_dir_eff:
+                            try:
+                                real = os.path.realpath(e.path)
+                            except OSError:
+                                continue
+                            if real in seen_real:
+                                continue
+                            seen_real.add(real)
+                            stack.append(e.path)
+                        elif is_file_eff:
                             rel = os.path.relpath(e.path, src)
                             rp  = f"{rpath}/{rel}".replace(os.sep, "/").lstrip("/")
                             lexp.append(_SmbJob(e.path, "", "smb_put", host, share, rp, title=title))
@@ -1367,12 +1421,17 @@ class CopyWorker(QThread):
                         for e in it:
                             if cancel.is_set():
                                 break
-                            if e.path in _excl:
+                            if e.path in _excl or _SKIP_RE.search(e.name):
                                 continue
-                            if e.is_dir(follow_symlinks=False):
-                                if not _SKIP_RE.search(e.name):
-                                    _enqueue((e.path, os.path.join(_dst, e.name), _title, _excl))
-                            elif e.is_file(follow_symlinks=False) and not _SKIP_RE.search(e.name):
+                            try:
+                                is_symlink   = e.is_symlink()
+                                is_dir_eff   = (not is_symlink) and e.is_dir(follow_symlinks=False)
+                                is_file_eff  = is_symlink or e.is_file(follow_symlinks=False)
+                            except OSError:
+                                continue
+                            if is_dir_eff:
+                                _enqueue((e.path, os.path.join(_dst, e.name), _title, _excl))
+                            elif is_file_eff:
                                 try:
                                     st = e.stat(follow_symlinks=False)
                                 except OSError:
@@ -1483,12 +1542,17 @@ class CopyWorker(QThread):
                         for e in it:
                             if cancel.is_set():
                                 break
-                            if e.path in _excl:
+                            if e.path in _excl or _SKIP_RE.search(e.name):
                                 continue
-                            if e.is_dir(follow_symlinks=False):
-                                if not _SKIP_RE.search(e.name):
-                                    _eq((e.path, os.path.join(_dst, e.name), _title, _excl))
-                            elif e.is_file(follow_symlinks=False) and not _SKIP_RE.search(e.name):
+                            try:
+                                is_symlink   = e.is_symlink()
+                                is_dir_eff   = (not is_symlink) and e.is_dir(follow_symlinks=False)
+                                is_file_eff  = is_symlink or e.is_file(follow_symlinks=False)
+                            except OSError:
+                                continue
+                            if is_dir_eff:
+                                _eq((e.path, os.path.join(_dst, e.name), _title, _excl))
+                            elif is_file_eff:
                                 try:
                                     entry_stat = e.stat(follow_symlinks=False)
                                 except OSError:

@@ -93,7 +93,7 @@ _PKG: dict[str, dict[str, Any]] = {
         kernel  = "linux-headers",
     ),
     "debian": dict(
-        check   = lambda p: ["dpkg-query", "-W", "-f=${Status}", p],
+        check   = lambda p: ["sh", "-c", f"dpkg-query -W -f='${{Status}}' {shlex.quote(p)} 2>/dev/null | grep -q '^install ok installed$'"],
         install = "sudo apt-get install -y {p}",
         update  = "sudo apt-get update && sudo apt-get upgrade -y",
         remove  = "sudo apt-get autoremove -y {p}",

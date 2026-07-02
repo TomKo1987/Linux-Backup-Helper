@@ -34,6 +34,7 @@ py-modules = [
     "linux_distro_helper",
     "main",
     "pre_post_hooks",
+    "profile_compare",
     "samba_credentials",
     "scan_verify",
     "scheduler",

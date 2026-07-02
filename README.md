@@ -17,6 +17,17 @@ The idea behind this project is to automatically configure a newly installed Lin
 - Advanced configuration options and multi-session support
 - Customizable headers and layouts for different backup types
 - **System Capture & Verify** — scan your system and compare it against your profile
+- **Dry Run** — preview backup or restore operations (new/updated/skipped files) before anything is actually copied
+- **Integrity Checker** — verify backup integrity via hashing
+- **Disk Analyzer** — scan disk usage and identify space usage
+- **Dotfiles Manager** — deploy and back up dotfiles with diff view before overwriting
+- **Scheduler** — automate backups via systemd timers, with configurable interval and AC-power-only option
+- **Pre/Post Hooks** — run custom scripts before and after backup steps
+- **Profile Compare** — compare two backup profiles against each other
+- **Backup History** — browse past backup runs, with CSV/JSON export
+- **Backup Stats** — visual statistics dashboard for backup activity
+- **Quick Backup** — one-click backup of individual headers from the system tray menu
+- System tray integration for background operation
 - Theming support with multiple built-in themes
 - Extensive error handling and user feedback
 
@@ -102,6 +113,69 @@ Required drives that are not yet mounted are automatically detected and the user
 | **Basic Packages** | Installed with the default package manager of your distribution |
 | **AUR Packages** | Installed from the Arch User Repository via **yay** (yay is installed automatically if missing) |
 | **Specific Packages** | Installed with the default package manager, but only when the corresponding session is detected (supports full desktop environments and window managers such as Hyprland) |
+
+---
+
+## Dry Run
+
+The **🔎 Dry Run** dialog previews a backup or restore operation without copying, deleting, or modifying anything.
+
+- Choose between **Backup Preview** (source → destination) and **Restore Preview** (destination → source) mode from the mode selector.
+- Results are grouped per entry, showing files that would be **new**, **updated**, or **skipped**, with a global overview across all entries.
+- Switch between backup and restore preview at any time from within the dialog without closing it.
+- Useful for verifying what a run would do before committing to it, especially after changing entries or excludes.
+
+---
+
+## Integrity Checker
+
+The **Integrity Checker** verifies that files in your backup destination match their source using hashing, helping catch silent corruption or incomplete copies that size/mtime comparisons alone might miss.
+
+---
+
+## Disk Analyzer
+
+The **Disk Analyzer** scans a directory tree and reports disk space usage, helping identify what is consuming space before or after a backup.
+
+---
+
+## Dotfiles Manager
+
+The **Dotfiles Manager** deploys tracked dotfiles from your backup into place (or backs up existing ones into your profile).
+
+- Shows a diff before overwriting any existing file, so changes are never applied blindly.
+- Supports deploying selected files individually or all at once.
+
+---
+
+## Scheduler
+
+The **Scheduler** automates backups using **systemd timers** — no cron setup required.
+
+- Choose a backup interval and, optionally, restrict runs to when the system is on AC power (useful for laptops).
+- The timer can be installed, removed, or checked for its next scheduled run time directly from the dialog.
+
+---
+
+## Pre/Post Hooks
+
+Custom shell commands can be configured to run **before** and/or **after** a backup:
+
+- Hooks run sequentially in the order listed and can be reordered.
+- If a "before" hook fails, the backup is aborted by default (configurable).
+
+---
+
+## Profile Compare
+
+The **Profile Compare** dialog compares two backup profiles side by side — packages, system files, backup entries, and services — highlighting what differs between them. Useful when maintaining multiple machine profiles or checking drift after manual changes.
+
+---
+
+## Backup History & Stats
+
+- **History** — every backup run is logged and browsable afterward, with the ability to export the log as CSV or JSON.
+- **Backup Stats** — a visual dashboard summarising backup activity over time (files copied, skipped, errors, run durations).
 
 ---
 
