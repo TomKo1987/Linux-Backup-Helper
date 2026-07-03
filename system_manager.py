@@ -524,7 +524,7 @@ class SystemManagerThread(QThread):
                  "enable_atd_service": ("Initialising atd…", "atd", d.get_at_packages),
                  "enable_cronie_service": (f"Initialising {d.get_cron_service_name()}…", d.get_cron_service_name(), d.get_cron_packages),
                  "install_snap": ("Installing Snap…", "snapd", d.get_snap_packages),
-                 "enable_firewall": ("Initialising firewall…", "ufw", d.get_firewall_packages)}
+                 "enable_firewall": ("Initialising firewall…", d.get_firewall_service_name(), d.get_firewall_packages)}
         return {k: (desc, lambda s=svc, p=pkg_fn: self._setup_service(s, p())) for k, (desc, svc, pkg_fn) in specs.items()}
 
     def _run_all_tasks(self) -> None:
@@ -889,7 +889,7 @@ class SystemManagerThread(QThread):
                 proc.stderr.close()
         except OSError:
             pass
-        return SimpleNamespace(returncode=rc if rc is not None else 1)
+        return SimpleNamespace(returncode=rc if rc is not None else 1, stdout="", stderr="")
 
     def _emit_result(self, ok: bool, msg_ok: str, msg_err: str):
         self.outputReceived.emit(msg_ok if ok else msg_err, "success" if ok else "error")
@@ -1024,6 +1024,14 @@ class SystemManagerThread(QThread):
         failed = []
         if use_aur:
             helper = S.aur_helper
+            if not self.distro.has_aur:
+                self.outputReceived.emit(f"AUR is not supported on this distribution — skipping {label}s", "warning")
+                return _Status.WARNING
+            if not (shutil.which(helper) or (self._pkg_cache and self._pkg_cache.is_installed(helper))):
+                self.outputReceived.emit(
+                    f"AUR helper '{helper}' is not installed — cannot install {label}s. "
+                    f"Enable 'Install AUR helper' first.", "error")
+                return False
             bulk = lambda b: self._exec([helper, "-S", "--needed", "--noconfirm"] + b, stream=True)
             single = lambda _p: self._exec([helper, "-S", "--needed", "--noconfirm", _p], stream=True)
         else:
@@ -1729,6 +1737,10 @@ class SystemManagerThread(QThread):
             if service == "ufw":
                 for c in (["sudo", "ufw", "default", "deny"], ["sudo", "ufw", "enable"], ["sudo", "ufw", "reload"]):
                     if self._exec(c, stream=True).returncode != 0: return False
+            elif service == "firewalld":
+                for c in (["sudo", "firewall-cmd", "--set-default-zone=drop"],
+                          ["sudo", "firewall-cmd", "--reload"]):
+                    if self._exec(c, stream=True).returncode != 0: return False
         else:
             self.outputReceived.emit(f"Failed to enable {service}", "error")
         return ok
@@ -1745,18 +1757,8 @@ class SystemManagerThread(QThread):
             self.outputReceived.emit("No orphaned packages found", "success")
             return True
         self.outputReceived.emit(f"Found orphaned packages: {', '.join(pkgs)}", "info")
-        fam = self.distro.family()
-        if fam == "nixos":
-            cmd_str = f"nix-env -e {' '.join(pkgs)}"
-            cmd = shlex.split(cmd_str)
-        else:
-            raw_cmd = self.distro.get_pkg_remove_cmd(" ".join(shlex.quote(p) for p in pkgs))
-            if isinstance(raw_cmd, str):
-                cmd = shlex.split(raw_cmd)
-            else:
-                cmd = raw_cmd
-
-        ok = (self._exec(cmd, stream=True).returncode == 0)
+        cmd = self.distro.get_batch_remove_cmd(pkgs)
+        ok = bool(cmd) and (self._exec(cmd, stream=True).returncode == 0)
         self._emit_result(ok, "Orphaned packages successfully removed", "Could not remove orphaned packages")
         return ok
 

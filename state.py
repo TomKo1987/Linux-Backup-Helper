@@ -9,7 +9,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
-from constants import USER_SHELLS, ARCH_KERNEL_VARIANTS
+from constants import USER_SHELLS, ARCH_KERNEL_VARIANTS, PKG_NAME_RE
 
 _state_lock = threading.Lock()
 
@@ -176,25 +176,48 @@ def _atomic_write(path: Path, data: dict | list) -> None:
             raise
 
 
-def _normalise_pkg(p) -> dict:
+def _is_valid_pkg_name(name) -> bool:
+    return isinstance(name, str) and 0 < len(name.strip()) <= 255 and bool(PKG_NAME_RE.match(name.strip()))
+
+
+def _normalise_pkg(p) -> dict | None:
     if isinstance(p, str):
-        return {"name": p, "disabled": False}
-    return {**p, "disabled": p.get("disabled", False)}
+        name = p
+    elif isinstance(p, dict):
+        name = p.get("name", "")
+    else:
+        return None
+    if not _is_valid_pkg_name(name):
+        logger.warning("Dropping invalid package name from profile: %r", name)
+        return None
+    if isinstance(p, str):
+        return {"name": name.strip(), "disabled": False}
+    return {**p, "name": name.strip(), "disabled": p.get("disabled", False)}
 
 
 def _norm_pkgs(raw: list) -> list[dict]:
-    return sorted((_normalise_pkg(p) for p in raw), key=lambda x: x.get("name", x.get("package", "")).lower())
+    return sorted((pk for p in raw if (pk := _normalise_pkg(p)) is not None),
+                  key=lambda x: x.get("name", x.get("package", "")).lower())
 
 
-def _normalise_specific_pkg(p) -> dict:
+def _normalise_specific_pkg(p) -> dict | None:
     if isinstance(p, str):
-        return {"package": p, "session": "", "disabled": False}
-    return {**p, "disabled": p.get("disabled", False)}
+        name = p
+    elif isinstance(p, dict):
+        name = p.get("package", "")
+    else:
+        return None
+    if not _is_valid_pkg_name(name):
+        logger.warning("Dropping invalid specific package name from profile: %r", name)
+        return None
+    if isinstance(p, str):
+        return {"package": name.strip(), "session": "", "disabled": False}
+    return {**p, "package": name.strip(), "disabled": p.get("disabled", False)}
 
 
 def _norm_specific_pkgs(raw: list) -> list[dict]:
     return sorted(
-        (_normalise_specific_pkg(p) for p in raw),
+        (pk for p in raw if (pk := _normalise_specific_pkg(p)) is not None),
         key=lambda x: (x.get("session", ""), x.get("package", ""))
     )
 

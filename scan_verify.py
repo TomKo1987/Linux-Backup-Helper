@@ -205,14 +205,14 @@ def _get_arch_de_deps(helper: LinuxDistroHelper) -> frozenset[str]:
 
 _OP_SERVICE_ALL: dict[str, str] = {"enable_bluetooth_service": "bluetooth",
                                    "enable_atd_service": "atd",
-                                   "enable_firewall": "ufw",
                                    "enable_printer_support": "cups",
                                    "enable_flatpak_integration": "",
                                    "install_snap": "snapd"}
 
 _OP_SERVICE_DYNAMIC_FNS: dict[str, str] = {"enable_ssh_service": "get_ssh_service_name",
                                            "enable_samba_network_filesharing": "get_samba_service_name",
-                                           "enable_cronie_service": "get_cron_service_name"}
+                                           "enable_cronie_service": "get_cron_service_name",
+                                           "enable_firewall": "get_firewall_service_name"}
 
 
 def _resolve_all_ops(helper: LinuxDistroHelper) -> dict[str, str]:

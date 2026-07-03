@@ -1,6 +1,7 @@
 import concurrent.futures
 import json
 import re
+import shlex
 import shutil
 import subprocess
 import urllib.error
@@ -346,7 +347,8 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, aur_he
                 f"Initialise Snap (Install '{pkglist(distro.get_snap_packages)}'. Enable & start 'snapd.service')",
                 _tip("install_snap")),
             "enable_firewall": (
-                f"Initialise firewall (Install '{pkglist(distro.get_firewall_packages)}'. Enable & start 'ufw.service', set to 'deny all by default')",
+                f"Initialise firewall (Install '{pkglist(distro.get_firewall_packages)}'. "
+                f"Enable & start '{distro.get_firewall_service_name()}.service', set to 'deny all by default')",
                 _tip("enable_firewall")),
             "remove_orphaned_packages": ("Remove orphaned package(s)", _tip("remove_orphaned_packages")),
             "clean_cache": ("Clean cache (for '" + pm_name + "'"
@@ -406,6 +408,13 @@ def _pkg_form_dialog(parent, title: str, *, prefill_name: str = "", prefill_sess
     name = name_ed.text().strip()
     if not name:
         QMessageBox.warning(parent, "Error", "Package name required.")
+        return None
+    if not is_valid_pkg_name(name):
+        QMessageBox.warning(
+            parent, "Error",
+            f"'{name}' is not a valid package name.\n\n"
+            "Allowed: letters, digits, '.', '_', '+', '-' (must not start with a separator)."
+        )
         return None
 
     if with_session and sess_cb is not None:
@@ -481,6 +490,8 @@ class PackageVerifierThread(QThread):
         else:
             def check_pkg(_pkg):
                 if self._is_cancelled: return _pkg, True
+                if not is_valid_pkg_name(_pkg):
+                    return _pkg, False
                 cmd = None
                 fam = self.distro_family
 
@@ -498,6 +509,12 @@ class PackageVerifierThread(QThread):
                     cmd = ["apk", "info", _pkg]
                 elif fam == "solus":
                     cmd = ["eopkg", "info", _pkg]
+                elif fam == "gentoo":
+                    cmd = ["sh", "-c", f"emerge --search --nospinner =~^{shlex.quote(_pkg)}$ 2>/dev/null | grep -q ."]
+                elif fam == "nixos":
+                    cmd = ["sh", "-c", f"nix-env -qa --available {shlex.quote(_pkg)} 2>/dev/null | grep -q ."]
+                elif fam == "slackware":
+                    cmd = None
 
                 if cmd is None: return _pkg, True
 
@@ -1494,6 +1511,14 @@ class SystemManagerOptions(QDialog):
             name, ok = ask_text(self, f"Add {label}", "Package name:")
             if ok and name.strip():
                 name = name.strip()
+                if not is_valid_pkg_name(name):
+                    QMessageBox.warning(
+                        self, "Error",
+                        f"'{name}' is not a valid package name.\n\n"
+                        "Allowed: letters, digits, '.', '_', '+', '-' (must not start with a separator)."
+                    )
+                    QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
+                    return
                 current = getattr(S, pkg_type, []) or []
                 existing = {p.get("name") if isinstance(p, dict) else str(p) for p in current}
                 if name in existing:

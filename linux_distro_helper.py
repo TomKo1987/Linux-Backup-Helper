@@ -422,22 +422,30 @@ class LinuxDistroHelper:
             return [p for p in packages if not self.package_is_installed(p)]
         return [pkg for pkg in packages if not results[pkg]]
 
-    def get_pkg_install_cmd(self, package: str) -> str: return self._install.format(p=package)
-    def get_pkg_remove_cmd(self,  package: str) -> str: return self._remove.format(p=package)
+    def get_pkg_install_cmd(self, package: str) -> str: return self._install.format(p=shlex.quote(package))
+    def get_pkg_remove_cmd(self,  package: str) -> str: return self._remove.format(p=shlex.quote(package))
     def get_update_system_cmd(self)             -> str: return self._update
     def get_clean_cache_cmd(self)               -> str: return self._clean
     def get_find_orphans_cmd(self)              -> str: return self._orphans
 
     def get_batch_install_cmd(self, packages: list[str]) -> str:
-        safe_pkgs = " ".join(shlex.quote(p) for p in packages)
         if not packages:
             return ""
+        safe_pkgs = " ".join(shlex.quote(p) for p in packages)
         fam = self.family()
         if fam == "nixos":
-            return "nix-env -iA " + " ".join(f"nixpkgs.{p}" for p in packages)
+            return "nix-env -iA " + " ".join("nixpkgs." + shlex.quote(p) for p in packages)
         if fam == "slackware":
-            return "sudo slackpkg install " + " ".join(packages)
+            return "sudo slackpkg install " + safe_pkgs
         return self._install.format(p=safe_pkgs)
+
+    def get_batch_remove_cmd(self, packages: list[str]) -> str:
+        if not packages:
+            return ""
+        safe_pkgs = " ".join(shlex.quote(p) for p in packages)
+        if self.family() == "nixos":
+            return "nix-env -e " + safe_pkgs
+        return self._remove.format(p=safe_pkgs)
 
     def parse_orphan_output(self, raw: str) -> list[str]:
         fam   = self.family()
@@ -586,10 +594,19 @@ class LinuxDistroHelper:
     def get_samba_service_name(self) -> str: return _SAMBA_SVC.get(self.family()) or _SAMBA_SVC[None]
     def get_cron_service_name(self)  -> str: return _CRON_SVC.get(self.family())  or _CRON_SVC[None]
 
+    _FIREWALL_PKGS: dict = {
+        "debian": ["ufw"], "arch": ["ufw"], "void": ["ufw"], "gentoo": ["net-firewall/ufw"],
+        "fedora": ["firewalld"], "suse": ["firewalld"], "alpine": ["ufw"],
+        "solus": ["ufw"], "nixos": ["ufw"], "slackware": [], None: ["ufw"],
+    }
+    _FIREWALL_SVC: dict = {"fedora": "firewalld", "suse": "firewalld", None: "ufw"}
+
+    def get_firewall_packages(self) -> list[Any] | None | Any: return _lookup(self._FIREWALL_PKGS, self.family())
+    def get_firewall_service_name(self) -> str: return self._FIREWALL_SVC.get(self.family()) or self._FIREWALL_SVC[None]
+    def firewall_backend(self) -> str: return self.get_firewall_service_name()
+
     @staticmethod
     def get_printer_packages()  -> list: return ["cups", "ghostscript", "system-config-printer", "gutenprint"]
-    @staticmethod
-    def get_firewall_packages() -> list: return ["ufw"]
     @staticmethod
     def get_at_packages()       -> list: return ["at"]
     @staticmethod
