@@ -61,7 +61,7 @@ def _make_tri_cb(text: str, disabled: bool, tooltip: str = "") -> TriCheckBox:
     cb = TriCheckBox(text)
     cb.setCheckState(_STATE_DISABLED if disabled else _STATE_ACTIVE)
     _update_tri_style(cb)
-    apply_tooltip(cb, tooltip)
+    apply_tooltip(cb, tooltip, wrap=False)
     return cb
 
 
@@ -346,6 +346,13 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, aur_he
             "install_snap": (
                 f"Initialise Snap (Install '{pkglist(distro.get_snap_packages)}'. Enable & start 'snapd.service')",
                 _tip("install_snap")),
+            "enable_ntp_sync": (
+                (f"Enable network time synchronisation (Install '{pkglist(distro.get_ntp_packages)}'. "
+                 f"Enable & start '{distro.get_ntp_service_name()}.service')")
+                if distro.get_ntp_packages() else
+                (f"Enable network time synchronisation (Already provided by the base system. "
+                 f"Enable & start '{distro.get_ntp_service_name()}.service')"),
+                _tip("enable_ntp_sync")),
             "enable_firewall": (
                 f"Initialise firewall (Install '{pkglist(distro.get_firewall_packages)}'. "
                 f"Enable & start '{distro.get_firewall_service_name()}.service', set to 'deny all by default')",
@@ -662,7 +669,7 @@ class SystemManagerOptions(QDialog):
                       ("🔧  Services",
                        ["enable_printer_support", "enable_ssh_service", "enable_samba_network_filesharing",
                         "enable_bluetooth_service", "enable_atd_service", "enable_cronie_service",
-                        "install_snap", "enable_firewall"]),
+                        "install_snap", "enable_ntp_sync", "enable_firewall"]),
                       ("🧹  Maintenance", ["remove_orphaned_packages", "clean_cache"])]
 
         _KERNEL_VARIANTS = list(ARCH_KERNEL_VARIANTS.keys())
@@ -744,8 +751,10 @@ class SystemManagerOptions(QDialog):
                     apply_tooltip(cb, _cb_tip)
 
                 is_arch = key in arch_only
+                unsupported = (is_arch and not self._distro.has_aur) or \
+                              (key == "enable_firewall" and not self._distro.firewall_supported())
 
-                if is_arch and not self._distro.has_aur:
+                if unsupported:
                     cb.setVisible(False)
                 else:
                     cb.setChecked(key in S.system_manager_ops)
@@ -808,7 +817,7 @@ class SystemManagerOptions(QDialog):
                                 sub_cb.setChecked(variant in saved_kti or (never_saved and is_installed))
                                 sub_cb.setEnabled(sub_enabled)
 
-                                apply_tooltip(sub_cb, tip)
+                                apply_tooltip(sub_cb, tip, wrap=False)
 
                                 if is_installed:
                                     sub_cb.setStyleSheet(style_checkbox_muted() + "QCheckBox{font-style:italic;}")
@@ -1871,9 +1880,11 @@ class SystemManagerLauncher:
             row = QHBoxLayout()
             num = QLabel(f"{display_num}:")
             num.setStyleSheet(style_label_mono(font_size=font_sz(2)))
+            num.setAlignment(Qt.AlignmentFlag.AlignLeft)
             lbl = QLabel(html)
             lbl.setTextFormat(Qt.TextFormat.RichText)
             lbl.setStyleSheet(style_label_mono(font_size=font_sz(2)))
+            lbl.setAlignment(Qt.AlignmentFlag.AlignLeft)
             apply_tooltip(lbl, tooltip)
             row.addWidget(num)
             row.addWidget(lbl)

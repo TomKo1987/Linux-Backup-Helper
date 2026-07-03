@@ -18,8 +18,8 @@ from types import SimpleNamespace
 from PyQt6.QtCore import Qt, QElapsedTimer, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QIcon, QTextCursor
 from PyQt6.QtWidgets import (
-    QApplication, QDialog, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QLineEdit,
-    QListWidget, QListWidgetItem, QPushButton, QTextEdit, QVBoxLayout, QWidget,
+    QApplication, QDialog, QFileDialog, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QLineEdit,
+    QListWidget, QListWidgetItem, QMessageBox, QPushButton, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from dotfiles_manager import first_path
@@ -203,7 +203,12 @@ class SystemManagerDialog(_StandardKeysMixin, QDialog):
         self._close_btn.setMinimumSize(*self.BUTTON_SIZE)
         self._close_btn.clicked.connect(self.accept)
 
+        self._save_log_btn = QPushButton("Save Log")
+        self._save_log_btn.setMinimumSize(*self.BUTTON_SIZE)
+        self._save_log_btn.clicked.connect(self._save_log)
+
         btn_row = QHBoxLayout()
+        btn_row.addWidget(self._save_log_btn)
         btn_row.addStretch()
         btn_row.addWidget(self._close_btn)
 
@@ -298,6 +303,19 @@ class SystemManagerDialog(_StandardKeysMixin, QDialog):
         self._ticker.stop()
         self._close_btn.setEnabled(True)
         self._close_btn.setFocus()
+
+    def _save_log(self) -> None:
+        default_name = f"system_manager_log_{time.strftime('%Y-%m-%d_%H-%M-%S')}.txt"
+        path, _ = QFileDialog.getSaveFileName(self, "Save System Manager Log", default_name, "Text Files (*.txt)")
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(self._text_edit.toPlainText())
+        except OSError as exc:
+            QMessageBox.warning(self, "Save Log Failed", f"Could not save log:\n{exc}")
+        else:
+            QMessageBox.information(self, "Log Saved", f"Log successfully saved to:\n{path}")
 
     def _init_checklist(self, task_descs: list[tuple[str, str]]) -> None:
         t = current_theme()
@@ -431,6 +449,7 @@ class SystemManagerThread(QThread):
         self._stop_keepalive = threading.Event()
         self._keepalive: _SudoKeepalive | None = None
         self._enabled_tasks: dict[str, tuple] = {}
+        self._task_status: dict[str, str] = {}
         self._input_event: threading.Event = threading.Event()
         self._input_value: str = ""
         self._env_snapshot: dict = os.environ.copy()
@@ -455,6 +474,7 @@ class SystemManagerThread(QThread):
             self._stop.clear()
 
     def run(self) -> None:
+        _start = time.monotonic()
         try:
             self.thread_started.emit()
             self._prepare_tasks()
@@ -474,9 +494,27 @@ class SystemManagerThread(QThread):
         finally:
             self._cleanup()
             try:
+                self._log_run_history(time.monotonic() - _start)
+            except Exception as exc:
+                logger.debug("_log_run_history failed: %s", exc)
+            try:
                 self.outputReceived.emit("", "finish")
             except RuntimeError:
                 pass
+
+    def _log_run_history(self, elapsed_s: float) -> None:
+        if not self._task_status:
+            return
+        succeeded = sum(1 for s in self._task_status.values() if s == _Status.SUCCESS)
+        warned = sum(1 for s in self._task_status.values() if s == _Status.WARNING)
+        errored = sum(1 for s in self._task_status.values() if s == _Status.ERROR)
+        cancelled = self.terminated
+        try:
+            from history import append_history
+            append_history(operation="System Manager", copied=succeeded, skipped=warned, errors=errored,
+                           duration_s=int(elapsed_s), cancelled=cancelled)
+        except Exception as exc:
+            logger.debug("append_history failed: %s", exc)
 
     def provide_input(self, answer: str) -> None:
         self._input_value = answer.strip()
@@ -514,6 +552,10 @@ class SystemManagerThread(QThread):
                 "install_specific_packages": ("Installing Specific Packages…", self._install_specific),
                 "enable_flatpak_integration": ("Enabling Flatpak integration…", self._install_flatpak)}
 
+    _OPTIONAL_SVC_PKGS: dict[str, tuple[str, ...]] = {
+        "cups": ("system-config-printer",),
+    }
+
     def _service_tasks(self) -> dict:
         if not self.distro: return {}
         d = self.distro
@@ -524,8 +566,11 @@ class SystemManagerThread(QThread):
                  "enable_atd_service": ("Initialising atd…", "atd", d.get_at_packages),
                  "enable_cronie_service": (f"Initialising {d.get_cron_service_name()}…", d.get_cron_service_name(), d.get_cron_packages),
                  "install_snap": ("Installing Snap…", "snapd", d.get_snap_packages),
-                 "enable_firewall": ("Initialising firewall…", d.get_firewall_service_name(), d.get_firewall_packages)}
-        return {k: (desc, lambda s=svc, p=pkg_fn: self._setup_service(s, p())) for k, (desc, svc, pkg_fn) in specs.items()}
+                 "enable_ntp_sync": (f"Initialising {d.get_ntp_service_name()}…", d.get_ntp_service_name(), d.get_ntp_packages)}
+        if d.firewall_supported():
+            specs["enable_firewall"] = ("Initialising firewall…", d.get_firewall_service_name(), d.get_firewall_packages)
+        return {k: (desc, lambda s=svc, p=pkg_fn: self._setup_service(s, p(), optional=self._OPTIONAL_SVC_PKGS.get(s, ())))
+                for k, (desc, svc, pkg_fn) in specs.items()}
 
     def _run_all_tasks(self) -> None:
         task_items = list(self._enabled_tasks.items())
@@ -533,8 +578,10 @@ class SystemManagerThread(QThread):
             if self.terminated:
                 for skipped_id, _ in task_items[idx:]:
                     self.taskStatusChanged.emit(skipped_id, _Status.WARNING)
+                    self._task_status[skipped_id] = _Status.WARNING
                 break
             self.taskStatusChanged.emit(task_id, _Status.IN_PROGRESS)
+            self._task_status[task_id] = _Status.IN_PROGRESS
             self.outputReceived.emit(desc, "operation")
             try:
                 res = fn()
@@ -543,10 +590,12 @@ class SystemManagerThread(QThread):
                 self.outputReceived.emit(f"Task '{task_id}' failed: {exc}", "error")
                 status = _Status.ERROR
             self.taskStatusChanged.emit(task_id, status)
+            self._task_status[task_id] = status
             if status == _Status.ERROR:
                 self.outputReceived.emit(f"Aborting remaining tasks due to failure in '{task_id}'.", "error")
                 for remaining_id, _ in task_items[idx + 1:]:
                     self.taskStatusChanged.emit(remaining_id, _Status.WARNING)
+                    self._task_status[remaining_id] = _Status.WARNING
                 break
 
     @staticmethod
@@ -1696,8 +1745,15 @@ class SystemManagerThread(QThread):
             self.outputReceived.emit(f"Flathub setup error: {exc}", "error")
             return False
 
-    def _setup_service(self, service: str, packages: list) -> bool:
-        return (not packages or all(self._install_pkg(p, "Service Package") for p in packages)) and self._enable_service(service)
+    def _setup_service(self, service: str, packages: list, *, optional: tuple[str, ...] = ()) -> bool:
+        if packages:
+            for p in packages:
+                ok = self._install_pkg(p, "Service Package")
+                if not ok and p not in optional:
+                    return False
+                if not ok:
+                    self.outputReceived.emit(f"Optional package '{p}' could not be installed — continuing", "warning")
+        return self._enable_service(service)
 
     def _enable_service(self, service: str) -> bool:
         if shutil.which("systemctl"):

@@ -169,7 +169,7 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
                 elif base_tip:
                     tip_text = base_tip
 
-                apply_tooltip(cb, tip_text)
+                apply_tooltip(cb, tip_text, wrap=False)
 
                 cb.setStyleSheet(f"QCheckBox{{color:{cb_color};}}")
                 cb.stateChanged.connect(self._sync_select_all)

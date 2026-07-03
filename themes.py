@@ -3,10 +3,8 @@ import re as _re
 import threading as _threading
 from functools import lru_cache
 
-from PyQt6.QtCore import Qt, QEvent
-from PyQt6.QtWidgets import (
-    QApplication, QDialog, QVBoxLayout, QScrollArea, QLabel, QPushButton, QWidget,
-)
+from PyQt6.QtCore import Qt, QEvent, QObject
+from PyQt6.QtWidgets import QApplication, QDialog, QVBoxLayout, QScrollArea, QLabel, QPushButton
 
 from state import S, logger, invalidate_tooltip_cache
 
@@ -229,7 +227,7 @@ def style_label_info(font_size: int = 0, bold: bool = False) -> str:
 
 def style_label_mono(font_size: int = 0) -> str:
     fs = font_size or font_scale()["lg"]
-    return f"font-size:{fs}px;padding:5px;qproperty-alignment:AlignLeft;font-family:monospace;"
+    return f"font-size:{fs}px;padding:5px;font-family:monospace;"
 
 
 def style_checkbox_select_all() -> str: return f"QCheckBox{{color:{current_theme()['cyan']};}}"
@@ -513,14 +511,13 @@ class _TooltipDialog(QDialog):
         self.resize(max_width + 40, max_h)
 
 
-class _TooltipClickFilter(QWidget):
+class _TooltipClickFilter(QObject):
 
     def __init__(self, host, html_text: str, max_width: int) -> None:
         super().__init__(host)
         self._host = host
         self._html_text = html_text
         self._max_width = max_width
-        self.hide()
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt override)
         if obj is self._host and event.type() == QEvent.Type.MouseButtonRelease:
@@ -533,13 +530,23 @@ class _TooltipClickFilter(QWidget):
 _TOOLTIP_LONG_LINE_THRESHOLD = 28
 
 
-def apply_tooltip(widget, text: str, max_width: int | None = None) -> None:
+def apply_tooltip(widget, text: str, max_width: int | None = None, *, wrap: bool = True) -> None:
     if not text:
         return
     if max_width is None:
         screen = QApplication.primaryScreen()
         avail = screen.availableGeometry().width() if screen else 1024
         max_width = max(320, min(720, int(avail * 0.6)))
+
+    is_preformatted_table = text.lstrip().startswith("<table")
+
+    if not wrap or is_preformatted_table:
+        wrapped = f"<div style='white-space:nowrap;'>{text}</div>"
+        widget.setToolTip(wrapped)
+        widget.setToolTipDuration(600_000)
+        widget.setCursor(Qt.CursorShape.WhatsThisCursor)
+        return
+
     chars_per_line = max(40, max_width // 8)
     wrapped_text = _hard_wrap_html(text, chars_per_line)
 

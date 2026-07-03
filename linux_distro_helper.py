@@ -2,6 +2,7 @@ import concurrent.futures
 import os
 import re
 import shlex
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, Callable
@@ -604,6 +605,25 @@ class LinuxDistroHelper:
     def get_firewall_packages(self) -> list[Any] | None | Any: return _lookup(self._FIREWALL_PKGS, self.family())
     def get_firewall_service_name(self) -> str: return self._FIREWALL_SVC.get(self.family()) or self._FIREWALL_SVC[None]
     def firewall_backend(self) -> str: return self.get_firewall_service_name()
+    def firewall_supported(self) -> bool: return bool(self.get_firewall_packages())
+
+    _NTP_PKGS: dict = {
+        "debian": ["systemd-timesyncd"], "arch": [], "fedora": ["chrony"], "suse": ["chrony"],
+        "void": ["chrony"], "alpine": ["chrony"], "gentoo": ["net-misc/chrony"], "solus": ["chrony"],
+        "nixos": [], "slackware": [], None: [],
+    }
+
+    def get_ntp_packages(self) -> list[Any] | None | Any: return _lookup(self._NTP_PKGS, self.family())
+
+    @staticmethod
+    def get_ntp_service_name() -> str:
+        if shutil.which("timedatectl"):
+            return "systemd-timesyncd"
+        return "chronyd"
+
+    @staticmethod
+    def ntp_supported() -> bool:
+        return bool(shutil.which("timedatectl") or shutil.which("chronyd") or shutil.which("chronyc"))
 
     @staticmethod
     def get_printer_packages()  -> list: return ["cups", "ghostscript", "system-config-printer", "gutenprint"]
@@ -622,7 +642,7 @@ class LinuxDistroHelper:
         try:
             out = subprocess.check_output(
                 ["bootctl", "--print-esp-path"],
-                stderr=subprocess.DEVNULL, text=True
+                stderr=subprocess.DEVNULL, text=True, timeout=10
             ).strip()
             if out:
                 p = Path(out)
@@ -673,7 +693,7 @@ class LinuxDistroHelper:
         for cmd in (["bootctl", "--print-esp-path"],
                     ["sudo", "-n", "bootctl", "--print-esp-path"]):
             try:
-                out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, text=True).strip()
+                out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, text=True, timeout=10).strip()
                 if out:
                     _add(Path(out))
                     break
@@ -730,12 +750,12 @@ class LinuxDistroHelper:
         for cmd in (["bootctl", "--print-esp-path"],
                     ["sudo", "-n", "bootctl", "--print-esp-path"]):
             try:
-                r = subprocess.run(cmd, capture_output=True, text=True)
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
                 if r.returncode == 0 and r.stdout.strip():
                     return "systemd-boot"
             except FileNotFoundError:
                 break
-            except OSError:
+            except (OSError, subprocess.SubprocessError):
                 pass
 
         for esp in LinuxDistroHelper._iter_esp_candidates():
@@ -746,7 +766,7 @@ class LinuxDistroHelper:
                 and not Path("/boot/grub/grub.cfg").exists()):
             try:
                 out = subprocess.check_output(
-                    ["efibootmgr"], stderr=subprocess.DEVNULL, text=True
+                    ["efibootmgr"], stderr=subprocess.DEVNULL, text=True, timeout=10
                 )
                 if "Linux Boot Manager" in out or "systemd" in out.lower():
                     return "systemd-boot"
@@ -850,7 +870,7 @@ class LinuxDistroHelper:
 
                 if default_val == "saved":
                     try:
-                        output = subprocess.check_output(["grub-editenv", "list"], stderr=subprocess.DEVNULL, text=True)
+                        output = subprocess.check_output(["grub-editenv", "list"], stderr=subprocess.DEVNULL, text=True, timeout=10)
                         for line in output.splitlines():
                             if line.startswith("saved_entry="):
                                 default_val = line.split("=", 1)[1].lower()
@@ -870,3 +890,4 @@ class LinuxDistroHelper:
                 pass
 
         return found or LinuxDistroHelper.detect_running_kernel_variant()
+    
