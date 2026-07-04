@@ -39,8 +39,8 @@ _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
 
 class TriCheckBox(QCheckBox):
 
-    def __init__(self, text: str = "", parent=None):
-        super().__init__(text, parent)
+    def __init__(self, text: str = "", _parent=None):
+        super().__init__(text, _parent)
         self.setTristate(True)
 
     def nextCheckState(self) -> None:
@@ -65,8 +65,8 @@ def _make_tri_cb(text: str, disabled: bool, tooltip: str = "") -> TriCheckBox:
     return cb
 
 
-def _scroll_dlg(parent, title: str, body: QWidget, on_save=None) -> tuple[QDialog, QVBoxLayout]:
-    dlg = QDialog(parent)
+def _scroll_dlg(_parent, title: str, body: QWidget, on_save=None) -> tuple[QDialog, QVBoxLayout]:
+    dlg = QDialog(_parent)
     dlg.setWindowTitle(title)
     dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
     lay = QVBoxLayout(dlg)
@@ -357,11 +357,19 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, aur_he
                 f"Initialise firewall (Install '{pkglist(distro.get_firewall_packages)}'. "
                 f"Enable & start '{distro.get_firewall_service_name()}.service', set to 'deny all by default')",
                 _tip("enable_firewall")),
-            "remove_orphaned_packages": ("Remove orphaned package(s)", _tip("remove_orphaned_packages")),
+            "enable_fstrim_timer": ("Enable periodic SSD TRIM (Enable & start 'fstrim.timer')",
+                                    _tip("enable_fstrim_timer")),
+            "remove_orphaned_packages": ("Remove orphaned package(s) (and unused Flatpak runtimes if installed)",
+                                         _tip("remove_orphaned_packages")),
             "clean_cache": ("Clean cache (for '" + pm_name + "'"
-                + (", '" + "', '".join(_installed_helpers_for_cache[:-1]) + "' and '" + _installed_helpers_for_cache[
-                -1] + "'" if len(_installed_helpers_for_cache) > 1 else (" and '" + _installed_helpers_for_cache[0] + "'"
-                if _installed_helpers_for_cache else "")) + ")", _tip("clean_cache"))}
+                            + (", '" + "', '".join(_installed_helpers_for_cache[:-1]) + "' and '" +
+                               _installed_helpers_for_cache[
+                                   -1] + "'" if len(_installed_helpers_for_cache) > 1 else (
+                " and '" + _installed_helpers_for_cache[0] + "'"
+                if _installed_helpers_for_cache else "")) + ")", _tip("clean_cache")),
+            "clean_journal_logs": (
+                "Clean systemd journal logs (Limit size to 100M using 'sudo journalctl --vacuum-size=100M')",
+                _tip("clean_journal_logs"))}
 
 
 def _raw_to_label_html(raw: dict[str, tuple[str, str]]) -> dict[str, str]:
@@ -377,17 +385,17 @@ def _raw_to_tips(raw: dict[str, tuple[str, str]]) -> dict[str, str]:
     return {k: tip for k, (_, tip) in raw.items()}
 
 
-def _read_import_file(parent, path: str) -> list[str] | None:
+def _read_import_file(_parent, path: str) -> list[str] | None:
     try:
         return Path(path).read_text(encoding="utf-8").splitlines()
     except Exception as e:
-        QMessageBox.critical(parent, "Error", f"Read failed: {e}")
+        QMessageBox.critical(_parent, "Error", f"Read failed: {e}")
         return None
 
 
-def _pkg_form_dialog(parent, title: str, *, prefill_name: str = "", prefill_sess: str | None = None) -> tuple | None:
+def _pkg_form_dialog(_parent, title: str, *, prefill_name: str = "", prefill_sess: str | None = None) -> tuple | None:
     with_session = prefill_sess is not None
-    dlg = QDialog(parent)
+    dlg = QDialog(_parent)
     dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
     dlg.setWindowTitle(title)
     dlg.setMinimumWidth(620)
@@ -414,11 +422,11 @@ def _pkg_form_dialog(parent, title: str, *, prefill_name: str = "", prefill_sess
 
     name = name_ed.text().strip()
     if not name:
-        QMessageBox.warning(parent, "Error", "Package name required.")
+        QMessageBox.warning(_parent, "Error", "Package name required.")
         return None
     if not is_valid_pkg_name(name):
         QMessageBox.warning(
-            parent, "Error",
+            _parent, "Error",
             f"'{name}' is not a valid package name.\n\n"
             "Allowed: letters, digits, '.', '_', '+', '-' (must not start with a separator)."
         )
@@ -517,7 +525,7 @@ class PackageVerifierThread(QThread):
                 elif fam == "solus":
                     cmd = ["eopkg", "info", _pkg]
                 elif fam == "gentoo":
-                    cmd = ["sh", "-c", f"emerge --search --nospinner =~^{shlex.quote(_pkg)}$ 2>/dev/null | grep -q ."]
+                    cmd = None
                 elif fam == "nixos":
                     cmd = ["sh", "-c", f"nix-env -qa --available {shlex.quote(_pkg)} 2>/dev/null | grep -q ."]
                 elif fam == "slackware":
@@ -555,8 +563,8 @@ class PackageVerifierThread(QThread):
 
 class SystemManagerOptions(QDialog):
 
-    def __init__(self, parent=None, distro: LinuxDistroHelper | None = None):
-        super().__init__(parent)
+    def __init__(self, _parent=None, distro: LinuxDistroHelper | None = None):
+        super().__init__(_parent)
         self.setWindowTitle("System Manager Options")
         self.setMinimumSize(1200, 680)
         self._distro = distro or LinuxDistroHelper()
@@ -670,7 +678,8 @@ class SystemManagerOptions(QDialog):
                        ["enable_printer_support", "enable_ssh_service", "enable_samba_network_filesharing",
                         "enable_bluetooth_service", "enable_atd_service", "enable_cronie_service",
                         "install_snap", "enable_ntp_sync", "enable_firewall"]),
-                      ("🧹  Maintenance", ["remove_orphaned_packages", "clean_cache"])]
+                      ("🧹  Maintenance",
+                       ["remove_orphaned_packages", "clean_cache", "clean_journal_logs", "enable_fstrim_timer"])]
 
         _KERNEL_VARIANTS = list(ARCH_KERNEL_VARIANTS.keys())
 
@@ -752,7 +761,8 @@ class SystemManagerOptions(QDialog):
 
                 is_arch = key in arch_only
                 unsupported = (is_arch and not self._distro.has_aur) or \
-                              (key == "enable_firewall" and not self._distro.firewall_supported())
+                              (key == "enable_firewall" and not self._distro.firewall_supported()) or \
+                              (key == "enable_ntp_sync" and not self._distro.ntp_supported())
 
                 if unsupported:
                     cb.setVisible(False)
@@ -1504,7 +1514,7 @@ class SystemManagerOptions(QDialog):
             result = _pkg_form_dialog(self, "Add Specific Package", prefill_sess=SESSIONS[0] if SESSIONS else "")
             if result is None:
                 QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
-                return
+                return None
             name, sess = result
             S.specific_packages = S.specific_packages or []
             if any(isinstance(p, dict) and p.get("package") == name and p.get("session") == sess
@@ -1524,10 +1534,11 @@ class SystemManagerOptions(QDialog):
                     QMessageBox.warning(
                         self, "Error",
                         f"'{name}' is not a valid package name.\n\n"
-                        "Allowed: letters, digits, '.', '_', '+', '-' (must not start with a separator)."
+                        "Allowed: letters, digits, '.', '_', '+', '-' (must not start with a separator).\n"
+                        "Gentoo category/package atoms (e.g. 'net-misc/openssh') are also allowed."
                     )
                     QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
-                    return
+                    return None
                 current = getattr(S, pkg_type, []) or []
                 existing = {p.get("name") if isinstance(p, dict) else str(p) for p in current}
                 if name in existing:
@@ -1537,6 +1548,7 @@ class SystemManagerOptions(QDialog):
                     _commit_pkgs(pkg_type, current)
                     QMessageBox.information(self, "Added", f"Added {label}:\n\n  • {name}")
         QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
+        return None
 
     def _batch_add(self, pkg_type: str) -> None:
         is_specific = _is_specific(pkg_type)
@@ -1785,9 +1797,9 @@ class SystemManagerOptions(QDialog):
 
 class SystemManagerLauncher:
 
-    def __init__(self, parent=None):
-        self.parent = parent
-        self.failed_attempts = getattr(parent, "sm_failed_attempts", 0)
+    def __init__(self, _parent=None):
+        self.parent = _parent
+        self.failed_attempts = getattr(_parent, "sm_failed_attempts", 0)
         self._distro = LinuxDistroHelper()
         self._distro_name = self._distro.distro_pretty_name
         self._session = self._distro.detect_session()

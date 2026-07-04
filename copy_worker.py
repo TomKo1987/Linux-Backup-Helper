@@ -362,7 +362,7 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
     except InterruptedError:
         raise
     except OSError as exc:
-        if exc.errno not in (errno.ENOSYS, errno.EOPNOTSUPP, errno.ENOTSUP, errno.EXDEV):
+        if exc.errno not in (errno.ENOSYS, errno.EOPNOTSUPP, errno.ENOTSUP, errno.EXDEV, errno.EINVAL):
             raise
         logger.debug("copy_file_range not supported, falling back: %s", exc)
         try:
@@ -1188,6 +1188,9 @@ class CopyWorker(QThread):
             user = ""
             if smb_tasks:
                 user, pw = _get_smb_credentials()
+                smb_tool_missing = shutil.which("smbclient") is None
+                if smb_tool_missing:
+                    logger.error("smbclient binary not found — SMB task(s) will be reported as errors")
 
             self.scan_progress.emit("Scanning", 0)
 
@@ -1239,6 +1242,14 @@ class CopyWorker(QThread):
 
             def _phase1_smb() -> None:
                 if not smb_tasks or self._cancel.is_set():
+                    return
+                if smb_tool_missing:
+                    smb_errors.extend(
+                        (s_ if is_smb(s_) else d_,
+                         "'smbclient' not found — install the Samba client tools (e.g. package "
+                         "'smbclient' / 'samba-client') to enable SMB backups")
+                        for s_, d_, *_ in smb_tasks
+                    )
                     return
                 ur, af, _guest = self._probe_shares(smb_tasks, user, pw)
                 _guest_box[0] = _guest

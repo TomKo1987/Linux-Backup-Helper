@@ -14,4 +14,6 @@ ARCH_KERNEL_VARIANTS: dict[str, tuple[str, str]] = {
 }
 
 
-PKG_NAME_RE: re.Pattern[str] = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-._+]*$")
+PKG_NAME_RE: re.Pattern[str] = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9\-._+]*(/[A-Za-z0-9][A-Za-z0-9\-._+]*)?$"
+)

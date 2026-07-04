@@ -24,7 +24,8 @@ _DISTROS_DEBIAN = {"debian", "ubuntu", "pop", "pop-os", "popos", "mint", "linuxm
 
 _VER_PKG = re.compile(r"[-_]\d[\w.+~:-]*$")
 
-_DISTROS_FEDORA = {"fedora", "rhel", "centos", "rocky", "almalinux", "nobara", "ultramarine", "mageia", "openmandriva"}
+_DISTROS_FEDORA = {"fedora", "rhel", "centos", "rocky", "almalinux", "nobara", "ultramarine", "mageia",
+                   "openmandriva", "amzn", "ol"}
 
 _DISTROS_SUSE = {"opensuse", "opensuse-leap", "opensuse-tumbleweed", "opensuse-slowroot", "suse", "sled", "sles"}
 
@@ -85,7 +86,7 @@ def _slackware_check(p: str) -> list[str]: return ["sh", "-c", f"ls /var/log/pac
 _PKG: dict[str, dict[str, Any]] = {
     "arch": dict(
         check   = lambda p: ["pacman", "-Qi", p],
-        install = "sudo pacman -S --needed {p}",
+        install = "sudo pacman -S --needed --noconfirm {p}",
         update  = "sudo pacman -Syu --noconfirm",
         remove  = "sudo pacman -Rns --noconfirm {p}",
         clean   = "sudo pacman -Scc --noconfirm",
@@ -95,9 +96,9 @@ _PKG: dict[str, dict[str, Any]] = {
     ),
     "debian": dict(
         check   = lambda p: ["sh", "-c", f"dpkg-query -W -f='${{Status}}' {shlex.quote(p)} 2>/dev/null | grep -q '^install ok installed$'"],
-        install = "sudo apt-get install -y {p}",
-        update  = "sudo apt-get update && sudo apt-get upgrade -y",
-        remove  = "sudo apt-get autoremove -y {p}",
+        install = "sudo env DEBIAN_FRONTEND=noninteractive apt-get install -yq -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold' {p}",
+        update  = "sudo env DEBIAN_FRONTEND=noninteractive apt-get update && sudo env DEBIAN_FRONTEND=noninteractive apt-get upgrade -yq -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold'",
+        remove  = "sudo env DEBIAN_FRONTEND=noninteractive apt-get autoremove -yq {p}",
         clean   = "sudo apt-get clean && sudo apt-get autoremove -y",
         orphans = "apt-get --dry-run autoremove",
         has_aur = False,
@@ -115,9 +116,9 @@ _PKG: dict[str, dict[str, Any]] = {
     ),
     "suse": dict(
         check   = lambda p: ["rpm", "-q", p],
-        install = "sudo zypper install -y {p}",
-        update  = "sudo zypper update -y",
-        remove  = "sudo zypper remove -y {p}",
+        install = "sudo zypper --non-interactive install -y {p}",
+        update  = "sudo zypper --non-interactive update -y",
+        remove  = "sudo zypper --non-interactive remove -y {p}",
         clean   = "sudo zypper clean --all",
         orphans = "zypper --no-refresh packages --orphaned",
         has_aur = False,
@@ -613,16 +614,25 @@ class LinuxDistroHelper:
         "nixos": [], "slackware": [], None: [],
     }
 
+    _NTP_SVC: dict[str, str] = {
+        "debian": "systemd-timesyncd", "arch": "systemd-timesyncd", "nixos": "systemd-timesyncd",
+        "fedora": "chronyd", "suse": "chronyd", "solus": "chronyd", "gentoo": "chronyd",
+        "void": "chronyd", "alpine": "chronyd",
+    }
+
     def get_ntp_packages(self) -> list[Any] | None | Any: return _lookup(self._NTP_PKGS, self.family())
 
-    @staticmethod
-    def get_ntp_service_name() -> str:
+    def get_ntp_service_name(self) -> str:
+        svc = self._NTP_SVC.get(self.family())
+        if svc:
+            return svc
         if shutil.which("timedatectl"):
             return "systemd-timesyncd"
         return "chronyd"
 
-    @staticmethod
-    def ntp_supported() -> bool:
+    def ntp_supported(self) -> bool:
+        if self.family() in self._NTP_SVC:
+            return True
         return bool(shutil.which("timedatectl") or shutil.which("chronyd") or shutil.which("chronyc"))
 
     @staticmethod

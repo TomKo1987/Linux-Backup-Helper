@@ -50,6 +50,17 @@ _INFO_RE = re.compile(
 _PACMAN_PROGRESS_RE = re.compile(r'\[[-Co# ]+]\s*\d+%')
 
 
+_PKG_LOCK_INFO: tuple[tuple[str, str, str], ...] = (
+    ("/var/lib/pacman/db.lck",           "pacman",   "sudo rm /var/lib/pacman/db.lck"),
+    ("/var/lib/dpkg/lock-frontend",      "dpkg/apt", "sudo rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock"),
+    ("/var/lib/dpkg/lock",               "dpkg/apt", "sudo rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock"),
+    ("/var/cache/apt/archives/lock",     "apt",      "sudo rm -f /var/cache/apt/archives/lock"),
+    ("/var/cache/dnf/metadata_lock.pid", "dnf",      "sudo rm -f /var/cache/dnf/metadata_lock.pid"),
+    ("/var/lib/rpm/.rpm.lock",           "rpm",      "sudo rm -f /var/lib/rpm/.rpm.lock"),
+    ("zypp.lock",                        "zypper",   "sudo rm -f /run/zypp.pid"),
+)
+
+
 class _Status: PENDING, IN_PROGRESS, SUCCESS, WARNING, ERROR = ("pending", "in_progress", "success", "warning", "error")
 
 
@@ -261,7 +272,10 @@ class SystemManagerDialog(_StandardKeysMixin, QDialog):
         self._ticker.start(1000)
 
     def on_output(self, text: str, kind: str) -> None:
-        if "/var/lib/pacman/db.lck" in text: self._show_db_lock_error(); return
+        for needle, pm_name, hint in _PKG_LOCK_INFO:
+            if needle in text:
+                self._show_db_lock_error(pm_name, hint)
+                return
         if kind == "finish": self._show_completion(); return
         if kind in _Style.KIND_CFG:
             self._append_html(text if ("<span " in text or "<p " in text) else _fmt_html(text, kind))
@@ -343,7 +357,7 @@ class SystemManagerDialog(_StandardKeysMixin, QDialog):
         except Exception as exc:
             logger.error("_append_html: %s", exc)
 
-    def _show_db_lock_error(self) -> None:
+    def _show_db_lock_error(self, pm_name: str = "pacman", hint: str = "sudo rm /var/lib/pacman/db.lck") -> None:
         t = current_theme()
 
         for i in range(self._checklist.count()):
@@ -362,9 +376,9 @@ class SystemManagerDialog(_StandardKeysMixin, QDialog):
                           f"<div style='padding:15px;margin:10px;border-radius:10px;border-left:4px solid {t['error']};'>"
                           f"<p style='color:{t['error']};font-size:{font_sz(4)}px;text-align:center;'>"
                           f"<b>⚠️ System Manager Aborted</b><br>"
-                          f"<span style='font-size:{font_sz(2)}px;'>/var/lib/pacman/db.lck detected!</span><br>"
+                          f"<span style='font-size:{font_sz(2)}px;'>{pm_name} database lock detected!</span><br>"
                           f"<span style='color:{t['text']};font-size:{font_sz()}px;'>"
-                          f"(Remove with: <code>'sudo rm /var/lib/pacman/db.lck</code>')</span></p></div><br>")
+                          f"(Remove with: <code>{hint}</code>)</span></p></div><br>")
 
         self.mark_done()
         self.cancelRequested.emit()
@@ -528,8 +542,13 @@ class SystemManagerThread(QThread):
         except (subprocess.SubprocessError, OSError): pass
 
     def _prepare_tasks(self) -> None:
-        all_tasks = {**self._base_tasks(), **self._service_tasks(), "remove_orphaned_packages":
-            ("Removing orphaned packages…", self._remove_orphans), "clean_cache": ("Cleaning cache…", self._clean_cache)}
+        all_tasks = {
+            **self._base_tasks(),
+            **self._service_tasks(),
+            "remove_orphaned_packages": ("Removing orphaned packages…", self._remove_orphans),
+            "clean_cache": ("Cleaning cache…", self._clean_cache),
+            "clean_journal_logs": ("Cleaning systemd journal logs…", self._clean_journal_logs)
+        }
         self._enabled_tasks = {k: v for k, v in all_tasks.items() if k in S.system_manager_ops}
         self.taskListReady.emit([(k, d) for k, (d, _) in self._enabled_tasks.items()])
 
@@ -561,16 +580,22 @@ class SystemManagerThread(QThread):
         d = self.distro
         specs = {"enable_printer_support": ("Initialising printer support…", "cups", d.get_printer_packages),
                  "enable_ssh_service": ("Initialising SSH server…", d.get_ssh_service_name(), d.get_ssh_packages),
-                 "enable_samba_network_filesharing": ("Initialising Samba…", d.get_samba_service_name(), d.get_samba_packages),
+                 "enable_samba_network_filesharing": ("Initialising Samba…", d.get_samba_service_name(),
+                                                      d.get_samba_packages),
                  "enable_bluetooth_service": ("Initialising Bluetooth…", "bluetooth", d.get_bluetooth_packages),
                  "enable_atd_service": ("Initialising atd…", "atd", d.get_at_packages),
-                 "enable_cronie_service": (f"Initialising {d.get_cron_service_name()}…", d.get_cron_service_name(), d.get_cron_packages),
+                 "enable_cronie_service": (f"Initialising {d.get_cron_service_name()}…", d.get_cron_service_name(),
+                                           d.get_cron_packages),
                  "install_snap": ("Installing Snap…", "snapd", d.get_snap_packages),
-                 "enable_ntp_sync": (f"Initialising {d.get_ntp_service_name()}…", d.get_ntp_service_name(), d.get_ntp_packages)}
+                 "enable_ntp_sync": (f"Initialising {d.get_ntp_service_name()}…", d.get_ntp_service_name(),
+                                     d.get_ntp_packages),
+                 "enable_fstrim_timer": ("Enabling SSD TRIM (fstrim.timer)…", "fstrim.timer", lambda: [])}
         if d.firewall_supported():
-            specs["enable_firewall"] = ("Initialising firewall…", d.get_firewall_service_name(), d.get_firewall_packages)
-        return {k: (desc, lambda s=svc, p=pkg_fn: self._setup_service(s, p(), optional=self._OPTIONAL_SVC_PKGS.get(s, ())))
-                for k, (desc, svc, pkg_fn) in specs.items()}
+            specs["enable_firewall"] = ("Initialising firewall…", d.get_firewall_service_name(),
+                                        d.get_firewall_packages)
+        return {
+            k: (desc, lambda s=svc, p=pkg_fn: self._setup_service(s, p(), optional=self._OPTIONAL_SVC_PKGS.get(s, ())))
+            for k, (desc, svc, pkg_fn) in specs.items()}
 
     def _run_all_tasks(self) -> None:
         task_items = list(self._enabled_tasks.items())
@@ -1182,14 +1207,20 @@ class SystemManagerThread(QThread):
                 if self._pkg_cache.is_installed(_fallback):
                     _eff_helper = _fallback
             if _eff_helper:
-                ok = (self._exec([_eff_helper, "--noconfirm"], stream=True).returncode == 0)
-                self._emit_result(ok, "System successfully updated", "System update failed")
-                return ok
+                sys_ok = (self._exec([_eff_helper, "-Syu", "--noconfirm"], stream=True).returncode == 0)
+                if shutil.which("flatpak"):
+                    self.outputReceived.emit("Updating Flatpak apps…", "info")
+                    self._exec(["flatpak", "update", "-y"], stream=True)
+                self._emit_result(sys_ok, "System successfully updated", "System update failed")
+                return sys_ok
 
         cmd_str = self.distro.get_update_system_cmd()
-        ok = (self._exec(cmd_str, stream=True, timeout=None).returncode == 0)
-        self._emit_result(ok, "System successfully updated", "System update failed")
-        return ok
+        sys_ok = (self._exec(cmd_str, stream=True, timeout=None).returncode == 0)
+        if shutil.which("flatpak"):
+            self.outputReceived.emit("Updating Flatpak apps…", "info")
+            self._exec(["flatpak", "update", "-y"], stream=True)
+        self._emit_result(sys_ok, "System successfully updated", "System update failed")
+        return sys_ok
 
     def _set_shell(self) -> bool:
         if not self.distro: return False
@@ -1803,19 +1834,29 @@ class SystemManagerThread(QThread):
 
     def _remove_orphans(self) -> bool:
         if not self.distro: return False
+        ok = True
         cmd = self.distro.get_find_orphans_cmd()
-        if not cmd:
-            self.outputReceived.emit("Orphan removal not supported on this distribution", "info")
-            return True
-        raw = self._exec(cmd, stream=False, timeout=60).stdout.strip()
-        pkgs = self.distro.parse_orphan_output(raw) if raw else []
-        if not pkgs:
-            self.outputReceived.emit("No orphaned packages found", "success")
-            return True
-        self.outputReceived.emit(f"Found orphaned packages: {', '.join(pkgs)}", "info")
-        cmd = self.distro.get_batch_remove_cmd(pkgs)
-        ok = bool(cmd) and (self._exec(cmd, stream=True).returncode == 0)
-        self._emit_result(ok, "Orphaned packages successfully removed", "Could not remove orphaned packages")
+        if cmd:
+            raw = self._exec(cmd, stream=False, timeout=60).stdout.strip()
+            pkgs = self.distro.parse_orphan_output(raw) if raw else []
+            if not pkgs:
+                self.outputReceived.emit("No orphaned system packages found", "success")
+            else:
+                self.outputReceived.emit(f"Found orphaned packages: {', '.join(pkgs)}", "info")
+                rem_cmd = self.distro.get_batch_remove_cmd(pkgs)
+                if rem_cmd:
+                    ok = (self._exec(rem_cmd, stream=True).returncode == 0)
+                    self._emit_result(ok, "Orphaned system packages successfully removed",
+                                      "Could not remove orphaned system packages")
+        else:
+            self.outputReceived.emit("System orphan removal not supported on this distribution", "info")
+
+        if shutil.which("flatpak"):
+            self.outputReceived.emit("Removing unused Flatpak runtimes…", "info")
+            fp_ok = (self._exec(["flatpak", "uninstall", "--unused", "-y"], stream=True).returncode == 0)
+            if not fp_ok:
+                self.outputReceived.emit("Failed to remove unused Flatpak runtimes", "warning")
+
         return ok
 
     def _clean_cache(self) -> bool:
@@ -1834,4 +1875,14 @@ class SystemManagerThread(QThread):
                                       f"{_helper} cache cleaning failed")
                     if not helper_ok:
                         logger.warning("_clean_cache: %s cache cleaning failed (non-critical)", _helper)
+        return ok
+
+    def _clean_journal_logs(self) -> bool:
+        if not shutil.which("journalctl"):
+            self.outputReceived.emit("journalctl not found on this system — skipping", "info")
+            return True
+
+        self.outputReceived.emit("Cleaning systemd journal logs to max 100M…", "info")
+        ok = (self._exec(["sudo", "journalctl", "--vacuum-size=100M"], stream=True).returncode == 0)
+        self._emit_result(ok, "Systemd journal logs successfully cleaned", "Failed to clean systemd journal logs")
         return ok
