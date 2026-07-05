@@ -1788,20 +1788,37 @@ class SystemManagerThread(QThread):
 
     def _enable_service(self, service: str) -> bool:
         if shutil.which("systemctl"):
-            svc = f"{service}.service"
-            self.outputReceived.emit(f"Enabling {svc} (systemd)", "info")
-            if self._exec(["systemctl", "is-active", "--quiet", svc]).returncode == 0:
-                self.outputReceived.emit(f"{svc} already active", "success")
+            unit_suffix = ".timer" if service.endswith(".timer") else ".service"
+            svc = service if service.endswith((".service", ".timer")) else f"{service}{unit_suffix}"
+            base_name = svc.rsplit(".", 1)[0]
+            self.outputReceived.emit(f"Checking {svc} (systemd)", "info")
+
+            is_enabled = self._exec(["systemctl", "is-enabled", "--quiet", svc]).returncode == 0
+            is_active = self._exec(["systemctl", "is-active", "--quiet", svc]).returncode == 0
+
+            if is_enabled and is_active:
+                self.outputReceived.emit(f"{svc} already enabled and active — nothing to do", "success")
                 return True
-            ok = (self._exec(["sudo", "systemctl", "enable", "--now", svc], stream=True).returncode == 0)
+            if is_enabled and not is_active:
+                self.outputReceived.emit(f"{svc} already enabled, starting it now", "info")
+                ok = (self._exec(["sudo", "systemctl", "start", svc], stream=True).returncode == 0)
+            else:
+                self.outputReceived.emit(f"Enabling {svc} (systemd)", "info")
+                ok = (self._exec(["sudo", "systemctl", "enable", "--now", svc], stream=True).returncode == 0)
+            service = base_name
 
         elif shutil.which("rc-update") and shutil.which("rc-service"):
-            self.outputReceived.emit(f"Enabling {service} (OpenRC)", "info")
-            if self._exec(["rc-service", service, "status"]).returncode == 0:
-                self.outputReceived.emit(f"{service} already active", "success")
+            self.outputReceived.emit(f"Checking {service} (OpenRC)", "info")
+            already_enabled = self._exec(["rc-update", "show", "default"], stream=False).stdout.find(service) != -1
+            already_active = self._exec(["rc-service", service, "status"]).returncode == 0
+            if already_enabled and already_active:
+                self.outputReceived.emit(f"{service} already enabled and active", "success")
                 return True
-            self._exec(["sudo", "rc-update", "add", service, "default"], stream=True)
-            ok = (self._exec(["sudo", "rc-service", service, "start"], stream=True).returncode == 0)
+            if not already_enabled:
+                self.outputReceived.emit(f"Enabling {service} (OpenRC)", "info")
+                self._exec(["sudo", "rc-update", "add", service, "default"], stream=True)
+            ok = already_active or (self._exec(["sudo", "rc-service", service, "start"],
+                                                stream=True).returncode == 0)
 
         elif shutil.which("sv") and os.path.isdir("/var/service"):
             self.outputReceived.emit(f"Enabling {service} (runit)", "info")
