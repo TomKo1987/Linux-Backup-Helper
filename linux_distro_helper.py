@@ -322,10 +322,6 @@ class LinuxDistroHelper:
     @staticmethod
     def _read_os_release() -> tuple[str, str, str]:
         d_id = d_name = d_pretty = d_like = ""
-        # Per the freedesktop os-release spec, /etc/os-release should be
-        # preferred but /usr/lib/os-release is the documented fallback for
-        # systems that ship it there (e.g. some minimal/immutable images).
-        last_exc: Exception | None = None
         for path in ("/etc/os-release", "/usr/lib/os-release"):
             try:
                 with open(path, encoding="utf-8") as fh:
