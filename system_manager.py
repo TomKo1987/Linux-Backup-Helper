@@ -58,6 +58,9 @@ _PKG_LOCK_INFO: tuple[tuple[str, str, str], ...] = (
     ("/var/cache/dnf/metadata_lock.pid", "dnf",      "sudo rm -f /var/cache/dnf/metadata_lock.pid"),
     ("/var/lib/rpm/.rpm.lock",           "rpm",      "sudo rm -f /var/lib/rpm/.rpm.lock"),
     ("zypp.lock",                        "zypper",   "sudo rm -f /run/zypp.pid"),
+    ("/var/lib/xbps/.xbps-lock",         "xbps",     "sudo rm -f /var/lib/xbps/.xbps-lock"),
+    ("/lib/apk/db/lock",                 "apk",      "sudo rm -f /lib/apk/db/lock"),
+    (".update_lock",                     "portage",  "sudo rm -f /var/lib/portage/.update_lock"),
 )
 
 
@@ -1227,7 +1230,17 @@ class SystemManagerThread(QThread):
         target = S.effective_shell
         pkg = self.distro.get_shell_package_name(target)
         binary = self.distro.get_shell_binary_name(target)
-        shell = shutil.which(binary) or f"/bin/{binary}"
+
+        def _locate_shell(_binary: str) -> str:
+            found = shutil.which(_binary)
+            if found:
+                return found
+            for candidate in (f"/usr/bin/{_binary}", f"/bin/{_binary}"):
+                if os.path.exists(candidate):
+                    return candidate
+            return f"/usr/bin/{_binary}"
+
+        shell = _locate_shell(binary)
 
         try:
             current = pwd.getpwnam(_USER).pw_shell
@@ -1243,7 +1256,7 @@ class SystemManagerThread(QThread):
         if not self.distro.package_is_installed(pkg):
             self.outputReceived.emit(f"Installing shell package: {pkg}", "info")
             if not self._install_pkg(pkg, "Shell Package"): return False
-            shell = shutil.which(binary) or shell
+            shell = _locate_shell(binary)
 
         if not Path(shell).exists():
             self.outputReceived.emit(f"Shell binary '{shell}' not found.", "error")
@@ -1809,7 +1822,8 @@ class SystemManagerThread(QThread):
 
         elif shutil.which("rc-update") and shutil.which("rc-service"):
             self.outputReceived.emit(f"Checking {service} (OpenRC)", "info")
-            already_enabled = self._exec(["rc-update", "show", "default"], stream=False).stdout.find(service) != -1
+            _rc_show = self._exec(["rc-update", "show", "default"], stream=False).stdout
+            already_enabled = service in _rc_show.split()
             already_active = self._exec(["rc-service", service, "status"]).returncode == 0
             if already_enabled and already_active:
                 self.outputReceived.emit(f"{service} already enabled and active", "success")
@@ -1831,6 +1845,24 @@ class SystemManagerThread(QThread):
                                  stream=True).returncode == 0)
                 if ok:
                     self._exec(["sudo", "sv", "up", service], stream=True)
+
+        elif os.path.isfile(f"/etc/rc.d/rc.{service}"):
+            self.outputReceived.emit(f"Enabling {service} (BSD-style rc.d)", "info")
+            rc_script = f"/etc/rc.d/rc.{service}"
+            if not os.access(rc_script, os.X_OK):
+                ok = (self._exec(["sudo", "chmod", "+x", rc_script], stream=True).returncode == 0)
+                if not ok:
+                    self.outputReceived.emit(f"Failed to make {rc_script} executable", "error")
+            else:
+                ok = True
+            if ok:
+                start_ok = (self._exec(["sudo", rc_script, "start"], stream=True).returncode == 0)
+                if not start_ok:
+                    self.outputReceived.emit(f"{rc_script} start returned non-zero — checking if already running", "warning")
+                    status_ok = (self._exec(["sudo", rc_script, "status"], stream=False).returncode == 0)
+                    if not status_ok:
+                        self.outputReceived.emit(f"{rc_script} does not appear to be running", "error")
+                        ok = False
 
         else:
             self.outputReceived.emit(f"Unsupported init system. Please enable '{service}' manually.", "warning")

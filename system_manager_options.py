@@ -760,7 +760,7 @@ class SystemManagerOptions(QDialog):
                     apply_tooltip(cb, _cb_tip)
 
                 is_arch = key in arch_only
-                unsupported = (is_arch and not self._distro.has_aur) or \
+                unsupported = (is_arch and self._distro.family() != "arch") or \
                               (key == "enable_firewall" and not self._distro.firewall_supported()) or \
                               (key == "enable_ntp_sync" and not self._distro.ntp_supported())
 
@@ -770,7 +770,7 @@ class SystemManagerOptions(QDialog):
                     cb.setChecked(key in S.system_manager_ops)
 
                 if key == "install_aur_helper":
-                    if not (is_arch and not self._distro.has_aur):
+                    if not unsupported:
                         _paru_inst = self._distro.package_is_installed("paru") or bool(shutil.which("paru"))
                         _yay_inst = self._distro.package_is_installed("yay") or bool(shutil.which("yay"))
                         _default_combo_helper = "paru" if _paru_inst else ("yay" if _yay_inst else S.aur_helper)
@@ -789,7 +789,7 @@ class SystemManagerOptions(QDialog):
 
                 elif key == "install_kernels":
                     _install_kernels_cb = cb
-                    if not (is_arch and not self._distro.has_aur):
+                    if not unsupported:
                         grid.addWidget(cb, grid_row, 0, 1, 2)
                         grid_row += 1
 
@@ -839,7 +839,7 @@ class SystemManagerOptions(QDialog):
 
                 elif key == "set_default_kernel":
                     _set_default_cb = cb
-                    if not (is_arch and not self._distro.has_aur):
+                    if not unsupported:
                         grid.addWidget(cb, grid_row, 0)
                         combo = QComboBox()
                         combo.setMinimumHeight(30)
@@ -864,7 +864,7 @@ class SystemManagerOptions(QDialog):
                     grid_row += 1
 
                 else:
-                    if not (is_arch and not self._distro.has_aur):
+                    if not unsupported:
                         grid.addWidget(cb, grid_row, 0, 1, 2)
                         grid_row += 1
 

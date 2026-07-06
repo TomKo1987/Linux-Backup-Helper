@@ -322,21 +322,32 @@ class LinuxDistroHelper:
     @staticmethod
     def _read_os_release() -> tuple[str, str, str]:
         d_id = d_name = d_pretty = d_like = ""
-        try:
-            with open("/etc/os-release", encoding="utf-8") as fh:
-                for line in fh:
-                    k, _, v = line.partition("=")
-                    v = v.strip().strip('"')
-                    if k == "ID":
-                        d_id = v.lower()
-                    elif k == "NAME":
-                        d_name = v
-                    elif k == "PRETTY_NAME":
-                        d_pretty = v
-                    elif k == "ID_LIKE":
-                        d_like = v.lower()
-        except Exception as exc:
-            logger.error("/etc/os-release: %s", exc)
+        # Per the freedesktop os-release spec, /etc/os-release should be
+        # preferred but /usr/lib/os-release is the documented fallback for
+        # systems that ship it there (e.g. some minimal/immutable images).
+        last_exc: Exception | None = None
+        for path in ("/etc/os-release", "/usr/lib/os-release"):
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    for line in fh:
+                        k, _, v = line.partition("=")
+                        v = v.strip().strip('"')
+                        if k == "ID":
+                            d_id = v.lower()
+                        elif k == "NAME":
+                            d_name = v
+                        elif k == "PRETTY_NAME":
+                            d_pretty = v
+                        elif k == "ID_LIKE":
+                            d_like = v.lower()
+                last_exc = None
+                break
+            except Exception as exc:
+                last_exc = exc
+                continue
+
+        if last_exc is not None:
+            logger.error("os-release: %s", last_exc)
             d_id = "unknown"
             d_name = "Unknown Linux Distribution"
             d_pretty = "Unknown Linux Distribution"
@@ -757,12 +768,16 @@ class LinuxDistroHelper:
 
     @staticmethod
     def detect_bootloader() -> str:
-        for cmd in (["bootctl", "--print-esp-path"],
-                    ["sudo", "-n", "bootctl", "--print-esp-path"]):
+        for cmd in (["bootctl", "is-installed"],
+                    ["sudo", "-n", "bootctl", "is-installed"]):
             try:
                 r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-                if r.returncode == 0 and r.stdout.strip():
-                    return "systemd-boot"
+                if r.returncode == 0:
+                    answer = r.stdout.strip().lower()
+                    if answer == "yes":
+                        return "systemd-boot"
+                    if answer == "no":
+                        break
             except FileNotFoundError:
                 break
             except (OSError, subprocess.SubprocessError):

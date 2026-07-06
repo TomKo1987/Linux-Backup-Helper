@@ -119,7 +119,7 @@ def _check_destination_space(tasks: list[tuple]) -> list[str]:
 
 
 _CACHE_MISS = object()
-_O_NOATIME  = os.O_NOATIME
+_O_NOATIME  = getattr(os, "O_NOATIME", 0)
 _PID        = os.getpid()
 _tls        = threading.local()
 _TIME_CHECK_EVERY = 32
@@ -440,8 +440,10 @@ def _copy_file(src, dst, cancel):
             if not _ensure_dir(os.path.dirname(dst)):
                 return "error", "Directory could not be created", 0
 
+            _euid = os.geteuid()
+            _may_use_noatime = _euid == 0 or st.st_uid == _euid
             try:
-                rfd = os.open(src, os.O_RDONLY | _O_NOATIME)
+                rfd = os.open(src, os.O_RDONLY | (_O_NOATIME if _may_use_noatime else 0))
             except OSError:
                 rfd = os.open(src, os.O_RDONLY)
 
