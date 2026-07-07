@@ -95,13 +95,31 @@ class _DryRunWorker(QThread):
                     if _SKIP_RE.search(fname):
                         continue
                     src_file = Path(dirpath) / fname
-                    if str(src_file.resolve()) in excl_set:
+                    src_file_str = str(src_file)
+                    if src_file_str in excl_set or str(src_file.resolve()) in excl_set:
                         continue
                     try:
                         rel = src_file.relative_to(src_p)
                     except ValueError:
                         continue
                     dst_file = dst_p / rel
+
+                    if os.path.islink(src_file_str):
+                        try:
+                            target = os.readlink(src_file_str)
+                        except OSError as e:
+                            errors.append((str(rel), str(e)))
+                            continue
+
+                        dst_file_str = str(dst_file)
+                        if not os.path.lexists(dst_file_str):
+                            to_copy.append((str(rel), "new"))
+                        elif os.path.islink(dst_file_str) and os.readlink(dst_file_str) == target:
+                            to_skip.append(str(rel))
+                        else:
+                            to_copy.append((str(rel), "modified"))
+                        continue
+
                     try:
                         src_stat = src_file.stat()
                     except OSError as e:

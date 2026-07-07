@@ -306,6 +306,17 @@ class SchedulerDialog(_StandardKeysMixin, QDialog):
         interval_key = self._combo.currentText()
         headers = [h for cb, h in self._checks if cb.isChecked()]
 
+        if self._checks and not headers:
+            QMessageBox.warning(
+                self,
+                "No backup groups selected",
+                "No backup group is checked, so the scheduled backup would run "
+                "with no scope and back up everything instead of nothing.\n\n"
+                "Please select at least one backup group, or uncheck all groups "
+                "only if you actually intend to back up all entries."
+            )
+            return
+
         on_cal = self._build_on_calendar(interval_key)
 
         ok, err = install_timer(
