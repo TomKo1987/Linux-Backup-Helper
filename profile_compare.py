@@ -290,8 +290,8 @@ class ProfileCompareDialog(_StandardKeysMixin, QDialog):
                                     sorted(ops_a & ops_b)),
                    f"System Manager Ops ({len(ops_a)} / {len(ops_b)})")
 
-        mounts_a = {m.get("path", "") for m in (fa.get("mount_options", []) or []) if isinstance(m, dict)}
-        mounts_b = {m.get("path", "") for m in (fb.get("mount_options", []) or []) if isinstance(m, dict)}
+        mounts_a = {m.get("mount_path", "") for m in (fa.get("mount_options", []) or []) if isinstance(m, dict)}
+        mounts_b = {m.get("mount_path", "") for m in (fb.get("mount_options", []) or []) if isinstance(m, dict)}
         mounts_a.discard("")
         mounts_b.discard("")
         sub.addTab(_DiffListWidget(name_a, name_b,

@@ -1172,6 +1172,26 @@ class CopyWorker(QThread):
                 logger.error("Hook error [%s]: %s", entry_title, err)
         return ok or not abort
 
+    def _run_pre_hooks(self, tasks: list) -> set[str]:
+        skip_titles: set[str] = set()
+        seen: set[str] = set()
+        for _s, _d, _t, _exc in tasks:
+            if _t and _t not in seen:
+                seen.add(_t)
+                _pre, _ = self._hooks.get(_t, ([], []))
+                if _pre and not self._fire_hooks(_t, "pre", _pre, abort=True):
+                    skip_titles.add(_t)
+        return skip_titles
+
+    def _run_post_hooks(self, tasks: list) -> None:
+        seen: set[str] = set()
+        for _s, _d, _t, _exc in tasks:
+            if _t and _t not in seen:
+                seen.add(_t)
+                _, _post = self._hooks.get(_t, ([], []))
+                if _post:
+                    self._fire_hooks(_t, "post", _post, abort=False)
+
     def run(self) -> None:
         with _seen_dirs_lock:
             _seen_dirs_global.clear()
@@ -1199,32 +1219,16 @@ class CopyWorker(QThread):
             if not smb_tasks:
                 flusher = _Flusher(self.batch_update, 0)
                 tracker = _EntryTracker()
-                if local_tasks and not self._cancel.is_set():
-                    skip_titles: set[str] = set()
-                    seen_pre: set[str] = set()
-                    for _s, _d, _t, _exc in local_tasks:
-                        if _t and _t not in seen_pre:
-                            seen_pre.add(_t)
-                            _pre, _ = self._hooks.get(_t, ([], []))
-                            if _pre and not self._fire_hooks(_t, "pre", _pre, abort=True):
-                                skip_titles.add(_t)
-                    active_local = [(s, d, t, e) for s, d, t, e in local_tasks
-                                    if t not in skip_titles]
-                    if active_local and not self._cancel.is_set():
-                        self._scan_copy_local_pipelined(active_local, flusher, tracker)
-                    else:
-                        self.scan_finished.emit(0)
-                    seen_post: set[str] = set()
-                    for _s, _d, _t, _exc in local_tasks:
-                        if _t and _t not in seen_post:
-                            seen_post.add(_t)
-                            _, _post = self._hooks.get(_t, ([], []))
-                            if _post:
-                                self._fire_hooks(_t, "post", _post, abort=False)
+                skip_titles = self._run_pre_hooks(local_tasks + ssh_tasks) if not self._cancel.is_set() else set()
+                active_local = [(s, d, t, e) for s, d, t, e in local_tasks if t not in skip_titles]
+                active_ssh = [(s, d, t, e) for s, d, t, e in ssh_tasks if t not in skip_titles]
+                if active_local and not self._cancel.is_set():
+                    self._scan_copy_local_pipelined(active_local, flusher, tracker)
                 else:
                     self.scan_finished.emit(0)
-                if ssh_tasks and not self._cancel.is_set():
-                    self._copy_ssh_tasks(ssh_tasks, flusher, tracker)
+                if active_ssh and not self._cancel.is_set():
+                    self._copy_ssh_tasks(active_ssh, flusher, tracker)
+                self._run_post_hooks(local_tasks + ssh_tasks)
                 flusher.flush()
                 tracker.emit_all(self.entry_status)
                 cancelled = self._cancel.is_set()
@@ -1236,6 +1240,11 @@ class CopyWorker(QThread):
             smb_expanded: list[_SmbJob] = []
             smb_errors: list[tuple[str, str]] = []
             _guest_box: list[bool] = [False]
+
+            skip_titles = self._run_pre_hooks(local_tasks + ssh_tasks + smb_tasks) if not self._cancel.is_set() else set()
+            local_tasks = [(s, d, t, e) for s, d, t, e in local_tasks if t not in skip_titles]
+            ssh_tasks = [(s, d, t, e) for s, d, t, e in ssh_tasks if t not in skip_titles]
+            smb_tasks = [(s, d, t, e) for s, d, t, e in smb_tasks if t not in skip_titles]
 
             def _phase1_local() -> None:
                 nonlocal local_items
@@ -1307,6 +1316,10 @@ class CopyWorker(QThread):
                 futs = [pool.submit(_phase2_local), pool.submit(_phase2_smb)]
                 _run_futures(futs, self._cancel, "Phase-2")
 
+            if ssh_tasks and not self._cancel.is_set():
+                self._copy_ssh_tasks(ssh_tasks, flusher, tracker)
+
+            self._run_post_hooks(local_tasks + ssh_tasks + smb_tasks)
             flusher.flush()
             tracker.emit_all(self.entry_status)
             cancelled = self._cancel.is_set()
@@ -1319,17 +1332,20 @@ class CopyWorker(QThread):
                 pw.clear()
 
     def _copy_ssh_tasks(
-        self,
-        tasks: list[tuple[str, str, str]],
-        flusher: "_Flusher",
-        tracker: "_EntryTracker",
+            self,
+            tasks: list[tuple[str, str, str, frozenset]],
+            flusher: "_Flusher",
+            tracker: "_EntryTracker",
     ) -> None:
         for src, dst, title, *_ in tasks:
             if self._cancel.is_set():
                 break
 
             self.scan_progress.emit(f"rsync  {title or src}", 0)
-            cmd = build_rsync_cmd(src, dst)
+
+            excludes = list(_[0]) if _ and _[0] else None
+
+            cmd = build_rsync_cmd(src, dst, exclude=excludes)
             logger.debug("_copy_ssh_tasks: %s", " ".join(cmd))
 
             try:

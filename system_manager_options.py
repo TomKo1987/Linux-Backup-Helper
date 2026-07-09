@@ -1262,7 +1262,6 @@ class SystemManagerOptions(QDialog):
             _aur_cb.stateChanged.connect(lambda _: _sync_aur_combo())
             _sync_aur_combo()
 
-        aur_cb = next((c for c, k in widgets if k == "install_aur_packages"), None)
         enabled_widgets = [c for c, _ in widgets if c.isEnabled() and c.isVisible()]
 
         def _sync_sa():
@@ -1683,16 +1682,14 @@ class SystemManagerOptions(QDialog):
         def _apply_search(txt: str) -> None:
             txt_lower = txt.lower()
             visible_sessions: set[str] = set()
-            for _cb in checkboxes:
+            for _cb, _p in zip(checkboxes, packages):
                 visible = txt_lower in _cb.text().lower()
                 _cb.setVisible(visible)
                 parent_widget = _cb.parentWidget()
                 if parent_widget is not None:
                     parent_widget.setVisible(visible)
-                if visible and is_specific:
-                    _p = packages[checkboxes.index(_cb)]
-                    if isinstance(_p, dict):
-                        visible_sessions.add(_p.get("session", ""))
+                if visible and is_specific and isinstance(_p, dict):
+                    visible_sessions.add(_p.get("session", ""))
             if is_specific:
                 for _sess, hdr_lbl in session_headers.items():
                     hdr_lbl.setVisible(not txt_lower or _sess in visible_sessions)
@@ -2147,7 +2144,9 @@ class SystemManagerLauncher:
             display_num += 1
             tooltip = tips.get(key, "")
 
+            is_firewall_tip = False
             if key == "enable_firewall":
+                is_firewall_tip = True
                 rules = S.firewall_config.get("rules", [])
                 if rules:
                     lines = ["<b>Firewall Rules:</b>"]
@@ -2180,7 +2179,7 @@ class SystemManagerLauncher:
             lbl.setTextFormat(Qt.TextFormat.RichText)
             lbl.setStyleSheet(style_label_mono(font_size=font_sz(2)))
             lbl.setAlignment(Qt.AlignmentFlag.AlignLeft)
-            apply_tooltip(lbl, tooltip)
+            apply_tooltip(lbl, tooltip, wrap=not is_firewall_tip)
             row.addWidget(num)
             row.addWidget(lbl)
             row.addStretch(1)
