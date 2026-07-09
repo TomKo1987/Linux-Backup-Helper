@@ -316,7 +316,7 @@ def _lookup(table: dict, family: str) -> list[Any] | None | Any:
 class LinuxDistroHelper:
 
     def __init__(self) -> None:
-        self.distro_id, self.distro_name, self.distro_pretty_name = self._read_os_release()
+        self.distro_id, _, self.distro_pretty_name = self._read_os_release()
         self._init_pkg()
 
     @staticmethod
@@ -377,8 +377,6 @@ class LinuxDistroHelper:
     def family(self) -> str: return self._family
 
     def pkg_manager_name(self) -> str: return _PKG_MGR_NAME.get(self.family(), "unknown")
-
-    def supports_aur(self) -> bool: return self.has_aur
 
     @staticmethod
     def valid(name: str) -> bool:
@@ -612,7 +610,6 @@ class LinuxDistroHelper:
 
     def get_firewall_packages(self) -> list[Any] | None | Any: return _lookup(self._FIREWALL_PKGS, self.family())
     def get_firewall_service_name(self) -> str: return self._FIREWALL_SVC.get(self.family()) or self._FIREWALL_SVC[None]
-    def firewall_backend(self) -> str: return self.get_firewall_service_name()
     def firewall_supported(self) -> bool: return bool(self.get_firewall_packages())
 
     _NTP_PKGS: dict = {

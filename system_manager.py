@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
 )
 
 from dotfiles_manager import first_path
+from firewall_rules import build_firewalld_commands, build_ufw_commands
 from linux_distro_helper import LinuxDistroHelper, ARCH_KERNEL_VARIANTS
 from state import S, _HOME, _USER, logger, apply_replacements, _ANSI_RE, active_pkg_names, active_dotfiles
 from themes import current_theme, font_sz
@@ -593,9 +594,11 @@ class SystemManagerThread(QThread):
                  "enable_ntp_sync": (f"Initialising {d.get_ntp_service_name()}…", d.get_ntp_service_name(),
                                      d.get_ntp_packages),
                  "enable_fstrim_timer": ("Enabling SSD TRIM (fstrim.timer)…", "fstrim.timer", lambda: [])}
-        if d.firewall_supported():
-            specs["enable_firewall"] = ("Initialising firewall…", d.get_firewall_service_name(),
-                                        d.get_firewall_packages)
+        if d.firewall_supported() or S.firewall_config.get("backend"):
+            fw_backend = S.firewall_config.get("backend") or d.get_firewall_service_name()
+            fw_pkgs = ["ufw"] if fw_backend == "ufw" else ["firewalld"]
+            specs["enable_firewall"] = ("Initialising firewall…", fw_backend, lambda: fw_pkgs)
+
         return {
             k: (desc, lambda s=svc, p=pkg_fn: self._setup_service(s, p(), optional=self._OPTIONAL_SVC_PKGS.get(s, ())))
             for k, (desc, svc, pkg_fn) in specs.items()}
@@ -1871,12 +1874,15 @@ class SystemManagerThread(QThread):
         if ok:
             self.outputReceived.emit(f"{service} successfully enabled", "success")
             if service == "ufw":
-                for c in (["sudo", "ufw", "default", "deny"], ["sudo", "ufw", "enable"], ["sudo", "ufw", "reload"]):
+                cmds = build_ufw_commands(S.firewall_config.get("rules", []))
+                for c in cmds:
                     if self._exec(c, stream=True).returncode != 0: return False
+
             elif service == "firewalld":
-                for c in (["sudo", "firewall-cmd", "--set-default-zone=drop"],
-                          ["sudo", "firewall-cmd", "--reload"]):
+                cmds = build_firewalld_commands(S.firewall_config.get("rules", []))
+                for c in cmds:
                     if self._exec(c, stream=True).returncode != 0: return False
+
         else:
             self.outputReceived.emit(f"Failed to enable {service}", "error")
         return ok

@@ -21,7 +21,6 @@ from state import (
 from themes import current_theme, font_sz
 from ui_utils import sep, _StandardKeysMixin
 
-_VER_RE = re.compile(r"[-_]\d[\w.+~:-]*$")
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 
@@ -32,9 +31,6 @@ def _run(cmd: list[str], timeout: int = 25) -> list[str]:
     except Exception as exc:
         logger.warning("capture_verify._run %s: %s", cmd[0] if cmd else "?", exc)
         return []
-
-
-def _strip_ver(name: str) -> str: return _VER_RE.sub("", name).strip()
 
 
 def _clean_title(text: str) -> str: return _HTML_TAG_RE.sub(" ", text).strip()

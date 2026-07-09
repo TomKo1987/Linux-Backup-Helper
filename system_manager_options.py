@@ -16,11 +16,13 @@ if TYPE_CHECKING:
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QFontMetrics
 from PyQt6.QtWidgets import (
+    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
     QFrame, QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea, QTextEdit,
     QFileDialog, QFormLayout, QGridLayout, QHBoxLayout, QVBoxLayout, QProgressDialog,
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QSizePolicy, QWidget
 )
 
+from firewall_rules import normalize_rule
 from linux_distro_helper import LinuxDistroHelper, SESSIONS, USER_SHELLS, ARCH_KERNEL_VARIANTS, is_valid_pkg_name
 from state import S, _HOME, _USER, apply_replacements, save_profile, sort_pkg_list, sort_specific_pkg_list, logger
 from dotfiles_manager import first_path
@@ -189,7 +191,7 @@ def _compute_op_status(distro: LinuxDistroHelper, aur_helper_installed: bool, sy
     _ik: set = installed_kernels if installed_kernels is not None else distro.detect_installed_kernel_variants()
     targets_kti = S.effective_kernels
     status["kernels_all_installed"] = (
-                not targets_kti or all(v in _ik for v in targets_kti if v in ARCH_KERNEL_VARIANTS))
+            not targets_kti or all(v in _ik for v in targets_kti if v in ARCH_KERNEL_VARIANTS))
 
     if distro.family() == "arch":
         future_kernels = _ik.union(set(targets_kti))
@@ -215,8 +217,8 @@ def _compute_op_status(distro: LinuxDistroHelper, aur_helper_installed: bool, sy
 def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, aur_helper_installed: bool | None = None,
                    system_default_variant: str | None = None, op_status: dict | None = None,
                    installed_kernels: set | None = None, kernels_to_install_override: list | None = None,
-                   default_kernel_override: str | None = None, aur_helper_override: str | None = None) -> dict[str, tuple[str, str]]:
-
+                   default_kernel_override: str | None = None, aur_helper_override: str | None = None) -> dict[
+    str, tuple[str, str]]:
     helper = aur_helper_override or S.aur_helper
     tips = sm_tooltips()
     _NO_CHANGE = " (No changes necessary.)"
@@ -294,7 +296,7 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, aur_he
     dk_pkg = dk or system_default_variant or "(not selected)"
     sys_def_info = f" [System default: {system_default_variant}]" if system_default_variant and system_default_variant != dk_pkg else ""
     dk_note = " (Is already default. No changes necessary.)" if (
-                op_status and op_status.get("default_kernel_ok")) else sys_def_info
+            op_status and op_status.get("default_kernel_ok")) else sys_def_info
 
     return {"copy_dotfiles": ("Copy 'Dotfiles' (Using 'sudo cp')", _tip("copy_dotfiles")),
             "update_mirrors": (
@@ -355,7 +357,7 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, aur_he
                 _tip("enable_ntp_sync")),
             "enable_firewall": (
                 f"Initialise firewall (Install '{pkglist(distro.get_firewall_packages)}'. "
-                f"Enable & start '{distro.get_firewall_service_name()}.service', set to 'deny all by default')",
+                f"Enable & start '{distro.get_firewall_service_name()}.service' and apply rules.)",
                 _tip("enable_firewall")),
             "enable_fstrim_timer": ("Enable periodic SSD TRIM (Enable & start 'fstrim.timer')",
                                     _tip("enable_fstrim_timer")),
@@ -561,6 +563,252 @@ class PackageVerifierThread(QThread):
             self.result.emit(valid, invalid)
 
 
+class RuleDialog(QDialog):
+    def __init__(self, parent=None, rule=None):
+        super().__init__(parent)
+        self.setWindowTitle("Edit Rule" if rule else "Add Rule")
+        self.rule = rule or {}
+        self.setMinimumWidth(400)
+        lay = QFormLayout(self)
+
+        self.action_cb = QComboBox()
+        self.action_cb.addItems(["allow", "deny", "reject", "limit", "default allow", "default deny"])
+        self.action_cb.setCurrentText(self.rule.get("action", "allow"))
+
+        self.dir_cb = QComboBox()
+        self.dir_cb.addItems(["in", "out"])
+        self.dir_cb.setCurrentText(self.rule.get("direction", "in"))
+
+        self.proto_cb = QComboBox()
+        self.proto_cb.addItems(["both", "tcp", "udp"])
+        self.proto_cb.setCurrentText(self.rule.get("proto", "both"))
+
+        self.src_ed = QLineEdit(str(self.rule.get("source", "")))
+        self.src_ed.setPlaceholderText("e.g. 192.168.0.0/24 or any")
+
+        self.port_ed = QLineEdit(str(self.rule.get("port", "")))
+        self.port_ed.setPlaceholderText("e.g. 1982")
+
+        self.comment_ed = QLineEdit(str(self.rule.get("comment", "")))
+        self.comment_ed.setPlaceholderText("e.g. Yeelight Discovery")
+
+        lay.addRow("Action:", self.action_cb)
+        lay.addRow("Direction:", self.dir_cb)
+        lay.addRow("Protocol:", self.proto_cb)
+        lay.addRow("Source:", self.src_ed)
+        lay.addRow("Port:", self.port_ed)
+        lay.addRow("Comment:", self.comment_ed)
+
+        lay.addWidget(ok_cancel_buttons(self, self.accept))
+
+    def get_rule(self):
+        return normalize_rule({
+            "action": self.action_cb.currentText(),
+            "direction": self.dir_cb.currentText(),
+            "proto": self.proto_cb.currentText(),
+            "source": self.src_ed.text().strip(),
+            "port": self.port_ed.text().strip(),
+            "comment": self.comment_ed.text().strip()
+        })
+
+
+class FirewallSettingsDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Firewall Settings")
+        self.setMinimumSize(1250, 1000)
+        self.rules = [normalize_rule(r) for r in S.firewall_config.get("rules", [])]
+
+        lay = QVBoxLayout(self)
+        top_row = QHBoxLayout()
+        top_row.addWidget(QLabel("Firewall Backend:"))
+
+        self.backend_cb = QComboBox()
+        self.backend_cb.addItems(["ufw", "firewalld"])
+
+        saved_backend = S.firewall_config.get("backend", "")
+        initial_backend = saved_backend if saved_backend in ("ufw",
+                                                             "firewalld") else LinuxDistroHelper().get_firewall_service_name()
+        if initial_backend in ("ufw", "firewalld"):
+            self.backend_cb.setCurrentText(initial_backend)
+
+        top_row.addWidget(self.backend_cb)
+        top_row.addStretch()
+        lay.addLayout(top_row)
+
+        quick_row = QHBoxLayout()
+        quick_row.addWidget(QLabel("Raw Rule:"))
+        self.raw_input = QLineEdit()
+        self.raw_input.setPlaceholderText(
+            "e.g. sudo ufw default deny  OR  sudo ufw allow in from 192.168.0.0/24 to any port 1982 proto udp comment 'Yeelight'")
+        self.raw_input.returnPressed.connect(self._add_raw_rule)
+        quick_add_btn = QPushButton("Quick Add")
+        quick_add_btn.clicked.connect(self._add_raw_rule)
+        quick_row.addWidget(self.raw_input, 1)
+        quick_row.addWidget(quick_add_btn)
+        lay.addLayout(quick_row)
+
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(["Action", "Dir", "Proto", "Source", "Port", "Comment"])
+
+        header = self.table.horizontalHeader()
+        if header is not None:
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        lay.addWidget(self.table)
+
+        self._refresh_table()
+
+        btn_row = QHBoxLayout()
+        add_btn = QPushButton("Add Rule")
+        add_btn.clicked.connect(self._add_rule)
+        edit_btn = QPushButton("Edit Rule")
+        edit_btn.clicked.connect(self._edit_rule)
+        del_btn = QPushButton("Remove Rule")
+        del_btn.clicked.connect(self._del_rule)
+
+        btn_row.addWidget(add_btn)
+        btn_row.addWidget(edit_btn)
+        btn_row.addWidget(del_btn)
+        lay.addLayout(btn_row)
+
+        lay.addWidget(ok_cancel_buttons(self, self._save))
+
+    def _refresh_table(self):
+        self.table.setRowCount(len(self.rules))
+        for i, r in enumerate(self.rules):
+            self.table.setItem(i, 0, QTableWidgetItem(str(r.get("action", ""))))
+            self.table.setItem(i, 1, QTableWidgetItem(str(r.get("direction", ""))))
+            self.table.setItem(i, 2, QTableWidgetItem(str(r.get("proto", ""))))
+            self.table.setItem(i, 3, QTableWidgetItem(str(r.get("source", ""))))
+            self.table.setItem(i, 4, QTableWidgetItem(str(r.get("port", ""))))
+            self.table.setItem(i, 5, QTableWidgetItem(str(r.get("comment", ""))))
+
+    def _add_raw_rule(self):
+        raw = self.raw_input.text().strip()
+        if not raw: return
+
+        rule = {"action": "allow", "direction": "in", "proto": "both", "source": "", "port": "", "comment": ""}
+        success = True
+
+        try:
+            tokens = shlex.split(raw)
+        except ValueError:
+            tokens = []
+            success = False
+
+        if tokens and tokens[0] == "sudo": tokens.pop(0)
+        if tokens and tokens[0] == "ufw": tokens.pop(0)
+
+        if not tokens:
+            success = False
+        elif tokens[0].lower() == "default":
+            tokens.pop(0)
+            if tokens and tokens[0].lower() in ["allow", "deny", "reject"]:
+                rule["action"] = f"default {tokens.pop(0).lower()}"
+            else:
+                success = False
+
+            if success and tokens and tokens[0].lower() in ["in", "out", "incoming", "outgoing"]:
+                dir_val = tokens.pop(0).lower()
+                rule["direction"] = "in" if dir_val in ["in", "incoming"] else "out"
+            elif success:
+                rule["direction"] = "in"
+
+            if success and tokens:
+                success = False
+
+            if success:
+                rule["comment"] = "Default Policy"
+
+        else:
+            action = tokens.pop(0).lower()
+            if action in ["allow", "deny", "reject", "limit"]:
+                rule["action"] = action
+            else:
+                success = False
+
+            if success and tokens and tokens[0].lower() in ["in", "out", "incoming", "outgoing"]:
+                dir_val = tokens.pop(0).lower()
+                rule["direction"] = "in" if dir_val in ["in", "incoming"] else "out"
+
+            i = 0
+            while success and i < len(tokens):
+                tok = tokens[i].lower()
+                if tok == "from" and i + 1 < len(tokens):
+                    rule["source"] = tokens[i + 1]
+                    if rule["source"].lower() == "any": rule["source"] = ""
+                    i += 2
+                elif tok == "to":
+                    i += 1
+                    if i < len(tokens) and tokens[i].lower() == "any":
+                        i += 1
+                    else:
+                        success = False
+                elif tok == "port" and i + 1 < len(tokens):
+                    rule["port"] = tokens[i + 1]
+                    i += 2
+                elif tok == "proto" and i + 1 < len(tokens):
+                    p = tokens[i + 1].lower()
+                    if p in ["tcp", "udp", "both"]:
+                        rule["proto"] = p
+                    else:
+                        success = False
+                    i += 2
+                elif tok == "comment" and i + 1 < len(tokens):
+                    rule["comment"] = " ".join(tokens[i + 1:])
+                    i = len(tokens)
+                else:
+                    success = False
+
+        if success:
+            self.rules.append(normalize_rule(rule))
+            self._refresh_table()
+            self.raw_input.clear()
+        else:
+            dlg = RuleDialog(self, rule)
+            if dlg.exec() == QDialog.DialogCode.Accepted:
+                self.rules.append(dlg.get_rule())
+                self._refresh_table()
+                self.raw_input.clear()
+
+    def _add_rule(self):
+        dlg = RuleDialog(self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.rules.append(dlg.get_rule())
+            self._refresh_table()
+
+    def _edit_rule(self):
+        row = self.table.currentRow()
+        if row < 0: return
+        dlg = RuleDialog(self, self.rules[row])
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.rules[row] = dlg.get_rule()
+            self._refresh_table()
+
+    def _del_rule(self):
+        row = self.table.currentRow()
+        if row < 0: return
+        del self.rules[row]
+        self._refresh_table()
+
+    def _save(self):
+        S.firewall_config = {
+            "backend": self.backend_cb.currentText(),
+            "rules": self.rules
+        }
+        save_profile()
+        self.accept()
+
+
 class SystemManagerOptions(QDialog):
 
     def __init__(self, _parent=None, distro: LinuxDistroHelper | None = None):
@@ -571,7 +819,7 @@ class SystemManagerOptions(QDialog):
         self._session = self._distro.detect_session()
         self._aur_helper_installed: bool | None = None
         self._build()
-        
+
     def _build(self) -> None:
         lay = QVBoxLayout(self)
         if self._distro.has_aur:
@@ -648,7 +896,8 @@ class SystemManagerOptions(QDialog):
 
         _saved_default_variant = S.default_kernel or _system_default_variant
 
-        arch_only = {"update_mirrors", "install_aur_helper", "install_aur_packages", "install_kernels", "set_default_kernel"}
+        arch_only = {"update_mirrors", "install_aur_helper", "install_aur_packages", "install_kernels",
+                     "set_default_kernel"}
         _installed_kernels = self._distro.detect_installed_kernel_variants()
         _installed_kernels.add(current_variant)
 
@@ -863,6 +1112,19 @@ class SystemManagerOptions(QDialog):
                     _user_shell_combo = combo
                     grid_row += 1
 
+                elif key == "enable_firewall":
+                    if not unsupported:
+                        grid.addWidget(cb, grid_row, 0)
+                        fw_btn = QPushButton("Firewall Settings")
+                        fw_btn.setEnabled(cb.isEnabled() and cb.isChecked())
+                        fw_btn.setMinimumHeight(30)
+                        fw_btn.setFixedWidth(200)
+                        cb.stateChanged.connect(
+                            lambda state, b=fw_btn: b.setEnabled(state == Qt.CheckState.Checked.value))
+                        fw_btn.clicked.connect(lambda: FirewallSettingsDialog(self).exec())
+                        grid.addWidget(fw_btn, grid_row, 1)
+                        grid_row += 1
+
                 else:
                     if not unsupported:
                         grid.addWidget(cb, grid_row, 0, 1, 2)
@@ -882,8 +1144,8 @@ class SystemManagerOptions(QDialog):
                 _dyn_status = dict(_op_status)
                 if aur_override is not None:
                     _dyn_status["aur_helper_installed"] = (
-                        self._distro.package_is_installed(aur_override)
-                        or shutil.which(aur_override) is not None
+                            self._distro.package_is_installed(aur_override)
+                            or shutil.which(aur_override) is not None
                     )
                 _dyn_status["kernels_all_installed"] = not any(
                     v for v in currently_selected if v not in _installed_kernels)
@@ -1466,7 +1728,6 @@ class SystemManagerOptions(QDialog):
         for lbl, fn in [("📥 Import", lambda: self._import_pkgs(pkg_type)),
                         ("📤 Export", lambda: self._export_pkgs(pkg_type)),
                         ("🔎 Verify Package(s)", lambda: self._verify_pkgs(pkg_type, dlg))]:
-
             b = QPushButton(lbl)
             b.clicked.connect(make_io_slot(fn, lbl))
             io_row.addWidget(b)
@@ -1885,6 +2146,28 @@ class SystemManagerLauncher:
                 continue
             display_num += 1
             tooltip = tips.get(key, "")
+
+            if key == "enable_firewall":
+                rules = S.firewall_config.get("rules", [])
+                if rules:
+                    lines = ["<b>Firewall Rules:</b>"]
+                    for r in rules:
+                        action = r.get("action", "allow")
+                        direction = r.get("direction", "in")
+                        port = r.get("port", "")
+                        port_str = f"port: {port}" if port else ""
+                        proto = r.get("proto", "")
+                        proto_str = f"proto: {proto}" if proto and proto != "both" else ""
+                        src = r.get("source", "")
+                        src_str = f"src: {src}" if src else ""
+                        comment = f"<i>({r.get('comment', '')})</i>" if r.get('comment') else ""
+
+                        parts = [p for p in [action, direction, port_str, proto_str, src_str, comment] if p]
+                        lines.append(f"• {' | '.join(parts)}")
+                    tooltip = "<br>".join(lines)
+                else:
+                    tooltip = "No custom firewall rules configured."
+
             has_tip = bool(tooltip)
             colour, decoration = style_op_label(has_tip)
             icon = "󰔨 " if has_tip else ""

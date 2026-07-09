@@ -285,7 +285,6 @@ class SambaPasswordDialog(_StandardKeysMixin, QDialog):
         self._error_dialog = QErrorMessage(self)
         self._first_setup = first_setup
         self._kwallet_avail = kwallet_available
-        self._from_kwallet = from_kwallet
         self._has_credentials = has_credentials
 
         self._build_ui(username, from_kwallet)

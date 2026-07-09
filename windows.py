@@ -519,9 +519,14 @@ class SettingsWindow(_BaseCheckboxWindow):
         DiskAnalyzerDialog(self).exec()
 
     def _change_theme(self) -> None:
+        if self._theme_dlg is not None:
+            self._theme_dlg.raise_()
+            self._theme_dlg.activateWindow()
+            return
         dlg = _ThemeDialog(self)
         self._theme_dlg = dlg
         dlg.changed.connect(self.done)
+        dlg.destroyed.connect(lambda: setattr(self, "_theme_dlg", None))
         dlg.show()
         dlg.raise_()
         dlg.activateWindow()

@@ -134,7 +134,7 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
         return btn
 
     def _open_notes(self) -> None:
-        NotesDialog(self).show()
+        NotesDialog(self).exec()
 
     def _refresh_status_panel(self) -> None:
         if self._status_panel is not None:

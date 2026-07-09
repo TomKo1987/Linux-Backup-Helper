@@ -129,6 +129,7 @@ class State:
                                               "backup_window_columns": 2, "restore_window_columns": 2,
                                               "settings_window_columns": 2})
     notes: str = ""
+    firewall_config: dict = field(default_factory=dict)
 
     def reset_to_fresh(self) -> None:
         fresh = State()
@@ -352,6 +353,10 @@ def _parse_profile_data(path: Path, data: dict) -> tuple[dict, bool]:
 
     new_notes = str(data.get("notes", ""))
 
+    new_firewall_config = data.get("firewall_config", {})
+    if not isinstance(new_firewall_config, dict):
+        new_firewall_config = {}
+
     fields = {
         "profile_name": new_name,
         "headers": new_headers,
@@ -368,6 +373,7 @@ def _parse_profile_data(path: Path, data: dict) -> tuple[dict, bool]:
         "kernels_to_install": new_kti,
         "ui": new_ui,
         "notes": new_notes,
+        "firewall_config": new_firewall_config,
     }
     return fields, _needs_migration
 
@@ -391,6 +397,7 @@ def _load_profile_from_data(path: Path, data: dict) -> bool:
         S.kernels_to_install = fields["kernels_to_install"]
         S.ui = fields["ui"]
         S.notes = fields["notes"]
+        S.firewall_config = fields["firewall_config"]
 
         if needs_migration:
             try:
@@ -453,7 +460,8 @@ def save_profile(path: Path | None = None) -> bool:
             S.specific_packages, key=lambda x: str(x.get("package", "") if isinstance(x, dict) else x).lower()),
         "ui_settings": S.ui,
         "user_shell": S.user_shell,
-        "aur_helper": S.aur_helper, 
+        "aur_helper": S.aur_helper,
+        "firewall_config": S.firewall_config,
         "entries": sorted(
             S.entries,
             key=lambda e: (e.get("header", "").lower(), e.get("title", "").lower(), str(e.get("source", "")))
