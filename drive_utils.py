@@ -134,8 +134,10 @@ def _execute_drive_op(drive: dict, cmd_key: str, timeout: int) -> tuple[bool, st
             return True, ""
         return False, result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
     except subprocess.TimeoutExpired:
+        logger.debug("_execute_drive_op: '%s' (%s) timed out after %ds", name, cmd_key, timeout)
         return False, f"Timed out after {timeout}s"
     except Exception as e:
+        logger.debug("_execute_drive_op: '%s' (%s) raised %s: %s", name, cmd_key, type(e).__name__, e)
         return False, str(e)
 
 

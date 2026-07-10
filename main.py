@@ -150,6 +150,7 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
             if setup_fn:
                 setup_fn(dlg)
             result = dlg.exec()
+            dlg.deleteLater() 
             if result != RESTART_DIALOG:
                 break
         self.show()

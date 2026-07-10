@@ -1337,13 +1337,13 @@ class CopyWorker(QThread):
             flusher: "_Flusher",
             tracker: "_EntryTracker",
     ) -> None:
-        for src, dst, title, *_ in tasks:
+        for src, dst, title, *extra in tasks:
             if self._cancel.is_set():
                 break
 
             self.scan_progress.emit(f"rsync  {title or src}", 0)
 
-            excludes = list(_[0]) if _ and _[0] else None
+            excludes = list(extra[0]) if extra and extra[0] else None
 
             cmd = build_rsync_cmd(src, dst, exclude=excludes)
             logger.debug("_copy_ssh_tasks: %s", " ".join(cmd))

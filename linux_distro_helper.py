@@ -316,12 +316,12 @@ def _lookup(table: dict, family: str) -> list[Any] | None | Any:
 class LinuxDistroHelper:
 
     def __init__(self) -> None:
-        self.distro_id, _, self.distro_pretty_name = self._read_os_release()
+        self.distro_id, self.distro_pretty_name = self._read_os_release()
         self._init_pkg()
 
     @staticmethod
-    def _read_os_release() -> tuple[str, str, str]:
-        d_id = d_name = d_pretty = d_like = ""
+    def _read_os_release() -> tuple[str, str]:
+        d_id = d_pretty = d_like = ""
         for path in ("/etc/os-release", "/usr/lib/os-release"):
             try:
                 with open(path, encoding="utf-8") as fh:
@@ -330,8 +330,6 @@ class LinuxDistroHelper:
                         v = v.strip().strip('"')
                         if k == "ID":
                             d_id = v.lower()
-                        elif k == "NAME":
-                            d_name = v
                         elif k == "PRETTY_NAME":
                             d_pretty = v
                         elif k == "ID_LIKE":
@@ -345,7 +343,6 @@ class LinuxDistroHelper:
         if last_exc is not None:
             logger.error("os-release: %s", last_exc)
             d_id = "unknown"
-            d_name = "Unknown Linux Distribution"
             d_pretty = "Unknown Linux Distribution"
 
         resolved = d_id or "unknown"
@@ -357,7 +354,7 @@ class LinuxDistroHelper:
                     resolved = candidate
                     break
 
-        return resolved or "unknown", d_name, d_pretty
+        return resolved or "unknown", d_pretty
 
     def _init_pkg(self) -> None:
         self._family: str = distro_family(self.distro_id)
@@ -430,7 +427,6 @@ class LinuxDistroHelper:
         return [pkg for pkg in packages if not results[pkg]]
 
     def get_pkg_install_cmd(self, package: str) -> str: return self._install.format(p=shlex.quote(package))
-    def get_pkg_remove_cmd(self,  package: str) -> str: return self._remove.format(p=shlex.quote(package))
     def get_update_system_cmd(self)             -> str: return self._update
     def get_clean_cache_cmd(self)               -> str: return self._clean
     def get_find_orphans_cmd(self)              -> str: return self._orphans

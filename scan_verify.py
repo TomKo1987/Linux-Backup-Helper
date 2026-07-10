@@ -1,4 +1,5 @@
 import hashlib
+import os
 import re
 import subprocess
 from functools import lru_cache as _lru_cache
@@ -62,6 +63,14 @@ def _sha256(path: Path, limit: int = 8 * 1024 * 1024) -> str | None:
 @_lru_cache(maxsize=1024)
 def _sha256_cached(path_str: str, _mtime_ns: int, _size: int) -> str | None:
     return _sha256(Path(path_str))
+
+
+def _hash_v(p: Path) -> str | None:
+    try:
+        st = p.stat()
+        return _sha256_cached(str(p), st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
 
 
 def _surface_mtime(path: Path) -> float:
@@ -169,8 +178,9 @@ def _get_arch_de_deps(helper: LinuxDistroHelper) -> frozenset[str]:
     result: set[str] = set()
     for meta in _DE_META_PKGS:
         try:
-            r = subprocess.run(["env", "LC_ALL=C", "pacman", "-Qi", meta],
-                               capture_output=True, text=True, timeout=15)
+            r = subprocess.run(["pacman", "-Qi", meta],
+                               capture_output=True, text=True, timeout=15,
+                               env={**os.environ, "LC_ALL": "C"})
             lines = r.stdout.splitlines()
         except (RuntimeError, subprocess.SubprocessError, OSError):
             continue
@@ -289,12 +299,6 @@ class _CaptureWorker(QThread):
                 elif not dst.exists():
                     status = "dst_missing"
                 else:
-                    def _hash_v(p: Path) -> str | None:
-                        try:
-                            st = p.stat()
-                            return _sha256_cached(str(p), st.st_mtime_ns, st.st_size)
-                        except OSError:
-                            return None
                     h_src, h_dst = _hash_v(src), _hash_v(dst)
                     if h_src and h_dst:
                         status = "ok" if h_src == h_dst else "changed"
@@ -382,12 +386,6 @@ class _VerifyWorker(QThread):
             elif not dst.exists():
                 status = "dst_missing"
             else:
-                def _hash_v(p: Path) -> str | None:
-                    try:
-                        st = p.stat()
-                        return _sha256_cached(str(p), st.st_mtime_ns, st.st_size)
-                    except OSError:
-                        return None
                 h_src, h_dst = _hash_v(src), _hash_v(dst)
                 if h_src and h_dst:
                     status = "ok" if h_src == h_dst else "changed"
@@ -581,19 +579,10 @@ class _CaptureTab(QWidget):
         self._de_deps = _get_arch_de_deps(helper)
         self._current_session = helper.detect_session() or SESSIONS[0]
         self._build_ui()
-        self._last_result: dict = {}
         self._spec_sess_cb: QComboBox | None = None
         self._spec_grid: QGridLayout | None = None
         self._spec_cbs: list = []
         self._start()
-
-    def _save_and_notify(self, ok_msg: str, on_success=None) -> None:
-        if save_profile():
-            if on_success:
-                on_success()
-            QMessageBox.information(self.window(), "Done", ok_msg)
-        else:
-            QMessageBox.warning(self.window(), "Save Failed", "Could not save profile.")
 
     def _build_ui(self) -> None:
         t = current_theme()

@@ -1806,7 +1806,6 @@ class SystemManagerThread(QThread):
         if shutil.which("systemctl"):
             unit_suffix = ".timer" if service.endswith(".timer") else ".service"
             svc = service if service.endswith((".service", ".timer")) else f"{service}{unit_suffix}"
-            base_name = svc.rsplit(".", 1)[0]
             self.outputReceived.emit(f"Checking {svc} (systemd)", "info")
 
             is_enabled = self._exec(["systemctl", "is-enabled", "--quiet", svc]).returncode == 0
@@ -1821,7 +1820,6 @@ class SystemManagerThread(QThread):
             else:
                 self.outputReceived.emit(f"Enabling {svc} (systemd)", "info")
                 ok = (self._exec(["sudo", "systemctl", "enable", "--now", svc], stream=True).returncode == 0)
-            service = base_name
 
         elif shutil.which("rc-update") and shutil.which("rc-service"):
             self.outputReceived.emit(f"Checking {service} (OpenRC)", "info")

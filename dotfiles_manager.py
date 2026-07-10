@@ -141,7 +141,7 @@ class _DeployWorker(QThread):
                 try:
                     if self._backup and _path_exists(dst):
                         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        bak_path = dst.with_suffix(dst.suffix + f".bak_{ts}")
+                        bak_path = dst.with_suffix(f"{dst.suffix}.bak_{ts}")
                         bres = subprocess.run(
                             ["sudo", "cp", "-p", str(dst), str(bak_path)],
                             capture_output=True, text=True, timeout=15)

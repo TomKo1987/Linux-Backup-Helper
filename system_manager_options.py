@@ -387,6 +387,41 @@ def _raw_to_tips(raw: dict[str, tuple[str, str]]) -> dict[str, str]:
     return {k: tip for k, (_, tip) in raw.items()}
 
 
+def firewall_rules_tooltip() -> str:
+    rules = S.firewall_config.get("rules", [])
+    if not rules:
+        return "No custom firewall rules configured."
+
+    t = current_theme()
+    header_cells = "".join(
+        f"<th style='text-align:left;padding:3px 14px 3px 4px;"
+        f"border-bottom:2px solid {t['header_sep']};'>{h}</th>"
+        for h in ("#", "Action", "Dir", "Proto", "Source", "Port", "Comment")
+    )
+    rows = []
+    for i, r in enumerate(rules):
+        norm = normalize_rule(r)
+        action = norm["action"]
+        direction = norm["direction"]
+        proto = norm["proto"] if norm["proto"] != "both" else ""
+        source = norm["source"] or "any"
+        port = norm["port"]
+        comment = norm["comment"]
+        row_bg = f"background:{t['bg2']};" if i % 2 else ""
+        num_cell = (f"<td style='padding:3px 14px 3px 4px;text-align:right;"
+                    f"color:{t['muted']};border-bottom:1px solid {t['header_sep']};'>{i + 1}</td>")
+        cells = "".join(
+            f"<td style='padding:3px 14px 3px 4px;"
+            f"border-bottom:1px solid {t['header_sep']};'>{v}</td>"
+            for v in (action, direction, proto, source, port, comment)
+        )
+        rows.append(f"<tr style='{row_bg}'>{num_cell}{cells}</tr>")
+
+    return (f"<b>Firewall Rules:</b>"
+            f"<table style='border-collapse:collapse;margin-top:4px;'>"
+            f"<tr>{header_cells}</tr>{''.join(rows)}</table>")
+
+
 def _read_import_file(_parent, path: str) -> list[str] | None:
     try:
         return Path(path).read_text(encoding="utf-8").splitlines()
@@ -1000,13 +1035,13 @@ class SystemManagerOptions(QDialog):
                 if text is None:
                     continue
 
-                _cb_tip = op_tips.get(key, "")
+                _cb_tip = firewall_rules_tooltip() if key == "enable_firewall" else op_tips.get(key, "")
                 icon = "󰔨  " if _cb_tip else ""
 
                 cb = QCheckBox(f"{icon}{text}")
                 cb.setStyleSheet("margin-left:14px;")
                 if _cb_tip:
-                    apply_tooltip(cb, _cb_tip)
+                    apply_tooltip(cb, _cb_tip, wrap=(key != "enable_firewall"))
 
                 is_arch = key in arch_only
                 unsupported = (is_arch and self._distro.family() != "arch") or \
@@ -2147,25 +2182,7 @@ class SystemManagerLauncher:
             is_firewall_tip = False
             if key == "enable_firewall":
                 is_firewall_tip = True
-                rules = S.firewall_config.get("rules", [])
-                if rules:
-                    lines = ["<b>Firewall Rules:</b>"]
-                    for r in rules:
-                        action = r.get("action", "allow")
-                        direction = r.get("direction", "in")
-                        port = r.get("port", "")
-                        port_str = f"port: {port}" if port else ""
-                        proto = r.get("proto", "")
-                        proto_str = f"proto: {proto}" if proto and proto != "both" else ""
-                        src = r.get("source", "")
-                        src_str = f"src: {src}" if src else ""
-                        comment = f"<i>({r.get('comment', '')})</i>" if r.get('comment') else ""
-
-                        parts = [p for p in [action, direction, port_str, proto_str, src_str, comment] if p]
-                        lines.append(f"• {' | '.join(parts)}")
-                    tooltip = "<br>".join(lines)
-                else:
-                    tooltip = "No custom firewall rules configured."
+                tooltip = firewall_rules_tooltip()
 
             has_tip = bool(tooltip)
             colour, decoration = style_op_label(has_tip)

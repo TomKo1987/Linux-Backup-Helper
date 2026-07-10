@@ -65,14 +65,12 @@ class _BarChart(QWidget):
         self,
         title: str,
         bars: list[tuple[str, float, str]],
-        y_label: str = "",
         fmt_fn=None,
         parent=None,
     ) -> None:
         super().__init__(parent)
         self._title  = title
         self._bars   = bars
-        self._y_lbl  = y_label
         self._fmt    = fmt_fn or (lambda v: f"{v:.0f}")
         self.setMinimumHeight(220)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)

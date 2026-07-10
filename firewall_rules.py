@@ -1,3 +1,5 @@
+import ipaddress
+
 VALID_ACTIONS = ("allow", "deny", "reject", "limit")
 VALID_DEFAULT_ACTIONS = ("default allow", "default deny")
 VALID_DIRECTIONS = ("in", "out")
@@ -10,6 +12,20 @@ def is_port_range(port: str) -> bool:
 
 def port_to_firewalld(port: str) -> str:
     return port.replace(":", "-") if port else port
+
+
+def source_family(source: str) -> str:
+    if not source:
+        return "ipv4"
+    candidate = source.split("/", 1)[0].strip()
+    try:
+        return "ipv6" if ipaddress.ip_address(candidate).version == 6 else "ipv4"
+    except ValueError:
+        pass
+    try:
+        return "ipv6" if ipaddress.ip_network(source, strict=False).version == 6 else "ipv4"
+    except ValueError:
+        return "ipv4"
 
 
 def normalize_rule(rule: dict) -> dict:
@@ -83,8 +99,9 @@ def build_ufw_commands(rules: list[dict]) -> list[list[str]]:
     return cmds
 
 
-def build_firewalld_rich_rule(rule: dict) -> str | None:
-    rule = normalize_rule(rule)
+def build_firewalld_rich_rule(rule: dict, *, _skip_normalize: bool = False) -> str | None:
+    if not _skip_normalize:
+        rule = normalize_rule(rule)
     action_val = rule["action"]
     if action_val.startswith("default "):
         return None
@@ -111,7 +128,7 @@ def build_firewalld_rich_rule(rule: dict) -> str | None:
     elif rule["proto"] != "both":
         proto = f' protocol="{rule["proto"]}"'
 
-    return f'rule family="ipv4"{src}{port}{proto} {action}{limit_clause}'
+    return f'rule family="{source_family(rule["source"])}"{src}{port}{proto} {action}{limit_clause}'
 
 
 def build_firewalld_commands(rules: list[dict]) -> list[list[str]]:
@@ -125,7 +142,7 @@ def build_firewalld_commands(rules: list[dict]) -> list[list[str]]:
             cmds.append(["sudo", "firewall-cmd", f"--set-default-zone={zone}"])
             continue
 
-        rich_rule = build_firewalld_rich_rule(norm)
+        rich_rule = build_firewalld_rich_rule(norm, _skip_normalize=True)
         if rich_rule:
             cmds.append(["sudo", "firewall-cmd", "--permanent", f"--add-rich-rule={rich_rule}"])
 
