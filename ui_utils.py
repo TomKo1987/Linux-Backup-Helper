@@ -4,9 +4,9 @@ from typing import TYPE_CHECKING
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QTextCursor
 from PyQt6.QtWidgets import (
-    QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
-    QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
-    QVBoxLayout, QWidget, QPlainTextEdit
+    QApplication, QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
+    QHBoxLayout, QLabel, QLayout, QLineEdit, QMessageBox, QPushButton,
+    QScrollArea, QVBoxLayout, QWidget, QPlainTextEdit
 )
 
 from state import _HOME, _PROFILE_RE
@@ -15,6 +15,95 @@ if TYPE_CHECKING:
     _MixinBase = QWidget
 else:
     _MixinBase = object
+
+
+def size_to_screen(
+    widget: QWidget,
+    max_w: int,
+    max_h: int,
+    *,
+    fraction: float = 0.85,
+    fallback_w: int = 1200,
+    fallback_h: int = 700,
+) -> None:
+
+    screen = QApplication.primaryScreen()
+    geo = screen.availableGeometry() if screen else None
+    if geo:
+        widget.setMinimumSize(
+            min(max_w, int(geo.width() * fraction)),
+            min(max_h, int(geo.height() * fraction)),
+        )
+    else:
+        widget.setMinimumSize(fallback_w, fallback_h)
+
+
+def build_dialog_shell(
+    dialog: QDialog,
+    theme: dict,
+    font_sz_fn,
+    title: str,
+    icon: str = "",
+    *,
+    header_extra: list[QWidget] | None = None,
+    footer_extra: list[QWidget] | None = None,
+    close_text: str = "\u2715 Close",
+) -> tuple[QVBoxLayout, QVBoxLayout, QPushButton]:
+
+    t = theme
+    lay = QVBoxLayout(dialog)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(0)
+
+    hdr = QFrame()
+    hdr.setStyleSheet(f"background:{t['bg2']};border-bottom:1px solid {t['header_sep']};")
+    hl = QHBoxLayout(hdr)
+    hl.setContentsMargins(16, 10, 16, 10)
+    title_lbl = QLabel(f"{icon}  {title}" if icon else title)
+    title_lbl.setStyleSheet(
+        f"font-size:{font_sz_fn(4)}px;font-weight:bold;color:{t['accent']};"
+        f"background:transparent;border:none;"
+    )
+    hl.addWidget(title_lbl)
+    hl.addStretch()
+    for w in header_extra or ():
+        hl.addWidget(w)
+    lay.addWidget(hdr)
+
+    body = QWidget()
+    body.setStyleSheet(f"background:{t['bg']};")
+    body_lay = QVBoxLayout(body)
+    body_lay.setContentsMargins(16, 16, 16, 16)
+    body_lay.setSpacing(10)
+
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QFrame.Shape.NoFrame)
+    scroll.setWidget(body)
+    lay.addWidget(scroll, 1)
+
+    ftr = QFrame()
+    ftr.setStyleSheet(f"background:{t['bg2']};border-top:1px solid {t['header_sep']};")
+    fl = QHBoxLayout(ftr)
+    fl.setContentsMargins(12, 8, 12, 8)
+    for w in footer_extra or ():
+        fl.addWidget(w)
+    fl.addStretch()
+    close_btn = QPushButton(close_text)
+    close_btn.setFixedHeight(34)
+    close_btn.clicked.connect(dialog.accept)
+    fl.addWidget(close_btn)
+    lay.addWidget(ftr)
+
+    return lay, body_lay, close_btn
+
+
+def clear_layout(layout: QLayout) -> None:
+    while layout.count():
+        item = layout.takeAt(0)
+        w = item.widget() if item else None
+        if w:
+            w.deleteLater()
 
 
 def block_set(cb: QCheckBox, checked: bool) -> None:

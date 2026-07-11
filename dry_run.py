@@ -7,14 +7,14 @@ from PyQt6.QtGui import QColor, QStandardItemModel, QStandardItem
 from PyQt6.QtWidgets import (
     QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
     QMessageBox, QProgressBar, QPushButton, QTabWidget, QTableView,
-    QVBoxLayout, QWidget, QAbstractItemView, QApplication, QHeaderView,
+    QVBoxLayout, QWidget, QAbstractItemView, QHeaderView,
     QSizePolicy, QStackedWidget,
 )
 
 from copy_worker import _SKIP_RE
 from state import S
 from themes import current_theme, font_sz
-from ui_utils import _StandardKeysMixin
+from ui_utils import _StandardKeysMixin, size_to_screen
 
 __all__ = ["DryRunDialog", "DryRunModeDialog", "launch_dry_run"]
 
@@ -530,15 +530,7 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         self._mode = mode  # "backup" or "restore"
         title_suffix = "Backup Preview" if mode == "backup" else "Restore Preview"
         self.setWindowTitle(f"🔎  Dry Run — {title_suffix}")
-        screen = QApplication.primaryScreen()
-        geo    = screen.availableGeometry() if screen else None
-        if geo:
-            self.setMinimumSize(
-                min(1600, int(geo.width() * 0.85)),
-                min(900,  int(geo.height() * 0.85)),
-            )
-        else:
-            self.setMinimumSize(1200, 700)
+        size_to_screen(self, 1600, 900)
 
         self._worker: _DryRunWorker | None = None
         self._results: list[dict] = []

@@ -4,13 +4,13 @@ from pathlib import Path
 
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtWidgets import (
-    QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QProgressBar,
-    QPushButton, QScrollArea, QVBoxLayout, QWidget,
+    QDialog, QFrame, QHBoxLayout, QLabel, QProgressBar,
+    QPushButton, QVBoxLayout,
 )
 
 from state import S
 from themes import current_theme, font_sz
-from ui_utils import _StandardKeysMixin
+from ui_utils import _StandardKeysMixin, build_dialog_shell, clear_layout, size_to_screen
 
 __all__ = ["IntegrityCheckerDialog"]
 
@@ -227,15 +227,7 @@ class IntegrityCheckerDialog(_StandardKeysMixin, QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Backup Integrity Check")
-        screen = QApplication.primaryScreen()
-        geo    = screen.availableGeometry() if screen else None
-        if geo:
-            self.setMinimumSize(
-                min(1500, int(geo.width()  * 0.85)),
-                min(1000, int(geo.height() * 0.85)),
-            )
-        else:
-            self.setMinimumSize(1200, 700)
+        size_to_screen(self, 1500, 1000)
         self._worker: _CheckWorker | None = None
         self._results: list[dict] = []
         self._build()
@@ -248,26 +240,22 @@ class IntegrityCheckerDialog(_StandardKeysMixin, QDialog):
 
     def _build(self) -> None:
         t = current_theme()
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(0)
 
-        hdr = QFrame()
-        hdr.setStyleSheet(f"background:{t['bg2']};border-bottom:1px solid {t['header_sep']};")
-        hl  = QHBoxLayout(hdr)
-        hl.setContentsMargins(16, 10, 16, 10)
-        title = QLabel("🔬  Backup Integrity Check")
-        title.setStyleSheet(
-            f"font-size:{font_sz(4)}px;font-weight:bold;"
-            f"color:{t['accent']};background:transparent;border:none;"
-        )
-        hl.addWidget(title)
-        hl.addStretch()
         self._run_btn = QPushButton("▶  Run Check")
         self._run_btn.setFixedHeight(34)
         self._run_btn.clicked.connect(self._start)
-        hl.addWidget(self._run_btn)
-        lay.addWidget(hdr)
+
+        self._status_lbl = QLabel("")
+        self._status_lbl.setStyleSheet(
+            f"color:{t['text_dim']};font-size:{font_sz(-1)}px;"
+            f"background:transparent;border:none;"
+        )
+
+        lay, self._body_lay, _ = build_dialog_shell(
+            self, t, font_sz, "Backup Integrity Check", "🔬",
+            header_extra=[self._run_btn],
+            footer_extra=[self._status_lbl],
+        )
 
         self._progress = QProgressBar()
         self._progress.setRange(0, 0)
@@ -278,13 +266,7 @@ class IntegrityCheckerDialog(_StandardKeysMixin, QDialog):
             f"QProgressBar{{background:{t['bg3']};border:none;}}"
             f"QProgressBar::chunk{{background:{t['accent']};}}"
         )
-        lay.addWidget(self._progress)
-
-        self._body = QWidget()
-        self._body.setStyleSheet(f"background:{t['bg']};")
-        self._body_lay = QVBoxLayout(self._body)
-        self._body_lay.setContentsMargins(16, 16, 16, 16)
-        self._body_lay.setSpacing(10)
+        lay.insertWidget(1, self._progress)
 
         hint = QLabel(
             "Checks each backup entry:\n"
@@ -301,42 +283,13 @@ class IntegrityCheckerDialog(_StandardKeysMixin, QDialog):
         self._body_lay.addWidget(hint)
         self._body_lay.addStretch()
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setWidget(self._body)
-        lay.addWidget(scroll, 1)
-
-        ftr = QFrame()
-        ftr.setStyleSheet(f"background:{t['bg2']};border-top:1px solid {t['header_sep']};")
-        fl  = QHBoxLayout(ftr)
-        fl.setContentsMargins(12, 8, 12, 8)
-        self._status_lbl = QLabel("")
-        self._status_lbl.setStyleSheet(
-            f"color:{t['text_dim']};font-size:{font_sz(-1)}px;"
-            f"background:transparent;border:none;"
-        )
-        fl.addWidget(self._status_lbl)
-        fl.addStretch()
-        close_btn = QPushButton("✕ Close")
-        close_btn.setFixedHeight(34)
-        close_btn.clicked.connect(self.accept)
-        fl.addWidget(close_btn)
-        lay.addWidget(ftr)
-
-    def _clear_body(self) -> None:
-        while self._body_lay.count():
-            item = self._body_lay.takeAt(0)
-            if item and item.widget():
-                item.widget().deleteLater()
-
     def _start(self) -> None:
         entries = [e for e in S.entries if not e.get("details", {}).get("no_backup")]
         if not entries:
             self._status_lbl.setText("No active entries found.")
             return
 
-        self._clear_body()
+        clear_layout(self._body_lay)
         self._run_btn.setEnabled(False)
         self._progress.show()
         self._status_lbl.setText(f"Checking {len(entries)} entries…")

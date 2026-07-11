@@ -6,14 +6,14 @@ from PyQt6.QtGui import (
     QLinearGradient,
 )
 from PyQt6.QtWidgets import (
-    QApplication, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel,
-    QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
+    QComboBox, QDialog, QFrame, QHBoxLayout, QLabel,
+    QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from history import load_history as _load_all_history, _fmt_duration as _fmt_dur
 from state import S
 from themes import current_theme, font_sz, register_style_listener, unregister_style_listener
-from ui_utils import _StandardKeysMixin
+from ui_utils import _StandardKeysMixin, build_dialog_shell, clear_layout, size_to_screen
 
 
 def _parse_ts(ts: str) -> datetime | None:
@@ -237,15 +237,7 @@ class BackupStatsDialog(_StandardKeysMixin, QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Backup Statistics")
-        screen = QApplication.primaryScreen()
-        geo    = screen.availableGeometry() if screen else None
-        if geo:
-            self.setMinimumSize(
-                min(1500, int(geo.width()  * 0.85)),
-                min(1000, int(geo.height() * 0.85)),
-            )
-        else:
-            self.setMinimumSize(1200, 700)
+        size_to_screen(self, 1500, 1000)
         self._history: list[dict] = []
         self._build_shell()
         self._reload()
@@ -256,63 +248,23 @@ class BackupStatsDialog(_StandardKeysMixin, QDialog):
         super().closeEvent(event)
 
     def _build_shell(self) -> None:
-        t   = current_theme()
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(0)
+        t = current_theme()
 
-        hdr = QFrame()
-        hdr.setStyleSheet(f"background:{t['bg2']};border-bottom:1px solid {t['header_sep']};")
-        hl  = QHBoxLayout(hdr)
-        hl.setContentsMargins(16, 10, 16, 10)
-        title = QLabel("📊  Backup Statistics")
-        title.setStyleSheet(
-            f"font-size:{font_sz(4)}px;font-weight:bold;color:{t['accent']};"
-            f"background:transparent;border:none;"
-        )
-        hl.addWidget(title)
-        hl.addStretch()
-        hl.addWidget(QLabel("Range:"))
+        range_lbl = QLabel("Range:")
         self._range_combo = QComboBox()
         self._range_combo.addItems(list(self._RANGES.keys()))
         self._range_combo.setCurrentIndex(1)
         self._range_combo.currentIndexChanged.connect(self._reload)
-        hl.addWidget(self._range_combo)
-        lay.addWidget(hdr)
 
-        self._scroll_content = QWidget()
-        self._scroll_content.setStyleSheet(f"background:{t['bg']};")
-        self._body_lay = QVBoxLayout(self._scroll_content)
-        self._body_lay.setContentsMargins(16, 16, 16, 16)
+        _, self._body_lay, _ = build_dialog_shell(
+            self, t, font_sz, "Backup Statistics", "📊",
+            header_extra=[range_lbl, self._range_combo],
+        )
         self._body_lay.setSpacing(20)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setWidget(self._scroll_content)
-        lay.addWidget(scroll, 1)
-
-        ftr = QFrame()
-        ftr.setStyleSheet(f"background:{t['bg2']};border-top:1px solid {t['header_sep']};")
-        fl  = QHBoxLayout(ftr)
-        fl.setContentsMargins(12, 8, 12, 8)
-        fl.addStretch()
-        close_btn = QPushButton("✕ Close")
-        close_btn.setFixedHeight(34)
-        close_btn.clicked.connect(self.accept)
-        fl.addWidget(close_btn)
-        lay.addWidget(ftr)
-
-    def _clear_body(self) -> None:
-        while self._body_lay.count():
-            item = self._body_lay.takeAt(0)
-            w = item.widget() if item else None
-            if w:
-                w.deleteLater()
 
     def _reload(self) -> None:
         self._history = _load_all_history(S.profile_name or "")
-        self._clear_body()
+        clear_layout(self._body_lay)
 
         days = self._RANGES[self._range_combo.currentText()]
         now  = datetime.now()

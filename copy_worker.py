@@ -27,7 +27,7 @@ from drive_utils import is_smb, is_ssh, build_rsync_cmd
 from pre_post_hooks import run_hooks as _run_hooks
 from state import apply_replacements, logger
 from themes import current_theme, font_sz, register_cache_invalidation_hook as _reg_cache_hook
-from ui_utils import _StandardKeysMixin
+from ui_utils import _StandardKeysMixin, size_to_screen
 
 _CHUNK           = 32 * 1024 * 1024
 _IO_BUF          =  8 * 1024 * 1024
@@ -294,12 +294,16 @@ def _wipe_smb_cred(tmp_dir: str, path: str) -> None:
             os.close(fd)
     except OSError:
         pass
-    try:
-        os.unlink(path)
-    except OSError:
-        pass
+    _silent_unlink(path)
     try:
         os.rmdir(tmp_dir)
+    except OSError:
+        pass
+
+
+def _silent_unlink(path: str) -> None:
+    try:
+        os.unlink(path)
     except OSError:
         pass
 
@@ -333,18 +337,12 @@ def _copy_symlink(src: str, dst: str) -> tuple:
 
     tmp = f"{dst}.{_PID}.{threading.get_ident()}.lnk.part"
     try:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+        _silent_unlink(tmp)
         os.symlink(target, tmp)
         os.replace(tmp, dst)
         return "ok", dst, 0
     except OSError as exc:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+        _silent_unlink(tmp)
         logger.error("symlink %s → %s: %s", src, dst, exc)
         return "error", str(exc), 0
 
@@ -500,10 +498,7 @@ def _copy_file(src, dst, cancel):
                 except OSError:
                     pass
             if not success:
-                try:
-                    os.unlink(tmp)
-                except OSError:
-                    pass
+                _silent_unlink(tmp)
     return "error", "Copy failed after retries", 0
 
 
@@ -869,7 +864,7 @@ class _ShareProcessor:
         get_transfer: list = []
 
         for j in get_jobs:
-            full_url = f"smb://{self.host}/{self.share}/{j.remote_path}"
+            full_url = self._remote_url(j.remote_path)
             self._url_title[full_url] = (j.title, j.remote_size)
             if j.size_matches_local():
                 sk_immediate.append((full_url, "Up to date"))
@@ -952,6 +947,12 @@ class _ShareProcessor:
             merged.update(cached)
         return merged
 
+    def _remote_url(self, remote_path: str) -> str:
+        return f"smb://{self.host}/{self.share}/{remote_path}"
+
+    def _job_src(self, job: "_SmbJob", is_get: bool) -> str:
+        return self._remote_url(job.remote_path) if is_get else job.src_url
+
     def _transfer(self, jobs: list, build_fn) -> tuple[list, list]:
         is_get  = build_fn is _build_smb_get_cmds
         ok_list: list = []
@@ -963,23 +964,20 @@ class _ShareProcessor:
             if not batch or self._cancel.is_set():
                 break
             if self._unreachable.is_set():
-                er_list.extend((f"smb://{self.host}/{self.share}/{j.remote_path}" if is_get else j.src_url,
-                                "NT_STATUS_HOST_UNREACHABLE") for j in batch)
+                er_list.extend((self._job_src(j, is_get), "NT_STATUS_HOST_UNREACHABLE") for j in batch)
                 continue
 
             ok, err = self._client.run(build_fn(batch), max(_SMB_TIMEOUT, len(batch) * _SMB_FILE_SECS))
             if ok:
                 for j in batch:
-                    src = f"smb://{self.host}/{self.share}/{j.remote_path}" if is_get else j.src_url
-                    dst = j.dst_path if is_get else f"smb://{self.host}/{self.share}/{j.remote_path}"
+                    src = self._job_src(j, is_get)
+                    dst = j.dst_path if is_get else self._remote_url(j.remote_path)
                     ok_list.append((src, dst))
             elif _is_unreachable(err):
                 self._unreachable.set()
-                er_list.extend((f"smb://{self.host}/{self.share}/{j.remote_path}" if is_get else j.src_url,
-                                "NT_STATUS_HOST_UNREACHABLE") for j in batch)
+                er_list.extend((self._job_src(j, is_get), "NT_STATUS_HOST_UNREACHABLE") for j in batch)
             elif len(batch) == 1:
-                src = (f"smb://{self.host}/{self.share}/{batch[0].remote_path}" if is_get else batch[0].src_url)
-                er_list.append((src, err))
+                er_list.append((self._job_src(batch[0], is_get), err))
             else:
                 mid = len(batch) // 2
                 stack.append(batch[mid:])
@@ -1016,7 +1014,7 @@ class _ShareProcessor:
         self._tracker.batch_update(batch_counts)
 
     def _fail_batch(self, remaining: list, *, is_get: bool) -> None:
-        er_c = [(f"smb://{self.host}/{self.share}/{j.remote_path}" if is_get else j.src_url, "NT_STATUS_HOST_UNREACHABLE") for j in remaining]
+        er_c = [(self._job_src(j, is_get), "NT_STATUS_HOST_UNREACHABLE") for j in remaining]
         if er_c:
             self._record([], [], er_c)
 
@@ -1092,6 +1090,33 @@ class _Flusher:
         self._signal.emit(payload_ok, payload_sk, payload_er, done_snap, total_snap)
 
     def flush(self) -> None: self.push(force=True)
+
+
+class _BatchBuffer:
+    __slots__ = ("_flusher", "_tracker", "ok", "sk", "er", "tc", "pending")
+
+    def __init__(self, flusher: "_Flusher", tracker: "_EntryTracker") -> None:
+        self._flusher = flusher
+        self._tracker = tracker
+        self.ok: list = []
+        self.sk: list = []
+        self.er: list = []
+        self.tc: dict = {}
+        self.pending = 0
+
+    def record(self, entry, cancel: threading.Event) -> None:
+        _do_copy(entry, cancel, self.ok, self.sk, self.er, self.tc)
+        self.pending += 1
+
+    def flush(self) -> None:
+        if self.ok or self.sk or self.er:
+            self._flusher.push(ok=self.ok, sk=self.sk, er=self.er)
+            self.ok.clear()
+            self.sk.clear()
+            self.er.clear()
+        self._tracker.batch_update(self.tc)
+        self.tc.clear()
+        self.pending = 0
 
 
 class CopyWorker(QThread):
@@ -1639,26 +1664,15 @@ class CopyWorker(QThread):
                     found[0] += local_n
 
         def _copy_worker() -> None:
-            ok_l: list = []
-            sk_l: list = []
-            er_l: list = []
-            tc: dict   = {}
-            last_fl_t   = time.monotonic()
-            _pend_count = 0
-            _file_ctr   = 0
+            buf = _BatchBuffer(flusher, tracker)
+            last_fl_t = time.monotonic()
+            _file_ctr = 0
 
             def _fl() -> None:
-                nonlocal last_fl_t, _pend_count, _file_ctr
-                if ok_l or sk_l or er_l:
-                    flusher.push(ok=ok_l, sk=sk_l, er=er_l)
-                    ok_l.clear()
-                    sk_l.clear()
-                    er_l.clear()
-                tracker.batch_update(tc)
-                tc.clear()
-                last_fl_t   = time.monotonic()
-                _pend_count = 0
-                _file_ctr   = 0
+                nonlocal last_fl_t, _file_ctr
+                buf.flush()
+                last_fl_t = time.monotonic()
+                _file_ctr = 0
 
             while True:
                 try:
@@ -1678,10 +1692,9 @@ class CopyWorker(QThread):
                 for entry in item:
                     if cancel.is_set():
                         break
-                    _do_copy(entry, cancel, ok_l, sk_l, er_l, tc)
-                    _pend_count += 1
-                    _file_ctr   += 1
-                    if _pend_count >= lb or (
+                    buf.record(entry, cancel)
+                    _file_ctr += 1
+                    if buf.pending >= lb or (
                         _file_ctr >= _TIME_CHECK_EVERY
                         and (time.monotonic() - last_fl_t) >= _FLUSH_INTERVAL
                     ):
@@ -2541,12 +2554,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
 
         self._status_fs = font_sz(8)
 
-        screen = QApplication.primaryScreen()
-        geo = screen.availableGeometry() if screen else None
-        if geo:
-            self.setMinimumSize(min(1900, int(geo.width() * 0.9)), min(925, int(geo.height() * 0.9)))
-        else:
-            self.setMinimumSize(1200, 700)
+        size_to_screen(self, 1900, 925, fraction=0.9)
 
         self._operation = operation
         self.worker     = CopyWorker(tasks)

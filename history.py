@@ -7,13 +7,13 @@ from pathlib import Path
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QApplication, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
+    QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
     QMessageBox, QPushButton, QTextEdit, QVBoxLayout
 )
 
 from state import S, _LOG_HIST_DIR, _atomic_write, logger
 from themes import current_theme, font_sz, register_style_listener, unregister_style_listener
-from ui_utils import _StandardKeysMixin
+from ui_utils import _StandardKeysMixin, size_to_screen
 
 
 def _history_path(profile_name: str) -> Path:
@@ -148,15 +148,7 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
     def __init__(self, parent) -> None:
         super().__init__(parent)
         self.setWindowTitle("History")
-        screen = QApplication.primaryScreen()
-        geo    = screen.availableGeometry() if screen else None
-        if geo:
-            self.setMinimumSize(
-                min(1250, int(geo.width()  * 0.85)),
-                min(850,  int(geo.height() * 0.85)),
-            )
-        else:
-            self.setMinimumSize(1000, 650)
+        size_to_screen(self, 1250, 850, fallback_w=1000, fallback_h=650)
         t   = current_theme()
         bg  = t["bg"]
         bg2 = t["bg2"]

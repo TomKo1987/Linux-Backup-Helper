@@ -3,14 +3,14 @@ import subprocess
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QApplication, QDialog, QHBoxLayout, QInputDialog,
+    QAbstractItemView, QDialog, QHBoxLayout, QInputDialog,
     QLabel, QListWidget, QListWidgetItem, QMessageBox,
     QPushButton, QVBoxLayout, QWidget,
 )
 
 from state import logger
 from themes import current_theme, font_sz
-from ui_utils import _StandardKeysMixin, hdr_label, sep
+from ui_utils import _StandardKeysMixin, hdr_label, sep, size_to_screen
 
 __all__ = ["HooksDialog", "run_hooks"]
 
@@ -185,15 +185,7 @@ class HooksDialog(_StandardKeysMixin, QDialog):
         super().__init__(parent)
         self._entry = entry
         self.setWindowTitle(f"Hooks — {entry.get('title', '?')}")
-        screen = QApplication.primaryScreen()
-        geo    = screen.availableGeometry() if screen else None
-        if geo:
-            self.setMinimumSize(
-                min(1500, int(geo.width()  * 0.85)),
-                min(1000, int(geo.height() * 0.85)),
-            )
-        else:
-            self.setMinimumSize(1200, 700)
+        size_to_screen(self, 1500, 1000)
         self._build()
 
     def _build(self) -> None:
