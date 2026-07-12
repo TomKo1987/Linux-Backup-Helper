@@ -148,6 +148,27 @@ class _DryRunWorker(QThread):
         )
 
 
+def _style_chip_tabs(chips: list[QPushButton], colors: list[str], active_idx: int) -> None:
+    t = current_theme()
+    for i, (btn, color) in enumerate(zip(chips, colors)):
+        if i == active_idx:
+            btn.setStyleSheet(
+                f"QPushButton{{color:{color};font-size:{font_sz(-1)}px;font-weight:bold;"
+                f"background:{t['bg2']};border:1px solid {t['header_sep']};"
+                f"border-bottom:2px solid {color};"
+                f"border-radius:4px 4px 0 0;padding:5px 16px;}}"
+                f"QPushButton:hover{{background:{t['bg2']};}}"
+            )
+        else:
+            btn.setStyleSheet(
+                f"QPushButton{{color:{t['text_dim']};font-size:{font_sz(-1)}px;font-weight:normal;"
+                f"background:{t['bg3']};border:1px solid {t['header_sep']};"
+                f"border-bottom:1px solid {t['header_sep']};"
+                f"border-radius:4px 4px 0 0;padding:5px 16px;}}"
+                f"QPushButton:hover{{color:{t['text']};background:{t['bg2']};}}"
+            )
+
+
 class _SearchableList(QWidget):
     def __init__(self, items: list[str], color: str, parent=None) -> None:
         super().__init__(parent)
@@ -276,24 +297,7 @@ class _EntryTabWidget(QWidget):
             return
         self._active_idx = idx
         self._stack.setCurrentIndex(idx)
-        t = current_theme()
-        for i, (btn, color) in enumerate(zip(self._chips, self._chip_colors)):
-            if i == idx:
-                btn.setStyleSheet(
-                    f"QPushButton{{color:{color};font-size:{font_sz(-1)}px;font-weight:bold;"
-                    f"background:{t['bg2']};border:1px solid {t['header_sep']};"
-                    f"border-bottom:2px solid {color};"
-                    f"border-radius:4px 4px 0 0;padding:5px 16px;}}"
-                    f"QPushButton:hover{{background:{t['bg2']};}}"
-                )
-            else:
-                btn.setStyleSheet(
-                    f"QPushButton{{color:{t['text_dim']};font-size:{font_sz(-1)}px;font-weight:normal;"
-                    f"background:{t['bg3']};border:1px solid {t['header_sep']};"
-                    f"border-bottom:1px solid {t['header_sep']};"
-                    f"border-radius:4px 4px 0 0;padding:5px 16px;}}"
-                    f"QPushButton:hover{{color:{t['text']};background:{t['bg2']};}}"
-                )
+        _style_chip_tabs(self._chips, self._chip_colors, idx)
 
     @staticmethod
     def _badge(text: str, color: str) -> QLabel:
@@ -502,24 +506,7 @@ class _GlobalViewTab(QWidget):
             return
         self._active_idx = idx
         self._stack.setCurrentIndex(idx)
-        t = current_theme()
-        for i, (btn, color) in enumerate(zip(self._chips, self._chip_colors)):
-            if i == idx:
-                btn.setStyleSheet(
-                    f"QPushButton{{color:{color};font-size:{font_sz(-1)}px;font-weight:bold;"
-                    f"background:{t['bg2']};border:1px solid {t['header_sep']};"
-                    f"border-bottom:2px solid {color};"
-                    f"border-radius:4px 4px 0 0;padding:5px 16px;}}"
-                    f"QPushButton:hover{{background:{t['bg2']};}}"
-                )
-            else:
-                btn.setStyleSheet(
-                    f"QPushButton{{color:{t['text_dim']};font-size:{font_sz(-1)}px;font-weight:normal;"
-                    f"background:{t['bg3']};border:1px solid {t['header_sep']};"
-                    f"border-bottom:1px solid {t['header_sep']};"
-                    f"border-radius:4px 4px 0 0;padding:5px 16px;}}"
-                    f"QPushButton:hover{{color:{t['text']};background:{t['bg2']};}}"
-                )
+        _style_chip_tabs(self._chips, self._chip_colors, idx)
 
 
 # noinspection PyUnresolvedReferences

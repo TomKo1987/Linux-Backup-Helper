@@ -58,6 +58,22 @@ def _make_icon() -> QIcon:
         logger.debug("Icon could not be decoded: %s", e)
         return QIcon()
 
+def _build_backup_tasks(headers: list[str] | None = None) -> list[tuple]:
+    tasks = []
+    for e in S.entries:
+        details = e.get("details", {})
+        if details.get("no_backup"):
+            continue
+        if headers and e.get("header") not in headers:
+            continue
+        tasks.append((
+            e["source"], e["destination"], e["title"],
+            details.get("exclude_paths", {}),
+            details.get("pre_hooks", []),
+            details.get("post_hooks", []),
+        ))
+    return tasks
+
 class MainWindow(_StandardKeysMixin, QMainWindow):
     def __init__(self):
         super().__init__()
@@ -150,7 +166,7 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
             if setup_fn:
                 setup_fn(dlg)
             result = dlg.exec()
-            dlg.deleteLater() 
+            dlg.deleteLater()
             if result != RESTART_DIALOG:
                 break
         self.show()
@@ -159,6 +175,7 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
     def _open_settings(self) -> None:
         self._open(base_window, "Settings", setup_fn=lambda d: d.changed.connect(apply_style))
         self._build_ui()
+        self._apply_tray_setting()
         if hasattr(self, "tray"):
             self._build_tray_menu()
         self._refresh_status_panel()
@@ -184,7 +201,7 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
         SystemManagerLauncher(self).launch()
 
     def _setup_tray(self) -> None:
-        if not QSystemTrayIcon.isSystemTrayAvailable():
+        if S.ui.get("disable_tray_icon", False) or not QSystemTrayIcon.isSystemTrayAvailable():
             return
         from PyQt6.QtWidgets import QStyle
         _style = QApplication.style()
@@ -194,6 +211,15 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
         self._build_tray_menu()
         self.tray.activated.connect(self._on_tray_activated)
         self.tray.show()
+
+    def _apply_tray_setting(self) -> None:
+        disabled = S.ui.get("disable_tray_icon", False)
+        if disabled and hasattr(self, "tray"):
+            self.tray.hide()
+            self.tray.deleteLater()
+            del self.tray
+        elif not disabled and not hasattr(self, "tray"):
+            self._setup_tray()
 
     def _build_tray_menu(self) -> None:
         menu = QMenu()
@@ -229,19 +255,7 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
 
     def _quick_backup(self, header: str | None) -> None:
         from copy_worker import CopyDialog
-        tasks = []
-        for e in S.entries:
-            details = e.get("details", {})
-            if details.get("no_backup"):
-                continue
-            if header is not None and e.get("header") != header:
-                continue
-            tasks.append((
-                e["source"], e["destination"], e["title"],
-                details.get("exclude_paths", {}),
-                details.get("pre_hooks", []),
-                details.get("post_hooks", []),
-            ))
+        tasks = _build_backup_tasks([header] if header is not None else None)
         if not tasks:
             QMessageBox.information(None, "Quick Backup", "No backup entries found for this group.")
             return
@@ -466,19 +480,7 @@ def main():
                 headers = [h.strip() for h in _raw.split(",") if h.strip()]
 
         from copy_worker import CopyDialog
-        tasks = []
-        for e in S.entries:
-            details = e.get("details", {})
-            if details.get("no_backup"):
-                continue
-            if headers and e.get("header") not in headers:
-                continue
-            tasks.append((
-                e["source"], e["destination"], e["title"],
-                details.get("exclude_paths", {}),
-                details.get("pre_hooks", []),
-                details.get("post_hooks", []),
-            ))
+        tasks = _build_backup_tasks(headers)
         if tasks:
             CopyDialog(None, tasks, "Backup (scheduled)").exec()
         else:

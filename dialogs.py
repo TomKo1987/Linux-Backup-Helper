@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal, QObject, QEvent
-from PyQt6.QtGui import QColor, QFont, QFontMetrics, QTextCursor
+from PyQt6.QtGui import QColor, QFont, QFontDatabase, QFontMetrics, QTextCursor
 from PyQt6.QtWidgets import (
     QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QWidget, QVBoxLayout,
     QListWidgetItem, QMessageBox, QPlainTextEdit, QPushButton, QSplitter, QSizePolicy,
@@ -20,9 +20,9 @@ from drive_utils import get_mounts, is_mounted
 from profile_compare import ProfileCompareDialog
 from state import (
     _norm_paths, list_profiles, load_profile, save_profile, logger, S, _HOME, _LOG_FILE, _PROFILES_DIR, _PROFILE_RE,
-    _atomic_write, apply_replacements,
+    _atomic_write, apply_replacements, RESTART_DIALOG,
 )
-from themes import current_theme, font_scale, font_sz, apply_tooltip
+from themes import THEMES, current_theme, apply_style, font_scale, font_sz, apply_tooltip
 from ui_utils import sep, hdr_label, ok_cancel_buttons, btn_row, ask_text, ask_profile_name, browse_field, \
     _StandardKeysMixin
 
@@ -1485,3 +1485,73 @@ class NotesDialog(_StandardKeysMixin, QDialog):
             S.notes = self._edit.toPlainText()
             save_profile()
         event.accept()
+
+
+class _ThemeDialog(_StandardKeysMixin, QDialog):
+    changed = pyqtSignal(int)
+
+    def __init__(self, parent) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Theme and Font Settings")
+        self.setMinimumSize(480, 380)
+        self.setWindowModality(Qt.WindowModality.NonModal)
+        self._orig = (
+            S.ui.get("theme", "Tokyo Night"), S.ui.get("font_family", ""), S.ui.get("font_size", 14),
+            S.ui.get("disable_tray_icon", False),
+        )
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+
+        def _combo(label: str, items: list[str], current: str) -> QComboBox:
+            layout.addWidget(QLabel(label))
+            cb = QComboBox()
+            cb.addItems(items)
+            cb.setCurrentText(current)
+            layout.addWidget(cb)
+            return cb
+
+        self._theme_cb = _combo("Select Theme:", list(THEMES.keys()), S.ui.get("theme", "Tokyo Night"))
+        self._font_cb = _combo("Select Font:", ["(System Default)"] + sorted(QFontDatabase.families()),
+                               S.ui.get("font_family", "") or "(System Default)")
+        current_size = str(S.ui.get("font_size", 14))
+        size_options = ["10", "11", "12", "13", "14", "15", "16", "17", "18", "20", "22", "24"]
+        if current_size not in size_options:
+            size_options = sorted(size_options + [current_size], key=int)
+        self._size_cb = _combo("Select Font Size:", size_options, current_size)
+
+        prev_btn = QPushButton("Preview")
+        prev_btn.clicked.connect(lambda: self._apply(save=False))
+        layout.addWidget(prev_btn)
+
+        self._tray_cb = QCheckBox("Disable Tray Icon")
+        self._tray_cb.setChecked(bool(S.ui.get("disable_tray_icon", False)))
+        layout.addWidget(self._tray_cb)
+
+        layout.addWidget(ok_cancel_buttons(self, self._on_ok, cancel_fn=self.reject))
+
+    def _apply(self, save: bool = False) -> None:
+        chosen_font = self._font_cb.currentText()
+        if chosen_font == "(System Default)":
+            chosen_font = ""
+        S.ui.update(
+            theme=self._theme_cb.currentText(), font_family=chosen_font, font_size=int(self._size_cb.currentText()))
+        apply_style()
+        if save:
+            S.ui["disable_tray_icon"] = self._tray_cb.isChecked()
+            save_profile()
+
+    def _on_ok(self) -> None:
+        self._apply(save=True)
+        font_display = self._font_cb.currentText()
+        msg = f"Theme: {self._theme_cb.currentText()}, Font: {font_display}, Size: {self._size_cb.currentText()} px"
+        QMessageBox.information(self, "Theme Saved", msg)
+        self.changed.emit(RESTART_DIALOG)
+        self.accept()
+
+    def reject(self) -> None:
+        orig_theme, orig_font, orig_size, orig_tray = self._orig
+        S.ui.update(theme=orig_theme, font_family=orig_font, font_size=orig_size, disable_tray_icon=orig_tray)
+        apply_style()
+        super().reject()

@@ -263,7 +263,7 @@ def _smb_cred_file(user: str, pw: "_SecurePw") -> "tuple[str, str]":
             pwd_bytes = pw.get_bytes()
             try:
                 f.write(b"password = ")
-                f.write(pwd_bytes)  
+                f.write(pwd_bytes)
                 f.write(b"\n")
             finally:
                 for i in range(len(pwd_bytes)):

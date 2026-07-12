@@ -904,4 +904,3 @@ class LinuxDistroHelper:
                 pass
 
         return found or LinuxDistroHelper.detect_running_kernel_variant()
-    

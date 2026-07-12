@@ -1,18 +1,15 @@
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget, QScrollArea,
-    QApplication, QCheckBox, QComboBox, QDialog, QMessageBox, QPushButton
+    QApplication, QCheckBox, QDialog, QMessageBox, QPushButton
 )
 
-from dialogs import EntryDialog, HeaderSettingsDialog, MountsDialog, ProfilesDialog
+from dialogs import EntryDialog, HeaderSettingsDialog, MountsDialog, ProfilesDialog, _ThemeDialog
 from samba_credentials import SambaPasswordDialog
 from state import S, _PROFILES_DIR, RESTART_DIALOG, apply_replacements, save_profile
-from themes import (
-    THEMES, current_theme, apply_style, font_scale, register_style_listener, unregister_style_listener, apply_tooltip
-)
+from themes import current_theme, font_scale, register_style_listener, unregister_style_listener, apply_tooltip
 from tooltips import backup_tooltips, restore_tooltips, copy_logic_tooltip
-from ui_utils import block_set, ok_cancel_buttons, btn_row, _StandardKeysMixin
+from ui_utils import block_set, btn_row, _StandardKeysMixin
 
 _COLS_NARROW, _COLS_WIDE = 2, 4
 
@@ -77,7 +74,7 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
 
     def _setup_ui(self) -> None:
         if self.scroll_area.widget():
-            self.scroll_area.widget().deleteLater()  
+            self.scroll_area.widget().deleteLater()
         self.checkbox_dirs.clear()
         self._rebuild_top_controls()
 
@@ -530,67 +527,6 @@ class SettingsWindow(_BaseCheckboxWindow):
         dlg.show()
         dlg.raise_()
         dlg.activateWindow()
-
-
-class _ThemeDialog(_StandardKeysMixin, QDialog):
-    changed = pyqtSignal(int)
-
-    def __init__(self, parent) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Theme and Font Settings")
-        self.setMinimumSize(480, 380)
-        self.setWindowModality(Qt.WindowModality.NonModal)
-        self._orig = (S.ui.get("theme", "Tokyo Night"), S.ui.get("font_family", ""), S.ui.get("font_size", 14))
-        self._build_ui()
-
-    def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
-
-        def _combo(label: str, items: list[str], current: str) -> QComboBox:
-            layout.addWidget(QLabel(label))
-            cb = QComboBox()
-            cb.addItems(items)
-            cb.setCurrentText(current)
-            layout.addWidget(cb)
-            return cb
-
-        self._theme_cb = _combo("Select Theme:", list(THEMES.keys()), S.ui.get("theme", "Tokyo Night"))
-        self._font_cb = _combo("Select Font:", ["(System Default)"] + sorted(QFontDatabase.families()),
-                               S.ui.get("font_family", "") or "(System Default)")
-        current_size = str(S.ui.get("font_size", 14))
-        size_options = ["10", "11", "12", "13", "14", "15", "16", "17", "18", "20", "22", "24"]
-        if current_size not in size_options:
-            size_options = sorted(size_options + [current_size], key=int)
-        self._size_cb = _combo("Select Font Size:", size_options, current_size)
-
-        prev_btn = QPushButton("Preview")
-        prev_btn.clicked.connect(lambda: self._apply(save=False))
-        layout.addWidget(prev_btn)
-        layout.addWidget(ok_cancel_buttons(self, self._on_ok, cancel_fn=self.reject))
-
-    def _apply(self, save: bool = False) -> None:
-        chosen_font = self._font_cb.currentText()
-        if chosen_font == "(System Default)":
-            chosen_font = ""
-        S.ui.update(
-            theme=self._theme_cb.currentText(), font_family=chosen_font, font_size=int(self._size_cb.currentText()))
-        apply_style()
-        if save:
-            save_profile()
-
-    def _on_ok(self) -> None:
-        self._apply(save=True)
-        font_display = self._font_cb.currentText()
-        msg = f"Theme: {self._theme_cb.currentText()}, Font: {font_display}, Size: {self._size_cb.currentText()} px"
-        QMessageBox.information(self, "Theme Saved", msg)
-        self.changed.emit(RESTART_DIALOG)
-        self.accept()
-
-    def reject(self) -> None:
-        orig_theme, orig_font, orig_size = self._orig
-        S.ui.update(theme=orig_theme, font_family=orig_font, font_size=orig_size)
-        apply_style()
-        super().reject()
 
 
 _WINDOW_MAP: dict[str, type[_BaseCheckboxWindow]] = {

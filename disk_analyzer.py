@@ -242,7 +242,6 @@ class _ScanWorker(QThread):
         return count
 
 
-
 class _DiskInfoBar(QFrame):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -705,7 +704,6 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
 
         disk_used = self._disk_info.get("used", 0)
         scan_total = sum(x[_R_SIZE] for x in sorted_r if not x[_R_IS_MOUNT])
-        ref_total = scan_total
 
         self._list.clear()
         self._item_paths = []
@@ -738,12 +736,12 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
                 self._item_paths.append(path)
                 continue
 
-            bar_frac = size / max(ref_total, 1)
+            bar_frac = size / max(scan_total, 1)
             bar = _bar(bar_frac)
 
             icon = "📁 " if is_dir else "📄 "
             size_str = _fmt_size(size)
-            pct_scan = (size / max(ref_total, 1)) * 100
+            pct_scan = (size / max(scan_total, 1)) * 100
 
             count_str = f"  [{_fmt_count(file_count)} files]" if is_dir else ""
 

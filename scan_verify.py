@@ -25,15 +25,6 @@ from ui_utils import sep, _StandardKeysMixin
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 
-def _run(cmd: list[str], timeout: int = 25) -> list[str]:
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return [line.strip() for line in r.stdout.splitlines() if line.strip()]
-    except Exception as exc:
-        logger.warning("capture_verify._run %s: %s", cmd[0] if cmd else "?", exc)
-        return []
-
-
 def _clean_title(text: str) -> str: return _HTML_TAG_RE.sub(" ", text).strip()
 
 
