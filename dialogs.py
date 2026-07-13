@@ -28,7 +28,15 @@ from ui_utils import sep, hdr_label, ok_cancel_buttons, btn_row, ask_text, ask_p
 
 _ARCHIVE_MAX_PROFILE_BYTES = 1024 * 1024
 
-class _ListDialog(QDialog):
+class _UserRoleListMixin:
+    item_list: QListWidget
+
+    def _selected_data(self):
+        item = self.item_list.currentItem()
+        return item.data(Qt.ItemDataRole.UserRole) if item else None
+
+
+class _ListDialog(_UserRoleListMixin, QDialog):
 
     def __init__(self, parent, title: str, size: tuple[int, int], hdr_text: str,
                  btn_specs: list[tuple[str, str]], close_label: str = "✕  Close"):
@@ -50,10 +58,6 @@ class _ListDialog(QDialog):
 
     def _refresh(self) -> None:
         raise NotImplementedError
-
-    def _selected_data(self):
-        item = self.item_list.currentItem()
-        return item.data(Qt.ItemDataRole.UserRole) if item else None
 
 class _TextViewDialog(QDialog):
 
@@ -870,7 +874,8 @@ class MountsDialog(_ListDialog):
         self.was_changed = True
         self._refresh()
 
-class HeaderSettingsDialog(QDialog):
+class HeaderSettingsDialog(_UserRoleListMixin, QDialog):
+    _selected_name = _UserRoleListMixin._selected_data
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -911,10 +916,6 @@ class HeaderSettingsDialog(QDialog):
             self.item_list.addItem(item)
         if 0 <= row < self.item_list.count():
             self.item_list.setCurrentRow(row)
-
-    def _selected_name(self) -> str | None:
-        item = self.item_list.currentItem()
-        return item.data(Qt.ItemDataRole.UserRole) if item else None
 
     def _new(self) -> None:
         name, ok = ask_text(self, "New Header", "Header name:")

@@ -191,25 +191,11 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
         super().closeEvent(event)
 
     def _build_ui(self) -> None:
-        t = current_theme()
-        bg = t["bg"]
-        bg2 = t["bg2"]
-        bg3 = t["bg3"]
-        sep_col = t["header_sep"]
-        acc = t["accent"]
-        fg = t["text"]
-        dim = t["text_dim"]
-
-        self.setStyleSheet(f"background:{bg};color:{fg};")
-
         self._header_frame = QFrame()
-        self._header_frame.setStyleSheet(f"background:{bg2};border-bottom:1px solid {sep_col};")
         hl = QHBoxLayout(self._header_frame)
         hl.setContentsMargins(14, 10, 14, 10)
         self._title_lbl = QLabel("📄  Dotfiles Manager")
-        self._title_lbl.setStyleSheet(f"font-size:{font_sz(5)}px;font-weight:bold;color:{acc};background:transparent;")
         self._sub_lbl = QLabel("Deploy tracked config files from your profile to the live system")
-        self._sub_lbl.setStyleSheet(f"font-size:{font_sz(-1)}px;color:{dim};background:transparent;")
         hl.addWidget(self._title_lbl)
         hl.addStretch()
         hl.addWidget(self._sub_lbl)
@@ -218,55 +204,40 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
         self._splitter = splitter
 
         self._left_widget = QWidget()
-        self._left_widget.setStyleSheet(f"background:{bg};")
         ll = QVBoxLayout(self._left_widget)
         ll.setContentsMargins(8, 8, 4, 8)
         ll.setSpacing(6)
 
         self._list_hdr_lbl = QLabel("Tracked Files")
-        self._list_hdr_lbl.setStyleSheet(f"font-size:{font_sz(1)}px;font-weight:bold;color:{acc};")
         ll.addWidget(self._list_hdr_lbl)
 
         self._list = QListWidget()
-        self._list.setStyleSheet(
-            f"QListWidget{{background:{bg3};border:1px solid {sep_col};border-radius:4px;"
-            f"font-size:{font_sz()}px;color:{fg};outline:none;}}"
-            f"QListWidget::item{{padding:6px 8px;border-bottom:1px solid {sep_col};}}"
-            f"QListWidget::item:selected{{background:{bg2};color:{acc};border-left:3px solid {acc};}}"
-            f"QListWidget::item:hover:!selected{{background:{bg2};}}"
-        )
         self._list.currentRowChanged.connect(self._on_select)
         ll.addWidget(self._list)
 
         self._backup_cb = QCheckBox("Create .bak backup before overwriting")
         self._backup_cb.setChecked(True)
-        self._backup_cb.setStyleSheet(f"color:{dim};font-size:{font_sz(-1)}px;")
         ll.addWidget(self._backup_cb)
 
         self._btn_deploy_sel = QPushButton("⬇  Deploy Selected")
         self._btn_deploy_sel.setMinimumHeight(36)
-        self._btn_deploy_sel.setStyleSheet(self._btn_style(t, primary=True))
         self._btn_deploy_sel.clicked.connect(self._deploy_selected)
 
         self._btn_deploy_all = QPushButton("⬇⬇  Deploy All Changed")
         self._btn_deploy_all.setMinimumHeight(36)
-        self._btn_deploy_all.setStyleSheet(self._btn_style(t, primary=False))
         self._btn_deploy_all.clicked.connect(self._deploy_all_changed)
 
         ll.addWidget(self._btn_deploy_sel)
         ll.addWidget(self._btn_deploy_all)
 
         self._right_widget = QWidget()
-        self._right_widget.setStyleSheet(f"background:{bg};")
         rl = QVBoxLayout(self._right_widget)
         rl.setContentsMargins(4, 8, 8, 8)
         rl.setSpacing(4)
 
         diff_hdr_row = QHBoxLayout()
         self._diff_title = QLabel("Select a file to see the diff")
-        self._diff_title.setStyleSheet(f"font-size:{font_sz(1)}px;font-weight:bold;color:{acc};")
         self._status_lbl = QLabel()
-        self._status_lbl.setStyleSheet(f"font-size:{font_sz()}px;")
         diff_hdr_row.addWidget(self._diff_title)
         diff_hdr_row.addStretch()
         diff_hdr_row.addWidget(self._status_lbl)
@@ -275,29 +246,22 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
         self._diff_view = QTextEdit()
         self._diff_view.setReadOnly(True)
         self._diff_view.setFont(QFont("monospace"))
-        self._diff_view.setStyleSheet(
-            f"QTextEdit{{background:{bg3};color:{fg};border:1px solid {sep_col};"
-            f"border-radius:4px;padding:8px;}}")
         rl.addWidget(self._diff_view, 1)
 
         splitter.addWidget(self._left_widget)
         splitter.addWidget(self._right_widget)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 2)
-        splitter.setStyleSheet(f"QSplitter::handle{{background:{sep_col};width:1px;}}")
 
         self._bottom_frame = QFrame()
-        self._bottom_frame.setStyleSheet(f"background:{bg2};border-top:1px solid {sep_col};")
         bl = QHBoxLayout(self._bottom_frame)
         bl.setContentsMargins(12, 8, 12, 8)
         self._info_lbl = QLabel()
-        self._info_lbl.setStyleSheet(f"color:{dim};font-size:{font_sz(-1)}px;background:transparent;")
         bl.addWidget(self._info_lbl)
         bl.addStretch()
         self._close_btn = QPushButton("Close")
         self._close_btn.setMinimumHeight(32)
         self._close_btn.setMinimumWidth(100)
-        self._close_btn.setStyleSheet(self._btn_style(t, primary=False))
         self._close_btn.clicked.connect(self.accept)
         bl.addWidget(self._close_btn)
 
@@ -307,12 +271,13 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
         lay.addWidget(self._header_frame)
         lay.addWidget(splitter, 1)
         lay.addWidget(self._bottom_frame)
+        self._apply_styles()
 
     def done(self, result: int) -> None:
         unregister_style_listener(self._refresh_styles)
         super().done(result)
 
-    def _refresh_styles(self) -> None:
+    def _apply_styles(self) -> None:
         t = current_theme()
         bg = t["bg"]
         bg2 = t["bg2"]
@@ -354,6 +319,9 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
         self._info_lbl.setStyleSheet(
             f"color:{dim};font-size:{font_sz(-1)}px;background:transparent;")
         self._close_btn.setStyleSheet(self._btn_style(t, primary=False))
+
+    def _refresh_styles(self) -> None:
+        self._apply_styles()
         self._load_files()
 
     @staticmethod

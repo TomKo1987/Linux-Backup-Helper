@@ -256,6 +256,27 @@ def _collect_verify_paths() -> list[str]:
     return paths
 
 
+def _check_dotfile_status(sf: dict) -> "dict | None":
+    src_raw = first_path(sf.get("source", "")).strip()
+    dst_raw = first_path(sf.get("destination", "")).strip()
+    if not src_raw or not dst_raw:
+        return None
+    src = _ep(src_raw)
+    dst = _ep(dst_raw)
+    name = src.name or str(src)
+    if not src.exists():
+        status = "src_missing"
+    elif not dst.exists():
+        status = "dst_missing"
+    else:
+        h_src, h_dst = _hash_v(src), _hash_v(dst)
+        if h_src and h_dst:
+            status = "ok" if h_src == h_dst else "changed"
+        else:
+            status = "ok" if _mtime(dst) >= _mtime(src) - 2 else "changed"
+    return {"name": name, "status": status, "src": str(src), "dst": str(dst)}
+
+
 class _CaptureWorker(QThread):
     progress = pyqtSignal(str)
     done = pyqtSignal(dict)
@@ -278,24 +299,9 @@ class _CaptureWorker(QThread):
         self.progress.emit("Checking dotfiles…")
         try:
             for sf in active_dotfiles():
-                src_raw = first_path(sf.get("source", "")).strip()
-                dst_raw = first_path(sf.get("destination", "")).strip()
-                if not src_raw or not dst_raw:
-                    continue
-                src = _ep(src_raw)
-                dst = _ep(dst_raw)
-                name = src.name or str(src)
-                if not src.exists():
-                    status = "src_missing"
-                elif not dst.exists():
-                    status = "dst_missing"
-                else:
-                    h_src, h_dst = _hash_v(src), _hash_v(dst)
-                    if h_src and h_dst:
-                        status = "ok" if h_src == h_dst else "changed"
-                    else:
-                        status = "ok" if _mtime(dst) >= _mtime(src) - 2 else "changed"
-                res["sys_files"].append({"name": name, "status": status, "src": str(src), "dst": str(dst)})
+                entry = _check_dotfile_status(sf)
+                if entry is not None:
+                    res["sys_files"].append(entry)
         except Exception as exc:
             logger.warning("CaptureWorker: dotfile check failed: %s", exc)
 
@@ -365,25 +371,9 @@ class _VerifyWorker(QThread):
         for sf in S.dotfiles:
             if not isinstance(sf, dict) or sf.get("disabled"):
                 continue
-            src_raw = first_path(sf.get("source", "")).strip()
-            dst_raw = first_path(sf.get("destination", "")).strip()
-            if not src_raw or not dst_raw:
-                continue
-            src = _ep(src_raw)
-            dst = _ep(dst_raw)
-            name = src.name or str(src)
-            if not src.exists():
-                status = "src_missing"
-            elif not dst.exists():
-                status = "dst_missing"
-            else:
-                h_src, h_dst = _hash_v(src), _hash_v(dst)
-                if h_src and h_dst:
-                    status = "ok" if h_src == h_dst else "changed"
-                else:
-                    logger.debug("verify: hashing skipped for large file '%s', using mtime", src)
-                    status = "ok" if _mtime(dst) >= _mtime(src) - 2 else "changed"
-            res["sys_files"].append({"name": name, "status": status, "src": str(src), "dst": str(dst)})
+            entry = _check_dotfile_status(sf)
+            if entry is not None:
+                res["sys_files"].append(entry)
 
         self.progress.emit("Checking backup entries…")
         for entry in S.entries:
@@ -716,72 +706,15 @@ class _CaptureTab(QWidget):
         active_basic = [
             {"name": p.get("name", ""), "installed": p.get("name", "") in installed_basic_set}
             for p in S.basic_packages if isinstance(p, dict) and not p.get("disabled") and p.get("name")]
-        if active_basic:
-            cl.addWidget(sep())
-            n_ok = sum(1 for p in active_basic if p["installed"])
-            n_bad = len(active_basic) - n_ok
-            color = t["error"] if n_bad else t["success"]
-            hdr = QLabel(f"<b>Basic Packages (Profile)</b>  —  "
-                         f"<span style='color:{color};'>{n_ok}/{len(active_basic)} installed</span>")
-            hdr.setTextFormat(Qt.TextFormat.RichText)
-            hdr.setStyleSheet(f"font-size:{font_sz(1)}px; color:{t['accent']}; padding:2px 0;")
-            cl.addWidget(hdr)
-            grid = QWidget()
-            gl = QGridLayout(grid)
-            gl.setContentsMargins(8, 2, 8, 4)
-            gl.setSpacing(4)
-            for i, p in enumerate(active_basic):
-                lbl = QLabel(f"{'✅' if p['installed'] else '❌'}  {p['name']}")
-                lbl.setStyleSheet(f"color:{t['success'] if p['installed'] else t['error']};")
-                gl.addWidget(lbl, i // 4, i % 4)
-            cl.addWidget(grid)
+        self._add_profile_pkg_grid(cl, t, "Basic Packages (Profile)", active_basic, t["accent"])
 
         active_aur = [{"name": p.get("name", ""), "installed": p.get("name", "") in installed_aur_set}
                       for p in S.aur_packages if isinstance(p, dict) and not p.get("disabled") and p.get("name")]
-        if active_aur:
-            cl.addWidget(sep())
-            n_ok = sum(1 for p in active_aur if p["installed"])
-            n_bad = len(active_aur) - n_ok
-            color = t["error"] if n_bad else t["success"]
-            hdr = QLabel(f"<b>AUR Packages (Profile)</b>  —  "
-                         f"<span style='color:{color};'>{n_ok}/{len(active_aur)} installed</span>")
-            hdr.setTextFormat(Qt.TextFormat.RichText)
-            hdr.setStyleSheet(f"font-size:{font_sz(1)}px; color:{t['accent2']}; padding:2px 0;")
-            cl.addWidget(hdr)
-            grid = QWidget()
-            gl = QGridLayout(grid)
-            gl.setContentsMargins(8, 2, 8, 4)
-            gl.setSpacing(4)
-            for i, p in enumerate(active_aur):
-                lbl = QLabel(f"{'✅' if p['installed'] else '❌'}  {p['name']}")
-                lbl.setStyleSheet(f"color:{t['success'] if p['installed'] else t['error']};")
-                gl.addWidget(lbl, i // 4, i % 4)
-            cl.addWidget(grid)
+        self._add_profile_pkg_grid(cl, t, "AUR Packages (Profile)", active_aur, t["accent2"])
 
         specific = res.get("specific", [])
-        if specific:
-            cl.addWidget(sep())
-            n_ok = sum(1 for p in specific if p["installed"])
-            n_bad = len(specific) - n_ok
-            color = t["error"] if n_bad else t["success"]
-            hdr = QLabel(f"<b>Specific Packages (Profile)</b>  —  "
-                         f"<span style='color:{color};'>{n_ok}/{len(specific)} installed</span>")
-            hdr.setTextFormat(Qt.TextFormat.RichText)
-            hdr.setStyleSheet(f"font-size:{font_sz(1)}px; color:{t['accent2']}; padding:2px 0;")
-            cl.addWidget(hdr)
-            grid = QWidget()
-            gl = QGridLayout(grid)
-            gl.setContentsMargins(8, 2, 8, 4)
-            gl.setSpacing(4)
-            cols = 3
-            for i, p in enumerate(specific):
-                session = f" [{p['session']}]" if p.get("session") else ""
-                lbl = QLabel(f"{'✅' if p['installed'] else '❌'}  {p['name']}"
-                             f"<span style='color:{t['muted']}; font-size:{font_sz(-2)}px;'>{session}</span>")
-                lbl.setTextFormat(Qt.TextFormat.RichText)
-                lbl.setStyleSheet(f"color:{t['success'] if p['installed'] else t['error']};")
-                gl.addWidget(lbl, i // cols, i % cols)
-            cl.addWidget(grid)
+        self._add_profile_pkg_grid(cl, t, "Specific Packages (Profile)", specific, t["accent2"], cols=3,
+                                   suffix_fn=lambda p: f" [{p['session']}]" if p.get("session") else "")
 
         cl.addWidget(sep())
         cl.addWidget(self._build_specific_section(res["basic"], _excluded, t))
@@ -860,6 +793,32 @@ class _CaptureTab(QWidget):
             self._btns.show()
         else:
             self._btns.hide()
+
+    @staticmethod
+    def _add_profile_pkg_grid(cl: QVBoxLayout, t: dict, title: str, pkgs: list[dict], accent: str,
+                              cols: int = 4, suffix_fn=None) -> None:
+        if not pkgs:
+            return
+        cl.addWidget(sep())
+        n_ok = sum(1 for p in pkgs if p["installed"])
+        n_bad = len(pkgs) - n_ok
+        color = t["error"] if n_bad else t["success"]
+        hdr = QLabel(f"<b>{title}</b>  —  <span style='color:{color};'>{n_ok}/{len(pkgs)} installed</span>")
+        hdr.setTextFormat(Qt.TextFormat.RichText)
+        hdr.setStyleSheet(f"font-size:{font_sz(1)}px; color:{accent}; padding:2px 0;")
+        cl.addWidget(hdr)
+        grid = QWidget()
+        gl = QGridLayout(grid)
+        gl.setContentsMargins(8, 2, 8, 4)
+        gl.setSpacing(4)
+        for i, p in enumerate(pkgs):
+            suffix = suffix_fn(p) if suffix_fn else ""
+            lbl = QLabel(f"{'✅' if p['installed'] else '❌'}  {p['name']}"
+                        + (f"<span style='color:{t['muted']}; font-size:{font_sz(-2)}px;'>{suffix}</span>" if suffix else ""))
+            lbl.setTextFormat(Qt.TextFormat.RichText)
+            lbl.setStyleSheet(f"color:{t['success'] if p['installed'] else t['error']};")
+            gl.addWidget(lbl, i // cols, i % cols)
+        cl.addWidget(grid)
 
     def _build_specific_section(self, all_basic: list[str], excluded: frozenset, t: dict) -> QWidget:
         wrapper = QWidget()
@@ -1474,25 +1433,30 @@ class ScanVerifyDialog(_StandardKeysMixin, QDialog):
                     worker.wait(2000)
         super().closeEvent(event)
 
+    _MIN_W, _MIN_H = 1250, 850
+
+    def _clamped_size(self, want_w: int, want_h: int) -> "tuple[int, int] | None":
+        scr = QApplication.primaryScreen()
+        if not scr:
+            return None
+        sg = scr.availableGeometry()
+        w = min(max(want_w, self._MIN_W), sg.width() - 60)
+        h = min(max(want_h, self._MIN_H), sg.height() - 60)
+        return w, h
+
     def _size_to_screen(self) -> None:
         scr = QApplication.primaryScreen()
-        if scr:
-            sg = scr.availableGeometry()
-            w = min(max(1250, sg.width() * 2 // 3), sg.width() - 60)
-            h = min(max(850, sg.height() * 3 // 4), sg.height() - 60)
-            self.resize(w, h)
-        else:
-            self.resize(950, 640)
+        size = self._clamped_size(scr.availableGeometry().width() * 2 // 3,
+                                  scr.availableGeometry().height() * 3 // 4) if scr else None
+        self.resize(*size) if size else self.resize(950, 640)
 
     def fit_to_content(self) -> None:
         def _do_resize() -> None:
-            if not self.isVisible(): return
-            scr = QApplication.primaryScreen()
-            if not scr: return
-            sg = scr.availableGeometry()
-            w = min(max(self.width(), 1250), sg.width() - 60)
-            h = min(max(self.height(), 850), sg.height() - 60)
-            self.resize(w, h)
+            if not self.isVisible():
+                return
+            size = self._clamped_size(self.width(), self.height())
+            if size:
+                self.resize(*size)
 
         QTimer.singleShot(60, _do_resize)
 

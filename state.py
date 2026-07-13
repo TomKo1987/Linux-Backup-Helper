@@ -181,19 +181,20 @@ def _is_valid_pkg_name(name) -> bool:
     return isinstance(name, str) and 0 < len(name.strip()) <= 255 and bool(PKG_NAME_RE.match(name.strip()))
 
 
-def _normalise_pkg(p) -> dict | None:
-    if isinstance(p, str):
-        name = p
-    elif isinstance(p, dict):
-        name = p.get("name", "")
-    else:
+def _normalise_pkg_generic(p, key: str, extra_defaults: dict) -> dict | None:
+    name = p if isinstance(p, str) else p.get(key, "") if isinstance(p, dict) else None
+    if name is None:
         return None
     if not _is_valid_pkg_name(name):
-        logger.warning("Dropping invalid package name from profile: %r", name)
+        logger.warning("Dropping invalid %s name from profile: %r", key, name)
         return None
     if isinstance(p, str):
-        return {"name": name.strip(), "disabled": False}
-    return {**p, "name": name.strip(), "disabled": p.get("disabled", False)}
+        return {key: name.strip(), "disabled": False, **extra_defaults}
+    return {**p, key: name.strip(), "disabled": p.get("disabled", False)}
+
+
+def _normalise_pkg(p) -> dict | None:
+    return _normalise_pkg_generic(p, "name", {})
 
 
 def _norm_pkgs(raw: list) -> list[dict]:
@@ -202,18 +203,7 @@ def _norm_pkgs(raw: list) -> list[dict]:
 
 
 def _normalise_specific_pkg(p) -> dict | None:
-    if isinstance(p, str):
-        name = p
-    elif isinstance(p, dict):
-        name = p.get("package", "")
-    else:
-        return None
-    if not _is_valid_pkg_name(name):
-        logger.warning("Dropping invalid specific package name from profile: %r", name)
-        return None
-    if isinstance(p, str):
-        return {"package": name.strip(), "session": "", "disabled": False}
-    return {**p, "package": name.strip(), "disabled": p.get("disabled", False)}
+    return _normalise_pkg_generic(p, "package", {"session": ""})
 
 
 def _norm_specific_pkgs(raw: list) -> list[dict]:
@@ -234,24 +224,15 @@ def all_profile_pkg_names() -> frozenset[str]:
 def _norm_paths(raw: Any) -> list[str]:
     if not raw:
         return []
-    if isinstance(raw, list):
-        result = []
-        for x in raw:
-            if not isinstance(x, str):
-                continue
-            for part in re.split(r'\r\n|\r|\n', x):
-                s = part.strip()
-                if s:
-                    result.append(s)
-        return result
-    s = str(raw).strip()
-    if not s:
-        return []
+    parts = raw if isinstance(raw, list) else [str(raw)]
     result = []
-    for p in re.split(r'\r\n|\r|\n', s):
-        p = p.strip()
-        if p:
-            result.append(p)
+    for x in parts:
+        if not isinstance(x, str):
+            continue
+        for line in re.split(r'\r\n|\r|\n', x):
+            s = line.strip()
+            if s:
+                result.append(s)
     return result
 
 

@@ -1202,29 +1202,32 @@ class SystemManagerThread(QThread):
         self.outputReceived.emit(f"Running: {' '.join(cmd)}", "info")
         return self._exec(cmd, stream=True).returncode == 0
 
+    def _effective_aur_helper(self) -> str | None:
+        if not self._pkg_cache:
+            return None
+        if self._pkg_cache.is_installed(S.aur_helper):
+            return S.aur_helper
+        fallback = "paru" if S.aur_helper == "yay" else "yay"
+        return fallback if self._pkg_cache.is_installed(fallback) else None
+
+    def _update_flatpak_apps(self) -> None:
+        if shutil.which("flatpak"):
+            self.outputReceived.emit("Updating Flatpak apps…", "info")
+            self._exec(["flatpak", "update", "-y"], stream=True)
+
     def _update_system(self) -> bool:
         if not self.distro: return False
-        if self.distro.has_aur and self._pkg_cache:
-            _eff_helper = None
-            if self._pkg_cache.is_installed(S.aur_helper):
-                _eff_helper = S.aur_helper
-            else:
-                _fallback = "paru" if S.aur_helper == "yay" else "yay"
-                if self._pkg_cache.is_installed(_fallback):
-                    _eff_helper = _fallback
-            if _eff_helper:
-                sys_ok = (self._exec([_eff_helper, "-Syu", "--noconfirm"], stream=True).returncode == 0)
-                if shutil.which("flatpak"):
-                    self.outputReceived.emit("Updating Flatpak apps…", "info")
-                    self._exec(["flatpak", "update", "-y"], stream=True)
+        if self.distro.has_aur:
+            eff_helper = self._effective_aur_helper()
+            if eff_helper:
+                sys_ok = (self._exec([eff_helper, "-Syu", "--noconfirm"], stream=True).returncode == 0)
+                self._update_flatpak_apps()
                 self._emit_result(sys_ok, "System successfully updated", "System update failed")
                 return sys_ok
 
         cmd_str = self.distro.get_update_system_cmd()
         sys_ok = (self._exec(cmd_str, stream=True, timeout=None).returncode == 0)
-        if shutil.which("flatpak"):
-            self.outputReceived.emit("Updating Flatpak apps…", "info")
-            self._exec(["flatpak", "update", "-y"], stream=True)
+        self._update_flatpak_apps()
         self._emit_result(sys_ok, "System successfully updated", "System update failed")
         return sys_ok
 

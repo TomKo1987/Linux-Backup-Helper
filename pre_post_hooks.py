@@ -20,6 +20,12 @@ _HOOK_TIMEOUT = 120
 
 def run_hooks(hooks: list[str], *, abort_on_error: bool = True, label: str = "") -> tuple[bool, list[str]]:
     errors: list[str] = []
+
+    def _fail(_msg: str) -> bool:
+        logger.error("run_hooks: %s", _msg)
+        errors.append(_msg)
+        return abort_on_error
+
     for raw_cmd in hooks:
         cmd = raw_cmd.strip()
         if not cmd or cmd.startswith("#"):
@@ -27,10 +33,7 @@ def run_hooks(hooks: list[str], *, abort_on_error: bool = True, label: str = "")
         try:
             tokens = shlex.split(cmd)
         except ValueError as exc:
-            msg = f"Hook parse error ({label!r}): {exc} — command: {cmd!r}"
-            logger.error("run_hooks: %s", msg)
-            errors.append(msg)
-            if abort_on_error:
+            if _fail(f"Hook parse error ({label!r}): {exc} — command: {cmd!r}"):
                 return False, errors
             continue
 
@@ -49,21 +52,13 @@ def run_hooks(hooks: list[str], *, abort_on_error: bool = True, label: str = "")
                     f"{' — ' + label if label else ''}: {cmd!r}"
                     + (f"\n  → {stderr}" if stderr else "")
                 )
-                logger.error("run_hooks: %s", msg)
-                errors.append(msg)
-                if abort_on_error:
+                if _fail(msg):
                     return False, errors
         except subprocess.TimeoutExpired:
-            msg = f"Hook timed out after {_HOOK_TIMEOUT}s ({label}): {cmd!r}"
-            logger.error("run_hooks: %s", msg)
-            errors.append(msg)
-            if abort_on_error:
+            if _fail(f"Hook timed out after {_HOOK_TIMEOUT}s ({label}): {cmd!r}"):
                 return False, errors
         except Exception as exc:
-            msg = f"Hook exception ({label}): {exc} — {cmd!r}"
-            logger.error("run_hooks: %s", msg)
-            errors.append(msg)
-            if abort_on_error:
+            if _fail(f"Hook exception ({label}): {exc} — {cmd!r}"):
                 return False, errors
 
     return len(errors) == 0, errors

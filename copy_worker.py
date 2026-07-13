@@ -131,6 +131,16 @@ _smb_procs: dict[int, subprocess.Popen] = {}
 _smb_procs_lock = threading.Lock()
 
 
+def _classify_entry(e: "os.DirEntry") -> "tuple[bool, bool] | None":
+    try:
+        is_symlink = e.is_symlink()
+        is_dir_eff = (not is_symlink) and e.is_dir(follow_symlinks=False)
+        is_file_eff = is_symlink or e.is_file(follow_symlinks=False)
+        return is_dir_eff, is_file_eff
+    except OSError:
+        return None
+
+
 def _ensure_dir(path: str) -> bool:
     if not path:
         return True
@@ -1477,12 +1487,10 @@ class CopyWorker(QThread):
                                 break
                             if e.path in _excl or _SKIP_RE.search(e.name):
                                 continue
-                            try:
-                                is_symlink   = e.is_symlink()
-                                is_dir_eff   = (not is_symlink) and e.is_dir(follow_symlinks=False)
-                                is_file_eff  = is_symlink or e.is_file(follow_symlinks=False)
-                            except OSError:
+                            cls = _classify_entry(e)
+                            if cls is None:
                                 continue
+                            is_dir_eff, is_file_eff = cls
                             if is_dir_eff:
                                 _enqueue((e.path, os.path.join(_dst, e.name), _title, _excl))
                             elif is_file_eff:
@@ -1598,12 +1606,10 @@ class CopyWorker(QThread):
                                 break
                             if e.path in _excl or _SKIP_RE.search(e.name):
                                 continue
-                            try:
-                                is_symlink   = e.is_symlink()
-                                is_dir_eff   = (not is_symlink) and e.is_dir(follow_symlinks=False)
-                                is_file_eff  = is_symlink or e.is_file(follow_symlinks=False)
-                            except OSError:
+                            cls = _classify_entry(e)
+                            if cls is None:
                                 continue
+                            is_dir_eff, is_file_eff = cls
                             if is_dir_eff:
                                 _eq((e.path, os.path.join(_dst, e.name), _title, _excl))
                             elif is_file_eff:
@@ -1808,23 +1814,7 @@ class CopyWorker(QThread):
                 return start, end
 
         def _worker() -> None:
-            ok_l: list  = []
-            sk_l: list  = []
-            er_l: list  = []
-            tc: dict    = {}
-            _pend_count = 0
-
-            def _fl() -> None:
-                nonlocal _pend_count
-                if ok_l or sk_l or er_l:
-                    flusher.push(ok=ok_l, sk=sk_l, er=er_l)
-                    ok_l.clear()
-                    sk_l.clear()
-                    er_l.clear()
-                tracker.batch_update(tc)
-                tc.clear()
-                _pend_count = 0
-
+            buf = _BatchBuffer(flusher, tracker)
             while not cancel.is_set():
                 claim = _claim()
                 if claim is None:
@@ -1833,11 +1823,10 @@ class CopyWorker(QThread):
                 for i in range(start, end):
                     if cancel.is_set():
                         break
-                    _do_copy(items[i], cancel, ok_l, sk_l, er_l, tc)
-                    _pend_count += 1
-                    if _pend_count >= local_batch:
-                        _fl()
-            _fl()
+                    buf.record(items[i], cancel)
+                    if buf.pending >= local_batch:
+                        buf.flush()
+            buf.flush()
 
         _workers = workers or _WORKERS
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=_workers)

@@ -247,7 +247,7 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, aur_he
     _installed_helpers_for_cache: list[str] = []
     if distro.has_aur:
         for _candidate in ("paru", "yay"):
-            if distro.package_is_installed(_candidate) or shutil.which(_candidate) is not None:
+            if _is_helper_present(distro, _candidate):
                 if _installed_helper_for_update is None:
                     _installed_helper_for_update = _candidate
                 _installed_helpers_for_cache.append(_candidate)
@@ -481,6 +481,20 @@ def _check_aur_helper_installed(distro: LinuxDistroHelper) -> bool:
     if distro.package_is_installed(helper):
         return True
     return shutil.which(helper) is not None
+
+
+def _is_helper_present(distro: LinuxDistroHelper, helper: str) -> bool:
+    return distro.package_is_installed(helper) or shutil.which(helper) is not None
+
+
+def _detect_effective_aur_helper(distro: LinuxDistroHelper) -> tuple[str, bool]:
+    helper = S.aur_helper
+    if _is_helper_present(distro, helper):
+        return helper, True
+    alt = "paru" if helper == "yay" else "yay"
+    if _is_helper_present(distro, alt):
+        return alt, True
+    return helper, False
 
 
 class PackageVerifierThread(QThread):
@@ -858,15 +872,8 @@ class SystemManagerOptions(QDialog):
     def _build(self) -> None:
         lay = QVBoxLayout(self)
         if self._distro.has_aur:
-            _detected_helper = S.aur_helper if self.aur_helper_installed else None
-            if _detected_helper:
-                aur_helper_info = f"   |   AUR Helper: '{_detected_helper}' detected"
-            else:
-                _alt = "paru" if S.aur_helper == "yay" else "yay"
-                if shutil.which(_alt) or self._distro.package_is_installed(_alt):
-                    aur_helper_info = f"   |   AUR Helper: '{_alt}' detected"
-                else:
-                    aur_helper_info = f"   |   AUR Helper: '{S.aur_helper}' not detected"
+            _helper, _ok = _detect_effective_aur_helper(self._distro)
+            aur_helper_info = f"   |   AUR Helper: '{_helper}' {'detected' if _ok else 'not detected'}"
         else:
             aur_helper_info = ""
         info = QLabel(
@@ -982,13 +989,7 @@ class SystemManagerOptions(QDialog):
 
         bl_color = t["success"] if bootloader != "unknown" else t["warning"]
         if self._distro.has_aur:
-            _eff_helper = S.aur_helper
-            _helper_ok = (self._distro.package_is_installed(_eff_helper) or shutil.which(_eff_helper) is not None)
-            if not _helper_ok:
-                _alt2 = "paru" if _eff_helper == "yay" else "yay"
-                if self._distro.package_is_installed(_alt2) or shutil.which(_alt2) is not None:
-                    _eff_helper = _alt2
-                    _helper_ok = True
+            _eff_helper, _helper_ok = _detect_effective_aur_helper(self._distro)
             _aur_color = t["success"] if _helper_ok else t["warning"]
             _aur_status = "detected" if _helper_ok else "not detected"
             _aur_prefix = f"AUR Helper: <b style='color:{_aur_color};'>'{_eff_helper}' {_aur_status}</b>   |   "
@@ -1055,8 +1056,8 @@ class SystemManagerOptions(QDialog):
 
                 if key == "install_aur_helper":
                     if not unsupported:
-                        _paru_inst = self._distro.package_is_installed("paru") or bool(shutil.which("paru"))
-                        _yay_inst = self._distro.package_is_installed("yay") or bool(shutil.which("yay"))
+                        _paru_inst = _is_helper_present(self._distro, "paru")
+                        _yay_inst = _is_helper_present(self._distro, "yay")
                         _default_combo_helper = "paru" if _paru_inst else ("yay" if _yay_inst else S.aur_helper)
 
                         aur_combo = QComboBox()
@@ -1696,13 +1697,7 @@ class SystemManagerOptions(QDialog):
                     continue
                 d = pkg if isinstance(pkg, dict) else {"name": str(pkg)}
                 updated.append({**d, "disabled": _cb.checkState() == _STATE_DISABLED})
-            setattr(S, pkg_type, updated)
-            if _is_specific(pkg_type):
-                sort_specific_pkg_list(updated)
-            else:
-                sort_pkg_list(updated)
-            setattr(S, pkg_type, updated)
-            save_profile()
+            _commit_pkgs(pkg_type, updated)
             _dlg.accept()
 
         raw_title = pkg_type.replace('_', ' ').title()
@@ -2150,13 +2145,7 @@ class SystemManagerLauncher:
         outer.setContentsMargins(0, 0, 0, 0)
         aur_helper_info = ""
         if self._distro.has_aur:
-            _lnch_helper = S.aur_helper
-            _lnch_ok = (self._distro.package_is_installed(_lnch_helper) or shutil.which(_lnch_helper) is not None)
-            if not _lnch_ok:
-                _lnch_alt = "paru" if _lnch_helper == "yay" else "yay"
-                if self._distro.package_is_installed(_lnch_alt) or shutil.which(_lnch_alt) is not None:
-                    _lnch_helper = _lnch_alt
-                    _lnch_ok = True
+            _lnch_helper, _lnch_ok = _detect_effective_aur_helper(self._distro)
             aur_helper_info = f"   |   AUR Helper: '{_lnch_helper}' {'detected' if _lnch_ok else 'not detected'}"
 
         content_widget = QWidget()
