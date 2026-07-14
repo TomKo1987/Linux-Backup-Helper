@@ -56,15 +56,15 @@ def _scale_params(total: int) -> tuple[int, int, int, int, int]:
 
 
 _SKIP_RE = re.compile(
-    r"("
-    r"^/?\.?lock/?$|\.lock/?$|^/?lockfile/?$|\.lck/?$|\.parentlock/?$|^/?Singleton\w*/?$|"
-    r"^/?cache/?$|^/?Network\sCache/?$|^/?startupCache/?$|^/?jumpListCache/?$|"
-    r"\.sqlite-wal/?$|\.sqlite-shm/?$|\.journal/?$|[-_]journal/?$|\.db-wal/?$|\.db-shm/?$|"
-    r"^/?idb/?$|^/?WebStorage/?$|^/?Session\sStorage/?$|^/?Local\sStorage/?$|^/?leveldb/?$|\.ldb/?$|"
-    r"^/?temp/?$|^/?tmp/?$|\.tmp/?$|\.bak/?$|\.baklz4/?$|^/?recovery\.jsonlz4/?$|^/?recovery\.baklz4/?$|^/?sessionstore-backups/?$|"
-    r"^/?Thumbs\.db/?$|^/?\.DS_Store/?$|^/?\.quota/?$|^/?\.user64/?$|^/?\.healthcheck/?$|^/?\.active-update/?$|"
-    r"^/?GPUCache/?$|^/?ShaderCache/?$|^/?blob_storage/?$|^/?prefs\.js/?$"
-    r")",
+    r"^(?:"
+    r"\.?lock|lockfile|\.lck|\.parentlock|Singleton\w*|"
+    r"cache|Network\sCache|startupCache|jumpListCache|"
+    r".*\.sqlite-wal|.*\.sqlite-shm|.*\.journal|.*[-_]journal|.*\.db-wal|.*\.db-shm|"
+    r"idb|WebStorage|Session\sStorage|Local\sStorage|leveldb|.*\.ldb|"
+    r"temp|tmp|.*\.tmp|.*\.bak|.*\.baklz4|recovery\.jsonlz4|recovery\.baklz4|sessionstore-backups|"
+    r"Thumbs\.db|\.DS_Store|\.quota|\.user64|\.healthcheck|\.active-update|"
+    r"GPUCache|ShaderCache|blob_storage|prefs\.js"
+    r")$",
     re.I
 )
 
@@ -810,9 +810,15 @@ class _SmbScanner:
         self._report(1)
 
     def _do_put_dir(self, src, host, share, rpath, title, expanded) -> None:
-        lexp:  list = []
+        lexp: list = []
         stack: list = [src]
-        seen_real: set = {os.path.realpath(src)}
+
+        try:
+            st = os.stat(src)
+            seen_inos: set = {(st.st_dev, st.st_ino)}
+        except OSError:
+            seen_inos: set = set()
+
         while stack:
             if self._cancel.is_set():
                 break
@@ -823,22 +829,23 @@ class _SmbScanner:
                         if _SKIP_RE.search(e.name):
                             continue
                         try:
-                            is_dir_eff  = e.is_dir(follow_symlinks=True)
+                            is_dir_eff = e.is_dir(follow_symlinks=True)
                             is_file_eff = e.is_file(follow_symlinks=True)
                         except OSError:
                             continue
                         if is_dir_eff:
                             try:
-                                real = os.path.realpath(e.path)
+                                e_st = e.stat(follow_symlinks=True)
+                                ino = (e_st.st_dev, e_st.st_ino)
                             except OSError:
                                 continue
-                            if real in seen_real:
+                            if ino in seen_inos:
                                 continue
-                            seen_real.add(real)
+                            seen_inos.add(ino)
                             stack.append(e.path)
                         elif is_file_eff:
                             rel = os.path.relpath(e.path, src)
-                            rp  = f"{rpath}/{rel}".replace(os.sep, "/").lstrip("/")
+                            rp = f"{rpath}/{rel}".replace(os.sep, "/").lstrip("/")
                             lexp.append(_SmbJob(e.path, "", "smb_put", host, share, rp, title=title))
             except (PermissionError, FileNotFoundError, NotADirectoryError):
                 pass
@@ -1243,6 +1250,7 @@ class CopyWorker(QThread):
                 else:
                     local_tasks.append((s, d, t, exc))
             user = ""
+            smb_tool_missing = False
             if smb_tasks:
                 user, pw = _get_smb_credentials()
                 smb_tool_missing = shutil.which("smbclient") is None

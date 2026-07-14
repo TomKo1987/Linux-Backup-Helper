@@ -403,9 +403,10 @@ class LinuxDistroHelper:
         adaptive_timeout = max(15, len(packages) * 2)
         results: dict[str, bool] = dict.fromkeys(packages, False)
         done: set[str] = set()
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=workers)
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-                futs = {pool.submit(self.package_is_installed, p): p for p in packages}
+            futs = {pool.submit(self.package_is_installed, p): p for p in packages}
+            try:
                 for fut in concurrent.futures.as_completed(futs, timeout=adaptive_timeout):
                     pkg = futs[fut]
                     done.add(pkg)
@@ -413,17 +414,22 @@ class LinuxDistroHelper:
                         results[pkg] = fut.result()
                     except Exception as exc:
                         logger.warning("parallel check '%s': %s", pkg, exc)
-        except concurrent.futures.TimeoutError:
-            remaining = [p for p in packages if p not in done]
-            logger.warning("parallel check timed out; %d package(s) checked sequentially", len(remaining))
-            for p in remaining:
-                try:
-                    results[p] = self.package_is_installed(p)
-                except Exception as exc:
-                    logger.warning("sequential fallback check '%s': %s", p, exc)
+            except concurrent.futures.TimeoutError:
+                remaining = [p for p in packages if p not in done]
+                logger.warning("parallel check timed out; %d package(s) checked sequentially", len(remaining))
+                for fut, pkg in futs.items():
+                    if pkg not in done:
+                        fut.cancel()
+                for p in remaining:
+                    try:
+                        results[p] = self.package_is_installed(p)
+                    except Exception as exc:
+                        logger.warning("sequential fallback check '%s': %s", p, exc)
         except Exception as exc:
             logger.error("parallel check failed: %s", exc)
             return [p for p in packages if not self.package_is_installed(p)]
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
         return [pkg for pkg in packages if not results[pkg]]
 
     def get_pkg_install_cmd(self, package: str) -> str: return self._install.format(p=shlex.quote(package))
