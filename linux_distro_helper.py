@@ -44,12 +44,10 @@ def _run_capture(cmd: list[str], timeout: int = 25) -> list[str]:
 
 
 def is_valid_pkg_name(name: str) -> bool:
-    return (
-        isinstance(name, str)
-        and bool(name.strip())
-        and len(name.strip()) <= 255
-        and bool(PKG_NAME_RE.match(name.strip()))
-    )
+    if not isinstance(name, str):
+        return False
+    stripped = name.strip()
+    return bool(stripped) and len(stripped) <= 255 and bool(PKG_NAME_RE.match(stripped))
 
 
 _DISTRO_FAMILY_MAP: dict[str, str] = {
@@ -77,10 +75,13 @@ _PKG_MGR_NAME: dict[str, str] = {"arch": "pacman", "debian": "apt", "fedora": "d
                                  "slackware": "pkgtool", "unknown": "unknown"}
 
 
-def _nixos_check(p: str) -> list[str]: return ["sh", "-c", "nix-env -q --installed 2>/dev/null | grep -qF -- " + shlex.quote(p)]
+def _nixos_check(p: str) -> list[str]:
+    pattern = f"^{re.escape(p)}-[0-9]"
+    return ["sh", "-c", "nix-env -q --installed 2>/dev/null | grep -qE -- " + shlex.quote(pattern)]
 
 
-def _slackware_check(p: str) -> list[str]: return ["sh", "-c", f"ls /var/log/packages/{shlex.quote(p)}-* >/dev/null 2>&1"]
+def _slackware_check(p: str) -> list[str]:
+    return ["sh", "-c", f"ls /var/log/packages/{shlex.quote(p)}-[0-9]* >/dev/null 2>&1"]
 
 
 _PKG: dict[str, dict[str, Any]] = {
@@ -135,7 +136,7 @@ _PKG: dict[str, dict[str, Any]] = {
         kernel  = "linux-headers",
     ),
     "gentoo": dict(
-        check   = lambda p: ["qlist", "-I", p],
+        check   = lambda p: ["qlist", "-Ie", p],
         install = "sudo emerge --ask=n {p}",
         update  = "sudo emerge --sync && sudo emerge -uDU @world",
         remove  = "sudo emerge --depclean {p}",

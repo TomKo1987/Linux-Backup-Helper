@@ -475,12 +475,7 @@ def _pkg_form_dialog(_parent, title: str, *, prefill_name: str = "", prefill_ses
 
 
 def _check_aur_helper_installed(distro: LinuxDistroHelper) -> bool:
-    if not distro.has_aur:
-        return False
-    helper = S.aur_helper
-    if distro.package_is_installed(helper):
-        return True
-    return shutil.which(helper) is not None
+    return distro.has_aur and _is_helper_present(distro, S.aur_helper)
 
 
 def _is_helper_present(distro: LinuxDistroHelper, helper: str) -> bool:
@@ -1298,10 +1293,8 @@ class SystemManagerOptions(QDialog):
             _aur_cb.stateChanged.connect(lambda _: _sync_aur_combo())
             _sync_aur_combo()
 
-        enabled_widgets = [c for c, _ in widgets if c.isEnabled() and c.isVisible()]
-
         def _sync_sa():
-            currently_enabled = [c for c in enabled_widgets if c.isEnabled() and c.isVisible()]
+            currently_enabled = [c for c, _ in widgets if c.isEnabled() and c.isVisible()]
             if not currently_enabled: return
             n = sum(c.isChecked() for c in currently_enabled)
             sa.blockSignals(True)
@@ -1354,7 +1347,9 @@ class SystemManagerOptions(QDialog):
             QMessageBox.information(self, "Saved", "Operations saved.")
             dlg.accept()
 
-        _scroll_dlg(self, "System Manager Operations", body, _save)[0].exec()
+        _scroll_dlg_obj, _ = _scroll_dlg(self, "System Manager Operations", body, _save)
+        QTimer.singleShot(0, _sync_sa)
+        _scroll_dlg_obj.exec()
 
     def _edit_dotfiles(self) -> None:
         files = sorted(

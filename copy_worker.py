@@ -101,20 +101,21 @@ def _check_destination_space(tasks: list[tuple]) -> list[str]:
     checked: set[str] = set()
     warnings: list[str] = []
     for _src, dst_raw, _title, *_ in tasks:
-        dst = dst_raw[0] if isinstance(dst_raw, list) else dst_raw
-        dst = str(dst).strip()
-        if not dst or dst in checked or is_smb(dst) or is_ssh(dst):
-            continue
-        checked.add(dst)
-        try:
-            usage = shutil.disk_usage(dst)
-            if usage.free < _MIN_FREE:
-                free_mb = usage.free // (1024 * 1024)
-                warnings.append(
-                    f"• {dst!r}  —  only {free_mb:,} MB free"
-                )
-        except OSError as exc:
-            logger.debug("_check_destination_space: cannot check %r: %s", dst, exc)
+        dsts = dst_raw if isinstance(dst_raw, list) else (dst_raw,)
+        for dst in dsts:
+            dst = str(dst).strip()
+            if not dst or dst in checked or is_smb(dst) or is_ssh(dst):
+                continue
+            checked.add(dst)
+            try:
+                usage = shutil.disk_usage(dst)
+                if usage.free < _MIN_FREE:
+                    free_mb = usage.free // (1024 * 1024)
+                    warnings.append(
+                        f"• {dst!r}  —  only {free_mb:,} MB free"
+                    )
+            except OSError as exc:
+                logger.debug("_check_destination_space: cannot check %r: %s", dst, exc)
     return warnings
 
 
@@ -139,6 +140,28 @@ def _classify_entry(e: "os.DirEntry") -> "tuple[bool, bool] | None":
         return is_dir_eff, is_file_eff
     except OSError:
         return None
+
+
+def _scan_dir_entries(src: str, dst: str, excl: frozenset, cancel: threading.Event):
+    with os.scandir(src) as it:
+        for e in it:
+            if cancel.is_set():
+                break
+            if e.path in excl or _SKIP_RE.search(e.name):
+                continue
+            cls = _classify_entry(e)
+            if cls is None:
+                continue
+            is_dir_eff, is_file_eff = cls
+            dst_path = os.path.join(dst, e.name)
+            if is_dir_eff:
+                yield True, e.path, dst_path, None
+            elif is_file_eff:
+                try:
+                    st = e.stat(follow_symlinks=False)
+                except OSError:
+                    st = None
+                yield False, e.path, dst_path, st
 
 
 def _ensure_dir(path: str) -> bool:
@@ -219,9 +242,9 @@ def _run_futures(futs: list, cancel: threading.Event, tag: str = "worker") -> No
 
 def _do_copy(entry, cancel: threading.Event, ok_l: list, sk_l: list, er_l: list, tc: dict) -> None:
 
-    src, dst, title, _ = entry
+    src, dst, title, st = entry
     try:
-        status, aux, sz = _copy_file(src, dst, cancel)
+        status, aux, sz = _copy_file(src, dst, cancel, st)
     except Exception as exc:
         logger.error("copy %s: %s", src, exc)
         status, aux, sz = "error", str(exc), 0
@@ -426,7 +449,7 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
     return total - rem
 
 
-def _copy_file(src, dst, cancel):
+def _copy_file(src, dst, cancel, cached_st=None):
     if os.path.islink(src):
         return _copy_symlink(src, dst)
 
@@ -436,11 +459,14 @@ def _copy_file(src, dst, cancel):
         success = False
         try:
             if cancel.is_set():
-                return "skip", "", 0
-            try:
-                st = os.stat(src)
-            except OSError:
-                return "error", "Source unreadable", 0
+                return "skip", "Cancelled", 0
+            if cached_st is not None and _attempt == 0:
+                st = cached_st
+            else:
+                try:
+                    st = os.stat(src)
+                except OSError:
+                    return "error", "Source unreadable", 0
 
             if _is_up_to_date_local(dst, st):
                 return "skip", "Up to date", st.st_size
@@ -489,7 +515,7 @@ def _copy_file(src, dst, cancel):
             return "ok", dst, copied
 
         except InterruptedError:
-            return "skip", "", 0
+            return "skip", "Cancelled", 0
         except OSError as exc:
             if "Incomplete copy" in str(exc) and _attempt == 0:
                 logger.debug("copy %s: %s — retrying", src, exc)
@@ -1327,7 +1353,7 @@ class CopyWorker(QThread):
                 return
 
             guest = _guest_box[0]
-            total = len(local_items) + len(smb_expanded) + len(smb_errors)
+            total = len(local_items) + len(local_not_found) + len(smb_expanded) + len(smb_errors)
             cs, lb, ft, _spb, cw = _scale_params(total)
             self.scan_finished.emit(total)
 
@@ -1489,24 +1515,11 @@ class CopyWorker(QThread):
 
                 local_files: list = []
                 try:
-                    with os.scandir(_src) as it:
-                        for e in it:
-                            if cancel.is_set():
-                                break
-                            if e.path in _excl or _SKIP_RE.search(e.name):
-                                continue
-                            cls = _classify_entry(e)
-                            if cls is None:
-                                continue
-                            is_dir_eff, is_file_eff = cls
-                            if is_dir_eff:
-                                _enqueue((e.path, os.path.join(_dst, e.name), _title, _excl))
-                            elif is_file_eff:
-                                try:
-                                    st = e.stat(follow_symlinks=False)
-                                except OSError:
-                                    st = None
-                                local_files.append((e.path, os.path.join(_dst, e.name), _title, st))
+                    for is_dir, path, dst_path, st in _scan_dir_entries(_src, _dst, _excl, cancel):
+                        if is_dir:
+                            _enqueue((path, dst_path, _title, _excl))
+                        else:
+                            local_files.append((path, dst_path, _title, st))
                 except NotADirectoryError:
                     local_files.append((_src, _dst, _title, None))
                 except (PermissionError, FileNotFoundError):
@@ -1565,6 +1578,7 @@ class CopyWorker(QThread):
         dir_done = threading.Event()
         last_emit = [0.0]
         found = [0]
+        missing = [0]
         copy_params = [_LOCAL_BATCH, _SCAN_PIPE_BATCH]
         copy_params_lock = threading.Lock()
 
@@ -1587,6 +1601,7 @@ class CopyWorker(QThread):
                 flusher.push(sk=[(src, _nf_reason, 0)])
                 if title:
                     tracker.batch_update({title: (0, 1, 0)})
+                missing[0] += 1
             else:
                 _eq((src, dst, title, excludes))
 
@@ -1608,39 +1623,26 @@ class CopyWorker(QThread):
                 with copy_params_lock:
                     spb = copy_params[1]
                 try:
-                    with os.scandir(_src) as it:
-                        for e in it:
-                            if cancel.is_set():
-                                break
-                            if e.path in _excl or _SKIP_RE.search(e.name):
-                                continue
-                            cls = _classify_entry(e)
-                            if cls is None:
-                                continue
-                            is_dir_eff, is_file_eff = cls
-                            if is_dir_eff:
-                                _eq((e.path, os.path.join(_dst, e.name), _title, _excl))
-                            elif is_file_eff:
-                                try:
-                                    entry_stat = e.stat(follow_symlinks=False)
-                                except OSError:
-                                    entry_stat = None
-                                batch.append((e.path, os.path.join(_dst, e.name), _title, entry_stat))
-                                local_n += 1
-                                if len(batch) >= spb:
-                                    while not cancel.is_set():
-                                        try:
-                                            pipe_q.put(batch, timeout=0.25)
+                    for is_dir, path, dst_path, entry_stat in _scan_dir_entries(_src, _dst, _excl, cancel):
+                        if is_dir:
+                            _eq((path, dst_path, _title, _excl))
+                        else:
+                            batch.append((path, dst_path, _title, entry_stat))
+                            local_n += 1
+                            if len(batch) >= spb:
+                                while not cancel.is_set():
+                                    try:
+                                        pipe_q.put(batch, timeout=0.25)
+                                        batch = []
+                                        break
+                                    except queue.Full:
+                                        if cancel.is_set():
+                                            local_n -= len(batch)
                                             batch = []
                                             break
-                                        except queue.Full:
-                                            if cancel.is_set():
-                                                local_n -= len(batch)
-                                                batch = []
-                                                break
-                                    else:
-                                        local_n -= len(batch)
-                                        batch = []
+                                else:
+                                    local_n -= len(batch)
+                                    batch = []
                 except NotADirectoryError:
                     batch.append((_src, _dst, _title, None))
                     local_n += 1
@@ -1720,7 +1722,7 @@ class CopyWorker(QThread):
                 with concurrent.futures.ThreadPoolExecutor(max_workers=_WORKERS) as sp:
                     futs = [sp.submit(_scan_worker) for _ in range(_WORKERS)]
                     _run_futures(futs, cancel, "scan worker")
-                total = found[0]
+                total = found[0] + missing[0]
                 self.scan_progress.emit("Scanning", total)
                 _, lb, ft, spb, _ = _scale_params(total)
                 with copy_params_lock:

@@ -1120,7 +1120,9 @@ class SystemManagerThread(QThread):
             single = lambda p_: self._exec(_distro.get_pkg_install_cmd(p_), stream=True)
 
         for i in range(0, len(to_install), 20):
-            if self.terminated: break
+            if self.terminated:
+                failed.extend(to_install[i:])
+                break
             batch = to_install[i:i + 20]
             self.outputReceived.emit(f"Installing: {', '.join(batch)}", "info")
             failed.extend(self._install_with_retry(batch, bulk, single))
@@ -1304,7 +1306,10 @@ class SystemManagerThread(QThread):
             return _Status.WARNING
         targets = S.effective_kernels
         bootloader = LinuxDistroHelper.detect_bootloader()
+        esp = LinuxDistroHelper.detect_esp() if bootloader == "systemd-boot" else None
+        uki_mode = LinuxDistroHelper.detect_uki_mode(esp) if esp is not None else False
         overall = True
+        newly_installed = False
         for variant in targets:
             pkgs = ARCH_KERNEL_VARIANTS.get(variant)
 
@@ -1319,9 +1324,11 @@ class SystemManagerThread(QThread):
             kernel_pkg = pkgs[0]
             if not self._install_pkg(kernel_pkg, "Kernel Package"):
                 overall = False
-            elif bootloader == "systemd-boot":
-                esp = LinuxDistroHelper.detect_esp()
-                if LinuxDistroHelper.detect_uki_mode(esp):
+                continue
+
+            newly_installed = True
+            if esp is not None:
+                if uki_mode:
                     self.outputReceived.emit(
                         f"UKI mode detected — systemd-boot will auto-discover '{variant}'; "
                         f"no .conf entry needed.", "info"
@@ -1336,6 +1343,14 @@ class SystemManagerThread(QThread):
                         )
                     else:
                         self.outputReceived.emit(f"systemd-boot entry created for {variant}", "success")
+
+        if newly_installed and bootloader == "grub":
+            self.outputReceived.emit("Regenerating /boot/grub/grub.cfg for newly installed kernel(s)…", "info")
+            if self._exec(["sudo", "grub-mkconfig", "-o", "/boot/grub/grub.cfg"], stream=True, timeout=120).returncode != 0:
+                self.outputReceived.emit(
+                    "grub-mkconfig failed — new kernel(s) may not appear in the GRUB menu until it is regenerated manually.",
+                    "warning")
+                overall = False
 
         self._emit_result(overall, "Kernel(s) successfully installed", "One or more kernels failed to install")
         return overall
@@ -1559,13 +1574,14 @@ class SystemManagerThread(QThread):
 
         running_variant = LinuxDistroHelper.detect_running_kernel_variant()
         running_kern_pkg = ARCH_KERNEL_VARIANTS.get(running_variant, ("linux", "linux-headers"))[0]
+        _running_exact_re = re.compile(r"vmlinuz-" + re.escape(running_kern_pkg) + r"(?:[^\w-]|$)")
 
         template_content: str | None = None
         entry_files = sorted(entries_dir.glob("*.conf")) if entries_dir.exists() else []
 
         for fpath in entry_files:
             content = self._read_file_sudo(fpath)
-            if content and running_kern_pkg in content:
+            if content and _running_exact_re.search(content):
                 template_content = content
                 break
 
@@ -1576,7 +1592,8 @@ class SystemManagerThread(QThread):
             self.outputReceived.emit(f"No template found in {entries_dir}", "error")
             return None
 
-        new_content = template_content.replace(running_kern_pkg, kernel_pkg)
+        _token_re = re.compile(r"(?<![\w-])" + re.escape(running_kern_pkg) + r"(?![\w-])")
+        new_content = _token_re.sub(kernel_pkg, template_content)
         dest_path = entries_dir / f"{kernel_pkg}.conf"
 
         escaped_content = shlex.quote(new_content)
@@ -1745,7 +1762,7 @@ class SystemManagerThread(QThread):
                 mtime = 0
             return 0 if "-debug-" not in f.name else 1, mtime
 
-        pkgs = sorted((f for f in target_dir.iterdir() if ".pkg.tar." in f.name), key=_pkg_key)
+        pkgs = sorted((f for f in target_dir.iterdir() if f.name.endswith((".pkg.tar.zst", ".pkg.tar.xz", ".pkg.tar.gz", ".pkg.tar.lz4", ".pkg.tar"))), key=_pkg_key)
 
         if not pkgs:
             self.outputReceived.emit(f"No {helper} package file found after build", "error")
