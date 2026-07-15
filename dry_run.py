@@ -19,6 +19,14 @@ from ui_utils import _StandardKeysMixin, size_to_screen
 __all__ = ["DryRunDialog", "DryRunModeDialog", "launch_dry_run"]
 
 
+def _hline(color: str) -> QFrame:
+    line = QFrame()
+    line.setFrameShape(QFrame.Shape.HLine)
+    line.setStyleSheet(f"background:{color};border:none;")
+    line.setFixedHeight(1)
+    return line
+
+
 class _DryRunWorker(QThread):
     progress   = pyqtSignal(int, int)
     entry_done = pyqtSignal(dict)
@@ -274,12 +282,7 @@ class _EntryTabWidget(QWidget):
         if n_mod:
             chip_row.addWidget(self._badge(f"modified: {n_mod:,}", t["warning"]))
         lay.addLayout(chip_row)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet(f"background:{t['header_sep']};border:none;")
-        sep.setFixedHeight(1)
-        lay.addWidget(sep)
+        lay.addWidget(_hline(t["header_sep"]))
 
         self._stack = QStackedWidget()
         copy_items = [f"[{reason}]  {rel}" for rel, reason in to_copy]
@@ -443,12 +446,7 @@ class _GlobalViewTab(QWidget):
 
         chip_row.addStretch()
         lay.addLayout(chip_row)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet(f"background:{t['header_sep']};border:none;")
-        sep.setFixedHeight(1)
-        lay.addWidget(sep)
+        lay.addWidget(_hline(t["header_sep"]))
 
         self._stack = QStackedWidget()
         self._copy_list = _SearchableList([], t["text"])
@@ -514,7 +512,7 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
 
     def __init__(self, parent=None, mode: str = "backup") -> None:
         super().__init__(parent)
-        self._mode = mode  # "backup" or "restore"
+        self._mode = mode
         title_suffix = "Backup Preview" if mode == "backup" else "Restore Preview"
         self.setWindowTitle(f"🔎  Dry Run — {title_suffix}")
         size_to_screen(self, 1600, 900)
@@ -580,12 +578,7 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         info.setWordWrap(True)
         info.setStyleSheet(f"color:{t['text_dim']};font-size:{font_sz(-1)}px;")
         lay.addWidget(info)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet(f"background:{t['header_sep']};border:none;")
-        sep.setFixedHeight(1)
-        lay.addWidget(sep)
+        lay.addWidget(_hline(t["header_sep"]))
 
         prog_row = QHBoxLayout()
         self._prog_label = QLabel("Press  ▶ Start Scan  to begin…")
@@ -613,12 +606,7 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
             summ_row.addWidget(w)
         summ_row.addStretch()
         lay.addLayout(summ_row)
-
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.Shape.HLine)
-        sep2.setStyleSheet(f"background:{t['header_sep']};border:none;")
-        sep2.setFixedHeight(1)
-        lay.addWidget(sep2)
+        lay.addWidget(_hline(t["header_sep"]))
 
         self._tabs = QTabWidget()
         self._tabs.setObjectName("DryRunTabs")
@@ -912,12 +900,7 @@ class DryRunModeDialog(_StandardKeysMixin, QDialog):
         sub.setWordWrap(True)
         sub.setStyleSheet(f"color:{t['text_dim']};font-size:{font_sz(0)}px;")
         lay.addWidget(sub)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet(f"background:{t['header_sep']};border:none;")
-        sep.setFixedHeight(1)
-        lay.addWidget(sep)
+        lay.addWidget(_hline(t["header_sep"]))
 
         cards_row = QHBoxLayout()
         cards_row.setSpacing(20)

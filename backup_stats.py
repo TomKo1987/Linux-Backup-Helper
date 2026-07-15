@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
 from history import load_history as _load_all_history, _fmt_duration as _fmt_dur
 from state import S
 from themes import current_theme, font_sz, register_style_listener, unregister_style_listener
-from ui_utils import _StandardKeysMixin, build_dialog_shell, clear_layout, size_to_screen
+from ui_utils import _StandardKeysMixin, build_dialog_shell, clear_layout, sep, size_to_screen
 
 
 def _parse_ts(ts: str) -> datetime | None:
@@ -312,7 +312,7 @@ class BackupStatsDialog(_StandardKeysMixin, QDialog):
             cards_l.addWidget(_StatCard(icon, val, label, col))
         self._body_lay.addWidget(cards_w)
 
-        self._body_lay.addWidget(self._sep())
+        self._body_lay.addWidget(sep())
 
         by_day: dict[str, dict] = {}
         for e in entries:
@@ -340,7 +340,7 @@ class BackupStatsDialog(_StandardKeysMixin, QDialog):
                 fmt_fn=lambda v: f"{int(v):,}",
             )
             self._body_lay.addWidget(spark)
-            self._body_lay.addWidget(self._sep())
+            self._body_lay.addWidget(sep())
 
         op_counts: dict[str, int] = {}
         for e in entries:
@@ -354,7 +354,7 @@ class BackupStatsDialog(_StandardKeysMixin, QDialog):
             ]
             chart = _BarChart("Runs by Operation", bars, fmt_fn=lambda v: str(int(v)))
             self._body_lay.addWidget(chart)
-            self._body_lay.addWidget(self._sep())
+            self._body_lay.addWidget(sep())
 
         if by_day and len(by_day) >= 3:
             err_bars = [
@@ -369,7 +369,7 @@ class BackupStatsDialog(_StandardKeysMixin, QDialog):
                 fmt_fn=lambda v: f"{v:.0f}%",
             )
             self._body_lay.addWidget(err_chart)
-            self._body_lay.addWidget(self._sep())
+            self._body_lay.addWidget(sep())
 
         tbl_hdr = QLabel("🕑  Recent Runs")
         tbl_hdr.setStyleSheet(
@@ -429,10 +429,3 @@ class BackupStatsDialog(_StandardKeysMixin, QDialog):
             hl.addWidget(_lbl(f"✗ {errors}", t["error"]))
         hl.addWidget(_lbl(f"⏱ {_fmt_dur(dur)}", t["text_dim"]))
         return frame
-
-    @staticmethod
-    def _sep() -> QFrame:
-        line = QFrame()
-        line.setFrameShape(QFrame.Shape.HLine)
-        line.setStyleSheet(f"color:{current_theme()['header_sep']};margin:4px 0;")
-        return line

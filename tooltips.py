@@ -233,9 +233,9 @@ def copy_logic_tooltip() -> str:
         "- <b>Secure Erasure:</b> Before deletion, the credential file is <b>overwritten with zeros</b> (Wipe) and synced.<br>"
         "- <b>Guest Fallback:</b> In case of access errors to the secure storage, the system safely falls back to a guest connection.<br>"
         "- <b>Memory Safety:</b> The core password buffer (<code>SecureString</code>) is a mutable <code>bytearray</code> that is <b>manually zeroed</b> after use. "
-        "However, a brief immutable <code>str</code> is unavoidably created during the credential-file write step (<code>pwd_bytes.decode()</code>) and cannot be "
-        "actively overwritten — it persists until Python's garbage collector reclaims it. This window is limited to the narrow period while the file is being written to "
-        "<code>/dev/shm</code>, after which the file itself is wiped and deleted."
+        "During the credential-file write step the raw <code>bytearray</code> is written to <code>/dev/shm</code> directly — no intermediate "
+        "immutable <code>str</code> or <code>bytes</code> copy is ever created — and it is <b>zeroed byte-by-byte</b> immediately afterwards in a "
+        "<code>finally</code> block, before the file itself is wiped and deleted."
     )
 
 

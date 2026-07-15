@@ -1015,10 +1015,7 @@ class SystemManagerOptions(QDialog):
         _aur_helper_combo: QComboBox | None = None
 
         for group_label, keys in _OP_GROUPS:
-            sep_line = QFrame()
-            sep_line.setFrameShape(QFrame.Shape.HLine)
-            sep_line.setStyleSheet(f"color:{t['header_sep']};margin:4px 0;")
-            grid.addWidget(sep_line, grid_row, 0, 1, 2)
+            grid.addWidget(sep(), grid_row, 0, 1, 2)
             grid_row += 1
 
             hdr = QLabel(group_label)
