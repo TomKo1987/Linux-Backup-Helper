@@ -632,7 +632,7 @@ class SystemManagerThread(QThread):
     @staticmethod
     def _inject(cmd: list[str]) -> list[str]:
         if cmd and cmd[0] == "sudo" and not (len(cmd) > 1 and cmd[1] == "-S"):
-            return ["sudo", "-S"] + cmd[1:]
+            return ["sudo", "-S", *cmd[1:]]
         return cmd
 
     def _exec(self, cmd: list[str] | str, stream: bool = False, timeout: int | None = 15,
@@ -1112,12 +1112,16 @@ class SystemManagerThread(QThread):
                     f"AUR helper '{helper}' is not installed — cannot install {label}s. "
                     f"Enable 'Install AUR helper' first.", "error")
                 return False
-            bulk = lambda b: self._exec([helper, "-S", "--needed", "--noconfirm"] + b, stream=True)
-            single = lambda _p: self._exec([helper, "-S", "--needed", "--noconfirm", _p], stream=True)
+            def bulk(b):
+                return self._exec([helper, "-S", "--needed", "--noconfirm", *b], stream=True)
+            def single(_p):
+                return self._exec([helper, "-S", "--needed", "--noconfirm", _p], stream=True)
         else:
             _distro = self.distro
-            bulk = lambda b: self._exec(_distro.get_batch_install_cmd(b), stream=True)
-            single = lambda p_: self._exec(_distro.get_pkg_install_cmd(p_), stream=True)
+            def bulk(b):
+                return self._exec(_distro.get_batch_install_cmd(b), stream=True)
+            def single(p_):
+                return self._exec(_distro.get_pkg_install_cmd(p_), stream=True)
 
         for i in range(0, len(to_install), 20):
             if self.terminated:
@@ -1545,7 +1549,7 @@ class SystemManagerThread(QThread):
             efi_files = [efi_linux / n.strip() for n in r.stdout.splitlines() if n.strip().endswith(".efi")]
         for f in efi_files:
             name = f.name.lower().removesuffix(".efi")
-            if name == kernel_pkg or name.endswith(f"-{kernel_pkg}") or name.endswith(f"_{kernel_pkg}"):
+            if name == kernel_pkg or name.endswith((f"-{kernel_pkg}", f"_{kernel_pkg}")):
                 return f.name
         return None
 
@@ -1752,7 +1756,7 @@ class SystemManagerThread(QThread):
                 shutil.rmtree(d, ignore_errors=True)
 
         if self.distro.package_is_installed(f"{helper}-debug"): to_remove.append(f"{helper}-debug")
-        if to_remove and self._exec(["sudo", "pacman", "-R", "--noconfirm"] + to_remove, stream=True).returncode != 0:
+        if to_remove and self._exec(["sudo", "pacman", "-R", "--noconfirm", *to_remove], stream=True).returncode != 0:
             logger.warning("_install_aur_helper: cleanup of %s failed", to_remove)
 
         def _pkg_key(f):
@@ -1823,6 +1827,10 @@ class SystemManagerThread(QThread):
         return self._enable_service(service)
 
     def _enable_service(self, service: str) -> bool:
+        if service.endswith(".timer") and not shutil.which("systemctl"):
+            self.outputReceived.emit(
+                f"{service} is a systemd timer with no equivalent on this init system — skipping", "warning")
+            return True
         if shutil.which("systemctl"):
             unit_suffix = ".timer" if service.endswith(".timer") else ".service"
             svc = service if service.endswith((".service", ".timer")) else f"{service}{unit_suffix}"
@@ -1865,7 +1873,7 @@ class SystemManagerThread(QThread):
                 ok = (self._exec(["sudo", "ln", "-s", f"/etc/sv/{service}", "/var/service/"],
                                  stream=True).returncode == 0)
                 if ok:
-                    self._exec(["sudo", "sv", "up", service], stream=True)
+                    ok = (self._exec(["sudo", "sv", "up", service], stream=True).returncode == 0)
 
         elif os.path.isfile(f"/etc/rc.d/rc.{service}"):
             self.outputReceived.emit(f"Enabling {service} (BSD-style rc.d)", "info")

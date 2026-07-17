@@ -560,7 +560,8 @@ class _SmbJob:
 
 def _build_smb_get_cmds(jobs: list[_SmbJob]) -> str:
     lines = []
-    _key = lambda x: os.path.dirname(x.remote_path)
+    def _key(x):
+        return os.path.dirname(x.remote_path)
     for rdir, group in groupby(sorted(jobs, key=_key), key=_key):
         lines.append(f'cd "/{_q(str(rdir))}"' if rdir else 'cd "/"')
         for j in group:
@@ -606,7 +607,7 @@ class _SmbClient:
         self._guest = guest
         _proto = ["-m", "SMB3"]
         base = ["smbclient", f"//{host}/{share}"]
-        self._argv = (base + ["-N"] + _proto) if guest else (base + _proto)
+        self._argv = ([*base, "-N", *_proto]) if guest else (base + _proto)
 
     def _spawn(self, argv: list[str], input_data: str, timeout: int, wipe_fn=None) -> "tuple[subprocess.Popen | None, str, str]":
         tid = threading.get_ident()
@@ -640,16 +641,16 @@ class _SmbClient:
             if self._user:
                 logger.warning("SMB //%s/%s: user '%s' set but no password available, falling back to guest.",
                                self.host, self.share, self._user)
-            return self._argv + ["-N"], None, None
+            return [*self._argv, "-N"], None, None
         if _SHM_DIR is not None:
             try:
                 tmp_dir, cred_path = _smb_cred_file(self._user, self._pw)
-                return self._argv + ["-A", cred_path], tmp_dir, cred_path
+                return [*self._argv, "-A", cred_path], tmp_dir, cred_path
             except (OSError, RuntimeError) as exc:
                 logger.warning("SMB //%s/%s: Secure pw failed (%s). Falling back to guest.", self.host, self.share, exc)
         else:
             logger.warning("SMB //%s/%s: /dev/shm not available. Falling back to guest.", self.host, self.share)
-        return self._argv + ["-N"], None, None
+        return [*self._argv, "-N"], None, None
 
     def _run_with_creds(self, input_data: str, timeout: int) -> "tuple[subprocess.Popen | None, str, str]":
         argv, tmp_dir, cred_path = self._argv_with_creds()
@@ -1063,7 +1064,7 @@ class _ShareProcessor:
 
 
 class _EntryTracker:
-    __slots__ = ("_lock", "_counts")
+    __slots__ = ("_counts", "_lock")
 
     def __init__(self) -> None:
         self._lock   = threading.Lock()
@@ -1089,7 +1090,7 @@ class _EntryTracker:
 
 
 class _Flusher:
-    __slots__ = ("_signal", "_total", "_flush_thresh", "_lock", "_ok", "_sk", "_er", "done", "copied", "skipped", "errors", "_last_flush_t")
+    __slots__ = ("_er", "_flush_thresh", "_last_flush_t", "_lock", "_ok", "_signal", "_sk", "_total", "copied", "done", "errors", "skipped")
 
     def __init__(self, signal, total: int, flush_thresh: int = _FLUSH_THRESH) -> None:
         self._signal       = signal
@@ -1136,7 +1137,7 @@ class _Flusher:
 
 
 class _BatchBuffer:
-    __slots__ = ("_flusher", "_tracker", "ok", "sk", "er", "tc", "pending")
+    __slots__ = ("_flusher", "_tracker", "er", "ok", "pending", "sk", "tc")
 
     def __init__(self, flusher: "_Flusher", tracker: "_EntryTracker") -> None:
         self._flusher = flusher
@@ -1206,7 +1207,7 @@ class CopyWorker(QThread):
             dsts = [dst_raw] if isinstance(dst_raw, str) else dst_raw
             if not srcs or not dsts or len(srcs) != len(dsts):
                 continue
-            for s, d in zip(srcs, dsts):
+            for s, d in zip(srcs, dsts, strict=True):
                 if s and d:
                     s_str, d_str = str(s), str(d)
                     s_norm = s_str if (is_smb(s_str) or is_ssh(s_str)) else os.path.abspath(os.path.expanduser(s_str))
@@ -2025,7 +2026,7 @@ class _SummaryWidget(QWidget):
         metrics_lay = QHBoxLayout()
         metrics_lay.setSpacing(12)
 
-        kw = dict(size_title=font_sz(2), size_val=font_sz(10))
+        kw = {"size_title": font_sz(2), "size_val": font_sz(10)}
         self._card_elapsed = _make_stat_card(None, "⏲️ Elapsed", "--:--", **kw)
         self._card_speed   = _make_stat_card(None, "🚤 Speed",   "---",   **kw)
         self._card_eta     = _make_stat_card(None, "🏁 ETA",     "--:--", **kw)
@@ -2184,7 +2185,7 @@ class _SummaryWidget(QWidget):
                 s.setFixedWidth(0)
             return
         avail = max(1, self._rate_card.width() - 40)
-        for seg, count in zip(segs, (copied, skipped, errors)):
+        for seg, count in zip(segs, (copied, skipped, errors), strict=True):
             seg.setFixedWidth(max(0, int(avail * count / total)))
 
     def _update_timing(self, elapsed_s: int, done: int, total: int, finished: bool, cancelled: bool,
@@ -2480,7 +2481,7 @@ class _LogWidget(QWidget):
         self._items_lower.extend(entries_lower)
         if not self._finalized:
             if needle:
-                self._filtered.extend(e for e, el in zip(entries, entries_lower) if needle in el)
+                self._filtered.extend(e for e, el in zip(entries, entries_lower, strict=True) if needle in el)
             else:
                 self._filtered.extend(entries)
             self._search_cache.clear()
@@ -2495,13 +2496,13 @@ class _LogWidget(QWidget):
         self._finalized = True
         self._page = 0
         self._render()
-        pairs = list(zip(self._items, self._items_lower))
+        pairs = list(zip(self._items, self._items_lower, strict=True))
 
         def _bg_sort() -> None:
             _key = _LogWidget._natural_sort_key
             pairs.sort(key=lambda p: _key(p[0].split('\n', 1)[0]))
             if pairs:
-                sorted_items_t, sorted_lower_t = zip(*pairs)
+                sorted_items_t, sorted_lower_t = zip(*pairs, strict=True)
                 sorted_items = list(sorted_items_t)
                 sorted_lower = list(sorted_lower_t)
             else:
@@ -2518,7 +2519,7 @@ class _LogWidget(QWidget):
         self._items       = items
         self._items_lower = items_lower
         self._search_cache.clear()
-        self._filtered    = ([i for i, il in zip(items, items_lower) if needle in il] if needle else items)
+        self._filtered    = ([i for i, il in zip(items, items_lower, strict=True) if needle in il] if needle else items)
         self._render()
 
     def _on_search(self) -> None:
@@ -2526,7 +2527,7 @@ class _LogWidget(QWidget):
         if needle in self._search_cache:
             self._filtered = self._search_cache[needle] if self._finalized else self._search_cache[needle][:]
         else:
-            self._filtered = ([i for i, il in zip(self._items, self._items_lower) if needle in il]
+            self._filtered = ([i for i, il in zip(self._items, self._items_lower, strict=True) if needle in il]
                               if needle else (self._items if self._finalized else self._items[:]))
             if len(self._search_cache) > 50:
                 self._search_cache.pop(next(iter(self._search_cache)))
@@ -2736,7 +2737,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
 
         for pending, widget, fmt in zip((self._pending_ok, self._pending_sk, self._pending_er),
                                         (self._w_copied, self._w_skipped, self._w_errors),
-                                        (self._fmt_ok, self._fmt_sk, self._fmt_er)):
+                                        (self._fmt_ok, self._fmt_sk, self._fmt_er), strict=True):
             if pending:
                 cap = max(0, widget.log_max - widget.item_count)
                 if cap > 0:

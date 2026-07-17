@@ -10,7 +10,7 @@ from typing import Any, Callable
 from constants import USER_SHELLS, ARCH_KERNEL_VARIANTS, PKG_NAME_RE
 from state import logger
 
-__all__ = ["LinuxDistroHelper", "SESSIONS", "USER_SHELLS", "ARCH_KERNEL_VARIANTS", "is_valid_pkg_name", "distro_family"]
+__all__ = ["ARCH_KERNEL_VARIANTS", "SESSIONS", "USER_SHELLS", "LinuxDistroHelper", "distro_family", "is_valid_pkg_name"]
 
 _MIN_PARALLEL = 5
 
@@ -84,117 +84,121 @@ def _slackware_check(p: str) -> list[str]:
     return ["sh", "-c", f"ls /var/log/packages/{shlex.quote(p)}-[0-9]* >/dev/null 2>&1"]
 
 
+def _solus_check(p: str) -> list[str]:
+    return ["sh", "-c", "eopkg list-installed -N 2>/dev/null | grep -qxF -- " + shlex.quote(p)]
+
+
 _PKG: dict[str, dict[str, Any]] = {
-    "arch": dict(
-        check   = lambda p: ["pacman", "-Qi", p],
-        install = "sudo pacman -S --needed --noconfirm {p}",
-        update  = "sudo pacman -Syu --noconfirm",
-        remove  = "sudo pacman -Rns --noconfirm {p}",
-        clean   = "sudo pacman -Scc --noconfirm",
-        orphans = "pacman -Qdtq",
-        has_aur = True,
-        kernel  = "linux-headers",
-    ),
-    "debian": dict(
-        check   = lambda p: ["sh", "-c", f"dpkg-query -W -f='${{Status}}' {shlex.quote(p)} 2>/dev/null | grep -q '^install ok installed$'"],
-        install = "sudo env DEBIAN_FRONTEND=noninteractive apt-get install -yq -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold' {p}",
-        update  = "sudo env DEBIAN_FRONTEND=noninteractive apt-get update && sudo env DEBIAN_FRONTEND=noninteractive apt-get upgrade -yq -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold'",
-        remove  = "sudo env DEBIAN_FRONTEND=noninteractive apt-get autoremove -yq {p}",
-        clean   = "sudo apt-get clean && sudo apt-get autoremove -y",
-        orphans = "apt-get --dry-run autoremove",
-        has_aur = False,
-        kernel  = "linux-headers-generic",
-    ),
-    "fedora": dict(
-        check   = lambda p: ["rpm", "-q", p],
-        install = "sudo dnf install -y {p}",
-        update  = "sudo dnf upgrade -y",
-        remove  = "sudo dnf remove -y {p}",
-        clean   = "sudo dnf clean all && sudo dnf autoremove -y",
-        orphans = "sudo dnf repoquery --extras",
-        has_aur = False,
-        kernel  = "kernel-devel",
-    ),
-    "suse": dict(
-        check   = lambda p: ["rpm", "-q", p],
-        install = "sudo zypper --non-interactive install -y {p}",
-        update  = "sudo zypper --non-interactive update -y",
-        remove  = "sudo zypper --non-interactive remove -y {p}",
-        clean   = "sudo zypper clean --all",
-        orphans = "zypper --no-refresh packages --orphaned",
-        has_aur = False,
-        kernel  = "kernel-default-devel",
-    ),
-    "void": dict(
-        check   = lambda p: ["xbps-query", p],
-        install = "sudo xbps-install -y {p}",
-        update  = "sudo xbps-install -Su",
-        remove  = "sudo xbps-remove -y {p}",
-        clean   = "sudo xbps-remove -Oo",
-        orphans = "xbps-query -O",
-        has_aur = False,
-        kernel  = "linux-headers",
-    ),
-    "gentoo": dict(
-        check   = lambda p: ["qlist", "-Ie", p],
-        install = "sudo emerge --ask=n {p}",
-        update  = "sudo emerge --sync && sudo emerge -uDU @world",
-        remove  = "sudo emerge --depclean {p}",
-        clean   = "sudo eclean-dist --deep",
-        orphans = "",
-        has_aur = False,
-        kernel  = "sys-kernel/linux-headers",
-    ),
-    "nixos": dict(
-        check   = _nixos_check,
-        install = "nix-env -iA nixpkgs.{p}",
-        update  = "sudo nixos-rebuild switch --upgrade",
-        remove  = "nix-env -e {p}",
-        clean   = "nix-collect-garbage -d",
-        orphans = "",
-        has_aur = False,
-        kernel  = "linuxPackages.kernel",
-    ),
-    "alpine": dict(
-        check   = lambda p: ["apk", "info", "-e", p],
-        install = "sudo apk add {p}",
-        update  = "sudo apk update && sudo apk upgrade",
-        remove  = "sudo apk del {p}",
-        clean   = "sudo apk cache clean",
-        orphans = "",
-        has_aur = False,
-        kernel  = "linux-headers",
-    ),
-    "slackware": dict(
-        check   = _slackware_check,
-        install = "sudo installpkg {p}",
-        update  = "sudo slackpkg update && sudo slackpkg upgrade-all",
-        remove  = "sudo removepkg {p}",
-        clean   = "sudo slackpkg clean-system",
-        orphans = "",
-        has_aur = False,
-        kernel  = "kernel-headers",
-    ),
-    "solus": dict(
-        check   = lambda p: ["eopkg", "info", p],
-        install = "sudo eopkg install {p}",
-        update  = "sudo eopkg upgrade",
-        remove  = "sudo eopkg remove {p}",
-        clean   = "sudo eopkg delete-cache",
-        orphans = "eopkg list-orphans",
-        has_aur = False,
-        kernel  = "linux-headers",
-    ),
-    "unknown": dict(
-        check   = lambda p: ["which", p],
-        install = "echo 'No package manager detected: {p}'",
-        update  = "echo 'Update not available'",
-        remove  = "echo 'Remove not available: {p}'",
-        clean   = "echo 'Clean not available'",
-        orphans = "",
-        has_aur = False,
-        kernel  = "linux-headers",
-    ),
+    "arch": {
+        "check": lambda p: ["pacman", "-Qi", p],
+        "install": "sudo pacman -S --needed --noconfirm {p}",
+        "update": "sudo pacman -Syu --noconfirm",
+        "remove": "sudo pacman -Rns --noconfirm {p}",
+        "clean": "sudo pacman -Scc --noconfirm",
+        "orphans": "pacman -Qdtq",
+        "has_aur": True,
+        "kernel": "linux-headers",
+    },
+    "debian": {
+        "check": lambda p: ["sh", "-c", f"dpkg-query -W -f='${{Status}}' {shlex.quote(p)} 2>/dev/null | grep -q '^install ok installed$'"],
+        "install": "sudo env DEBIAN_FRONTEND=noninteractive apt-get install -yq -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold' {p}",
+        "update": "sudo env DEBIAN_FRONTEND=noninteractive apt-get update && sudo env DEBIAN_FRONTEND=noninteractive apt-get upgrade -yq -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold'",
+        "remove": "sudo env DEBIAN_FRONTEND=noninteractive apt-get autoremove -yq {p}",
+        "clean": "sudo apt-get clean && sudo apt-get autoremove -y",
+        "orphans": "apt-get --dry-run autoremove",
+        "has_aur": False,
+        "kernel": "linux-headers-generic",
+    },
+    "fedora": {
+        "check": lambda p: ["rpm", "-q", p],
+        "install": "sudo dnf install -y {p}",
+        "update": "sudo dnf upgrade -y",
+        "remove": "sudo dnf remove -y {p}",
+        "clean": "sudo dnf clean all && sudo dnf autoremove -y",
+        "orphans": "sudo dnf repoquery --extras",
+        "has_aur": False,
+        "kernel": "kernel-devel",
+    },
+    "suse": {
+        "check": lambda p: ["rpm", "-q", p],
+        "install": "sudo zypper --non-interactive install -y {p}",
+        "update": "sudo zypper --non-interactive update -y",
+        "remove": "sudo zypper --non-interactive remove -y {p}",
+        "clean": "sudo zypper clean --all",
+        "orphans": "zypper --no-refresh packages --orphaned",
+        "has_aur": False,
+        "kernel": "kernel-default-devel",
+    },
+    "void": {
+        "check": lambda p: ["xbps-query", p],
+        "install": "sudo xbps-install -y {p}",
+        "update": "sudo xbps-install -Su",
+        "remove": "sudo xbps-remove -y {p}",
+        "clean": "sudo xbps-remove -Oo",
+        "orphans": "xbps-query -O",
+        "has_aur": False,
+        "kernel": "linux-headers",
+    },
+    "gentoo": {
+        "check": lambda p: ["qlist", "-Ie", p],
+        "install": "sudo emerge --ask=n {p}",
+        "update": "sudo emerge --sync && sudo emerge -uDU @world",
+        "remove": "sudo emerge --depclean {p}",
+        "clean": "sudo eclean-dist --deep",
+        "orphans": "",
+        "has_aur": False,
+        "kernel": "sys-kernel/linux-headers",
+    },
+    "nixos": {
+        "check": _nixos_check,
+        "install": "nix-env -iA nixpkgs.{p}",
+        "update": "sudo nixos-rebuild switch --upgrade",
+        "remove": "nix-env -e {p}",
+        "clean": "nix-collect-garbage -d",
+        "orphans": "",
+        "has_aur": False,
+        "kernel": "linuxPackages.kernel",
+    },
+    "alpine": {
+        "check": lambda p: ["apk", "info", "-e", p],
+        "install": "sudo apk add {p}",
+        "update": "sudo apk update && sudo apk upgrade",
+        "remove": "sudo apk del {p}",
+        "clean": "sudo apk cache clean",
+        "orphans": "",
+        "has_aur": False,
+        "kernel": "linux-headers",
+    },
+    "slackware": {
+        "check": _slackware_check,
+        "install": "sudo installpkg {p}",
+        "update": "sudo slackpkg update && sudo slackpkg upgrade-all",
+        "remove": "sudo removepkg {p}",
+        "clean": "sudo slackpkg clean-system",
+        "orphans": "",
+        "has_aur": False,
+        "kernel": "kernel-headers",
+    },
+    "solus": {
+        "check": _solus_check,
+        "install": "sudo eopkg install {p}",
+        "update": "sudo eopkg upgrade",
+        "remove": "sudo eopkg remove {p}",
+        "clean": "sudo eopkg delete-cache",
+        "orphans": "eopkg list-orphans",
+        "has_aur": False,
+        "kernel": "linux-headers",
+    },
+    "unknown": {
+        "check": lambda p: ["which", p],
+        "install": "echo 'No package manager detected: {p}'",
+        "update": "echo 'Update not available'",
+        "remove": "echo 'Remove not available: {p}'",
+        "clean": "echo 'Clean not available'",
+        "orphans": "",
+        "has_aur": False,
+        "kernel": "linux-headers",
+    },
 }
 
 
@@ -482,7 +486,7 @@ class LinuxDistroHelper:
             pkgs = []
             for line in lines:
                 line = line.strip()
-                if not line or line.startswith("Last metadata") or line.startswith("Extra"):
+                if not line or line.startswith(("Last metadata", "Extra")):
                     continue
                 name = re.sub(r"^\d+:", "", line)
                 name = re.sub(r"-\d.*$", "", name)

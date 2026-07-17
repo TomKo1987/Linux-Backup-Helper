@@ -1039,7 +1039,8 @@ class SystemManagerOptions(QDialog):
                 is_arch = key in arch_only
                 unsupported = (is_arch and self._distro.family() != "arch") or \
                               (key == "enable_firewall" and not self._distro.firewall_supported()) or \
-                              (key == "enable_ntp_sync" and not self._distro.ntp_supported())
+                              (key == "enable_ntp_sync" and not self._distro.ntp_supported()) or \
+                              (key == "enable_fstrim_timer" and not shutil.which("systemctl"))
 
                 if unsupported:
                     cb.setVisible(False)
@@ -1600,7 +1601,7 @@ class SystemManagerOptions(QDialog):
             if not src or not dst:
                 skipped_inv += 1
                 continue
-            if not (src.startswith("/") or src.startswith("~")) or not (dst.startswith("/") or dst.startswith("~")):
+            if not (src.startswith(("/", "~"))) or not (dst.startswith(("/", "~"))):
                 skipped_inv += 1
                 continue
             src = str(Path(src).expanduser())
@@ -1638,7 +1639,7 @@ class SystemManagerOptions(QDialog):
         if is_specific:
             from collections import defaultdict
             groups: dict = defaultdict(list)
-            for p, cb in zip(packages, checkboxes):
+            for p, cb in zip(packages, checkboxes, strict=True):
                 groups[p.get("session", "") if isinstance(p, dict) else ""].append((cb, p))
             row = 0
             for idx, sess in enumerate(sorted(groups)):
@@ -1674,7 +1675,7 @@ class SystemManagerOptions(QDialog):
             _add_select_all_tri(grid, checkboxes, cols)
 
         def _save(_dlg):
-            to_del = [pkg for _cb, pkg in zip(checkboxes, packages) if _cb.checkState() == _STATE_DELETE]
+            to_del = [pkg for _cb, pkg in zip(checkboxes, packages, strict=True) if _cb.checkState() == _STATE_DELETE]
             do_delete = True
             if to_del:
                 names = [(f"{pkg.get('package', '')} [{pkg.get('session', '')}]"
@@ -1684,7 +1685,7 @@ class SystemManagerOptions(QDialog):
                                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes):
                     do_delete = False
             updated = []
-            for _cb, pkg in zip(checkboxes, packages):
+            for _cb, pkg in zip(checkboxes, packages, strict=True):
                 if do_delete and _cb.checkState() == _STATE_DELETE:
                     continue
                 d = pkg if isinstance(pkg, dict) else {"name": str(pkg)}
@@ -1704,7 +1705,7 @@ class SystemManagerOptions(QDialog):
         def _apply_search(txt: str) -> None:
             txt_lower = txt.lower()
             visible_sessions: set[str] = set()
-            for _cb, _p in zip(checkboxes, packages):
+            for _cb, _p in zip(checkboxes, packages, strict=True):
                 visible = txt_lower in _cb.text().lower()
                 _cb.setVisible(visible)
                 parent_widget = _cb.parentWidget()
@@ -1759,7 +1760,7 @@ class SystemManagerOptions(QDialog):
         def _set_p_ctx(widget, p_data, d):
             widget.contextMenuEvent = lambda _e: self._edit_pkg_entry((widget, p_data), pkg_type, d)
 
-        for cb, p in zip(checkboxes, packages):
+        for cb, p in zip(checkboxes, packages, strict=True):
             _set_p_ctx(cb, p, dlg)
         dlg.exec()
 
