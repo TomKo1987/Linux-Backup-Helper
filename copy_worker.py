@@ -1034,25 +1034,26 @@ class _ShareProcessor:
             return self._url_title.get(url, ("", 0))
 
         batch_counts: dict = {}
+
+        def _count(_title: str, slot: int) -> None:
+            if _title:
+                batch_counts.setdefault(_title, [0, 0, 0])[slot] += 1
+
         ok_w = []
         for s, d in ok_c:
             title, sz = _meta(s)
             ok_w.append((s, d, sz))
-            if title:
-                batch_counts.setdefault(title, [0, 0, 0])[0] += 1
+            _count(title, 0)
 
         sk_w = []
         for s, r in sk_c:
             title, sz = _meta(s)
             sk_w.append((s, r, sz))
-            if title:
-                batch_counts.setdefault(title, [0, 0, 0])[1] += 1
+            _count(title, 1)
 
         er_w = [(s, e, 0) for s, e in er_c]
         for s, _e, _ in er_w:
-            title = _meta(s)[0]
-            if title:
-                batch_counts.setdefault(title, [0, 0, 0])[2] += 1
+            _count(_meta(s)[0], 2)
 
         self._flusher.push(ok=ok_w, sk=sk_w, er=er_w)
         self._tracker.batch_update(batch_counts)
@@ -1407,6 +1408,9 @@ class CopyWorker(QThread):
             flusher: "_Flusher",
             tracker: "_EntryTracker",
     ) -> None:
+        def _track(ok: int, skip: int, err: int) -> None:
+            tracker.batch_update({title: (ok, skip, err)} if title else {})
+
         for src, dst, title, *extra in tasks:
             if self._cancel.is_set():
                 break
@@ -1429,13 +1433,13 @@ class CopyWorker(QThread):
             except (OSError, FileNotFoundError) as exc:
                 logger.error("rsync launch failed for '%s': %s", src, exc)
                 flusher.push(er=[(src, str(exc), 0)])
-                tracker.batch_update({title: (0, 0, 1)} if title else {})
+                _track(0, 0, 1)
                 continue
 
             if proc.stdout is None:
                 logger.error("rsync stdout is None for '%s'", src)
                 flusher.push(er=[(src, "rsync stdout unavailable", 0)])
-                tracker.batch_update({title: (0, 0, 1)} if title else {})
+                _track(0, 0, 1)
                 continue
             last_pct = 0
             try:
@@ -1464,11 +1468,11 @@ class CopyWorker(QThread):
 
             if proc.returncode == 0:
                 flusher.push(ok=[(src, dst, 0)])
-                tracker.batch_update({title: (1, 0, 0)} if title else {})
+                _track(1, 0, 0)
                 logger.info("rsync OK: %s → %s", src, dst)
             else:
                 flusher.push(er=[(src, f"rsync exit {proc.returncode}", 0)])
-                tracker.batch_update({title: (0, 0, 1)} if title else {})
+                _track(0, 0, 1)
                 logger.error("rsync exit %d: %s → %s", proc.returncode, src, dst)
 
     def _scan_local_all(self, tasks: list, not_found: "list | None" = None) -> list:

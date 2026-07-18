@@ -66,7 +66,7 @@ def active_dotfiles() -> list[dict]:
     ]
 
 
-def pkg_name(p: dict | str, *, is_specific: bool = False) -> str:
+def _pkg_name(p: dict | str, *, is_specific: bool = False) -> str:
     if isinstance(p, dict):
         return p.get("package" if is_specific else "name", "") or ""
     return str(p)
@@ -81,7 +81,7 @@ def active_pkg_names(pkg_list: list, *, is_specific: bool = False) -> list[str]:
 
 
 def sort_pkg_list(pkg_list: list) -> None:
-    pkg_list.sort(key=lambda x: pkg_name(x).lower())
+    pkg_list.sort(key=lambda x: _pkg_name(x).lower())
 
 
 def sort_specific_pkg_list(pkg_list: list) -> None:
@@ -148,10 +148,7 @@ class State:
 S = State()
 
 
-def _known_ui_keys() -> frozenset:
-    return frozenset(State().ui.keys())
-
-_KNOWN_UI_KEYS = _known_ui_keys()
+_KNOWN_UI_KEYS = frozenset(State().ui.keys())
 
 
 def _atomic_write(path: Path, data: dict | list) -> None:
@@ -330,7 +327,7 @@ def _parse_profile_data(path: Path, data: dict) -> tuple[dict, bool]:
                 raw_ui = {**raw_ui, "font_size": max(8, min(48, int(raw_ui["font_size"])))}
             except (ValueError, TypeError):
                 raw_ui = {k: v for k, v in raw_ui.items() if k != "font_size"}
-        new_ui.update({k: v for k, v in raw_ui.items() if k in _known_ui_keys()})
+        new_ui.update({k: v for k, v in raw_ui.items() if k in _KNOWN_UI_KEYS})
 
     new_notes = str(data.get("notes", ""))
 

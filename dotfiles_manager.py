@@ -55,16 +55,12 @@ def _path_exists(path: Path) -> bool:
         return False
 
 
-def _make_backup(dst: Path) -> bool:
+def _make_backup(dst: Path) -> None:
     if not dst.exists():
-        return True
+        return
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     bak = dst.with_suffix(f"{dst.suffix}.bak_{ts}")
-    try:
-        shutil.copy2(dst, bak)
-        return True
-    except OSError:
-        return False
+    shutil.copy2(dst, bak)
 
 
 def _colored_diff_html(src_lines: list[str], dst_lines: list[str], theme: dict) -> str:
@@ -129,10 +125,7 @@ class _DeployWorker(QThread):
                 continue
             try:
                 if self._backup:
-                    if not _make_backup(dst):
-                        self.progress.emit(f"  ✗ {src.name}: backup failed, skipping overwrite", True)
-                        err += 1
-                        continue
+                    _make_backup(dst)
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dst)
                 self.progress.emit(f"  ✓ {src.name}  →  {dst}", False)

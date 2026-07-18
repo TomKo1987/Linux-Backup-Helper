@@ -113,6 +113,10 @@ def _validate_cmd(cmd: str) -> tuple[bool, str, list[str]]:
 def _valid_drive_name(name: str) -> bool: return bool(name and isinstance(name, str) and _DRIVE_NAME_RE.match(name) and len(name) <= 128)
 
 
+def _str(v) -> str:
+    return v.strip() if isinstance(v, str) else ""
+
+
 @lru_cache(maxsize=64)
 def _mount_paths(name: str) -> tuple[str, ...]:
     if not _valid_drive_name(name):
@@ -122,7 +126,7 @@ def _mount_paths(name: str) -> tuple[str, ...]:
 
 def _execute_drive_op(drive: dict, cmd_key: str, timeout: int) -> tuple[bool, str]:
     name = drive.get("drive_name", "?")
-    cmd = drive.get(cmd_key, "").strip()
+    cmd = _str(drive.get(cmd_key))
     if not cmd:
         return False, f"No {cmd_key.replace('_', ' ')} configured for '{name}'."
     ok, reason, tokens = _validate_cmd(cmd)
@@ -143,7 +147,7 @@ def _execute_drive_op(drive: dict, cmd_key: str, timeout: int) -> tuple[bool, st
 
 def is_mounted(opt: dict, mounts: list[tuple[str, str]] | None = None) -> bool:
     name = opt.get("drive_name", "")
-    mount_path = opt.get("mount_path", "").strip()
+    mount_path = _str(opt.get("mount_path"))
 
     if not _valid_drive_name(name) and not mount_path:
         return False
@@ -246,7 +250,7 @@ def check_drives_to_mount(paths: list[str]) -> list[dict]:
         if is_mounted(opt, mounts):
             continue
         name       = opt.get("drive_name", "")
-        mount_path = opt.get("mount_path", "").strip()
+        mount_path = _str(opt.get("mount_path"))
 
         if not mount_path and not _valid_drive_name(name):
             logger.warning(
@@ -266,7 +270,7 @@ def check_drives_to_mount(paths: list[str]) -> list[dict]:
 
 
 def has_managed_mount_path(opt: dict) -> bool:
-    mount_path = opt.get("mount_path", "").strip()
+    mount_path = _str(opt.get("mount_path"))
     return bool(mount_path and mount_path not in _mount_paths(opt.get("drive_name", "")))
 
 

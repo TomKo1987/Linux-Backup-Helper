@@ -69,9 +69,7 @@ def build_ufw_command(rule: dict) -> list[str]:
         dir_mapped = "incoming" if direction == "in" else "outgoing"
         return ["sudo", "ufw", "default", policy, dir_mapped]
 
-    cmd = ["sudo", "ufw", action]
-    if direction:
-        cmd.append(direction)
+    cmd = ["sudo", "ufw", action, direction]
 
     if rule["source"]:
         cmd.extend(["from", rule["source"]])
@@ -99,9 +97,8 @@ def build_ufw_commands(rules: list[dict]) -> list[list[str]]:
     return cmds
 
 
-def build_firewalld_rich_rule(rule: dict, *, _skip_normalize: bool = False) -> str | None:
-    if not _skip_normalize:
-        rule = normalize_rule(rule)
+def build_firewalld_rich_rule(rule: dict) -> str | None:
+    rule = normalize_rule(rule)
     action_val = rule["action"]
     if action_val.startswith("default "):
         return None
@@ -134,15 +131,14 @@ def build_firewalld_rich_rule(rule: dict, *, _skip_normalize: bool = False) -> s
 def build_firewalld_commands(rules: list[dict]) -> list[list[str]]:
     cmds = [["sudo", "firewall-cmd", "--set-default-zone=drop"]]
     for rule in rules:
-        norm = normalize_rule(rule)
-        action_val = norm["action"]
+        action_val = normalize_rule(rule)["action"]
 
         if action_val.startswith("default "):
             zone = "trusted" if "allow" in action_val else "drop"
             cmds.append(["sudo", "firewall-cmd", f"--set-default-zone={zone}"])
             continue
 
-        rich_rule = build_firewalld_rich_rule(norm, _skip_normalize=True)
+        rich_rule = build_firewalld_rich_rule(rule)
         if rich_rule:
             cmds.append(["sudo", "firewall-cmd", "--permanent", f"--add-rich-rule={rich_rule}"])
 

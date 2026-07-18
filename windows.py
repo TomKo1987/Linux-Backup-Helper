@@ -54,10 +54,10 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
         return True
 
     def _refresh_styles(self) -> None:
-        saved = {id(e): cb.isChecked() for cb, _s, _d, _t, e in self.checkbox_dirs if e is not None}
+        saved = {id(e): cb.isChecked() for cb, *_, e in self.checkbox_dirs}
         self._setup_ui()
-        for cb, _s, _d, _t, e in self.checkbox_dirs:
-            if e is not None and id(e) in saved:
+        for cb, *_, e in self.checkbox_dirs:
+            if id(e) in saved:
                 block_set(cb, saved[id(e)])
         self._sync_select_all()
 
@@ -255,10 +255,9 @@ class _CopyMixin:
         from drive_utils import check_drives_to_mount, mount_required_drives
 
         selected = []
-        for cb, src, dst, title, *rest in self.checkbox_dirs:
+        for cb, src, dst, title, entry in self.checkbox_dirs:
             if cb.isChecked():
-                entry = rest[0] if rest else {}
-                details = (entry or {}).get("details", {}) if isinstance(entry, dict) else {}
+                details = entry.get("details", {})
                 excl = details.get("exclude_paths", {})
                 pre_hooks = details.get("pre_hooks", [])
                 post_hooks = details.get("post_hooks", [])
@@ -434,7 +433,7 @@ class SettingsWindow(_BaseCheckboxWindow):
             self.done(RESTART_DIALOG)
 
     def _edit_entry(self) -> None:
-        checked = [(cb, entry) for cb, src, dst, title, entry in self.checkbox_dirs if cb.isChecked()]
+        checked = [(cb, entry) for cb, *_, entry in self.checkbox_dirs if cb.isChecked()]
         if not checked:
             QMessageBox.information(self, "Edit Entry", "Please check one or more entries to edit.")
             return
@@ -472,11 +471,11 @@ class SettingsWindow(_BaseCheckboxWindow):
             self.done(RESTART_DIALOG)
 
     def _del_entry(self) -> None:
-        to_delete = [entry for cb, src, dst, title, entry in self.checkbox_dirs if cb.isChecked() and entry is not None]
+        to_delete = [entry for cb, *_, entry in self.checkbox_dirs if cb.isChecked()]
         if not to_delete:
             QMessageBox.information(self, "Delete Entry", "Please check one or more entries to delete.")
             return
-        names = ", ".join(e["title"].replace("<br>", " ") for e in to_delete if e)
+        names = ", ".join(e["title"].replace("<br>", " ") for e in to_delete)
         if (QMessageBox.question(self, "Delete", f"Really delete: {names}?",
                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) ==
                 QMessageBox.StandardButton.Yes):

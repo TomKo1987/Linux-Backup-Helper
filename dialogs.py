@@ -693,14 +693,17 @@ class EntryDialog(QDialog):
             self._populate_lists()
 
     def _toggle_layout(self) -> None:
+        _existing_details = self._e.get("details", {}) if isinstance(self._e, dict) else {}
         self._entry_snapshot = {
             **self._entry_snapshot,
             "header":  self.hdr.currentText().strip(),
             "title":   self.title_edit.text().strip(),
             "details": {"no_backup":  self.no_backup.isChecked(), "no_restore": self.no_restore.isChecked(),
-                        "exclude_paths": dict(self._pair_excludes)}}
+                        "exclude_paths": dict(self._pair_excludes),
+                        "pre_hooks": _existing_details.get("pre_hooks", []),
+                        "post_hooks": _existing_details.get("post_hooks", [])}}
         self.stacked = not self.stacked
-        self.done(2)
+        self.done(RESTART_DIALOG)
 
     def _accept(self) -> None:
         hdr   = self.hdr.currentText().strip()
@@ -720,7 +723,7 @@ class EntryDialog(QDialog):
         valid_srcs = {os.path.abspath(os.path.expanduser(s)) for s, _ in valid_pairs}
         clean_excludes = {k: v for k, v in self._pair_excludes.items() if k in valid_srcs and v}
 
-        _existing_details = getattr(self, "_e", self._entry_snapshot).get("details", {})
+        _existing_details = self._e.get("details", {})
         self.result = {"header": hdr, "title": title,
                        "source": [s for s, _ in valid_pairs],
                        "destination": [d for _, d in valid_pairs],
@@ -1392,6 +1395,7 @@ class NotesDialog(_StandardKeysMixin, QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._saved = False
+        self._discarded = False
 
         profile = S.profile_name or "(no profile)"
         self.setWindowTitle(f"Profile Notes — {profile}")
@@ -1465,7 +1469,7 @@ class NotesDialog(_StandardKeysMixin, QDialog):
         discard_btn = QPushButton("Discard")
         discard_btn.setMinimumHeight(34)
         discard_btn.setStyleSheet(_btn_style())
-        discard_btn.clicked.connect(self.reject)
+        discard_btn.clicked.connect(self._discard)
 
         fl.addWidget(discard_btn)
         fl.addWidget(save_btn)
@@ -1481,10 +1485,15 @@ class NotesDialog(_StandardKeysMixin, QDialog):
         self._saved = True
         self.accept()
 
+    def _discard(self) -> None:
+        self._discarded = True
+        self.reject()
+
     def closeEvent(self, event) -> None:
-        if not self._saved and self.result() != QDialog.DialogCode.Rejected:
+        if not self._saved and not self._discarded:
             S.notes = self._edit.toPlainText()
             save_profile()
+            self._saved = True
         event.accept()
 
 
