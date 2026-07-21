@@ -32,7 +32,7 @@ def _make_logger(name: str) -> logging.Logger:
     if log.handlers:
         return log
     log.setLevel(logging.INFO)
-    fmt = logging.Formatter("%(asctime)s  %(levelname)-8s  %(name)s — %(message)s", "%Y-%m-%d %H:%M:%S")
+    fmt = logging.Formatter("%(asctime)s  %(levelname)-8s  %(message)s", "%Y-%m-%d %H:%M:%S")
     sh = logging.StreamHandler()
     sh.setFormatter(fmt)
     log.addHandler(sh)

@@ -71,6 +71,7 @@ def _build_backup_tasks(headers: list[str] | None = None) -> list[tuple]:
             details.get("exclude_paths", {}),
             details.get("pre_hooks", []),
             details.get("post_hooks", []),
+            details,
         ))
     return tasks
 
@@ -255,10 +256,12 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
 
     def _quick_backup(self, header: str | None) -> None:
         from copy_worker import CopyDialog
+        from advanced_copy import apply_advanced_options
         tasks = _build_backup_tasks([header] if header is not None else None)
         if not tasks:
             QMessageBox.information(None, "Quick Backup", "No backup entries found for this group.")
             return
+        tasks = apply_advanced_options(tasks, interactive=True, parent=self)
         label = header or "All groups"
         CopyDialog(None, tasks, f"Quick Backup — {label}").exec()
         self._refresh_status_panel()
@@ -480,8 +483,10 @@ def main():
                 headers = [h.strip() for h in _raw.split(",") if h.strip()]
 
         from copy_worker import CopyDialog
+        from advanced_copy import apply_advanced_options
         tasks = _build_backup_tasks(headers)
         if tasks:
+            tasks = apply_advanced_options(tasks, interactive=False, parent=None)
             CopyDialog(None, tasks, "Backup (scheduled)").exec()
         else:
             logger.warning("Headless backup: no matching tasks found (headers=%s)", headers)

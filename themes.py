@@ -443,42 +443,11 @@ _style_cache: tuple | None = None
 _style_cache_lock = _threading.Lock()
 
 
-def _hard_wrap_html(html_text: str, chars_per_line: int = 90) -> str:
-    tokens = _re.findall(r'<[^>]+>|&[a-zA-Z]+;|&#\d+;|[^<&]', html_text)
+_TAG_RE = _re.compile(r'<[^>]+>')
 
-    out: list[str] = []
-    visible_len = 0
-    last_space_idx: int | None = None
 
-    for tok in tokens:
-        if tok.startswith('<') and tok.endswith('>'):
-            out.append(tok)
-            if tok.lower().replace(' ', '') in ('<br>', '<br/>'):
-                visible_len = 0
-                last_space_idx = None
-            continue
-        if tok.startswith('&'):
-            out.append(tok)
-            visible_len += 1
-            continue
-        if tok == '\n':
-            out.append(tok)
-            visible_len = 0
-            last_space_idx = None
-            continue
-        out.append(tok)
-        if tok in (' ', '\t'):
-            last_space_idx = len(out) - 1
-        visible_len += 1
-        if visible_len > chars_per_line:
-            if last_space_idx is not None:
-                out[last_space_idx] = '<br>'
-                visible_len = len(out) - 1 - last_space_idx
-                last_space_idx = None
-            else:
-                out.append('<br>')
-                visible_len = 0
-    return ''.join(out)
+def _visible_text_len(html_text: str) -> int:
+    return len(_TAG_RE.sub('', html_text))
 
 
 class _TooltipDialog(QDialog):
@@ -519,7 +488,7 @@ class _TooltipClickFilter(QObject):
         self._html_text = html_text
         self._max_width = max_width
 
-    def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt override)
+    def eventFilter(self, obj, event) -> bool:
         if obj is self._host and event.type() == QEvent.Type.MouseButtonRelease:
             dlg = _TooltipDialog(self._host.window(), self._html_text, self._max_width)
             dlg.show()
@@ -548,12 +517,11 @@ def apply_tooltip(widget, text: str, max_width: int | None = None, *, wrap: bool
         return
 
     chars_per_line = max(40, max_width // 8)
-    wrapped_text = _hard_wrap_html(text, chars_per_line)
-
-    approx_lines = wrapped_text.count('<br>') + wrapped_text.count('\n') + 1
+    explicit_breaks = text.count('<br>') + text.count('<br/>') + text.count('\n')
+    approx_lines = (_visible_text_len(text) // chars_per_line) + explicit_breaks + 1
     is_long = approx_lines > _TOOLTIP_LONG_LINE_THRESHOLD
 
-    hover_text = wrapped_text
+    hover_text = text
     if is_long:
         hover_text += "<br><br><i>(Click for full text in a scrollable window)</i>"
 

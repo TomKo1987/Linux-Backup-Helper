@@ -12,7 +12,7 @@ from PyQt6.QtCore import Qt, pyqtSignal, QObject, QEvent
 from PyQt6.QtGui import QColor, QFont, QFontDatabase, QFontMetrics, QTextCursor
 from PyQt6.QtWidgets import (
     QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QWidget, QVBoxLayout,
-    QListWidgetItem, QMessageBox, QPlainTextEdit, QPushButton, QSplitter, QSizePolicy,
+    QListWidgetItem, QMessageBox, QPlainTextEdit, QPushButton, QSplitter, QSizePolicy, QSpinBox,
     QCheckBox, QColorDialog, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame, QTextEdit, QApplication
 )
 
@@ -24,7 +24,7 @@ from state import (
 )
 from themes import THEMES, current_theme, apply_style, font_scale, font_sz, apply_tooltip
 from ui_utils import sep, hdr_label, ok_cancel_buttons, btn_row, ask_text, ask_profile_name, browse_field, \
-    _StandardKeysMixin
+    block_set, _StandardKeysMixin
 
 _ARCHIVE_MAX_PROFILE_BYTES = 1024 * 1024
 
@@ -269,6 +269,122 @@ class ExcludeDialog(QDialog):
         self._save_current_view()
         self.accept()
 
+class AdvancedOptionsDialog(QDialog):
+
+    def __init__(self, parent, options: dict):
+        super().__init__(parent)
+        self.setWindowTitle("Advanced Options")
+        self.setMinimumWidth(640)
+        self._opt: dict = dict(options)
+        self._build()
+
+    def _build(self) -> None:
+        t  = current_theme()
+        fs = font_scale()
+        lay = QVBoxLayout(self)
+        lay.setSpacing(10)
+        lay.setContentsMargins(16, 16, 16, 16)
+
+        lay.addWidget(hdr_label("Advanced Backup / Restore Options"))
+        lay.addWidget(sep())
+
+        def _note(text: str) -> QLabel:
+            lbl = QLabel(text)
+            lbl.setWordWrap(True)
+            lbl.setStyleSheet(f"color:{t['text_dim']};font-size:{fs['sm']}px;padding-left:26px;")
+            return lbl
+
+        self._mirror_cb = QCheckBox("Delete extraneous destination files (mirror mode)")
+        self._mirror_cb.setChecked(bool(self._opt.get("mirror_delete", False)))
+        apply_tooltip(
+            self._mirror_cb,
+            "After copying, any file or folder that exists in the destination but "
+            "no longer exists in the source will be <b>deleted</b>.<br><br>"
+            "This guarantees that source and destination are <b>exactly identical</b> "
+            "once the operation finishes.<br><br>"
+            "<i>Supported for local-to-local paths and for SSH destinations (via rsync "
+            "<code>--delete</code>). Not supported for SMB destinations.</i>",
+        )
+        lay.addWidget(self._mirror_cb)
+        lay.addWidget(_note("Makes the destination match the source exactly by removing "
+                            "anything the source no longer has."))
+
+        self._confirm_cb = QCheckBox("Ask for confirmation before deleting anything")
+        self._confirm_cb.setChecked(bool(self._opt.get("confirm_before_delete", True)))
+        apply_tooltip(
+            self._confirm_cb,
+            "Shows a confirmation dialog listing every item that would be deleted "
+            "before mirror mode removes anything. Applies to local paths; "
+            "recommended to keep enabled.<br><br>"
+            "<i>SSH deletions happen as part of the rsync transfer itself and "
+            "are not covered by this confirmation.</i>",
+        )
+        lay.addWidget(self._confirm_cb)
+
+        lay.addWidget(sep())
+
+        self._versioned_cb = QCheckBox("Create versioned archive folders (never overwrite)")
+        self._versioned_cb.setChecked(bool(self._opt.get("versioned_archive", False)))
+        apply_tooltip(
+            self._versioned_cb,
+            "Instead of overwriting files at the destination, every run creates a "
+            "<b>brand-new subfolder</b> named <code>&lt;number&gt; - &lt;date&gt; &lt;time&gt;</code> "
+            "(e.g. <code>001 - 2026-07-21 18-42-05</code>, then <code>002 - …</code>, and so on) "
+            "and copies the source into it, so every previous version stays fully intact.<br><br>"
+            "<i>Only applies to local destination paths.</i>",
+        )
+        lay.addWidget(self._versioned_cb)
+        lay.addWidget(_note("Every run adds a brand-new, self-contained snapshot — nothing "
+                            "is ever overwritten (unless a limit is set below)."))
+
+        max_row = QHBoxLayout()
+        max_row.addSpacing(26)
+        max_row.addWidget(QLabel("Keep at most:"))
+        self._max_spin = QSpinBox()
+        self._max_spin.setRange(0, 9999)
+        self._max_spin.setSpecialValueText("Unlimited")
+        self._max_spin.setValue(int(self._opt.get("max_versions", 0) or 0))
+        self._max_spin.setSuffix(" version(s)")
+        apply_tooltip(
+            self._max_spin,
+            "When more versions than this already exist, the oldest ones are "
+            "automatically deleted to make room for the new one. "
+            "Set to 0 to keep every version forever.",
+        )
+        max_row.addWidget(self._max_spin)
+        max_row.addStretch(1)
+        lay.addLayout(max_row)
+
+        lay.addWidget(sep())
+        lay.addWidget(ok_cancel_buttons(self, self._accept))
+
+        self._mirror_cb.toggled.connect(self._sync_exclusive)
+        self._versioned_cb.toggled.connect(self._sync_exclusive)
+        self._sync_exclusive()
+
+    def _sync_exclusive(self) -> None:
+        if self._mirror_cb.isChecked() and self._versioned_cb.isChecked():
+            if self.sender() is self._versioned_cb:
+                block_set(self._mirror_cb, False)
+            else:
+                block_set(self._versioned_cb, False)
+        self._confirm_cb.setEnabled(self._mirror_cb.isChecked())
+        self._max_spin.setEnabled(self._versioned_cb.isChecked())
+
+    def _accept(self) -> None:
+        self._opt = {
+            "mirror_delete":         self._mirror_cb.isChecked(),
+            "confirm_before_delete": self._confirm_cb.isChecked(),
+            "versioned_archive":     self._versioned_cb.isChecked(),
+            "max_versions":          self._max_spin.value(),
+        }
+        self.accept()
+
+    @property
+    def result_options(self) -> dict:
+        return self._opt
+
+
 class EntryDialog(QDialog):
     _COL_CLEAR = QColor(0, 0, 0, 0)
 
@@ -282,8 +398,15 @@ class EntryDialog(QDialog):
         self._e: dict = entry or {}
         self._show_full_paths: bool = False
         self._pairs_provided: bool  = _pairs is not None
-        raw_excl: dict = (entry or {}).get("details", {}).get("exclude_paths", {})
+        raw_details: dict = (entry or {}).get("details", {})
+        raw_excl: dict = raw_details.get("exclude_paths", {})
         self._pair_excludes: dict[str, list[str]] = {str(k): list(v) for k, v in raw_excl.items() if isinstance(v, list)}
+        self._advanced: dict = {
+            "mirror_delete":         bool(raw_details.get("mirror_delete", False)),
+            "confirm_before_delete": bool(raw_details.get("confirm_before_delete", True)),
+            "versioned_archive":     bool(raw_details.get("versioned_archive", False)),
+            "max_versions":          int(raw_details.get("max_versions", 0) or 0),
+        }
         t = current_theme()
         self._COL_ACTIVE_BG  = QColor(t["info"])
         self._COL_ACTIVE_FG  = QColor(t["bg"])
@@ -436,6 +559,8 @@ class EntryDialog(QDialog):
             ("➕ Add Pair",  "Add a new source/destination pair",                    self._add_pair),
             ("✏️ Edit",      "Edit selected pair (or double-click)",                  self._edit_selected),
             ("🚫 Exclude",   "Exclude files/subdirs within the selected source dir",  self._exclude_selected),
+            ("🛠 Advanced",  "Configure advanced backup/restore behaviour (mirror "
+                            "delete, versioned archives) for this entry",           self._open_advanced),
             ("🗑 Remove",    "Remove selected pair",                                  self._remove_selected),
             ("▲ Move Up",   "Move selected pair up",                                 self._move_up),
             ("▼ Move Down", "Move selected pair down",                               self._move_down),
@@ -692,6 +817,11 @@ class EntryDialog(QDialog):
                 del self._pair_excludes[src_abs]
             self._populate_lists()
 
+    def _open_advanced(self) -> None:
+        dlg = AdvancedOptionsDialog(self, self._advanced)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._advanced = dlg.result_options
+
     def _toggle_layout(self) -> None:
         _existing_details = self._e.get("details", {}) if isinstance(self._e, dict) else {}
         self._entry_snapshot = {
@@ -701,7 +831,8 @@ class EntryDialog(QDialog):
             "details": {"no_backup":  self.no_backup.isChecked(), "no_restore": self.no_restore.isChecked(),
                         "exclude_paths": dict(self._pair_excludes),
                         "pre_hooks": _existing_details.get("pre_hooks", []),
-                        "post_hooks": _existing_details.get("post_hooks", [])}}
+                        "post_hooks": _existing_details.get("post_hooks", []),
+                        **self._advanced}}
         self.stacked = not self.stacked
         self.done(RESTART_DIALOG)
 
@@ -731,7 +862,8 @@ class EntryDialog(QDialog):
                                    "no_restore": self.no_restore.isChecked(),
                                    "exclude_paths": clean_excludes,
                                    "pre_hooks": _existing_details.get("pre_hooks", []),
-                                   "post_hooks": _existing_details.get("post_hooks", [])}}
+                                   "post_hooks": _existing_details.get("post_hooks", []),
+                                   **self._advanced}}
         self.accept()
 
 class MountDialog(QDialog):

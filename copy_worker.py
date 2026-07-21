@@ -1186,8 +1186,20 @@ class CopyWorker(QThread):
     def __init__(self, tasks) -> None:
         super().__init__()
         self._hooks: dict[str, tuple[list, list]] = self._extract_hooks(tasks)
+        self._mirror_titles: set[str] = self._extract_mirror_flags(tasks)
         self.tasks = self._normalize_tasks(tasks)
         self._cancel = threading.Event()
+
+    @staticmethod
+    def _extract_mirror_flags(tasks) -> set[str]:
+        result: set[str] = set()
+        for t in tasks:
+            if not isinstance(t, (list, tuple)) or len(t) < 7:
+                continue
+            title = str(t[2]) if len(t) > 2 else ""
+            if title and t[6]:
+                result.add(title)
+        return result
 
     @staticmethod
     def _extract_hooks(tasks) -> dict[str, tuple[list, list]]:
@@ -1428,7 +1440,7 @@ class CopyWorker(QThread):
 
             excludes = list(extra[0]) if extra and extra[0] else None
 
-            cmd = build_rsync_cmd(src, dst, exclude=excludes)
+            cmd = build_rsync_cmd(src, dst, exclude=excludes, delete=title in self._mirror_titles)
             logger.debug("_copy_ssh_tasks: %s", " ".join(cmd))
 
             try:

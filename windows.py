@@ -66,7 +66,39 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
     def _src_dst(self, entry: dict) -> tuple[list, list]:
         return entry.get("source", []), entry.get("destination", [])
 
-    def _exclusion_note(self, _entry: dict) -> str: return ""
+    @staticmethod
+    def _exclusion_note(entry: dict) -> str:
+        details = entry.get("details", {})
+        no_b = details.get("no_backup", False)
+        no_r = details.get("no_restore", False)
+        excl_paths = details.get("exclude_paths", {})
+
+        has_path_excl = False
+        path_excl_count = 0
+        if isinstance(excl_paths, dict):
+            for paths in excl_paths.values():
+                if isinstance(paths, list) and paths:
+                    has_path_excl = True
+                    path_excl_count += len(paths)
+
+        parts = []
+        if no_b and no_r:
+            parts.append("Excluded from backup and restore")
+        elif no_b:
+            parts.append("Excluded from backup")
+        elif no_r:
+            parts.append("Excluded from restore")
+
+        if has_path_excl:
+            parts.append(f"Contains {path_excl_count} excluded subpath{'s' if path_excl_count > 1 else ''}")
+
+        if details.get("versioned_archive"):
+            max_v = details.get("max_versions") or 0
+            parts.append(f"Versioned archive (keep {max_v if max_v else 'unlimited'})")
+        elif details.get("mirror_delete"):
+            parts.append("Mirror delete active")
+
+        return " | ".join(parts)
 
     def _add_action_buttons(self, grid: QGridLayout, row: int) -> None: pass
 
@@ -253,6 +285,7 @@ class _CopyMixin:
     def _start_copy(self: "_BaseCheckboxWindow") -> None:
         from copy_worker import CopyDialog
         from drive_utils import check_drives_to_mount, mount_required_drives
+        from advanced_copy import apply_advanced_options
 
         selected = []
         for cb, src, dst, title, entry in self.checkbox_dirs:
@@ -261,7 +294,7 @@ class _CopyMixin:
                 excl = details.get("exclude_paths", {})
                 pre_hooks = details.get("pre_hooks", [])
                 post_hooks = details.get("post_hooks", [])
-                selected.append((src, dst, title, excl, pre_hooks, post_hooks))
+                selected.append((src, dst, title, excl, pre_hooks, post_hooks, details))
         if not selected:
             QMessageBox.information(self, "Note", "Nothing selected.")
             return
@@ -270,6 +303,8 @@ class _CopyMixin:
         drives_to_mount = check_drives_to_mount(paths)
         if not mount_required_drives(drives_to_mount, self):
             return
+
+        selected = apply_advanced_options(selected, interactive=True, parent=self)
 
         dlg_copy = CopyDialog(self, selected, self._op_label)  # type: ignore[attr-defined]
         dlg_copy.exec()
@@ -336,33 +371,6 @@ class SettingsWindow(_BaseCheckboxWindow):
         lbl.setTextFormat(Qt.TextFormat.RichText)
         apply_tooltip(lbl, copy_logic_tooltip())
         return lbl
-
-    def _exclusion_note(self, entry: dict) -> str:
-        details = entry.get("details", {})
-        no_b = details.get("no_backup", False)
-        no_r = details.get("no_restore", False)
-        excl_paths = details.get("exclude_paths", {})
-
-        has_path_excl = False
-        path_excl_count = 0
-        if isinstance(excl_paths, dict):
-            for paths in excl_paths.values():
-                if isinstance(paths, list) and paths:
-                    has_path_excl = True
-                    path_excl_count += len(paths)
-
-        parts = []
-        if no_b and no_r:
-            parts.append("Excluded from backup and restore")
-        elif no_b:
-            parts.append("Excluded from backup")
-        elif no_r:
-            parts.append("Excluded from restore")
-
-        if has_path_excl:
-            parts.append(f"Contains {path_excl_count} excluded subpath{'s' if path_excl_count > 1 else ''}")
-
-        return " | ".join(parts)
 
     def _add_action_buttons(self, grid: QGridLayout, row: int) -> None:
         grid.addLayout(btn_row([("System Manager Options", self._open_sm_options)]), row, 0, 1, self.cols)
