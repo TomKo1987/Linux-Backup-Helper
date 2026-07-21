@@ -1226,7 +1226,7 @@ class SystemManagerThread(QThread):
         if self.distro.has_aur:
             eff_helper = self._effective_aur_helper()
             if eff_helper:
-                sys_ok = (self._exec([eff_helper, "-Syu", "--noconfirm"], stream=True).returncode == 0)
+                sys_ok = (self._exec([eff_helper, "-Syu", "--noconfirm"], stream=True, timeout=None).returncode == 0)
                 self._update_flatpak_apps()
                 self._emit_result(sys_ok, "System successfully updated", "System update failed")
                 return sys_ok

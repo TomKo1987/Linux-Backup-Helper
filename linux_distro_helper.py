@@ -421,15 +421,33 @@ class LinuxDistroHelper:
                         logger.warning("parallel check '%s': %s", pkg, exc)
             except concurrent.futures.TimeoutError:
                 remaining = [p for p in packages if p not in done]
-                logger.warning("parallel check timed out; %d package(s) checked sequentially", len(remaining))
+                logger.warning("parallel check timed out; %d package(s) still pending", len(remaining))
+                still_running = {}
                 for fut, pkg in futs.items():
-                    if pkg not in done:
-                        fut.cancel()
-                for p in remaining:
+                    if pkg in done:
+                        continue
+                    if not fut.cancel():
+                        still_running[fut] = pkg
+                if still_running:
                     try:
-                        results[p] = self.package_is_installed(p)
-                    except Exception as exc:
-                        logger.warning("sequential fallback check '%s': %s", p, exc)
+                        for fut in concurrent.futures.as_completed(still_running, timeout=10):
+                            pkg = still_running[fut]
+                            done.add(pkg)
+                            try:
+                                results[pkg] = fut.result()
+                            except Exception as exc:
+                                logger.warning("parallel check '%s': %s", pkg, exc)
+                    except concurrent.futures.TimeoutError:
+                        pass
+                not_started = [p for p in packages if p not in done]
+                if not_started:
+                    logger.warning("parallel check: %d package(s) checked sequentially after timeout",
+                                    len(not_started))
+                    for p in not_started:
+                        try:
+                            results[p] = self.package_is_installed(p)
+                        except Exception as exc:
+                            logger.warning("sequential fallback check '%s': %s", p, exc)
         except Exception as exc:
             logger.error("parallel check failed: %s", exc)
             return [p for p in packages if not self.package_is_installed(p)]

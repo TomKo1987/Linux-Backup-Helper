@@ -104,11 +104,20 @@ def _check_destination_space(tasks: list[tuple]) -> list[str]:
         dsts = dst_raw if isinstance(dst_raw, list) else (dst_raw,)
         for dst in dsts:
             dst = str(dst).strip()
-            if not dst or dst in checked or is_smb(dst) or is_ssh(dst):
+            if not dst or is_smb(dst) or is_ssh(dst):
+                continue
+            dst = os.path.abspath(os.path.expanduser(dst))
+            if dst in checked:
                 continue
             checked.add(dst)
+            probe = dst
+            while probe and not os.path.exists(probe):
+                parent = os.path.dirname(probe)
+                probe = "" if parent == probe else parent
+            if not probe:
+                continue
             try:
-                usage = shutil.disk_usage(dst)
+                usage = shutil.disk_usage(probe)
                 if usage.free < _MIN_FREE:
                     free_mb = usage.free // (1024 * 1024)
                     warnings.append(
@@ -1956,6 +1965,7 @@ class _SummaryWidget(QWidget):
         self._entry_results:    dict[str, list[int]] = {}
         self._entry_row_labels: dict[str, QLabel]    = {}
         self._entry_grid_cols = 1
+        self._last_seg_counts: tuple[int, int, int] = (0, 0, 0)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(20, 20, 20, 20)
@@ -2182,6 +2192,7 @@ class _SummaryWidget(QWidget):
                 self._progress_bar.setFormat("Scanning…")
 
     def _update_segments(self, copied: int, skipped: int, errors: int) -> None:
+        self._last_seg_counts = (copied, skipped, errors)
         segs  = (self._seg_copied, self._seg_skipped, self._seg_errors)
         total = copied + skipped + errors
         if total == 0:
@@ -2213,23 +2224,23 @@ class _SummaryWidget(QWidget):
         self._card_speed.set_val(speed_str)
         self._card_eta.set_val(eta_str)
 
-    def _recalculate_grid(self) -> None:
+    def _recalculate_grid(self) -> bool:
         new_cols = max(1, (self._entry_card.width() - 40) // 280)
         if new_cols == self._entry_grid_cols:
-            return
+            return False
         self._entry_grid_cols = new_cols
         grid = self._entry_grid
         for i in range(max(grid.columnCount(), new_cols + 1)):
             grid.setColumnStretch(i, 0)
         for i in range(new_cols):
             grid.setColumnStretch(i, 1)
+        return True
 
     def _refresh_entry_labels(self) -> None:
-        self._recalculate_grid()
+        rebuild = self._recalculate_grid()
         cols    = self._entry_grid_cols
         labels  = self._entry_row_labels
         results = self._entry_results
-        rebuild = False
 
         for title, (ok, skip, err) in results.items():
             parts = []
@@ -2268,6 +2279,13 @@ class _SummaryWidget(QWidget):
             grid.addWidget(labels[title], row, col, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
 
         self._entry_list_widget.adjustSize()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._update_segments(*self._last_seg_counts)
+        if not self._entry_refresh_pending:
+            self._entry_refresh_pending = True
+            QTimer.singleShot(150, self._deferred_refresh_entry_labels)
 
 
 class _LogWidget(QWidget):

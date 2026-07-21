@@ -239,8 +239,12 @@ def _valid_hex_color(value: Any) -> bool: return isinstance(value, str) and bool
 def _parse_entry(raw: dict) -> dict | None:
     if not isinstance(raw, dict):
         return None
-    header = raw.get("header", "").strip()
-    title  = raw.get("title",  "").strip()
+    header = raw.get("header", "")
+    title  = raw.get("title",  "")
+    if not isinstance(header, str) or not isinstance(title, str):
+        return None
+    header = header.strip()
+    title  = title.strip()
     source = _norm_paths(raw.get("source"))
     dest   = _norm_paths(raw.get("destination"))
     if not (header and title and source and dest):

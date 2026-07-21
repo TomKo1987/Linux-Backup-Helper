@@ -862,6 +862,7 @@ class SystemManagerOptions(QDialog):
         self._distro = distro or LinuxDistroHelper()
         self._session = self._distro.detect_session()
         self._aur_helper_installed: bool | None = None
+        self._verifier_threads: list[PackageVerifierThread] = []
         self._build()
 
     def _build(self) -> None:
@@ -2031,7 +2032,8 @@ class SystemManagerOptions(QDialog):
         progress.setAutoClose(True)
         progress.setValue(0)
 
-        self._verifier_thread = PackageVerifierThread(packages, pkg_type, self._distro.family())
+        verifier_thread = PackageVerifierThread(packages, pkg_type, self._distro.family())
+        self._verifier_threads.append(verifier_thread)
 
         def on_progress(current, total):
             if not progress.wasCanceled():
@@ -2070,10 +2072,15 @@ class SystemManagerOptions(QDialog):
                 parent_dlg.accept()
                 QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
 
-        self._verifier_thread.progress.connect(on_progress)
-        self._verifier_thread.result.connect(on_result)
-        progress.canceled.connect(self._verifier_thread.cancel)
-        self._verifier_thread.start()
+        def on_finished():
+            if verifier_thread in self._verifier_threads:
+                self._verifier_threads.remove(verifier_thread)
+
+        verifier_thread.progress.connect(on_progress)
+        verifier_thread.result.connect(on_result)
+        verifier_thread.finished.connect(on_finished)
+        progress.canceled.connect(verifier_thread.cancel)
+        verifier_thread.start()
 
 
 class SystemManagerLauncher:
