@@ -4,7 +4,11 @@ from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QDialog, QMessageBox, QPushButton
 )
 
-from dialogs import EntryDialog, HeaderSettingsDialog, MountsDialog, ProfilesDialog, _ThemeDialog
+from entry_dialog import EntryDialog
+from header_settings_dialog import HeaderSettingsDialog
+from mount_dialogs import MountsDialog
+from misc_dialogs import _ThemeDialog
+from profiles_dialog import ProfilesDialog
 from samba_credentials import SambaPasswordDialog
 from state import S, _PROFILES_DIR, RESTART_DIALOG, apply_replacements, save_profile
 from themes import current_theme, font_scale, register_style_listener, unregister_style_listener, apply_tooltip
@@ -283,7 +287,7 @@ class _CopyMixin:
     _op_label: str = ""
 
     def _start_copy(self: "_BaseCheckboxWindow") -> None:
-        from copy_worker import CopyDialog
+        from copy_worker_gui import CopyDialog
         from drive_utils import check_drives_to_mount, mount_required_drives
         from advanced_copy import apply_advanced_options
 
@@ -500,7 +504,12 @@ class SettingsWindow(_BaseCheckboxWindow):
             self.changed.emit()
             self.done(RESTART_DIALOG)
 
-    def _manage_mounts(self)     -> None: MountsDialog(self).exec()
+    def _manage_mounts(self) -> None:
+        dlg = MountsDialog(self)
+        dlg.exec()
+        if dlg.was_changed:
+            self.changed.emit()
+            self.done(RESTART_DIALOG)
     def _samba_credentials(self) -> None: SambaPasswordDialog.open(self)
 
     def _manage_profiles(self) -> None:

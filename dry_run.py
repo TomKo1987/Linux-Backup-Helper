@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QStackedWidget,
 )
 
-from copy_worker import _SKIP_RE
+from copy_worker_core import _SKIP_RE
 from state import S
 from themes import current_theme, font_sz
 from ui_utils import _StandardKeysMixin, size_to_screen

@@ -35,7 +35,7 @@ from PyQt6.QtWidgets import (
 )
 
 from backup_stats import BackupStatsDialog
-from dialogs import LogViewer, SysInfoDialog, NotesDialog
+from misc_dialogs import LogViewer, SysInfoDialog, NotesDialog
 from drive_utils import get_mounts, is_mounted, unmount_drive, get_session_managed_mounts
 from dry_run import launch_dry_run
 from icons import _ICON_B64
@@ -255,7 +255,7 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
             old_menu.deleteLater()
 
     def _quick_backup(self, header: str | None) -> None:
-        from copy_worker import CopyDialog
+        from copy_worker_gui import CopyDialog
         from advanced_copy import apply_advanced_options
         tasks = _build_backup_tasks([header] if header is not None else None)
         if not tasks:
@@ -482,7 +482,7 @@ def main():
             except (json.JSONDecodeError, ValueError):
                 headers = [h.strip() for h in _raw.split(",") if h.strip()]
 
-        from copy_worker import CopyDialog
+        from copy_worker_gui import CopyDialog
         from advanced_copy import apply_advanced_options
         tasks = _build_backup_tasks(headers)
         if tasks:
