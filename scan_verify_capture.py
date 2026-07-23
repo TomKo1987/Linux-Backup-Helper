@@ -112,6 +112,8 @@ class _CaptureTab(QWidget):
         self._prog_widget.hide()
         self._cbs.clear()
         self._svc_cbs.clear()
+        self._spec_cbs = []
+        self._spec_sess_cb = None
 
         profile_all = all_profile_pkg_names()
         _excluded = self._sm_pkgs | _IGNORE_EXACT | self._de_deps

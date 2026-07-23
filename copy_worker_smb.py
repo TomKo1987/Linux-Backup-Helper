@@ -373,6 +373,8 @@ class _SmbScanner:
             for path, (sz,) in idx.items():
                 if self._cancel.is_set():
                     break
+                if _SKIP_RE.search(os.path.basename(path)):
+                    continue
                 if not rpath:
                     rel = path
                 elif prefix and path.startswith(prefix):

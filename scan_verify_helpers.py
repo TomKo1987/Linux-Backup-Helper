@@ -285,8 +285,6 @@ class _CaptureWorker(QThread):
         self.progress.emit("Scanning installed packages…")
         try:
             res["basic"], res["aur"] = self._h.get_explicitly_installed_packages()
-        except RuntimeError as exc:
-            res["error"] = str(exc)
         except Exception as exc:
             res["error"] = str(exc)
             logger.error("CaptureWorker: %s", exc)

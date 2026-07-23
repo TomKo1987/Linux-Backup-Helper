@@ -1,5 +1,6 @@
+from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtWidgets import (
-    QApplication, QHBoxLayout, QLabel, QListWidget, QPushButton, QVBoxLayout, QWidget
+    QHBoxLayout, QLabel, QListWidget, QPushButton, QVBoxLayout, QWidget
 )
 
 from linux_distro_helper import LinuxDistroHelper
@@ -32,10 +33,23 @@ def _get_package_diff(helper: "LinuxDistroHelper") -> tuple[list[str], list[str]
     return not_tracked, missing
 
 
+class _PackageDiffWorker(QThread):
+    done = pyqtSignal(tuple)
+
+    def __init__(self, helper: "LinuxDistroHelper", parent=None) -> None:
+        super().__init__(parent)
+        self._helper = helper
+
+    def run(self) -> None:
+        result = _get_package_diff(self._helper)
+        self.done.emit(result)
+
+
 class _PackageDiffTab(QWidget):
     def __init__(self, helper: "LinuxDistroHelper", parent=None) -> None:
         super().__init__(parent)
         self._helper = helper
+        self._worker: _PackageDiffWorker | None = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -92,10 +106,18 @@ class _PackageDiffTab(QWidget):
         lay.addWidget(self._status)
 
     def _run(self) -> None:
+        if self._worker is not None and self._worker.isRunning():
+            return
         self._run_btn.setEnabled(False)
         self._status.setText("Analyzing…")
-        QApplication.processEvents()
-        not_tracked, missing = _get_package_diff(self._helper)
+        worker = _PackageDiffWorker(self._helper, self)
+        self._worker = worker
+        worker.done.connect(self._on_done)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_done(self, result: tuple) -> None:
+        not_tracked, missing = result
 
         self._list_untracked.clear()
         for p in not_tracked:
@@ -112,3 +134,4 @@ class _PackageDiffTab(QWidget):
         self._status.setText(
             f"{len(not_tracked)} not tracked  ·  {len(missing)} missing from the system")
         self._run_btn.setEnabled(True)
+        
