@@ -1060,8 +1060,8 @@ class SystemManagerThread(QThread):
     def _install_with_retry(self, pkgs: list[str], bulk_fn, single_fn) -> list[str]:
         if not self.distro:
             return pkgs
-        result = bulk_fn(pkgs)
-        if result is not None and result.returncode != 0 and self.terminated:
+        bulk_fn(pkgs)
+        if self.terminated:
             return pkgs
         still_missing = self.distro.filter_not_installed(pkgs)
         for p in pkgs:
@@ -1103,10 +1103,10 @@ class SystemManagerThread(QThread):
 
         failed = []
         if use_aur:
-            helper = S.aur_helper
             if not self.distro.has_aur:
                 self.outputReceived.emit(f"AUR is not supported on this distribution — skipping {label}s", "warning")
                 return _Status.WARNING
+            helper = self._effective_aur_helper() or S.aur_helper
             if not (shutil.which(helper) or (self._pkg_cache and self._pkg_cache.is_installed(helper))):
                 self.outputReceived.emit(
                     f"AUR helper '{helper}' is not installed — cannot install {label}s. "
@@ -1785,8 +1785,9 @@ class SystemManagerThread(QThread):
             return _Status.SUCCESS
         self.outputReceived.emit(f"Detected session: {session}", "success")
 
-        pkgs = [p["package"] for p in (S.specific_packages or []) if isinstance(p, dict) and p.get("session") == session
-                and "package" in p and not p.get("disabled", False)]
+        session_pkgs = [p for p in (S.specific_packages or [])
+                        if isinstance(p, dict) and p.get("session") == session]
+        pkgs = [n for n in active_pkg_names(session_pkgs, is_specific=True) if self.distro.valid(n)]
         to_install = self.distro.filter_not_installed(pkgs) if pkgs else []
         if not to_install:
             self.outputReceived.emit(f"All Specific Packages for {session} already installed", "success")

@@ -20,7 +20,7 @@ from ui_utils import sep
 
 from system_manager_helpers import (
     _detect_boot_info, _compute_op_status, _build_op_text,
-    _raw_to_checkbox_text, _raw_to_tips, _BR_RE, _scroll_dlg,
+    _raw_to_checkbox_text, _raw_to_tips, _scroll_dlg,
     _detect_effective_aur_helper, _is_helper_present
 )
 
@@ -32,9 +32,6 @@ else:
 
 
 class _OpsEditorMixin(_OpsMixinBase):
-    # These attributes/properties are provided by the concrete class this mixin
-    # is combined with (see SystemManagerOptions in system_manager_options.py).
-    # Declared here only for the static type checker; no effect at runtime.
     if TYPE_CHECKING:
         _distro: "LinuxDistroHelper"
         _session: str | None
@@ -330,7 +327,7 @@ class _OpsEditorMixin(_OpsMixinBase):
                         continue
                     _icon = "󰔨  " if op_tips.get(_key) else ""
                     _text = _refreshed_text[_key]
-                    _cb.setText(f"{_icon}{_BR_RE.sub(' ', _text).replace('&', '&&')}")
+                    _cb.setText(f"{_icon}{_text}")
             except Exception as e:
                 logger.error("_refresh_labels: %s", e, exc_info=True)
 
