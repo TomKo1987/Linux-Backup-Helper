@@ -1,12 +1,14 @@
 import os
 import re
 import shutil
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from drive_utils import is_smb, is_ssh
 from state import apply_replacements, logger
 
 __all__ = [
+    "DeletedItem", "DeleteError", "AdvancedOptionsResult",
     "make_versioned_path", "prune_old_versions", "find_extraneous_paths",
     "delete_paths", "apply_advanced_options",
 ]
@@ -14,8 +16,48 @@ __all__ = [
 _VERSION_RE = re.compile(r"^(\d+)\s*[-_]\s*")
 
 
+@dataclass
+class DeletedItem:
+    path: str
+    title: str
+    reason: str
+    size: int = 0
+
+
+@dataclass
+class DeleteError:
+    path: str
+    title: str
+    reason: str
+
+
+@dataclass
+class AdvancedOptionsResult:
+    tasks: list[tuple]
+    deleted: list[DeletedItem] = field(default_factory=list)
+    errors: list[DeleteError] = field(default_factory=list)
+
+
 def _is_local(path: str) -> bool:
     return not is_smb(path) and not is_ssh(path)
+
+
+def _path_size(p: str) -> int:
+    try:
+        if os.path.islink(p) or os.path.isfile(p):
+            return os.path.getsize(p)
+        if os.path.isdir(p):
+            total = 0
+            for root, _dirs, files in os.walk(p, followlinks=False):
+                for fname in files:
+                    try:
+                        total += os.path.getsize(os.path.join(root, fname))
+                    except OSError:
+                        pass
+            return total
+    except OSError:
+        pass
+    return 0
 
 
 def _existing_versions(dst_abs: str) -> list[tuple[int, str]]:
@@ -41,21 +83,24 @@ def make_versioned_path(dst_abs: str) -> str:
     return os.path.join(dst_abs, f"{n:03d} - {ts}")
 
 
-def prune_old_versions(dst_abs: str, keep: int) -> list[str]:
+def prune_old_versions(dst_abs: str, keep: int, title: str = "") -> tuple[list[DeletedItem], list[DeleteError]]:
     if keep <= 0:
-        return []
+        return [], []
     versions = _existing_versions(dst_abs)
     overflow = len(versions) - keep
     if overflow <= 0:
-        return []
-    removed = []
+        return [], []
+    deleted: list[DeletedItem] = []
+    errors: list[DeleteError] = []
     for _, path in versions[:overflow]:
+        sz = _path_size(path)
         try:
             shutil.rmtree(path)
-            removed.append(path)
+            deleted.append(DeletedItem(path=path, title=title, reason="Pruned old version", size=sz))
         except OSError as exc:
+            errors.append(DeleteError(path=path, title=title, reason=f"Could not delete: {exc}"))
             logger.warning("Versioned archive: could not remove old version %r: %s", apply_replacements(path), exc)
-    return removed
+    return deleted, errors
 
 
 def find_extraneous_paths(src_abs: str, dst_abs: str, excludes: frozenset) -> list[str]:
@@ -83,10 +128,11 @@ def find_extraneous_paths(src_abs: str, dst_abs: str, excludes: frozenset) -> li
     return extraneous
 
 
-def delete_paths(paths: list[str]) -> tuple[int, list[str]]:
-    deleted = 0
-    errors: list[str] = []
+def delete_paths(paths: list[str], title: str = "", reason: str = "Mirror delete") -> tuple[list[DeletedItem], list[DeleteError]]:
+    deleted: list[DeletedItem] = []
+    errors: list[DeleteError] = []
     for p in paths:
+        sz = _path_size(p)
         try:
             if os.path.islink(p) or os.path.isfile(p):
                 os.remove(p)
@@ -94,9 +140,9 @@ def delete_paths(paths: list[str]) -> tuple[int, list[str]]:
                 shutil.rmtree(p)
             else:
                 continue
-            deleted += 1
+            deleted.append(DeletedItem(path=p, title=title, reason=reason, size=sz))
         except OSError as exc:
-            errors.append(f"{apply_replacements(p)}: {exc}")
+            errors.append(DeleteError(path=p, title=title, reason=f"Could not delete: {exc}"))
             logger.warning("Mirror delete: could not remove %r: %s", apply_replacements(p), exc)
     return deleted, errors
 
@@ -123,8 +169,11 @@ def _confirm(parent, title: str, paths: list[str]) -> bool:
     ) == QMessageBox.StandardButton.Yes
 
 
-def apply_advanced_options(tasks: list[tuple], *, interactive: bool = True, parent=None) -> list[tuple]:
+def apply_advanced_options(tasks: list[tuple], *, interactive: bool = True, parent=None) -> AdvancedOptionsResult:
     result = []
+    all_deleted: list[DeletedItem] = []
+    all_errors: list[DeleteError] = []
+
     for src_list, dst_list, title, excl, pre_hooks, post_hooks, details in tasks:
         details = details or {}
         versioned = bool(details.get("versioned_archive"))
@@ -148,7 +197,9 @@ def apply_advanced_options(tasks: list[tuple], *, interactive: bool = True, pare
                     try:
                         os.makedirs(d_abs, exist_ok=True)
                         if max_versions > 0:
-                            prune_old_versions(d_abs, max_versions - 1)
+                            pruned, prune_errs = prune_old_versions(d_abs, max_versions - 1, title=title)
+                            all_deleted.extend(pruned)
+                            all_errors.extend(prune_errs)
                         eff_dst[i] = make_versioned_path(d_abs)
                     except OSError as exc:
                         logger.warning(
@@ -177,11 +228,13 @@ def apply_advanced_options(tasks: list[tuple], *, interactive: bool = True, pare
                     if confirm_del and interactive:
                         proceed = _confirm(parent, title, extraneous)
                     if proceed:
-                        n, errors = delete_paths(extraneous)
+                        items, errs = delete_paths(extraneous, title=title, reason="Mirror delete")
+                        all_deleted.extend(items)
+                        all_errors.extend(errs)
                         logger.info("Mirror delete [%s]: removed %d item(s) from %r",
-                                    title, n, apply_replacements(d_abs))
-                        for err in errors:
-                            logger.warning("Mirror delete [%s]: %s", title, err)
+                                    title, len(items), apply_replacements(d_abs))
+                        for err in errs:
+                            logger.warning("Mirror delete [%s]: %s: %s", title, apply_replacements(err.path), err.reason)
                     else:
                         logger.info("Mirror delete [%s]: deletion cancelled by user", title)
                 elif is_ssh(s_str) or is_ssh(d_str):
@@ -190,4 +243,5 @@ def apply_advanced_options(tasks: list[tuple], *, interactive: bool = True, pare
                     logger.info("Mirror delete [%s]: SMB destinations are not supported — skipped", title)
 
         result.append((src_list, eff_dst, title, excl, pre_hooks, post_hooks, mirror_remote))
-    return result
+
+    return AdvancedOptionsResult(tasks=result, deleted=all_deleted, errors=all_errors)

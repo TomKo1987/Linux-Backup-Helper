@@ -80,6 +80,7 @@ class _SummaryWidget(QWidget):
 
         self._s_ok    = f"color:{t['success']};"
         self._s_skip  = f"color:{t['warning']};"
+        self._s_del   = f"color:{t['deleted']};"
         self._s_err   = f"color:{t['error']};"
         self._s_dim   = f"color:{t['text_dim']};"
         self._s_title = f"color:{t['text']};"
@@ -88,7 +89,7 @@ class _SummaryWidget(QWidget):
         self._entry_results:    dict[str, list[int]] = {}
         self._entry_row_labels: dict[str, QLabel]    = {}
         self._entry_grid_cols = 1
-        self._last_seg_counts: tuple[int, int, int] = (0, 0, 0)
+        self._last_seg_counts: tuple[int, int, int, int] = (0, 0, 0, 0)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(20, 20, 20, 20)
@@ -121,14 +122,15 @@ class _SummaryWidget(QWidget):
 
         stats_lay = QGridLayout()
         stats_lay.setSpacing(12)
-        for i in range(3):
+        for i in range(4):
             stats_lay.setColumnStretch(i, 1)
 
         self.card_copied  = _make_stat_card(t["success"], "⤵ Copied",  "0")
         self.card_skipped = _make_stat_card(t["warning"],  "↷ Skipped", "0")
+        self.card_deleted = _make_stat_card(t["deleted"],  "🗑 Deleted", "0")
         self.card_errors  = _make_stat_card(t["error"],    "✗ Errors",  "0")
 
-        for col, card in enumerate((self.card_copied, self.card_skipped, self.card_errors)):
+        for col, card in enumerate((self.card_copied, self.card_skipped, self.card_deleted, self.card_errors)):
             stats_lay.addWidget(card.frame, 0, col)
 
         self._progress_card = QFrame()
@@ -193,12 +195,14 @@ class _SummaryWidget(QWidget):
 
         self._seg_copied  = QFrame()
         self._seg_skipped = QFrame()
+        self._seg_deleted = QFrame()
         self._seg_errors  = QFrame()
         self._seg_copied.setStyleSheet(f"background:{t['success']};")
         self._seg_skipped.setStyleSheet(f"background:{t['warning']};")
+        self._seg_deleted.setStyleSheet(f"background:{t['deleted']};")
         self._seg_errors.setStyleSheet(f"background:{t['error']};")
 
-        for seg in (self._seg_copied, self._seg_skipped, self._seg_errors):
+        for seg in (self._seg_copied, self._seg_skipped, self._seg_deleted, self._seg_errors):
             seg.setFixedHeight(10)
             seg.setFixedWidth(0)
             seg_row.addWidget(seg)
@@ -207,7 +211,7 @@ class _SummaryWidget(QWidget):
         legend_row = QHBoxLayout()
         legend_row.setSpacing(20)
         legend_style = _cached_mono_style(font_sz(), t["text"], extra="border:none;")
-        for key, text in (("success", "Copied"), ("warning", "Skipped"), ("error", "Errors")):
+        for key, text in (("success", "Copied"), ("warning", "Skipped"), ("deleted", "Deleted"), ("error", "Errors")):
             dot = QLabel(f"<span style='color:{t[key]}'>■</span>  {text}")
             dot.setStyleSheet(legend_style)
             dot.setMinimumHeight(22)
@@ -261,25 +265,29 @@ class _SummaryWidget(QWidget):
 
     def update_progress_bar(self, done: int, total: int) -> None: self._update_progress(done, total)
 
-    def update_stats(self, operation: str, done: int, total: int, copied: int, skipped: int, errors: int, elapsed_s: int,
-                     size_copied: int, size_skipped: int, finished: bool = False, cancelled: bool = False) -> None:
+    def update_stats(self, operation: str, done: int, total: int, copied: int, skipped: int, errors: int, deleted: int,
+                     elapsed_s: int, size_copied: int, size_skipped: int, size_deleted: int,
+                     finished: bool = False, cancelled: bool = False) -> None:
         self.op_lbl.setText(operation)
         self.card_copied.set_val(f"{copied:,}")
         self.card_copied.set_size(_format_unit(size_copied))
         self.card_skipped.set_val(f"{skipped:,}")
         self.card_skipped.set_size(_format_unit(size_skipped))
+        self.card_deleted.set_val(f"{deleted:,}")
+        self.card_deleted.set_size(_format_unit(size_deleted))
         self.card_errors.set_val(f"{errors:,}")
         size_str = _format_unit(size_copied + size_skipped)
         self.total_lbl.setText(f"{total:,} files / {size_str}" if total > 0 else "")
         self._update_progress(done, total, finished, cancelled)
-        self._update_segments(copied, skipped, errors)
+        self._update_segments(copied, skipped, deleted, errors)
         self._update_timing(elapsed_s, done, total, finished, cancelled, size_copied=size_copied)
 
-    def on_entry_status(self, title: str, ok: int, skip: int, err: int) -> None:
-        ec = self._entry_results.setdefault(title, [0, 0, 0])
+    def on_entry_status(self, title: str, ok: int, skip: int, err: int, deleted: int = 0) -> None:
+        ec = self._entry_results.setdefault(title, [0, 0, 0, 0])
         ec[0] += ok
         ec[1] += skip
         ec[2] += err
+        ec[3] += deleted
         if not self._entry_refresh_pending:
             self._entry_refresh_pending = True
             QTimer.singleShot(300, self._deferred_refresh_entry_labels)
@@ -314,16 +322,16 @@ class _SummaryWidget(QWidget):
                 self._prog_pct.setText("…")
                 self._progress_bar.setFormat("Scanning…")
 
-    def _update_segments(self, copied: int, skipped: int, errors: int) -> None:
-        self._last_seg_counts = (copied, skipped, errors)
-        segs  = (self._seg_copied, self._seg_skipped, self._seg_errors)
-        total = copied + skipped + errors
+    def _update_segments(self, copied: int, skipped: int, deleted: int, errors: int) -> None:
+        self._last_seg_counts = (copied, skipped, deleted, errors)
+        segs  = (self._seg_copied, self._seg_skipped, self._seg_deleted, self._seg_errors)
+        total = copied + skipped + deleted + errors
         if total == 0:
             for s in segs:
                 s.setFixedWidth(0)
             return
         avail = max(1, self._rate_card.width() - 40)
-        for seg, count in zip(segs, (copied, skipped, errors), strict=True):
+        for seg, count in zip(segs, (copied, skipped, deleted, errors), strict=True):
             seg.setFixedWidth(max(0, int(avail * count / total)))
 
     def _update_timing(self, elapsed_s: int, done: int, total: int, finished: bool, cancelled: bool,
@@ -365,11 +373,12 @@ class _SummaryWidget(QWidget):
         labels  = self._entry_row_labels
         results = self._entry_results
 
-        for title, (ok, skip, err) in results.items():
+        for title, (ok, skip, err, deleted) in results.items():
             parts = []
-            if ok:   parts.append(f"<span style='{self._s_ok}'>⤵ {ok:,}</span>")
-            if skip: parts.append(f"<span style='{self._s_skip}'>↷ {skip:,}</span>")
-            if err:  parts.append(f"<span style='{self._s_err}'>✗ {err:,}</span>")
+            if ok:      parts.append(f"<span style='{self._s_ok}'>⤵ {ok:,}</span>")
+            if skip:    parts.append(f"<span style='{self._s_skip}'>↷ {skip:,}</span>")
+            if deleted: parts.append(f"<span style='{self._s_del}'>🗑 {deleted:,}</span>")
+            if err:     parts.append(f"<span style='{self._s_err}'>✗ {err:,}</span>")
 
             suffix = "&nbsp; ".join(parts) if parts else f"<span style='{self._s_dim}'></span>"
             _html  = f"<span style='{self._s_title}'>{title}</span><br>{suffix}"
@@ -688,7 +697,8 @@ class _LogWidget(QWidget):
 
 class CopyDialog(_StandardKeysMixin, QDialog):
 
-    def __init__(self, parent, tasks, operation: str) -> None:
+    def __init__(self, parent, tasks, operation: str, *,
+                pre_deleted: "list | None" = None, pre_errors: "list | None" = None) -> None:
         super().__init__(parent)
         self.setWindowTitle(operation)
         self._t = current_theme()
@@ -696,6 +706,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
 
         self.c_ok = t["success"]
         self.c_sk = t["warning"]
+        self.c_de = t["deleted"]
         self.c_er = t["error"]
 
         self._status_fs = font_sz(8)
@@ -704,14 +715,19 @@ class CopyDialog(_StandardKeysMixin, QDialog):
 
         self._operation = operation
         self.worker     = CopyWorker(tasks)
-        self.copied = self.skipped = self.errors = 0
+        self.copied = self.skipped = self.errors = self.deleted = 0
         self._done  = self._total = 0
         self._final_elapsed: int | None = None
         self._pending_ok = deque()
         self._pending_sk = deque()
+        self._pending_de = deque()
         self._pending_er = deque()
-        self._size_copied = self._size_skipped = 0
+        self._size_copied = self._size_skipped = self._size_deleted = 0
         self._not_found_paths: list[tuple[str, str]] = []
+
+        self._preseed_deleted = 0
+        self._preseed_deleted_size = 0
+        self._preseed_errors = 0
 
         self._summary = _SummaryWidget()
 
@@ -722,6 +738,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
 
         self._w_copied  = _LogWidget(self.c_ok)
         self._w_skipped = _LogWidget(self.c_sk)
+        self._w_deleted = _LogWidget(self.c_de)
         self._w_errors  = _LogWidget(self.c_er)
 
         summary_page = QWidget()
@@ -734,9 +751,13 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         self.tabs.addTab(summary_page, "📋 Summary")
         self.tabs.addTab(self._w_copied, "⤵ Copied (0)")
         self.tabs.addTab(self._w_skipped, "↷ Skipped (0)")
+        self.tabs.addTab(self._w_deleted, "🗑 Deleted (0)")
         self.tabs.addTab(self._w_errors, "✗ Errors (0)")
         self.tabs.setStyleSheet(f"QTabWidget::pane {{border: none}} QTabBar::tab {{width: 200px; padding: 10px}}"
                                 f"QTabBar::tab:selected {{background: {t['bg3']}; border-bottom: 2px solid {t['accent']}}}")
+
+        self._seed_deleted(pre_deleted)
+        self._seed_errors(pre_errors)
 
         self.cancel_btn = QPushButton("⏹ Cancel")
         self.cancel_btn.setMinimumHeight(50)
@@ -771,6 +792,9 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         self.worker.scan_progress.connect(self._on_scan_progress)
         self.worker.entry_status.connect(self._summary.on_entry_status)
 
+        if self._preseed_deleted or self._preseed_errors:
+            self._update_tab_labels()
+
         space_warnings = _check_destination_space(tasks)
         if space_warnings:
             QMessageBox.warning(
@@ -782,9 +806,37 @@ class CopyDialog(_StandardKeysMixin, QDialog):
             )
 
         self.worker.start()
-        self._summary.update_stats(self._operation, 0, 0, 0, 0, 0, 0, 0, 0, False)
+        self._summary.update_stats(self._operation, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, False)
 
     def _elapsed_s(self) -> int: return self._final_elapsed if self._final_elapsed is not None else self.timer.elapsed() // 1000
+
+    def _seed_deleted(self, items: "list | None") -> None:
+        if not items:
+            return
+        texts = []
+        for it in items:
+            self._preseed_deleted += 1
+            self._preseed_deleted_size += getattr(it, "size", 0) or 0
+            texts.append(self._fmt_de(it.path, it.reason))
+        self._w_deleted.bulk_add(texts)
+
+    def _seed_errors(self, errs: "list | None") -> None:
+        if not errs:
+            return
+        texts = []
+        for e in errs:
+            self._preseed_errors += 1
+            texts.append(self._fmt_er(e.path, e.reason))
+        self._w_errors.bulk_add(texts)
+
+    @property
+    def _display_deleted(self) -> int: return self._preseed_deleted + self.deleted
+
+    @property
+    def _display_errors(self) -> int: return self._preseed_errors + self.errors
+
+    @property
+    def _display_size_deleted(self) -> int: return self._preseed_deleted_size + self._size_deleted
 
     def _status_badge(self, icon: str, label: str, color: str, border: "str | None" = None) -> str:
         border = border or color
@@ -825,20 +877,22 @@ class CopyDialog(_StandardKeysMixin, QDialog):
             return n
 
         return (process_batch(self._pending_ok, self._w_copied,  self._fmt_ok) + process_batch(self._pending_sk, self._w_skipped, self._fmt_sk)
-                + process_batch(self._pending_er, self._w_errors,  self._fmt_er))
+                + process_batch(self._pending_de, self._w_deleted, self._fmt_de) + process_batch(self._pending_er, self._w_errors,  self._fmt_er))
 
     def _update_ui_tick(self) -> None:
         elapsed   = self._elapsed_s()
         processed = self._drain_pending()
         if processed:
             self._update_tab_labels()
-        self._summary.update_stats(self._operation, self._done, self._total, self.copied, self.skipped, self.errors,
-                                   elapsed, self._size_copied, self._size_skipped, finished=False)
+        self._summary.update_stats(self._operation, self._done, self._total, self.copied, self.skipped,
+                                   self._display_errors, self._display_deleted, elapsed,
+                                   self._size_copied, self._size_skipped, self._display_size_deleted, finished=False)
 
     def _update_tab_labels(self) -> None:
         self.tabs.setTabText(1, f"⤵ Copied ({self.copied:,})")
         self.tabs.setTabText(2, f"↷ Skipped ({self.skipped:,})")
-        self.tabs.setTabText(3, f"✗ Errors ({self.errors:,})")
+        self.tabs.setTabText(3, f"🗑 Deleted ({self._display_deleted:,})")
+        self.tabs.setTabText(4, f"✗ Errors ({self._display_errors:,})")
 
     @staticmethod
     def _fmt_ok(s, d) -> str: return f"{apply_replacements(s)}\nCopied to ⤵\n{apply_replacements(d)}"
@@ -847,14 +901,18 @@ class CopyDialog(_StandardKeysMixin, QDialog):
     def _fmt_sk(p, r) -> str: return f"{apply_replacements(p)} ↷ {r}"
 
     @staticmethod
+    def _fmt_de(p, r) -> str: return f"{apply_replacements(p)} 🗑 {r}"
+
+    @staticmethod
     def _fmt_er(p, m) -> str: return f"{apply_replacements(p)} ❌ {m}"
 
-    def _on_batch(self, ok, sk, er, done, total) -> None:
+    def _on_batch(self, ok, sk, er, de, done, total) -> None:
         self._done = max(self._done, done)
         self._total = total
         self.copied  += len(ok)
         self.skipped += len(sk)
         self.errors  += len(er)
+        self.deleted += len(de)
 
         for s, d, sz in ok:
             self._size_copied += sz
@@ -866,12 +924,15 @@ class CopyDialog(_StandardKeysMixin, QDialog):
                 _nf_title = (r.rsplit(" (", 1)[1].rstrip(")")
                              if (" (" in r and r.endswith(")")) else "")
                 self._not_found_paths.append((apply_replacements(s), _nf_title))
+        for p, r, sz in de:
+            self._size_deleted += sz
+            self._pending_de.append((p, r))
         self._pending_er.extend((s, m) for s, m, _ in er)
 
         if total > 0:
             self._summary.update_progress_bar(done, total)
 
-    def _on_done(self, c, s, e, cancelled) -> None:
+    def _on_done(self, c, s, e, d, cancelled) -> None:
         self._tick.stop()
         elapsed = self._final_elapsed = self.timer.elapsed() // 1000
 
@@ -881,33 +942,35 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         except Exception as exc:
             logger.debug("append_history failed: %s", exc)
 
-        for pending, widget, fmt in zip((self._pending_ok, self._pending_sk, self._pending_er),
-                                        (self._w_copied, self._w_skipped, self._w_errors),
-                                        (self._fmt_ok, self._fmt_sk, self._fmt_er), strict=True):
+        for pending, widget, fmt in zip((self._pending_ok, self._pending_sk, self._pending_de, self._pending_er),
+                                        (self._w_copied, self._w_skipped, self._w_deleted, self._w_errors),
+                                        (self._fmt_ok, self._fmt_sk, self._fmt_de, self._fmt_er), strict=True):
             if pending:
                 cap = max(0, widget.log_max - widget.item_count)
                 if cap > 0:
                     widget.bulk_add([fmt(*args) for args in islice(pending, cap)])
                 pending.clear()
 
-        self.copied, self.skipped, self.errors = c, s, e
+        self.copied, self.skipped, self.errors, self.deleted = c, s, e, d
         self._done = self._total
 
         tstr = f"{elapsed // 60:02d}:{elapsed % 60:02d}"
 
         if cancelled:
             icon, label, col = "⏹", f"Cancelled after {tstr}", self.c_sk
-        elif e > 0:
+        elif self._display_errors > 0:
             icon, label, col = "⚠", f"Done with errors ✗ — {tstr}", self.c_er
         else:
             icon, label, col = "✓", f"Done — {tstr}", self.c_ok
 
         self._set_status_finished(icon, label, col)
-        self._summary.update_stats(self._operation, self._done, self._total, self.copied, self.skipped, self.errors,
-                                   elapsed, self._size_copied, self._size_skipped, finished=True, cancelled=cancelled)
+        self._summary.update_stats(self._operation, self._done, self._total, self.copied, self.skipped,
+                                   self._display_errors, self._display_deleted, elapsed,
+                                   self._size_copied, self._size_skipped, self._display_size_deleted,
+                                   finished=True, cancelled=cancelled)
         self._update_tab_labels()
 
-        for w in (self._w_copied, self._w_skipped, self._w_errors):
+        for w in (self._w_copied, self._w_skipped, self._w_deleted, self._w_errors):
             w.flush_final()
 
         if self._cancel_connected:
@@ -929,16 +992,19 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         self._accept_connected = True
 
         if not self.isActiveWindow() and not cancelled:
-            if e > 0:
+            disp_err = self._display_errors
+            disp_del = self._display_deleted
+            del_part = f", {disp_del} deleted" if disp_del else ""
+            if disp_err > 0:
                 _notify(
                     f"{self._operation} completed with errors",
-                    f"{c} file{'s' if c != 1 else ''} copied, {s} skipped, {e} error{'s' if e != 1 else ''}",
+                    f"{c} file{'s' if c != 1 else ''} copied, {s} skipped{del_part}, {disp_err} error{'s' if disp_err != 1 else ''}",
                     urgency="critical",
                 )
             else:
                 _notify(
                     f"{self._operation} successfully completed",
-                    f"{c} file{'s' if c != 1 else ''} copied, {s} skipped",
+                    f"{c} file{'s' if c != 1 else ''} copied, {s} skipped{del_part}",
                     urgency="normal",
                 )
 

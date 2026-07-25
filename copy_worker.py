@@ -27,6 +27,12 @@ from copy_worker_smb import (
 )
 
 
+def _ssh_join(dst_spec: str, rel_path: str) -> str:
+    base = dst_spec.rstrip("/")
+    rel = rel_path.lstrip("/")
+    return f"{base}/{rel}" if rel else base
+
+
 def _do_copy(entry, cancel: threading.Event, ok_l: list, sk_l: list, er_l: list, tc: dict) -> None:
 
     src, dst, title, st = entry
@@ -37,13 +43,13 @@ def _do_copy(entry, cancel: threading.Event, ok_l: list, sk_l: list, er_l: list,
         status, aux, sz = "error", str(exc), 0
     if status == "ok":
         ok_l.append((src, dst, sz))
-        if title: tc.setdefault(title, [0, 0, 0])[0] += 1
+        if title: tc.setdefault(title, [0, 0, 0, 0])[0] += 1
     elif status == "skip":
         sk_l.append((src, aux or "Up to date", sz))
-        if title: tc.setdefault(title, [0, 0, 0])[1] += 1
+        if title: tc.setdefault(title, [0, 0, 0, 0])[1] += 1
     else:
         er_l.append((src, aux, 0))
-        if title: tc.setdefault(title, [0, 0, 0])[2] += 1
+        if title: tc.setdefault(title, [0, 0, 0, 0])[2] += 1
 
 def _is_up_to_date_local(dst: str, src_st: "os.stat_result") -> bool:
     try:
@@ -254,23 +260,27 @@ class _EntryTracker:
         if not counts:
             return
         with self._lock:
-            for title, (n_ok, n_skip, n_err) in counts.items():
-                if title:
-                    c = self._counts.setdefault(title, [0, 0, 0])
-                    c[0] += n_ok
-                    c[1] += n_skip
-                    c[2] += n_err
+            for title, vals in counts.items():
+                if not title:
+                    continue
+                n_ok, n_skip, n_err = vals[0], vals[1], vals[2]
+                n_del = vals[3] if len(vals) > 3 else 0
+                c = self._counts.setdefault(title, [0, 0, 0, 0])
+                c[0] += n_ok
+                c[1] += n_skip
+                c[2] += n_err
+                c[3] += n_del
 
     def emit_all(self, signal) -> None:
         with self._lock:
             snap = {t: ec[:] for t, ec in self._counts.items()}
         for t, ec in snap.items():
             if t:
-                signal.emit(t, ec[0], ec[1], ec[2])
+                signal.emit(t, ec[0], ec[1], ec[2], ec[3])
 
 
 class _Flusher:
-    __slots__ = ("_er", "_flush_thresh", "_last_flush_t", "_lock", "_ok", "_signal", "_sk", "_total", "copied", "done", "errors", "skipped")
+    __slots__ = ("_de", "_er", "_flush_thresh", "_last_flush_t", "_lock", "_ok", "_signal", "_sk", "_total", "copied", "deleted", "done", "errors", "skipped")
 
     def __init__(self, signal, total: int, flush_thresh: int = _FLUSH_THRESH) -> None:
         self._signal       = signal
@@ -280,7 +290,8 @@ class _Flusher:
         self._ok: list     = []
         self._sk: list     = []
         self._er: list     = []
-        self.done = self.copied = self.skipped = self.errors = 0
+        self._de: list     = []
+        self.done = self.copied = self.skipped = self.errors = self.deleted = 0
         self._last_flush_t = time.monotonic()
 
     def set_total(self, total: int) -> None:
@@ -289,13 +300,14 @@ class _Flusher:
     def set_flush_thresh(self, thresh: int) -> None:
         with self._lock: self._flush_thresh = thresh
 
-    def push(self, ok=(), sk=(), er=(), *, force: bool = False) -> None:
+    def push(self, ok=(), sk=(), er=(), de=(), *, force: bool = False) -> None:
         now = time.monotonic()
         with self._lock:
             if ok: self._ok.extend(ok)
             if sk: self._sk.extend(sk)
             if er: self._er.extend(er)
-            n = len(self._ok) + len(self._sk) + len(self._er)
+            if de: self._de.extend(de)
+            n = len(self._ok) + len(self._sk) + len(self._er) + len(self._de)
             if n == 0:
                 return
             timed_out = (now - self._last_flush_t) >= _FLUSH_INTERVAL
@@ -304,14 +316,16 @@ class _Flusher:
             payload_ok, self._ok = self._ok, []
             payload_sk, self._sk = self._sk, []
             payload_er, self._er = self._er, []
-            self.done    += n
+            payload_de, self._de = self._de, []
+            self.done    += len(payload_ok) + len(payload_sk) + len(payload_er)
             self.copied  += len(payload_ok)
             self.skipped += len(payload_sk)
             self.errors  += len(payload_er)
+            self.deleted += len(payload_de)
             done_snap  = self.done
             total_snap = self._total
             self._last_flush_t = now
-        self._signal.emit(payload_ok, payload_sk, payload_er, done_snap, total_snap)
+        self._signal.emit(payload_ok, payload_sk, payload_er, payload_de, done_snap, total_snap)
 
     def flush(self) -> None: self.push(force=True)
 
@@ -344,14 +358,15 @@ class _BatchBuffer:
 
 
 class CopyWorker(QThread):
-    batch_update = pyqtSignal(list, list, list, int, int)
-    finished_work = pyqtSignal(int, int, int, bool)
+    batch_update = pyqtSignal(list, list, list, list, int, int)
+    finished_work = pyqtSignal(int, int, int, int, bool)
     scan_progress = pyqtSignal(str, int)
-    entry_status = pyqtSignal(str, int, int, int)
+    entry_status = pyqtSignal(str, int, int, int, int)
     scan_finished = pyqtSignal(int)
     _RSYNC_PROGRESS_RE = re.compile(
         r"^\s*([\d,]+)\s+(\d+)%\s+([\d.]+\w+/s)\s+([\d:]+)"
     )
+    _RSYNC_DELETE_RE = re.compile(r"^deleting\s+(.+)$")
 
     def __init__(self, tasks) -> None:
         super().__init__()
@@ -494,7 +509,7 @@ class CopyWorker(QThread):
                 flusher.flush()
                 tracker.emit_all(self.entry_status)
                 cancelled = self._cancel.is_set()
-                self.finished_work.emit(flusher.copied, flusher.skipped, flusher.errors, cancelled)
+                self.finished_work.emit(flusher.copied, flusher.skipped, flusher.errors, flusher.deleted, cancelled)
                 return
 
             local_items: list[tuple[str, str, str]] = []
@@ -542,7 +557,7 @@ class CopyWorker(QThread):
                 _run_futures(futs, self._cancel, "Phase-1")
 
             if self._cancel.is_set():
-                self.finished_work.emit(0, 0, 0, True)
+                self.finished_work.emit(0, 0, 0, 0, True)
                 return
 
             guest = _guest_box[0]
@@ -566,7 +581,7 @@ class CopyWorker(QThread):
                     nf_counts: dict = {}
                     for _, nf_title in local_not_found:
                         if nf_title:
-                            nf_counts.setdefault(nf_title, [0, 0, 0])[1] += 1
+                            nf_counts.setdefault(nf_title, [0, 0, 0, 0])[1] += 1
                     if nf_counts:
                         tracker.batch_update(nf_counts)
 
@@ -585,10 +600,10 @@ class CopyWorker(QThread):
             flusher.flush()
             tracker.emit_all(self.entry_status)
             cancelled = self._cancel.is_set()
-            self.finished_work.emit(flusher.copied, flusher.skipped, flusher.errors, cancelled)
+            self.finished_work.emit(flusher.copied, flusher.skipped, flusher.errors, flusher.deleted, cancelled)
         except Exception as exc:
             logger.error("CopyWorker critical: %s", exc, exc_info=True)
-            self.finished_work.emit(0, 0, 0, False)
+            self.finished_work.emit(0, 0, 0, 0, False)
         finally:
             if pw is not None:
                 pw.clear()
@@ -599,8 +614,8 @@ class CopyWorker(QThread):
             flusher: "_Flusher",
             tracker: "_EntryTracker",
     ) -> None:
-        def _track(ok: int, skip: int, err: int) -> None:
-            tracker.batch_update({title: (ok, skip, err)} if title else {})
+        def _track(ok: int, skip: int, err: int, deleted: int = 0) -> None:
+            tracker.batch_update({title: (ok, skip, err, deleted)} if title else {})
 
         for src, dst, title, *extra in tasks:
             if self._cancel.is_set():
@@ -609,8 +624,9 @@ class CopyWorker(QThread):
             self.scan_progress.emit(f"rsync  {title or src}", 0)
 
             excludes = list(extra[0]) if extra and extra[0] else None
+            mirror = title in self._mirror_titles
 
-            cmd = build_rsync_cmd(src, dst, exclude=excludes, delete=title in self._mirror_titles)
+            cmd = build_rsync_cmd(src, dst, exclude=excludes, delete=mirror)
             logger.debug("_copy_ssh_tasks: %s", " ".join(cmd))
 
             try:
@@ -633,6 +649,7 @@ class CopyWorker(QThread):
                 _track(0, 0, 1)
                 continue
             last_pct = 0
+            deleted_this_task: list = []
             try:
                 for line in proc.stdout:
                     if self._cancel.is_set():
@@ -648,22 +665,32 @@ class CopyWorker(QThread):
                                 f"rsync  {title or src}  {pct}%  {m.group(3)}",
                                 pct,
                             )
+                        continue
+                    dm = self._RSYNC_DELETE_RE.match(line) if mirror else None
+                    if dm:
+                        rel = dm.group(1).strip()
+                        display_path = _ssh_join(dst, rel)
+                        deleted_this_task.append((display_path, "Mirror delete (remote)", 0))
                     elif line:
                         logger.debug("rsync: %s", line)
             except OSError as exc:
                 logger.warning("rsync read error for '%s': %s", src, exc)
 
             proc.wait()
+            if deleted_this_task:
+                flusher.push(de=deleted_this_task, force=True)
             if self._cancel.is_set():
+                if deleted_this_task:
+                    _track(0, 0, 0, len(deleted_this_task))
                 break
 
             if proc.returncode == 0:
                 flusher.push(ok=[(src, dst, 0)])
-                _track(1, 0, 0)
+                _track(1, 0, 0, len(deleted_this_task))
                 logger.info("rsync OK: %s → %s", src, dst)
             else:
                 flusher.push(er=[(src, f"rsync exit {proc.returncode}", 0)])
-                _track(0, 0, 1)
+                _track(0, 0, 1, len(deleted_this_task))
                 logger.error("rsync exit %d: %s → %s", proc.returncode, src, dst)
 
     def _scan_local_all(self, tasks: list, not_found: "list | None" = None) -> list:

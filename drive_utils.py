@@ -234,7 +234,8 @@ def is_ssh(path: str) -> bool:
 
 
 def build_rsync_cmd(src: str, dst: str, *, delete: bool = False, exclude: list[str] | None = None) -> list[str]:
-    cmd = ["rsync", "-az", "--info=progress2", "-e", "ssh -o StrictHostKeyChecking=accept-new"]
+    info = "progress2,del" if delete else "progress2"
+    cmd = ["rsync", "-az", f"--info={info}", "-e", "ssh -o StrictHostKeyChecking=accept-new"]
     if delete:
         cmd.append("--delete")
     for ex in (exclude or []):

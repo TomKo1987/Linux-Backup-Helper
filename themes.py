@@ -15,7 +15,7 @@ THEMES: dict[str, dict[str, str]] = {
         "highlight": "#f07178", "text": "#908e89", "text_dim": "#8a8f99",
         "green": "#aad94c", "red": "#f07178", "cyan": "#39bae6",
         "header_sep": "#273040", "info": "#39bae6", "muted": "#9aa0aa",
-        "success": "#7dd474", "warning": "#fae079", "error": "#f31d27",
+        "success": "#7dd474", "warning": "#fae079", "error": "#f31d27", "deleted": "#d2a6ff",
         "pb_bg": "#1e2530", "pb_text": "#ffffff", "pb_chunk": "#995526", "pb_chunk2": "#8a6c30",
     },
     "Catppuccin": {
@@ -24,7 +24,7 @@ THEMES: dict[str, dict[str, str]] = {
         "highlight": "#fab387", "text": "#cdd6f4", "text_dim": "#a6adc8",
         "green": "#a6e3a1", "red": "#f38ba8", "cyan": "#89dceb",
         "header_sep": "#45475a", "info": "#89b4fa", "muted": "#9399b2",
-        "success": "#7dd474", "warning": "#fae079", "error": "#f31d27",
+        "success": "#7dd474", "warning": "#fae079", "error": "#f31d27", "deleted": "#f5c2e7",
         "pb_bg": "#4e5068", "pb_text": "#ffffff", "pb_chunk": "#526c95", "pb_chunk2": "#796394",
     },
     "Dracula": {
@@ -33,7 +33,7 @@ THEMES: dict[str, dict[str, str]] = {
         "highlight": "#f1fa8c", "text": "#f8f8f2", "text_dim": "#c8c8d0",
         "green": "#50fa7b", "red": "#ff5555", "cyan": "#8be9fd",
         "header_sep": "#44475a", "info": "#8be9fd", "muted": "#9d9dbd",
-        "success": "#7dd474", "warning": "#fae079", "error": "#f31d27",
+        "success": "#7dd474", "warning": "#fae079", "error": "#f31d27", "deleted": "#ffb86c",
         "pb_bg": "#44475a", "pb_text": "#ffffff", "pb_chunk": "#8466ae", "pb_chunk2": "#b2548a",
     },
     "Everforest": {
@@ -42,7 +42,7 @@ THEMES: dict[str, dict[str, str]] = {
         "highlight": "#60dbdb", "text": "#d3c6aa", "text_dim": "#a0a89a",
         "green": "#a7c080", "red": "#e67e80", "cyan": "#7fbbb3",
         "header_sep": "#3d484d", "info": "#7fbbb3", "muted": "#9aa090",
-        "success": "#7dd474", "warning": "#fae079", "error": "#f31d27",
+        "success": "#7dd474", "warning": "#fae079", "error": "#f31d27", "deleted": "#d699b6",
         "pb_bg": "#374145", "pb_text": "#ffffff", "pb_chunk": "#4e7357", "pb_chunk2": "#64734c",
     },
     "Gruvbox": {
@@ -51,7 +51,7 @@ THEMES: dict[str, dict[str, str]] = {
         "highlight": "#12bbb0", "text": "#ebdbb2", "text_dim": "#bdae93",
         "green": "#1abb65", "red": "#fb4934", "cyan": "#83a598",
         "header_sep": "#504945", "info": "#83a598", "muted": "#a89984",
-        "success": "#7dd474", "warning": "#fae079", "error": "#f31d27",
+        "success": "#7dd474", "warning": "#fae079", "error": "#f31d27", "deleted": "#d3869b",
         "pb_bg": "#5a5248", "pb_text": "#ffffff", "pb_chunk": "#95711c", "pb_chunk2": "#984c0f",
     },
     "High Contrast": {
@@ -60,7 +60,7 @@ THEMES: dict[str, dict[str, str]] = {
         "highlight": "#ffff00", "text": "#ffffff", "text_dim": "#d8d8d8",
         "green": "#00ff5f", "red": "#ff3333", "cyan": "#00d7ff",
         "header_sep": "#505050", "info": "#00d7ff", "muted": "#bbbbbb",
-        "success": "#00ff5f", "warning": "#ffaf00", "error": "#ff3333",
+        "success": "#00ff5f", "warning": "#ffaf00", "error": "#ff3333", "deleted": "#ff5fd7",
         "pb_bg": "#2a2a2a", "pb_text": "#ffffff", "pb_chunk": "#008199", "pb_chunk2": "#996900",
     },
     "Monokai": {
@@ -69,7 +69,7 @@ THEMES: dict[str, dict[str, str]] = {
         "highlight": "#f916d3", "text": "#f8f8f2", "text_dim": "#c0bfb8",
         "green": "#a6e22e", "red": "#f92672", "cyan": "#66d9e8",
         "header_sep": "#49483e", "info": "#66d9e8", "muted": "#90908a",
-        "success": "#7dd474", "warning": "#fae079", "error": "#f31d27",
+        "success": "#7dd474", "warning": "#fae079", "error": "#f31d27", "deleted": "#ae81ff",
         "pb_bg": "#565650", "pb_text": "#ffffff", "pb_chunk": "#537117", "pb_chunk2": "#336c74",
     },
     "Nord": {
@@ -78,7 +78,7 @@ THEMES: dict[str, dict[str, str]] = {
         "highlight": "#ebcb8b", "text": "#eceff4", "text_dim": "#d8dee9",
         "green": "#a3be8c", "red": "#bf616a", "cyan": "#8fbcbb",
         "header_sep": "#4c566a", "info": "#88c0d0", "muted": "#616e88",
-        "success": "#a3be8c", "warning": "#ebcb8b", "error": "#bf616a",
+        "success": "#a3be8c", "warning": "#ebcb8b", "error": "#bf616a", "deleted": "#b48ead",
         "pb_bg": "#3b4252", "pb_text": "#eceff4", "pb_chunk": "#5e81ac", "pb_chunk2": "#88c0d0",
     },
     "One Dark": {
@@ -87,7 +87,7 @@ THEMES: dict[str, dict[str, str]] = {
         "highlight": "#e5c07b", "text": "#abb2bf", "text_dim": "#828997",
         "green": "#98c379", "red": "#e06c75", "cyan": "#56b6c2",
         "header_sep": "#3e4451", "info": "#61afef", "muted": "#636d83",
-        "success": "#98c379", "warning": "#e5c07b", "error": "#e06c75",
+        "success": "#98c379", "warning": "#e5c07b", "error": "#e06c75", "deleted": "#d19a66",
         "pb_bg": "#3e4451", "pb_text": "#abb2bf", "pb_chunk": "#3a7db7", "pb_chunk2": "#8e4fb5",
     },
     "Rosé Pine": {
@@ -96,7 +96,7 @@ THEMES: dict[str, dict[str, str]] = {
         "highlight": "#f6c177", "text": "#e0def4", "text_dim": "#b8b4d0",
         "green": "#9ccfd8", "red": "#eb6f92", "cyan": "#9ccfd8",
         "header_sep": "#403d52", "info": "#c4a7e7", "muted": "#8a8aaa",
-        "success": "#7dd474", "warning": "#fae079", "error": "#f31d27",
+        "success": "#7dd474", "warning": "#fae079", "error": "#f31d27", "deleted": "#6e6a86",
         "pb_bg": "#393552", "pb_text": "#ffffff", "pb_chunk": "#75648a", "pb_chunk2": "#8c706f",
     },
     "Solarized Dark": {
@@ -105,7 +105,7 @@ THEMES: dict[str, dict[str, str]] = {
         "highlight": "#b58900", "text": "#eee8d5", "text_dim": "#b0bab5",
         "green": "#859900", "red": "#dc322f", "cyan": "#2aa198",
         "header_sep": "#0a4a5a", "info": "#268bd2", "muted": "#8fa8ad",
-        "success": "#7dd474", "warning": "#fae079", "error": "#f31d27",
+        "success": "#7dd474", "warning": "#fae079", "error": "#f31d27", "deleted": "#6c71c4",
         "pb_bg": "#0a3d4d", "pb_text": "#ffffff", "pb_chunk": "#1e6fa8", "pb_chunk2": "#218079",
     },
     "Tokyo Night": {
@@ -114,7 +114,7 @@ THEMES: dict[str, dict[str, str]] = {
         "highlight": "#f7c948", "text": "#c0caf5", "text_dim": "#8897d9",
         "green": "#00ffbf", "red": "#ff5370", "cyan": "#55ffff",
         "header_sep": "#414868", "info": "#b26fff", "muted": "#9a9a9a",
-        "success": "#7dd474", "warning": "#fae079", "error": "#f31d27",
+        "success": "#7dd474", "warning": "#fae079", "error": "#f31d27", "deleted": "#ff9e64",
         "pb_bg": "#4a4a6a", "pb_text": "#ffffff", "pb_chunk": "#4a7c99", "pb_chunk2": "#705c94",
     },
     "Zenburn": {
@@ -123,7 +123,7 @@ THEMES: dict[str, dict[str, str]] = {
         "highlight": "#7beef0", "text": "#dcdccc", "text_dim": "#9f9f8f",
         "green": "#7f9f7f", "red": "#cc9393", "cyan": "#93e0e3",
         "header_sep": "#4a4a4a", "info": "#93e0e3", "muted": "#9a9a8a",
-        "success": "#7dd474", "warning": "#fae079", "error": "#f31d27",
+        "success": "#7dd474", "warning": "#fae079", "error": "#f31d27", "deleted": "#dc8cc3",
         "pb_bg": "#4a4a3a", "pb_text": "#ffffff", "pb_chunk": "#4c5f4c", "pb_chunk2": "#856955",
     },
 }
@@ -587,3 +587,4 @@ def apply_style() -> None:
             fn()
         except Exception as e:
             logger.error("Style listener error (%s): %s", fn, e)
+            

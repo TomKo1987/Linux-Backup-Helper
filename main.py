@@ -261,9 +261,10 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
         if not tasks:
             QMessageBox.information(None, "Quick Backup", "No backup entries found for this group.")
             return
-        tasks = apply_advanced_options(tasks, interactive=True, parent=self)
+        adv = apply_advanced_options(tasks, interactive=True, parent=self)
         label = header or "All groups"
-        CopyDialog(None, tasks, f"Quick Backup — {label}").exec()
+        CopyDialog(None, adv.tasks, f"Quick Backup — {label}",
+                   pre_deleted=adv.deleted, pre_errors=adv.errors).exec()
         self._refresh_status_panel()
 
     def _on_tray_activated(self, r: QSystemTrayIcon.ActivationReason) -> None:
@@ -486,8 +487,9 @@ def main():
         from advanced_copy import apply_advanced_options
         tasks = _build_backup_tasks(headers)
         if tasks:
-            tasks = apply_advanced_options(tasks, interactive=False, parent=None)
-            CopyDialog(None, tasks, "Backup (scheduled)").exec()
+            adv = apply_advanced_options(tasks, interactive=False, parent=None)
+            CopyDialog(None, adv.tasks, "Backup (scheduled)",
+                       pre_deleted=adv.deleted, pre_errors=adv.errors).exec()
         else:
             logger.warning("Headless backup: no matching tasks found (headers=%s)", headers)
         sys.exit(0)

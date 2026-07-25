@@ -308,9 +308,10 @@ class _CopyMixin:
         if not mount_required_drives(drives_to_mount, self):
             return
 
-        selected = apply_advanced_options(selected, interactive=True, parent=self)
+        adv = apply_advanced_options(selected, interactive=True, parent=self)
 
-        dlg_copy = CopyDialog(self, selected, self._op_label)  # type: ignore[attr-defined]
+        dlg_copy = CopyDialog(self, adv.tasks, self._op_label,  # type: ignore[attr-defined]
+                              pre_deleted=adv.deleted, pre_errors=adv.errors)
         dlg_copy.exec()
 
     def _add_action_buttons(self: "_BaseCheckboxWindow", grid: QGridLayout, row: int) -> None:
