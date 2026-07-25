@@ -31,6 +31,8 @@ def _expand(path: str) -> Path:
 
 def _read_safe(path: Path) -> str | None:
     try:
+        if path.is_dir():
+            return None
         return path.read_text(encoding="utf-8", errors="replace")
     except PermissionError:
         try:
@@ -55,12 +57,42 @@ def _path_exists(path: Path) -> bool:
         return False
 
 
+def _is_dir_safe(path: Path) -> bool:
+    try:
+        return path.is_dir()
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def _dir_listing(path: Path) -> dict[str, tuple[int, int]] | None:
+    result: dict[str, tuple[int, int]] = {}
+    try:
+        for root, _dirs, files in os.walk(path):
+            for name in files:
+                fp = Path(root) / name
+                try:
+                    st = fp.stat()
+                except OSError:
+                    continue
+                rel = str(fp.relative_to(path))
+                result[rel] = (st.st_size, st.st_mtime_ns)
+        return result
+    except OSError:
+        return None
+
+
 def _make_backup(dst: Path) -> None:
     if not dst.exists():
         return
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    bak = dst.with_suffix(f"{dst.suffix}.bak_{ts}")
-    shutil.copy2(dst, bak)
+    if dst.is_dir():
+        bak = dst.with_name(f"{dst.name}.bak_{ts}")
+        shutil.copytree(dst, bak, symlinks=True)
+    else:
+        bak = dst.with_suffix(f"{dst.suffix}.bak_{ts}")
+        shutil.copy2(dst, bak)
 
 
 def _colored_diff_html(src_lines: list[str], dst_lines: list[str], theme: dict) -> str:
@@ -119,35 +151,63 @@ class _DeployWorker(QThread):
         for f in self._files:
             src = _expand(first_path(f.get("source", "")))
             dst = _expand(first_path(f.get("destination", "")))
-            if not src.exists():
+            if not _path_exists(src):
                 self.progress.emit(f"  ✗ Source not found: {src}", True)
                 err += 1
                 continue
+
+            is_dir = _is_dir_safe(src)
             try:
                 if self._backup:
                     _make_backup(dst)
                 dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, dst)
-                self.progress.emit(f"  ✓ {src.name}  →  {dst}", False)
+                if is_dir:
+                    if dst.exists():
+                        shutil.copytree(src, dst, symlinks=True, dirs_exist_ok=True)
+                    else:
+                        shutil.copytree(src, dst, symlinks=True)
+                    n = sum(1 for _ in dst.rglob("*") if _.is_file())
+                    self.progress.emit(f"  ✓ {src.name}/  →  {dst}  ({n} file(s))", False)
+                else:
+                    shutil.copy2(src, dst)
+                    self.progress.emit(f"  ✓ {src.name}  →  {dst}", False)
                 ok += 1
             except PermissionError:
                 try:
                     if self._backup and _path_exists(dst):
                         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        bak_path = dst.with_suffix(f"{dst.suffix}.bak_{ts}")
-                        bres = subprocess.run(
-                            ["sudo", "cp", "-p", str(dst), str(bak_path)],
-                            capture_output=True, text=True, timeout=15)
+                        if dst.is_dir():
+                            bak_path = dst.with_name(f"{dst.name}.bak_{ts}")
+                            bres = subprocess.run(
+                                ["sudo", "cp", "-a", str(dst), str(bak_path)],
+                                capture_output=True, text=True, timeout=30)
+                        else:
+                            bak_path = dst.with_suffix(f"{dst.suffix}.bak_{ts}")
+                            bres = subprocess.run(
+                                ["sudo", "cp", "-p", str(dst), str(bak_path)],
+                                capture_output=True, text=True, timeout=15)
                         if bres.returncode != 0:
                             self.progress.emit(
                                 f"  ✗ {src.name}: sudo backup failed: {bres.stderr.strip()}, skipping overwrite", True)
                             err += 1
                             continue
-                    r = subprocess.run(
-                        ["sudo", "cp", str(src), str(dst)],
-                        capture_output=True, text=True, timeout=30)
+
+                    subprocess.run(
+                        ["sudo", "mkdir", "-p", str(dst.parent)],
+                        capture_output=True, text=True, timeout=15)
+
+                    if is_dir:
+                        r = subprocess.run(
+                            ["sudo", "cp", "-a", "-T", str(src), str(dst)],
+                            capture_output=True, text=True, timeout=60)
+                    else:
+                        r = subprocess.run(
+                            ["sudo", "cp", str(src), str(dst)],
+                            capture_output=True, text=True, timeout=30)
+
                     if r.returncode == 0:
-                        self.progress.emit(f"  ✓ {src.name}  →  {dst}  (via sudo)", False)
+                        suffix = "/" if is_dir else ""
+                        self.progress.emit(f"  ✓ {src.name}{suffix}  →  {dst}  (via sudo)", False)
                         ok += 1
                     else:
                         self.progress.emit(
@@ -347,21 +407,42 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
             dst = _expand(first_path(dst_raw))
 
             title = f.get("title", src.name)
-            src_text = _read_safe(src)
-            dst_text = _read_safe(dst)
 
-            if src_text is None:
+            if _is_dir_safe(src):
+                if not _is_dir_safe(dst):
+                    icon, color_key = "★ ", "warning"
+                    changed += 1
+                else:
+                    src_list = _dir_listing(src)
+                    dst_list = _dir_listing(dst)
+                    if src_list is None:
+                        icon, color_key = "✗ ", "error"
+                        missing += 1
+                    elif src_list == dst_list:
+                        icon, color_key = "✓ ", "success"
+                        identical += 1
+                    else:
+                        icon, color_key = "≠ ", "warning"
+                        changed += 1
+            elif not _path_exists(src):
                 icon, color_key = "✗ ", "error"
                 missing += 1
-            elif dst_text is None:
-                icon, color_key = "★ ", "warning"
-                changed += 1
-            elif src_text == dst_text:
-                icon, color_key = "✓ ", "success"
-                identical += 1
             else:
-                icon, color_key = "≠ ", "warning"
-                changed += 1
+                src_text = _read_safe(src)
+                dst_text = _read_safe(dst)
+
+                if src_text is None:
+                    icon, color_key = "✗ ", "error"
+                    missing += 1
+                elif dst_text is None:
+                    icon, color_key = "★ ", "warning"
+                    changed += 1
+                elif src_text == dst_text:
+                    icon, color_key = "✓ ", "success"
+                    identical += 1
+                else:
+                    icon, color_key = "≠ ", "warning"
+                    changed += 1
 
             item = QListWidgetItem(f"{icon}{title}")
             item.setForeground(QColor(t[color_key]))
@@ -392,6 +473,19 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
         dst = _expand(first_path(dst_raw))
 
         self._diff_title.setText(f.get("title", src.name))
+
+        if _is_dir_safe(src):
+            self._show_dir_status(src, dst, t)
+            return
+
+        if not _path_exists(src):
+            err_col = t["error"]
+            self._diff_view.setHtml(
+                f"<p style='color:{err_col};font-family:monospace;font-size:{font_sz()}px;'>"
+                f"✗  Source not found:<br>{src}</p>")
+            self._status_lbl.setText("⚠ Source missing")
+            self._status_lbl.setStyleSheet(f"color:{err_col};font-size:{font_sz()}px;")
+            return
 
         src_text = _read_safe(src)
         dst_text = _read_safe(dst)
@@ -436,6 +530,66 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
             self._status_lbl.setStyleSheet(f"color:{t['warning']};font-size:{font_sz()}px;")
 
         self._diff_view.setHtml(_colored_diff_html(src_lines, dst_lines, t))
+
+    def _show_dir_status(self, src: Path, dst: Path, t: dict) -> None:
+        src_list = _dir_listing(src)
+        if src_list is None:
+            err_col = t["error"]
+            self._diff_view.setHtml(
+                f"<p style='color:{err_col};font-family:monospace;font-size:{font_sz()}px;'>"
+                f"✗  Source directory not readable:<br>{src}</p>")
+            self._status_lbl.setText("⚠ Source unreadable")
+            self._status_lbl.setStyleSheet(f"color:{err_col};font-size:{font_sz()}px;")
+            return
+
+        if not _is_dir_safe(dst):
+            warn_col = t["warning"]
+            text_col = t["text"]
+            files_preview = "<br>".join(_html.escape(p) for p in sorted(src_list)[:200])
+            more = "" if len(src_list) <= 200 else f"<br>… and {len(src_list) - 200} more"
+            self._status_lbl.setText("★ Not on system yet")
+            self._status_lbl.setStyleSheet(f"color:{warn_col};font-size:{font_sz()}px;")
+            self._diff_view.setHtml(
+                f"<p style='color:{warn_col};font-family:monospace;font-size:{font_sz()}px;'>"
+                f"★  Destination directory does not exist yet — will be created ({len(src_list)} file(s)):</p>"
+                f"<pre style='color:{text_col};font-family:monospace;font-size:{font_sz(-1)}px;'>{files_preview}{more}</pre>")
+            return
+
+        dst_list = _dir_listing(dst) or {}
+        only_src = sorted(set(src_list) - set(dst_list))
+        only_dst = sorted(set(dst_list) - set(src_list))
+        changed = sorted(k for k in (set(src_list) & set(dst_list)) if src_list[k] != dst_list[k])
+
+        if not only_src and not only_dst and not changed:
+            self._status_lbl.setText("✓ Identical")
+            self._status_lbl.setStyleSheet(f"color:{t['success']};font-size:{font_sz()}px;")
+            self._diff_view.setHtml(
+                f"<p style='color:{t['success']};font-family:monospace;font-size:{font_sz()}px;'>"
+                f"✓  Directory contents are identical ({len(src_list)} file(s)) — nothing to deploy.</p>")
+            return
+
+        self._status_lbl.setText("≠ Different")
+        self._status_lbl.setStyleSheet(f"color:{t['warning']};font-size:{font_sz()}px;")
+
+        rows = []
+        add_col = t.get("success", "#4ec994")
+        rem_col = t.get("error",   "#f7768e")
+        ctx_col = t.get("text_dim", "#565f89")
+        for p in only_src:
+            rows.append(f"<p style='margin:0;color:{add_col};font-family:monospace;"
+                        f"font-size:{font_sz(-1)}px;white-space:pre;'>+ {_html.escape(p)}</p>")
+        for p in changed:
+            rows.append(f"<p style='margin:0;color:{t['warning']};font-family:monospace;"
+                        f"font-size:{font_sz(-1)}px;white-space:pre;'>≠ {_html.escape(p)}</p>")
+        for p in only_dst:
+            rows.append(f"<p style='margin:0;color:{rem_col};font-family:monospace;"
+                        f"font-size:{font_sz(-1)}px;white-space:pre;'>- {_html.escape(p)}</p>")
+
+        legend = (f"<p style='color:{ctx_col};font-family:monospace;font-size:{font_sz(-1)}px;'>"
+                 f"+ new/missing on system   ≠ different   - only on system (not in profile)</p>")
+        bg = t.get("bg", "#1a1b26")
+        html = legend + f"<div style='background:{bg};padding:8px;border-radius:4px;'>" + "\n".join(rows) + "</div>"
+        self._diff_view.setHtml(html)
 
     def _deploy(self, files: list[dict]) -> None:
         if not files:
@@ -500,6 +654,18 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
             dst_raw = f.get("destination", "")
             src = _expand(first_path(src_raw))
             dst = _expand(first_path(dst_raw))
+
+            if _is_dir_safe(src):
+                src_list = _dir_listing(src)
+                if src_list is None:
+                    continue
+                dst_list = _dir_listing(dst) if _is_dir_safe(dst) else {}
+                if src_list != dst_list:
+                    changed.append(f)
+                continue
+
+            if not _path_exists(src):
+                continue
             src_text = _read_safe(src)
             if src_text is None:
                 continue
