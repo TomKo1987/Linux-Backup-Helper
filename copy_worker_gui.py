@@ -937,7 +937,8 @@ class CopyDialog(_StandardKeysMixin, QDialog):
 
         try:
             from history import append_history
-            append_history(operation=self._operation, copied=c, skipped=s, errors=e, duration_s=elapsed, cancelled=cancelled)
+            append_history(operation=self._operation, copied=c, skipped=s, errors=self._display_errors,
+                           deleted=self._display_deleted, duration_s=elapsed, cancelled=cancelled)
         except Exception as exc:
             logger.debug("append_history failed: %s", exc)
 

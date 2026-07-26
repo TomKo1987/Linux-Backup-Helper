@@ -88,7 +88,7 @@ def make_versioned_path(dst_abs: str) -> str:
 
 
 def prune_old_versions(dst_abs: str, keep: int, title: str = "") -> tuple[list[DeletedItem], list[DeleteError]]:
-    if keep <= 0:
+    if keep < 0:
         return [], []
     versions = _existing_versions(dst_abs)
     overflow = len(versions) - keep

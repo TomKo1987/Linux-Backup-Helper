@@ -97,6 +97,14 @@ def _wipe_smb_cred(tmp_dir: str, path: str) -> None:
         pass
 
 
+def _smb_path_excluded(full_url: str, excludes: frozenset) -> bool:
+    if not excludes:
+        return False
+    if full_url in excludes:
+        return True
+    return any(full_url.startswith(ex + "/") for ex in excludes)
+
+
 @dataclass
 class _SmbJob:
     src_url:     str
@@ -386,7 +394,7 @@ class _SmbScanner:
                 if _SKIP_RE.search(os.path.basename(path)):
                     continue
                 full_url = f"smb://{host}/{share}/{path}"
-                if full_url in excludes:
+                if _smb_path_excluded(full_url, excludes):
                     continue
                 if not rpath:
                     rel = path

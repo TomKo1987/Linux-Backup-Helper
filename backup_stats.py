@@ -293,8 +293,9 @@ class BackupStatsDialog(_StandardKeysMixin, QDialog):
         successful  = sum(1 for e in entries if not e.get("errors") and not e.get("cancelled"))
         failed      = sum(1 for e in entries if e.get("errors"))
         cancelled   = sum(1 for e in entries if e.get("cancelled"))
-        total_copied = sum(e.get("copied", 0) for e in entries)
-        total_skip   = sum(e.get("skipped", 0) for e in entries)
+        total_copied  = sum(e.get("copied", 0) for e in entries)
+        total_skip    = sum(e.get("skipped", 0) for e in entries)
+        total_deleted = sum(e.get("deleted", 0) for e in entries)
         avg_dur      = (sum(e.get("duration_s", 0) for e in entries) // max(total, 1))
 
         cards_w = QWidget()
@@ -307,6 +308,7 @@ class BackupStatsDialog(_StandardKeysMixin, QDialog):
             ("⚠️", str(failed + cancelled), "Failed/Cancelled", t["warning"] if failed == 0 else t["error"]),
             ("📁", f"{total_copied:,}", "Files Copied",    t["info"]),
             ("⏭", str(total_skip),          "Files Skipped",   t["accent2"]),
+            ("🗑", f"{total_deleted:,}", "Files Deleted",   t["deleted"]),
             ("⏱",  _fmt_dur(avg_dur),        "Avg Duration",    t["accent2"]),
         ]:
             cards_l.addWidget(_StatCard(icon, val, label, col))
@@ -399,6 +401,7 @@ class BackupStatsDialog(_StandardKeysMixin, QDialog):
         op      = e.get("operation", "?")
         copied  = e.get("copied", 0)
         skipped = e.get("skipped", 0)
+        deleted = e.get("deleted", 0)
         errors  = e.get("errors", 0)
         dur     = e.get("duration_s", 0)
         cancel  = e.get("cancelled", False)
@@ -425,6 +428,8 @@ class BackupStatsDialog(_StandardKeysMixin, QDialog):
         hl.addStretch()
         hl.addWidget(_lbl(f"📁 {copied:,}",  t["success"] if copied else t["text_dim"]))
         hl.addWidget(_lbl(f"↷ {skipped:,}", t["text_dim"]))
+        if deleted:
+            hl.addWidget(_lbl(f"🗑 {deleted:,}", t["deleted"]))
         if errors:
             hl.addWidget(_lbl(f"✗ {errors}", t["error"]))
         hl.addWidget(_lbl(f"⏱ {_fmt_dur(dur)}", t["text_dim"]))

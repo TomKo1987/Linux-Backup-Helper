@@ -23,7 +23,8 @@ def _history_path(profile_name: str) -> Path:
 _MAX_HISTORY_ENTRIES = 500
 
 
-def append_history(operation: str, copied: int, skipped: int, errors: int, duration_s: int, cancelled: bool) -> None:
+def append_history(operation: str, copied: int, skipped: int, errors: int, duration_s: int, cancelled: bool,
+                   deleted: int = 0) -> None:
     name = S.profile_name
     if not name:
         return
@@ -42,6 +43,7 @@ def append_history(operation: str, copied: int, skipped: int, errors: int, durat
                  "operation":  operation,
                  "copied":     copied,
                  "skipped":    skipped,
+                 "deleted":    deleted,
                  "errors":     errors,
                  "duration_s": duration_s,
                  "cancelled":  cancelled}
@@ -69,11 +71,11 @@ def export_history_csv(profile_name: str) -> str:
     out = io.StringIO()
     writer = csv.DictWriter(
         out,
-        fieldnames=["timestamp", "operation", "copied", "skipped", "errors", "duration_s", "cancelled"],
+        fieldnames=["timestamp", "operation", "copied", "skipped", "deleted", "errors", "duration_s", "cancelled"],
         extrasaction="ignore",
     )
     writer.writeheader()
-    writer.writerows(entries)
+    writer.writerows({**{"deleted": 0}, **e} for e in entries)
     return out.getvalue()
 
 
@@ -98,12 +100,14 @@ def _entry_detail_html(e: dict, t: dict) -> str:
     op      = e.get("operation", "?")
     copied  = e.get("copied",    0)
     skipped = e.get("skipped",   0)
+    deleted = e.get("deleted",   0)
     errors  = e.get("errors",    0)
     dur     = _fmt_duration(e.get("duration_s", 0))
     can     = e.get("cancelled", False)
 
     ok_col = t["success"]
     sk_col = t["warning"]
+    de_col = t["deleted"]
     er_col = t["error"]
     dim    = t["text_dim"]
     fg     = t["text"]
@@ -134,6 +138,7 @@ def _entry_detail_html(e: dict, t: dict) -> str:
             f"{row('Timestamp', ts)}"
             f"{row('Copied',    f'{copied:,}',  ok_col if copied  > 0 else dim)}"
             f"{row('Skipped',   f'{skipped:,}', sk_col if skipped > 0 else dim)}"
+            f"{row('Deleted',   f'{deleted:,}', de_col if deleted > 0 else dim)}"
             f"{row('Errors',    f'{errors:,}',  err_color)}"
             f"{row('Duration',  dur)}"
             f"<tr>"
@@ -301,6 +306,7 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
             op      = e.get("operation", "?")
             copied  = e.get("copied",  0)
             skipped = e.get("skipped", 0)
+            deleted = e.get("deleted", 0)
             errors  = e.get("errors",  0)
             dur     = _fmt_duration(e.get("duration_s", 0))
             can     = e.get("cancelled", False)
@@ -309,7 +315,8 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
             op_label = "Backup created" if is_backup else ("Restored from backup" if is_restore else op)
             can_tag  = "  ⏹" if can else ""
             line1    = f"{op_label}  {ts}{can_tag}"
-            line2    = f"    ⤵ {copied:,}   ↷ {skipped:,}   ✗ {errors:,}   ⏱ {dur}"
+            del_part = f"   🗑 {deleted:,}" if deleted else ""
+            line2    = f"    ⤵ {copied:,}   ↷ {skipped:,}{del_part}   ✗ {errors:,}   ⏱ {dur}"
 
             item = QListWidgetItem(f"{line1}\n{line2}")
             item.setBackground(row_bg_even if idx % 2 == 0 else row_bg_odd)
@@ -325,11 +332,14 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
 
         n = len(self._entries)
         total_copied  = sum(e.get("copied",     0) for e in self._entries)
+        total_deleted = sum(e.get("deleted",    0) for e in self._entries)
         total_errors  = sum(e.get("errors",     0) for e in self._entries)
         total_dur     = sum(e.get("duration_s", 0) for e in self._entries)
+        del_part = f"{total_deleted:,} files deleted  ·  " if total_deleted else ""
         self._count_lbl.setText(
             f"{n} run{'s' if n != 1 else ''}  ·  "
             f"{total_copied:,} files copied total  ·  "
+            f"{del_part}"
             f"{total_errors:,} errors  ·  "
             f"Total runtime: {_fmt_duration(total_dur)}"
         )

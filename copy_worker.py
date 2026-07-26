@@ -9,7 +9,7 @@ import threading
 import time
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from drive_utils import is_smb, is_ssh, build_rsync_cmd
+from drive_utils import is_smb, is_ssh, build_rsync_cmd, _SSH_HOST_RE
 from pre_post_hooks import run_hooks as _run_hooks
 from state import logger
 
@@ -48,10 +48,32 @@ def _rsync_escape_component(name: str) -> str:
     return _RSYNC_GLOB_CHARS.sub(r"\\\1", name)
 
 
+_LIKELY_FILE_TAIL_RE = re.compile(r"\.[A-Za-z0-9]{1,8}$")
+
+
 def _rsync_src_arg(src: str) -> str:
-    if src.endswith("/") or is_smb(src) or is_ssh(src):
+    if src.endswith("/") or is_smb(src):
+        return src
+    if is_ssh(src):
+        tail = src.rstrip("/").rsplit("/", 1)[-1]
+        if not _LIKELY_FILE_TAIL_RE.search(tail):
+            return f"{src}/"
         return src
     return f"{src}/" if os.path.isdir(src) else src
+
+
+_SSH_URL_RE = re.compile(r"^(ssh://(?:[^@/]+@)?[^/]+)(/.*)?$")
+
+
+def _ssh_split(spec: str) -> tuple[str, str]:
+    m = _SSH_URL_RE.match(spec)
+    if m:
+        return m.group(1), (m.group(2) or "")
+    m = _SSH_HOST_RE.match(spec)
+    if m:
+        path = m.group(2)
+        return spec[:len(spec) - len(path)], path
+    return spec, ""
 
 
 _RSYNC_SKIP_PATTERNS: tuple[str, ...] = (
@@ -67,25 +89,41 @@ _RSYNC_SKIP_PATTERNS: tuple[str, ...] = (
 )
 
 
+def _relativize_excludes(raw_excludes: "list | None", base_dir: str, *,
+                         split_fn=None) -> list[str]:
+    patterns: list[str] = []
+    if not raw_excludes:
+        return patterns
+    for ex in raw_excludes:
+        ex_path = split_fn(ex)[1] if split_fn else ex
+        if not ex_path:
+            continue
+        try:
+            rel = os.path.relpath(ex_path, base_dir)
+        except ValueError:
+            continue
+        if rel == os.curdir or rel.startswith(os.pardir):
+            continue
+        escaped = "/".join(_rsync_escape_component(p) for p in rel.split(os.sep))
+        patterns.append("/" + escaped)
+    return patterns
+
+
 def _rsync_excludes(src: str, raw_excludes: "list | None") -> "list | None":
     skip = list(_RSYNC_SKIP_PATTERNS)
 
-    if is_smb(src) or is_ssh(src):
+    if is_smb(src):
         return (list(raw_excludes) + skip) if raw_excludes else skip
 
-    patterns: list[str] = []
-    if raw_excludes:
-        base_dir = src.rstrip("/") if src.endswith("/") else os.path.dirname(src.rstrip("/") or src)
-        for ex in raw_excludes:
-            try:
-                rel = os.path.relpath(ex, base_dir)
-            except ValueError:
-                continue
-            if rel == os.curdir or rel.startswith(os.pardir):
-                continue
-            escaped = "/".join(_rsync_escape_component(p) for p in rel.split(os.sep))
-            patterns.append("/" + escaped)
+    if is_ssh(src):
+        _prefix, remote_root = _ssh_split(src)
+        base_dir = (remote_root.rstrip("/") if remote_root.endswith("/")
+                   else os.path.dirname(remote_root.rstrip("/") or remote_root))
+        patterns = _relativize_excludes(raw_excludes, base_dir, split_fn=_ssh_split)
+        return patterns + skip
 
+    base_dir = src.rstrip("/") if src.endswith("/") else os.path.dirname(src.rstrip("/") or src)
+    patterns = _relativize_excludes(raw_excludes, base_dir)
     return patterns + skip
 
 
