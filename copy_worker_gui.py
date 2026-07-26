@@ -16,7 +16,7 @@ from themes import current_theme, font_sz
 from ui_utils import _StandardKeysMixin, size_to_screen
 
 from copy_worker_core import _check_destination_space, _format_unit, _cached_mono_style, _notify
-from copy_worker import CopyWorker
+from copy_worker import CopyWorker, _NF_MARK
 
 
 @dataclass
@@ -919,11 +919,10 @@ class CopyDialog(_StandardKeysMixin, QDialog):
             self._pending_ok.append((s, d))
         for s, r, sz in sk:
             self._size_skipped += sz
+            if _NF_MARK in r:
+                r, _, nf_title = r.partition(_NF_MARK)
+                self._not_found_paths.append((apply_replacements(s), nf_title))
             self._pending_sk.append((s, r))
-            if "does not exist" in r:
-                _nf_title = (r.rsplit(" (", 1)[1].rstrip(")")
-                             if (" (" in r and r.endswith(")")) else "")
-                self._not_found_paths.append((apply_replacements(s), _nf_title))
         for p, r, sz in de:
             self._size_deleted += sz
             self._pending_de.append((p, r))

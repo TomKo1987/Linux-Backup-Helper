@@ -168,7 +168,8 @@ class _SmbClient:
         base = ["smbclient", f"//{host}/{share}"]
         self._argv = ([*base, "-N", *_proto]) if guest else (base + _proto)
 
-    def _spawn(self, argv: list[str], input_data: str, timeout: int, wipe_fn=None) -> "tuple[subprocess.Popen | None, str, str]":
+    def _spawn(self, argv: list[str], input_data: str, timeout: int, wipe_fn=None,
+               cancel: "threading.Event | None" = None) -> "tuple[subprocess.Popen | None, str, str]":
         tid = threading.get_ident()
         env = dict(os.environ, LC_ALL="C", LANG="C")
         try:
@@ -176,6 +177,11 @@ class _SmbClient:
                                     text=True, encoding="utf-8", env=env)
             with _smb_procs_lock:
                 _smb_procs[tid] = proc
+            if cancel is not None and cancel.is_set():
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
             try:
                 out, err = proc.communicate(input=input_data, timeout=timeout)
                 return proc, out, err
@@ -211,14 +217,15 @@ class _SmbClient:
             logger.warning("SMB //%s/%s: /dev/shm not available. Falling back to guest.", self.host, self.share)
         return [*self._argv, "-N"], None, None
 
-    def _run_with_creds(self, input_data: str, timeout: int) -> "tuple[subprocess.Popen | None, str, str]":
+    def _run_with_creds(self, input_data: str, timeout: int,
+                        cancel: "threading.Event | None" = None) -> "tuple[subprocess.Popen | None, str, str]":
         argv, tmp_dir, cred_path = self._argv_with_creds()
         wipe_fn = (lambda: _wipe_smb_cred(str(tmp_dir), str(cred_path))) if (tmp_dir and cred_path) else None
 
-        return self._spawn(argv, input_data, timeout, wipe_fn=wipe_fn)
+        return self._spawn(argv, input_data, timeout, wipe_fn=wipe_fn, cancel=cancel)
 
-    def run(self, cmds: str, timeout: int) -> tuple[bool, str]:
-        proc, _, err = self._run_with_creds(cmds, timeout)
+    def run(self, cmds: str, timeout: int, cancel: "threading.Event | None" = None) -> tuple[bool, str]:
+        proc, _, err = self._run_with_creds(cmds, timeout, cancel=cancel)
         if proc is None:
             return False, err
         ok = proc.returncode == 0
@@ -300,18 +307,19 @@ class _SmbScanner:
         seen_get: set = set()
         tasks: list[Callable[[], None]] = []
 
-        def create_get_task(_h, _sh, _rp, _d, _ti):
-            return lambda: self._do_get(_h, _sh, _rp, _d, _ti, expanded, errors)
+        def create_get_task(_h, _sh, _rp, _d, _ti, _ex):
+            return lambda: self._do_get(_h, _sh, _rp, _d, _ti, expanded, errors, _ex)
 
-        def create_put_task(_s, _h, _sh, _rp, _ti, _is_file):
+        def create_put_task(_s, _h, _sh, _rp, _ti, _is_file, _ex):
             if _is_file:
-                return lambda: self._do_put_file(_s, _h, _sh, _rp, _ti, expanded)
-            return lambda: self._do_put_dir(_s, _h, _sh, _rp, _ti, expanded)
+                return lambda: self._do_put_file(_s, _h, _sh, _rp, _ti, expanded, _ex)
+            return lambda: self._do_put_dir(_s, _h, _sh, _rp, _ti, expanded, _ex)
 
         for src, dst, *rest in jobs:
             if self._cancel.is_set():
                 break
             title = rest[0] if rest else ""
+            excludes = rest[1] if len(rest) > 1 and rest[1] else frozenset()
             src_is_smb = is_smb(src)
             host, share, rpath = _parse_smb(src if src_is_smb else dst)
 
@@ -320,10 +328,12 @@ class _SmbScanner:
                 if key in seen_get:
                     continue
                 seen_get.add(key)
-                tasks.append(create_get_task(host, share, rpath, dst, title))
+                tasks.append(create_get_task(host, share, rpath, dst, title, excludes))
             else:
+                if src in excludes:
+                    continue
                 is_file = os.path.isfile(src)
-                tasks.append(create_put_task(src, host, share, rpath, title, is_file))
+                tasks.append(create_put_task(src, host, share, rpath, title, is_file, excludes))
 
         if self._cancel.is_set():
             return [], []
@@ -361,7 +371,7 @@ class _SmbScanner:
                 idx = self._ls_cache[ck]
         return idx
 
-    def _do_get(self, host, share, rpath, dst, title, expanded, errors) -> None:
+    def _do_get(self, host, share, rpath, dst, title, expanded, errors, excludes: frozenset = frozenset()) -> None:
         idx     = self._cached_index(host, share, rpath)
         src_url = f"smb://{host}/{share}/{rpath}"
         lexp:   list = []
@@ -374,6 +384,9 @@ class _SmbScanner:
                 if self._cancel.is_set():
                     break
                 if _SKIP_RE.search(os.path.basename(path)):
+                    continue
+                full_url = f"smb://{host}/{share}/{path}"
+                if full_url in excludes:
                     continue
                 if not rpath:
                     rel = path
@@ -389,15 +402,16 @@ class _SmbScanner:
             errors.extend(lerr)
         self._report(len(lexp) + len(lerr))
 
-    def _do_put_file(self, src: str, host: str, share: str, rpath: str, title: str, expanded: list) -> None:
-        if _SKIP_RE.search(os.path.basename(src)):
+    def _do_put_file(self, src: str, host: str, share: str, rpath: str, title: str, expanded: list,
+                      excludes: frozenset = frozenset()) -> None:
+        if _SKIP_RE.search(os.path.basename(src)) or src in excludes:
             return
         rp = f"{rpath}/{os.path.basename(src)}".lstrip("/")
         with self._result_lock:
             expanded.append(_SmbJob(src, "", "smb_put", host, share, rp, title=title))
         self._report(1)
 
-    def _do_put_dir(self, src, host, share, rpath, title, expanded) -> None:
+    def _do_put_dir(self, src, host, share, rpath, title, expanded, excludes: frozenset = frozenset()) -> None:
         lexp: list = []
         stack: list = [src]
 
@@ -414,7 +428,7 @@ class _SmbScanner:
                 current_dir = stack.pop()
                 with os.scandir(current_dir) as it:
                     for e in it:
-                        if _SKIP_RE.search(e.name):
+                        if _SKIP_RE.search(e.name) or e.path in excludes:
                             continue
                         try:
                             is_dir_eff = e.is_dir(follow_symlinks=True)
@@ -572,7 +586,8 @@ class _ShareProcessor:
                 er_list.extend((self._job_src(j, is_get), "NT_STATUS_HOST_UNREACHABLE") for j in batch)
                 continue
 
-            ok, err = self._client.run(build_fn(batch), max(_SMB_TIMEOUT, len(batch) * _SMB_FILE_SECS))
+            ok, err = self._client.run(build_fn(batch), max(_SMB_TIMEOUT, len(batch) * _SMB_FILE_SECS),
+                                       cancel=self._cancel)
             if ok:
                 for j in batch:
                     src = self._job_src(j, is_get)

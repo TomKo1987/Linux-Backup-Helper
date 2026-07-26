@@ -1,10 +1,11 @@
 import os
 import re
 import shutil
+import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from drive_utils import is_smb, is_ssh
+from drive_utils import is_smb, is_ssh, build_rsync_cmd
 from state import apply_replacements, logger
 
 __all__ = [
@@ -14,6 +15,8 @@ __all__ = [
 ]
 
 _VERSION_RE = re.compile(r"^(\d+)\s*[-_]\s*")
+_RSYNC_DELETE_RE = re.compile(r"^deleting\s+(.+)$")
+_SSH_PREVIEW_TIMEOUT_S = 30
 
 
 @dataclass
@@ -121,8 +124,13 @@ def find_extraneous_paths(src_abs: str, dst_abs: str, excludes: frozenset) -> li
                 continue
             if not os.path.lexists(s_path):
                 extraneous.append(e.path)
-            elif e.is_dir(follow_symlinks=False) and os.path.isdir(s_path) and not os.path.islink(s_path):
+                continue
+            dst_is_dir = e.is_dir(follow_symlinks=False)
+            src_is_dir = os.path.isdir(s_path) and not os.path.islink(s_path)
+            if dst_is_dir and src_is_dir:
                 _walk(rel_path)
+            elif dst_is_dir != src_is_dir:
+                extraneous.append(e.path)
 
     _walk("")
     return extraneous
@@ -169,6 +177,59 @@ def _confirm(parent, title: str, paths: list[str]) -> bool:
     ) == QMessageBox.StandardButton.Yes
 
 
+def _preview_ssh_mirror_delete(src: str, dst: str, excl) -> "list[str] | None":
+    from copy_worker import _rsync_excludes, _ssh_join
+
+    excludes_abs = _abs_excludes(excl, src, src)
+    rsync_excludes = _rsync_excludes(src, list(excludes_abs) if excludes_abs else None)
+    cmd = build_rsync_cmd(src, dst, delete=True, exclude=rsync_excludes, dry_run=True)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=_SSH_PREVIEW_TIMEOUT_S)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.warning("SSH mirror delete preview failed for %r \u2192 %r: %s",
+                        apply_replacements(src), apply_replacements(dst), exc)
+        return None
+    if proc.returncode != 0:
+        logger.warning(
+            "SSH mirror delete preview: rsync --dry-run exited %d for %r \u2192 %r \u2014 %s",
+            proc.returncode, apply_replacements(src), apply_replacements(dst),
+            (proc.stderr or proc.stdout or "").strip()[:300])
+        return None
+    deleted: list[str] = []
+    for line in (proc.stdout or "").splitlines():
+        m = _RSYNC_DELETE_RE.match(line.strip())
+        if m:
+            deleted.append(_ssh_join(dst, m.group(1).strip()))
+    return deleted
+
+
+def _resolve_ssh_mirror_delete(ssh_pairs: list[tuple[str, str]], excl, title: str,
+                               confirm_del: bool, interactive: bool, parent) -> bool:
+
+    if not confirm_del or not interactive:
+        return True
+
+    all_deleted: list[str] = []
+    for s_str, d_str in ssh_pairs:
+        preview = _preview_ssh_mirror_delete(s_str, d_str, excl)
+        if preview is None:
+            logger.warning(
+                "Mirror delete [%s]: could not preview remote deletions for %r \u2192 %r "
+                "\u2014 skipping remote --delete for this backup entry for safety",
+                title, apply_replacements(s_str), apply_replacements(d_str))
+            return False
+        all_deleted.extend(preview)
+
+    if not all_deleted:
+        return True
+
+    if _confirm(parent, title, all_deleted):
+        return True
+
+    logger.info("Mirror delete [%s]: remote deletion cancelled by user", title)
+    return False
+
+
 def apply_advanced_options(tasks: list[tuple], *, interactive: bool = True, parent=None) -> AdvancedOptionsResult:
     result = []
     all_deleted: list[DeletedItem] = []
@@ -186,6 +247,7 @@ def apply_advanced_options(tasks: list[tuple], *, interactive: bool = True, pare
 
         eff_dst = list(dst_list)
         mirror_remote = False
+        ssh_mirror_pairs: list[tuple[str, str]] = []
 
         for i, (s, d) in enumerate(zip(src_list, dst_list)):
             s_str, d_str = str(s), str(d)
@@ -238,9 +300,13 @@ def apply_advanced_options(tasks: list[tuple], *, interactive: bool = True, pare
                     else:
                         logger.info("Mirror delete [%s]: deletion cancelled by user", title)
                 elif is_ssh(s_str) or is_ssh(d_str):
-                    mirror_remote = True
+                    ssh_mirror_pairs.append((s_str, d_str))
                 else:
                     logger.info("Mirror delete [%s]: SMB destinations are not supported — skipped", title)
+
+        if ssh_mirror_pairs:
+            mirror_remote = _resolve_ssh_mirror_delete(
+                ssh_mirror_pairs, excl, title, confirm_del, interactive, parent)
 
         result.append((src_list, eff_dst, title, excl, pre_hooks, post_hooks, mirror_remote))
 

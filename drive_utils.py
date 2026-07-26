@@ -233,11 +233,14 @@ def is_ssh(path: str) -> bool:
     return path.startswith("ssh://") or bool(re.match(r"^[^/@]+@[^:]+:.+", path))
 
 
-def build_rsync_cmd(src: str, dst: str, *, delete: bool = False, exclude: list[str] | None = None) -> list[str]:
+def build_rsync_cmd(src: str, dst: str, *, delete: bool = False, exclude: list[str] | None = None,
+                    dry_run: bool = False) -> list[str]:
     info = "progress2,del" if delete else "progress2"
     cmd = ["rsync", "-az", f"--info={info}", "-e", "ssh -o StrictHostKeyChecking=accept-new"]
     if delete:
         cmd.append("--delete")
+    if dry_run:
+        cmd.append("--dry-run")
     for ex in (exclude or []):
         cmd += [f"--exclude={ex}"]
     cmd += [src, dst]

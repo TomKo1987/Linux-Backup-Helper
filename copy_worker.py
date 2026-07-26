@@ -33,6 +33,40 @@ def _ssh_join(dst_spec: str, rel_path: str) -> str:
     return f"{base}/{rel}" if rel else base
 
 
+_NF_MARK = "\x1f"
+
+
+def _not_found_reason(title: str) -> str:
+    base = "Path does not exist — skipping"
+    return f"{base}{_NF_MARK}{title}" if title else base
+
+
+_RSYNC_GLOB_CHARS = re.compile(r"([\\*?\[])")
+
+
+def _rsync_escape_component(name: str) -> str:
+    return _RSYNC_GLOB_CHARS.sub(r"\\\1", name)
+
+
+def _rsync_excludes(src: str, raw_excludes: "list | None") -> "list | None":
+    if not raw_excludes:
+        return None
+    if is_smb(src) or is_ssh(src):
+        return list(raw_excludes)
+    base_dir = os.path.dirname(src.rstrip("/") or src)
+    patterns: list[str] = []
+    for ex in raw_excludes:
+        try:
+            rel = os.path.relpath(ex, base_dir)
+        except ValueError:
+            continue
+        if rel == os.curdir or rel.startswith(os.pardir):
+            continue
+        escaped = "/".join(_rsync_escape_component(p) for p in rel.split(os.sep))
+        patterns.append("/" + escaped)
+    return patterns or None
+
+
 def _do_copy(entry, cancel: threading.Event, ok_l: list, sk_l: list, er_l: list, tc: dict) -> None:
 
     src, dst, title, st = entry
@@ -573,8 +607,7 @@ class CopyWorker(QThread):
                     self._copy_local_all(local_items, flusher, tracker, claim_size=cs, local_batch=lb, workers=cw)
                 if local_not_found and not self._cancel.is_set():
                     flusher.push(
-                        sk=[(p, (f"Path does not exist — skipping ({t_})" if t_
-                                 else "Path does not exist — skipping"), 0)
+                        sk=[(p, _not_found_reason(t_), 0)
                             for p, t_ in local_not_found],
                         force=True,
                     )
@@ -623,7 +656,8 @@ class CopyWorker(QThread):
 
             self.scan_progress.emit(f"rsync  {title or src}", 0)
 
-            excludes = list(extra[0]) if extra and extra[0] else None
+            excludes_raw = list(extra[0]) if extra and extra[0] else None
+            excludes = _rsync_excludes(src, excludes_raw)
             mirror = title in self._mirror_titles
 
             cmd = build_rsync_cmd(src, dst, exclude=excludes, delete=mirror)
@@ -645,38 +679,54 @@ class CopyWorker(QThread):
 
             if proc.stdout is None:
                 logger.error("rsync stdout is None for '%s'", src)
+                proc.kill()
+                proc.wait()
                 flusher.push(er=[(src, "rsync stdout unavailable", 0)])
                 _track(0, 0, 1)
                 continue
+
             last_pct = 0
             deleted_this_task: list = []
+            _tid = threading.get_ident()
+            with _smb_procs_lock:
+                _smb_procs[_tid] = proc
+            if self._cancel.is_set():
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
             try:
-                for line in proc.stdout:
-                    if self._cancel.is_set():
-                        proc.kill()
-                        break
-                    line = line.rstrip()
-                    m = self._RSYNC_PROGRESS_RE.match(line)
-                    if m:
-                        pct = int(m.group(2))
-                        if pct != last_pct:
-                            last_pct = pct
-                            self.scan_progress.emit(
-                                f"rsync  {title or src}  {pct}%  {m.group(3)}",
-                                pct,
-                            )
-                        continue
-                    dm = self._RSYNC_DELETE_RE.match(line) if mirror else None
-                    if dm:
-                        rel = dm.group(1).strip()
-                        display_path = _ssh_join(dst, rel)
-                        deleted_this_task.append((display_path, "Mirror delete (remote)", 0))
-                    elif line:
-                        logger.debug("rsync: %s", line)
-            except OSError as exc:
-                logger.warning("rsync read error for '%s': %s", src, exc)
+                try:
+                    for line in proc.stdout:
+                        if self._cancel.is_set():
+                            proc.kill()
+                            break
+                        line = line.rstrip()
+                        m = self._RSYNC_PROGRESS_RE.match(line)
+                        if m:
+                            pct = int(m.group(2))
+                            if pct != last_pct:
+                                last_pct = pct
+                                self.scan_progress.emit(
+                                    f"rsync  {title or src}  {pct}%  {m.group(3)}",
+                                    pct,
+                                )
+                            continue
+                        dm = self._RSYNC_DELETE_RE.match(line) if mirror else None
+                        if dm:
+                            rel = dm.group(1).strip()
+                            display_path = _ssh_join(dst, rel)
+                            deleted_this_task.append((display_path, "Mirror delete (remote)", 0))
+                        elif line:
+                            logger.debug("rsync: %s", line)
+                except OSError as exc:
+                    logger.warning("rsync read error for '%s': %s", src, exc)
 
-            proc.wait()
+                proc.wait()
+            finally:
+                with _smb_procs_lock:
+                    _smb_procs.pop(_tid, None)
+
             if deleted_this_task:
                 flusher.push(de=deleted_this_task, force=True)
             if self._cancel.is_set():
@@ -819,8 +869,7 @@ class CopyWorker(QThread):
         for src, dst, title, *rest in tasks:
             excludes = rest[0] if rest else frozenset()
             if not os.path.exists(src):
-                _nf_reason = (f"Path does not exist — skipping ({title})" if title
-                              else "Path does not exist — skipping")
+                _nf_reason = _not_found_reason(title)
                 flusher.push(sk=[(src, _nf_reason, 0)])
                 if title:
                     tracker.batch_update({title: (0, 1, 0)})
@@ -1017,13 +1066,14 @@ class CopyWorker(QThread):
     def _filter_dead_tasks(smb_tasks, dead_shares, unreachable_shares) -> tuple[list, list]:
         alive: list = []
         errors: list = []
-        for s, d, t, *_ in smb_tasks:
+        for s, d, t, *rest in smb_tasks:
+            excl = rest[0] if rest else frozenset()
             h, sh, _ = _parse_smb(s if is_smb(s) else d)
             if (h, sh) in dead_shares:
                 reason = ("NT_STATUS_HOST_UNREACHABLE" if (h, sh) in unreachable_shares else "Authentication failed")
                 errors.append((s if is_smb(s) else d, reason))
             else:
-                alive.append((s, d, t))
+                alive.append((s, d, t, excl))
         return alive, errors
 
     def _copy_local_all(self, items: list, flusher: _Flusher, tracker: _EntryTracker,

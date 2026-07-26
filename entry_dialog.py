@@ -235,10 +235,11 @@ class AdvancedOptionsDialog(QDialog):
         apply_tooltip(
             self._confirm_cb,
             "Shows a confirmation dialog listing every item that would be deleted "
-            "before mirror mode removes anything. Applies to local paths; "
-            "recommended to keep enabled.<br><br>"
-            "<i>SSH deletions happen as part of the rsync transfer itself and "
-            "are not covered by this confirmation.</i>",
+            "before mirror mode removes anything — for local paths as well as SSH "
+            "destinations (previewed via a harmless rsync dry-run beforehand). "
+            "Recommended to keep enabled.<br><br>"
+            "<i>If the SSH preview can't be determined (e.g. the host is unreachable), "
+            "remote deletion is skipped entirely for that backup entry, for safety.</i>",
         )
         lay.addWidget(self._confirm_cb)
 
