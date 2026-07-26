@@ -7,11 +7,12 @@ from datetime import datetime
 
 from drive_utils import is_smb, is_ssh, build_rsync_cmd
 from state import apply_replacements, logger
+from copy_worker_core import _SKIP_RE
 
 __all__ = [
     "DeletedItem", "DeleteError", "AdvancedOptionsResult",
     "make_versioned_path", "prune_old_versions", "find_extraneous_paths",
-    "delete_paths", "apply_advanced_options",
+    "delete_paths", "apply_advanced_options", "restore_exclude_paths",
 ]
 
 _VERSION_RE = re.compile(r"^(\d+)\s*[-_]\s*")
@@ -118,6 +119,8 @@ def find_extraneous_paths(src_abs: str, dst_abs: str, excludes: frozenset) -> li
         except (PermissionError, FileNotFoundError, OSError):
             return
         for e in entries:
+            if _SKIP_RE.search(e.name):
+                continue
             rel_path = os.path.join(rel, e.name) if rel else e.name
             s_path = os.path.join(src_abs, rel_path)
             if s_path in excludes:
@@ -162,6 +165,34 @@ def _abs_excludes(excl, s_norm: str, s_str: str) -> frozenset:
     return frozenset(os.path.join(s_norm, n) for n in names)
 
 
+def _exclude_key(path: str) -> str:
+    return path if (is_smb(path) or is_ssh(path)) else os.path.abspath(os.path.expanduser(path))
+
+
+def restore_exclude_paths(entry: dict) -> dict:
+    details  = entry.get("details", {}) or {}
+    raw_excl = details.get("exclude_paths", {})
+    if not isinstance(raw_excl, dict) or not raw_excl:
+        return {}
+
+    src_paths = entry.get("source", [])
+    dst_paths = entry.get("destination", [])
+    if isinstance(src_paths, str):
+        src_paths = [src_paths]
+    if isinstance(dst_paths, str):
+        dst_paths = [dst_paths]
+
+    remapped: dict = {}
+    for s, d in zip(src_paths, dst_paths):
+        if not s or not d:
+            continue
+        s_str = str(s)
+        names = raw_excl.get(_exclude_key(s_str)) or raw_excl.get(s_str) or []
+        if names:
+            remapped[_exclude_key(str(d))] = list(names)
+    return remapped
+
+
 def _confirm(parent, title: str, paths: list[str]) -> bool:
     from PyQt6.QtWidgets import QMessageBox
     shown = paths[:25]
@@ -178,11 +209,12 @@ def _confirm(parent, title: str, paths: list[str]) -> bool:
 
 
 def _preview_ssh_mirror_delete(src: str, dst: str, excl) -> "list[str] | None":
-    from copy_worker import _rsync_excludes, _ssh_join
+    from copy_worker import _rsync_excludes, _rsync_src_arg, _ssh_join
 
+    rsync_src = _rsync_src_arg(src)
     excludes_abs = _abs_excludes(excl, src, src)
-    rsync_excludes = _rsync_excludes(src, list(excludes_abs) if excludes_abs else None)
-    cmd = build_rsync_cmd(src, dst, delete=True, exclude=rsync_excludes, dry_run=True)
+    rsync_excludes = _rsync_excludes(rsync_src, list(excludes_abs) if excludes_abs else None)
+    cmd = build_rsync_cmd(rsync_src, dst, delete=True, exclude=rsync_excludes, dry_run=True)
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=_SSH_PREVIEW_TIMEOUT_S)
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -230,15 +262,20 @@ def _resolve_ssh_mirror_delete(ssh_pairs: list[tuple[str, str]], excl, title: st
     return False
 
 
-def apply_advanced_options(tasks: list[tuple], *, interactive: bool = True, parent=None) -> AdvancedOptionsResult:
+def apply_advanced_options(tasks: list[tuple], *, interactive: bool = True, parent=None,
+                          is_restore: bool = False) -> AdvancedOptionsResult:
     result = []
     all_deleted: list[DeletedItem] = []
     all_errors: list[DeleteError] = []
 
     for src_list, dst_list, title, excl, pre_hooks, post_hooks, details in tasks:
         details = details or {}
-        versioned = bool(details.get("versioned_archive"))
+        versioned = bool(details.get("versioned_archive")) and not is_restore
         mirror = bool(details.get("mirror_delete")) and not versioned
+        if is_restore and details.get("versioned_archive"):
+            logger.info(
+                "Versioned archive [%s]: skipped during Restore (only applies to the "
+                "backup destination) — restoring directly instead", title)
         confirm_del = bool(details.get("confirm_before_delete", True))
         try:
             max_versions = int(details.get("max_versions") or 0)

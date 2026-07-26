@@ -12,6 +12,8 @@ from PyQt6.QtWidgets import (
 )
 
 from copy_worker_core import _SKIP_RE
+from copy_worker import _is_up_to_date_local, _is_symlink_up_to_date
+from drive_utils import is_smb, is_ssh
 from state import S
 from themes import current_theme, font_sz
 from ui_utils import _StandardKeysMixin, size_to_screen
@@ -74,6 +76,15 @@ class _DryRunWorker(QThread):
             if not src_root or not dst_root:
                 continue
 
+            if is_smb(src_root) or is_ssh(src_root) or is_smb(dst_root) or is_ssh(dst_root):
+                remote = src_root if (is_smb(src_root) or is_ssh(src_root)) else dst_root
+                errors.append((
+                    remote,
+                    "Remote (SMB/SSH) path — not simulated in Dry Run (preview is "
+                    "local-filesystem only; this is not a failure).",
+                ))
+                continue
+
             src_p = Path(src_root).expanduser()
             dst_p = Path(dst_root).expanduser()
 
@@ -122,7 +133,7 @@ class _DryRunWorker(QThread):
                         dst_file_str = str(dst_file)
                         if not os.path.lexists(dst_file_str):
                             to_copy.append((str(rel), "new"))
-                        elif os.path.islink(dst_file_str) and os.readlink(dst_file_str) == target:
+                        elif _is_symlink_up_to_date(dst_file_str, target):
                             to_skip.append(str(rel))
                         else:
                             to_copy.append((str(rel), "modified"))
@@ -138,12 +149,10 @@ class _DryRunWorker(QThread):
                         to_copy.append((str(rel), "new"))
                     else:
                         try:
-                            dst_stat = dst_file.stat()
-                            if (src_stat.st_size != dst_stat.st_size
-                                    or abs(src_stat.st_mtime_ns - dst_stat.st_mtime_ns) > 2_000_000_000):
-                                to_copy.append((str(rel), "modified"))
-                            else:
+                            if _is_up_to_date_local(str(dst_file), src_stat):
                                 to_skip.append(str(rel))
+                            else:
+                                to_copy.append((str(rel), "modified"))
                         except OSError as e:
                             errors.append((str(rel), str(e)))
 
@@ -689,6 +698,8 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         self._tabs.setCurrentIndex(1)
 
     def _start(self) -> None:
+        from advanced_copy import restore_exclude_paths
+
         tasks: list[tuple[list[str], list[str], str, dict]] = []
         is_restore = self._mode == "restore"
         skip_flag  = "no_restore" if is_restore else "no_backup"
@@ -704,7 +715,7 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
                 dst = [dst]
             if src and dst:
                 if is_restore:
-                    tasks.append((dst, src, e.get("title", "?"), details.get("exclude_paths", {})))
+                    tasks.append((dst, src, e.get("title", "?"), restore_exclude_paths(e)))
                 else:
                     tasks.append((src, dst, e.get("title", "?"), details.get("exclude_paths", {})))
 

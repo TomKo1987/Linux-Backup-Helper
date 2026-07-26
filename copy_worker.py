@@ -48,23 +48,45 @@ def _rsync_escape_component(name: str) -> str:
     return _RSYNC_GLOB_CHARS.sub(r"\\\1", name)
 
 
+def _rsync_src_arg(src: str) -> str:
+    if src.endswith("/") or is_smb(src) or is_ssh(src):
+        return src
+    return f"{src}/" if os.path.isdir(src) else src
+
+
+_RSYNC_SKIP_PATTERNS: tuple[str, ...] = (
+    "lock", ".lock", "lockfile", ".lck", ".parentlock", "Singleton*",
+    "cache", "Network Cache", "startupCache", "jumpListCache",
+    "*.sqlite-wal", "*.sqlite-shm", "*.journal", "*-journal", "*_journal",
+    "*.db-wal", "*.db-shm",
+    "idb", "WebStorage", "Session Storage", "Local Storage", "leveldb", "*.ldb",
+    "temp", "tmp", "*.tmp", "*.bak", "*.baklz4",
+    "recovery.jsonlz4", "recovery.baklz4", "sessionstore-backups",
+    "Thumbs.db", ".DS_Store", ".quota", ".user64", ".healthcheck", ".active-update",
+    "GPUCache", "ShaderCache", "blob_storage", "prefs.js",
+)
+
+
 def _rsync_excludes(src: str, raw_excludes: "list | None") -> "list | None":
-    if not raw_excludes:
-        return None
+    skip = list(_RSYNC_SKIP_PATTERNS)
+
     if is_smb(src) or is_ssh(src):
-        return list(raw_excludes)
-    base_dir = os.path.dirname(src.rstrip("/") or src)
+        return (list(raw_excludes) + skip) if raw_excludes else skip
+
     patterns: list[str] = []
-    for ex in raw_excludes:
-        try:
-            rel = os.path.relpath(ex, base_dir)
-        except ValueError:
-            continue
-        if rel == os.curdir or rel.startswith(os.pardir):
-            continue
-        escaped = "/".join(_rsync_escape_component(p) for p in rel.split(os.sep))
-        patterns.append("/" + escaped)
-    return patterns or None
+    if raw_excludes:
+        base_dir = src.rstrip("/") if src.endswith("/") else os.path.dirname(src.rstrip("/") or src)
+        for ex in raw_excludes:
+            try:
+                rel = os.path.relpath(ex, base_dir)
+            except ValueError:
+                continue
+            if rel == os.curdir or rel.startswith(os.pardir):
+                continue
+            escaped = "/".join(_rsync_escape_component(p) for p in rel.split(os.sep))
+            patterns.append("/" + escaped)
+
+    return patterns + skip
 
 
 def _do_copy(entry, cancel: threading.Event, ok_l: list, sk_l: list, er_l: list, tc: dict) -> None:
@@ -656,11 +678,12 @@ class CopyWorker(QThread):
 
             self.scan_progress.emit(f"rsync  {title or src}", 0)
 
+            rsync_src = _rsync_src_arg(src)
             excludes_raw = list(extra[0]) if extra and extra[0] else None
-            excludes = _rsync_excludes(src, excludes_raw)
+            excludes = _rsync_excludes(rsync_src, excludes_raw)
             mirror = title in self._mirror_titles
 
-            cmd = build_rsync_cmd(src, dst, exclude=excludes, delete=mirror)
+            cmd = build_rsync_cmd(rsync_src, dst, exclude=excludes, delete=mirror)
             logger.debug("_copy_ssh_tasks: %s", " ".join(cmd))
 
             try:
@@ -933,6 +956,11 @@ class CopyWorker(QThread):
                             emit_cur = found[0]
                     if emit_cur >= 0:
                         self.scan_progress.emit("Scanning", emit_cur)
+                        _, lb_new, ft_new, spb_new, _ = _scale_params(emit_cur + missing[0])
+                        with copy_params_lock:
+                            copy_params[0] = lb_new
+                            copy_params[1] = spb_new
+                        flusher.set_flush_thresh(ft_new)
                     _dq()
 
             if batch and not cancel.is_set():

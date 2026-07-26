@@ -285,17 +285,18 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
 
 class _CopyMixin:
     _op_label: str = ""
+    _is_restore: bool = False
 
     def _start_copy(self: "_BaseCheckboxWindow") -> None:
         from copy_worker_gui import CopyDialog
         from drive_utils import check_drives_to_mount, mount_required_drives
-        from advanced_copy import apply_advanced_options
+        from advanced_copy import apply_advanced_options, restore_exclude_paths
 
         selected = []
         for cb, src, dst, title, entry in self.checkbox_dirs:
             if cb.isChecked():
                 details = entry.get("details", {})
-                excl = details.get("exclude_paths", {})
+                excl = restore_exclude_paths(entry) if self._is_restore else details.get("exclude_paths", {})  # type: ignore[attr-defined]
                 pre_hooks = details.get("pre_hooks", [])
                 post_hooks = details.get("post_hooks", [])
                 selected.append((src, dst, title, excl, pre_hooks, post_hooks, details))
@@ -308,7 +309,7 @@ class _CopyMixin:
         if not mount_required_drives(drives_to_mount, self):
             return
 
-        adv = apply_advanced_options(selected, interactive=True, parent=self)
+        adv = apply_advanced_options(selected, interactive=True, parent=self, is_restore=self._is_restore)  # type: ignore[attr-defined]
 
         dlg_copy = CopyDialog(self, adv.tasks, self._op_label,  # type: ignore[attr-defined]
                               pre_deleted=adv.deleted, pre_errors=adv.errors)
@@ -346,6 +347,7 @@ class RestoreWindow(_CopyMixin, _BaseCheckboxWindow):
     _window_title = "Restore Backup"
     _cols_key = "restore_window_columns"
     _op_label = "Restore"
+    _is_restore = True
 
     def _entry_filter(self, entry: dict) -> bool:
         return not entry.get("details", {}).get("no_restore", False)

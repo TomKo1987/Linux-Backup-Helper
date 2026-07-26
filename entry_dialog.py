@@ -223,8 +223,9 @@ class AdvancedOptionsDialog(QDialog):
             "no longer exists in the source will be <b>deleted</b>.<br><br>"
             "This guarantees that source and destination are <b>exactly identical</b> "
             "once the operation finishes.<br><br>"
-            "<i>Supported for local-to-local paths and for SSH destinations (via rsync "
-            "<code>--delete</code>). Not supported for SMB destinations.</i>",
+            "<i>Supported for local-to-local paths and for pairs involving an SSH "
+            "source or destination (via rsync <code>--delete</code>). Not supported "
+            "whenever SMB is involved on either side (source or destination).</i>",
         )
         lay.addWidget(self._mirror_cb)
         lay.addWidget(_note("Makes the destination match the source exactly by removing "
@@ -253,7 +254,9 @@ class AdvancedOptionsDialog(QDialog):
             "<b>brand-new subfolder</b> named <code>&lt;number&gt; - &lt;date&gt; &lt;time&gt;</code> "
             "(e.g. <code>001 - 2026-07-21 18-42-05</code>, then <code>002 - …</code>, and so on) "
             "and copies the source into it, so every previous version stays fully intact.<br><br>"
-            "<i>Only applies to local destination paths.</i>",
+            "<i>Only applies to local destination paths, and only for Backup — "
+            "Restore always writes directly to the original location and never "
+            "creates a versioned subfolder there.</i>",
         )
         lay.addWidget(self._versioned_cb)
         lay.addWidget(_note("Every run adds a brand-new, self-contained snapshot — nothing "
@@ -436,6 +439,9 @@ class EntryDialog(QDialog):
             f"(You can use ~ or the full path {_HOME}/…)<br></td></tr>"
             f"<tr><td style='white-space:nowrap;padding-right:20px;vertical-align:top;'>Samba Shares:</td>"
             f"    <td>smb://192.168.0.53/share/data/</td></tr>"
+            f"<tr><td style='white-space:nowrap;padding-right:20px;vertical-align:top;'>SSH / rsync:</td>"
+            f"    <td>user@192.168.0.53:/data/backup/<br>"
+            f"        <span style='color:{t['muted']};'>or 192.168.0.53:/data/backup/</span></td></tr>"
             f"</table><br><br></div>")
 
         self._src_hint = QLabel(self._src_list)
@@ -722,7 +728,16 @@ class EntryDialog(QDialog):
         if not (0 <= row < len(self.pairs)):
             QMessageBox.information(self, "Exclude", "Please select a pair first.")
             return
+        from drive_utils import is_smb, is_ssh
         src_raw = self.pairs[row][0]
+        if is_smb(src_raw) or is_ssh(src_raw):
+            QMessageBox.information(
+                self, "Exclude",
+                "Exclusions can't be browsed for SMB or SSH sources — this dialog only "
+                "browses the local filesystem.\n\nSwap source/destination first if you "
+                "want to exclude items from the local side of this pair instead."
+            )
+            return
         src_abs = os.path.abspath(os.path.expanduser(src_raw))
         if not os.path.isdir(src_abs):
             QMessageBox.information(
