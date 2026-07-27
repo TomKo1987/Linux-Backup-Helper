@@ -52,7 +52,7 @@ _LIKELY_FILE_TAIL_RE = re.compile(r"\.[A-Za-z0-9]{1,8}$")
 
 
 def _rsync_src_arg(src: str) -> str:
-    if src.endswith("/") or is_smb(src):
+    if src.endswith("/"):
         return src
     if is_ssh(src):
         tail = src.rstrip("/").rsplit("/", 1)[-1]
@@ -111,9 +111,6 @@ def _relativize_excludes(raw_excludes: "list | None", base_dir: str, *,
 
 def _rsync_excludes(src: str, raw_excludes: "list | None") -> "list | None":
     skip = list(_RSYNC_SKIP_PATTERNS)
-
-    if is_smb(src):
-        return (list(raw_excludes) + skip) if raw_excludes else skip
 
     if is_ssh(src):
         _prefix, remote_root = _ssh_split(src)

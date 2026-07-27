@@ -264,6 +264,29 @@ class _SmbClient:
                     index[f"{cur_dir}/{name}".lstrip("/")] = (int(size_s),)
         return index
 
+    def stat_path(self, rpath: str) -> "tuple[str, int]":
+        rpath = rpath.replace("\\", "/").strip("/")
+        if not rpath:
+            return "dir", -1
+        parent = os.path.dirname(rpath)
+        name = os.path.basename(rpath)
+        cmd = f'cd "/{_q(parent)}"\nls\n' if parent else "ls\n"
+        proc, stdout, stderr = self._run_with_creds(cmd, _SMB_TIMEOUT)
+        if proc is None:
+            return "unreachable", -1
+        if proc.returncode != 0:
+            return ("unreachable", -1) if _is_unreachable(stderr) else ("missing", -1)
+        for line in stdout.splitlines():
+            line = line.strip()
+            if not line or line.startswith("\\"):
+                continue
+            m = _SMB_LINE_RE.match(line)
+            if m:
+                ent_name, flags, size_s = m.groups()
+                if ent_name.strip() == name:
+                    return ("dir", -1) if "D" in flags else ("file", int(size_s))
+        return "missing", -1
+
     def probe(self) -> str:
         if self._user and self._pw:
             ok, err = self.run("exit\n", _SMB_TIMEOUT)
@@ -295,6 +318,7 @@ class _SmbScanner:
         self._cancel      = cancel
         self._progress_cb = progress_cb
         self._ls_cache:   dict = {}
+        self._stat_cache: dict = {}
         self._cache_lock  = threading.Lock()
         self._result_lock = threading.Lock()
         self._counter     = 0
@@ -379,32 +403,64 @@ class _SmbScanner:
                 idx = self._ls_cache[ck]
         return idx
 
+    def _cached_stat(self, host: str, share: str, rpath: str) -> "tuple[str, int]":
+        ck = f"{host}:{share}:{rpath}"
+        with self._cache_lock:
+            if ck in self._stat_cache:
+                return self._stat_cache[ck]
+        if self._cancel.is_set():
+            return "unreachable", -1
+        result = self._client(host, share).stat_path(rpath)
+        with self._cache_lock:
+            if ck not in self._stat_cache:
+                if len(self._stat_cache) >= self._CACHE_MAX:
+                    del self._stat_cache[next(iter(self._stat_cache))]
+                self._stat_cache[ck] = result
+            else:
+                result = self._stat_cache[ck]
+        return result
+
     def _do_get(self, host, share, rpath, dst, title, expanded, errors, excludes: frozenset = frozenset()) -> None:
-        idx     = self._cached_index(host, share, rpath)
+        if self._cancel.is_set():
+            return
+
         src_url = f"smb://{host}/{share}/{rpath}"
-        lexp:   list = []
-        lerr:   list = []
-        if idx is None:
+        lexp: list = []
+        lerr: list = []
+
+        kind, size = self._cached_stat(host, share, rpath)
+
+        if kind == "unreachable":
             lerr.append((src_url, "NT_STATUS_HOST_UNREACHABLE", title))
-        elif idx:
-            prefix = rpath.rstrip("/") + "/" if rpath else None
-            for path, (sz,) in idx.items():
-                if self._cancel.is_set():
-                    break
-                if _SKIP_RE.search(os.path.basename(path)):
-                    continue
-                full_url = f"smb://{host}/{share}/{path}"
-                if _smb_path_excluded(full_url, excludes):
-                    continue
-                if not rpath:
-                    rel = path
-                elif prefix and path.startswith(prefix):
-                    rel = os.path.relpath(path, rpath)
-                else:
-                    rel = os.path.basename(path)
-                dst_path = str(_Path(dst) / str(rel))
-                lexp.append(_SmbJob(src_url=src_url, dst_path=dst_path, kind="smb_get", host=host, share=share,
-                                    remote_path=path, remote_size=sz, title=title))
+        elif kind == "missing":
+            lerr.append((src_url, "Path does not exist — skipping", title))
+        elif kind == "file":
+            if not _SKIP_RE.search(os.path.basename(rpath)) and not _smb_path_excluded(src_url, excludes):
+                lexp.append(_SmbJob(src_url=src_url, dst_path=dst, kind="smb_get", host=host, share=share,
+                                    remote_path=rpath, remote_size=size, title=title))
+        else: 
+            idx = self._cached_index(host, share, rpath)
+            if idx is None:
+                lerr.append((src_url, "NT_STATUS_HOST_UNREACHABLE", title))
+            elif idx:
+                prefix = rpath.rstrip("/") + "/" if rpath else None
+                for path, (sz,) in idx.items():
+                    if self._cancel.is_set():
+                        break
+                    if _SKIP_RE.search(os.path.basename(path)):
+                        continue
+                    full_url = f"smb://{host}/{share}/{path}"
+                    if _smb_path_excluded(full_url, excludes):
+                        continue
+                    if not rpath:
+                        rel = path
+                    elif prefix and path.startswith(prefix):
+                        rel = os.path.relpath(path, rpath)
+                    else:
+                        rel = os.path.basename(path)
+                    dst_path = str(_Path(dst) / str(rel))
+                    lexp.append(_SmbJob(src_url=src_url, dst_path=dst_path, kind="smb_get", host=host, share=share,
+                                        remote_path=path, remote_size=sz, title=title))
         with self._result_lock:
             expanded.extend(lexp)
             errors.extend(lerr)
