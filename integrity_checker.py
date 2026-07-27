@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
 from state import S
 from themes import current_theme, font_sz
 from ui_utils import _StandardKeysMixin, build_dialog_shell, clear_layout, size_to_screen
+from drive_utils import is_smb, is_ssh
 
 __all__ = ["IntegrityCheckerDialog"]
 
@@ -99,6 +100,14 @@ class _CheckWorker(QThread):
                 ok = False
 
             for src_raw, dst_raw in zip(sources, dests):
+                if is_smb(src_raw) or is_ssh(src_raw) or is_smb(dst_raw) or is_ssh(dst_raw):
+                    remote = src_raw if (is_smb(src_raw) or is_ssh(src_raw)) else dst_raw
+                    issues.append(
+                        f"Remote (SMB/SSH) path — not checked by Integrity Checker "
+                        f"(local-filesystem check only; this is not a failure): {remote}"
+                    )
+                    continue
+
                 src_info = _quick_scan(src_raw)
                 dst_info = _quick_scan(dst_raw)
 

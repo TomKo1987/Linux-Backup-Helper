@@ -358,7 +358,7 @@ class _SmbScanner:
                 except Exception as exc:
                     logger.error("SMB scan error: %s", exc)
                     with self._result_lock:
-                        errors.append(("smb scan error", str(exc)))
+                        errors.append(("smb scan error", str(exc), ""))
 
         return ([], []) if self._cancel.is_set() else (expanded, errors)
 
@@ -385,7 +385,7 @@ class _SmbScanner:
         lexp:   list = []
         lerr:   list = []
         if idx is None:
-            lerr.append((src_url, "NT_STATUS_HOST_UNREACHABLE"))
+            lerr.append((src_url, "NT_STATUS_HOST_UNREACHABLE", title))
         elif idx:
             prefix = rpath.rstrip("/") + "/" if rpath else None
             for path, (sz,) in idx.items():

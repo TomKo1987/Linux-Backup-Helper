@@ -127,6 +127,13 @@ def _rsync_excludes(src: str, raw_excludes: "list | None") -> "list | None":
     return patterns + skip
 
 
+def _bump_count(tc: dict, title: str, idx: int) -> None:
+    counts = tc.get(title)
+    if counts is None:
+        counts = tc[title] = [0, 0, 0, 0]
+    counts[idx] += 1
+
+
 def _do_copy(entry, cancel: threading.Event, ok_l: list, sk_l: list, er_l: list, tc: dict) -> None:
 
     src, dst, title, st = entry
@@ -137,13 +144,13 @@ def _do_copy(entry, cancel: threading.Event, ok_l: list, sk_l: list, er_l: list,
         status, aux, sz = "error", str(exc), 0
     if status == "ok":
         ok_l.append((src, dst, sz))
-        if title: tc.setdefault(title, [0, 0, 0, 0])[0] += 1
+        if title: _bump_count(tc, title, 0)
     elif status == "skip":
         sk_l.append((src, aux or "Up to date", sz))
-        if title: tc.setdefault(title, [0, 0, 0, 0])[1] += 1
+        if title: _bump_count(tc, title, 1)
     else:
         er_l.append((src, aux, 0))
-        if title: tc.setdefault(title, [0, 0, 0, 0])[2] += 1
+        if title: _bump_count(tc, title, 2)
 
 def _is_up_to_date_local(dst: str, src_st: "os.stat_result") -> bool:
     try:
@@ -359,7 +366,9 @@ class _EntryTracker:
                     continue
                 n_ok, n_skip, n_err = vals[0], vals[1], vals[2]
                 n_del = vals[3] if len(vals) > 3 else 0
-                c = self._counts.setdefault(title, [0, 0, 0, 0])
+                c = self._counts.get(title)
+                if c is None:
+                    c = self._counts[title] = [0, 0, 0, 0]
                 c[0] += n_ok
                 c[1] += n_skip
                 c[2] += n_err
@@ -609,7 +618,7 @@ class CopyWorker(QThread):
             local_items: list[tuple[str, str, str]] = []
             local_not_found: list = []
             smb_expanded: list[_SmbJob] = []
-            smb_errors: list[tuple[str, str]] = []
+            smb_errors: list[tuple[str, str, str]] = []
             _guest_box: list[bool] = [False]
 
             skip_titles = self._run_pre_hooks(local_tasks + ssh_tasks + smb_tasks) if not self._cancel.is_set() else set()
@@ -629,8 +638,9 @@ class CopyWorker(QThread):
                     smb_errors.extend(
                         (s_ if is_smb(s_) else d_,
                          "'smbclient' not found — install the Samba client tools (e.g. package "
-                         "'smbclient' / 'samba-client') to enable SMB backups")
-                        for s_, d_, *_ in smb_tasks
+                         "'smbclient' / 'samba-client') to enable SMB backups",
+                         t_)
+                        for s_, d_, t_, *_ in smb_tasks
                     )
                     return
                 ur, af, _guest = self._probe_shares(smb_tasks, user, pw)
@@ -1137,7 +1147,7 @@ class CopyWorker(QThread):
             h, sh, _ = _parse_smb(s if is_smb(s) else d)
             if (h, sh) in dead_shares:
                 reason = ("NT_STATUS_HOST_UNREACHABLE" if (h, sh) in unreachable_shares else "Authentication failed")
-                errors.append((s if is_smb(s) else d, reason))
+                errors.append((s if is_smb(s) else d, reason, t))
             else:
                 alive.append((s, d, t, excl))
         return alive, errors
@@ -1190,7 +1200,13 @@ class CopyWorker(QThread):
         cancel = self._cancel
 
         if smb_errors:
-            flusher.push(er=[(src, err, 0) for src, err in smb_errors], force=True)
+            flusher.push(er=[(src, err, 0) for src, err, _title in smb_errors], force=True)
+            err_counts: dict = {}
+            for _src, _err, _title in smb_errors:
+                if _title:
+                    err_counts.setdefault(_title, [0, 0, 0, 0])[2] += 1
+            if err_counts:
+                tracker.batch_update(err_counts)
 
         if not smb_expanded or cancel.is_set():
             return

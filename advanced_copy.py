@@ -271,11 +271,15 @@ def apply_advanced_options(tasks: list[tuple], *, interactive: bool = True, pare
     for src_list, dst_list, title, excl, pre_hooks, post_hooks, details in tasks:
         details = details or {}
         versioned = bool(details.get("versioned_archive")) and not is_restore
-        mirror = bool(details.get("mirror_delete")) and not versioned
+        mirror = bool(details.get("mirror_delete")) and not versioned and not is_restore
         if is_restore and details.get("versioned_archive"):
             logger.info(
                 "Versioned archive [%s]: skipped during Restore (only applies to the "
                 "backup destination) — restoring directly instead", title)
+        if is_restore and details.get("mirror_delete") and not details.get("versioned_archive"):
+            logger.info(
+                "Mirror delete [%s]: skipped during Restore (only applies to the "
+                "backup destination) — restoring without deleting local files", title)
         confirm_del = bool(details.get("confirm_before_delete", True))
         try:
             max_versions = int(details.get("max_versions") or 0)
@@ -314,6 +318,8 @@ def apply_advanced_options(tasks: list[tuple], *, interactive: bool = True, pare
                 if s_local and d_local:
                     s_abs = os.path.abspath(os.path.expanduser(s_str))
                     d_abs = os.path.abspath(os.path.expanduser(d_str))
+                    if os.path.isfile(s_abs):
+                        continue
                     if not os.path.isdir(s_abs):
                         logger.warning(
                             "Mirror delete [%s]: source %r missing — skipping cleanup for safety",

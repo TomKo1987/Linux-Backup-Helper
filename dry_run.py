@@ -101,6 +101,10 @@ class _DryRunWorker(QThread):
             else:
                 excl_set = set()
 
+            if src_p.is_file() or src_p.is_symlink():
+                self._classify_file(src_p, src_p.name, dst_p, to_copy, to_skip, errors)
+                continue
+
             for dirpath, dirs, files in os.walk(src_p, followlinks=False):
                 if self._cancel.is_set():
                     break
@@ -122,39 +126,7 @@ class _DryRunWorker(QThread):
                     except ValueError:
                         continue
                     dst_file = dst_p / rel
-
-                    if os.path.islink(src_file_str):
-                        try:
-                            target = os.readlink(src_file_str)
-                        except OSError as e:
-                            errors.append((str(rel), str(e)))
-                            continue
-
-                        dst_file_str = str(dst_file)
-                        if not os.path.lexists(dst_file_str):
-                            to_copy.append((str(rel), "new"))
-                        elif _is_symlink_up_to_date(dst_file_str, target):
-                            to_skip.append(str(rel))
-                        else:
-                            to_copy.append((str(rel), "modified"))
-                        continue
-
-                    try:
-                        src_stat = src_file.stat()
-                    except OSError as e:
-                        errors.append((str(rel), str(e)))
-                        continue
-
-                    if not dst_file.exists():
-                        to_copy.append((str(rel), "new"))
-                    else:
-                        try:
-                            if _is_up_to_date_local(str(dst_file), src_stat):
-                                to_skip.append(str(rel))
-                            else:
-                                to_copy.append((str(rel), "modified"))
-                        except OSError as e:
-                            errors.append((str(rel), str(e)))
+                    self._classify_file(src_file, str(rel), dst_file, to_copy, to_skip, errors)
 
         return dict(
             title=title,
@@ -163,6 +135,50 @@ class _DryRunWorker(QThread):
             errors=errors,
             src_total=len(to_copy) + len(to_skip),
         )
+
+    @staticmethod
+    def _classify_file(
+            src_file: Path,
+        rel_name: str,
+        dst_file: Path,
+        to_copy: list[tuple[str, str]],
+        to_skip: list[str],
+        errors: list[tuple[str, str]],
+    ) -> None:
+        src_file_str = str(src_file)
+
+        if os.path.islink(src_file_str):
+            try:
+                target = os.readlink(src_file_str)
+            except OSError as e:
+                errors.append((rel_name, str(e)))
+                return
+
+            dst_file_str = str(dst_file)
+            if not os.path.lexists(dst_file_str):
+                to_copy.append((rel_name, "new"))
+            elif _is_symlink_up_to_date(dst_file_str, target):
+                to_skip.append(rel_name)
+            else:
+                to_copy.append((rel_name, "modified"))
+            return
+
+        try:
+            src_stat = src_file.stat()
+        except OSError as e:
+            errors.append((rel_name, str(e)))
+            return
+
+        if not dst_file.exists():
+            to_copy.append((rel_name, "new"))
+        else:
+            try:
+                if _is_up_to_date_local(str(dst_file), src_stat):
+                    to_skip.append(rel_name)
+                else:
+                    to_copy.append((rel_name, "modified"))
+            except OSError as e:
+                errors.append((rel_name, str(e)))
 
 
 def _style_chip_tabs(chips: list[QPushButton], colors: list[str], active_idx: int) -> None:
