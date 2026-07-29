@@ -300,9 +300,9 @@ class _DiskInfoBar(QFrame):
         bar = _bar(info["fraction_used"], bar_width)
 
         if pct > 90:
-            bar_color = "#ff5555"
+            bar_color = t["error"]
         elif pct > 70:
-            bar_color = "#ffb86c"
+            bar_color = t["warning"]
         else:
             bar_color = t["accent"]
 
@@ -698,7 +698,7 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
         t = current_theme()
         fg = t["text"]
         acc = t["accent"]
-        warn_col = "#ffb86c"
+        warn_col = t["warning"]
 
         sorted_r = self._sorted_results()
 

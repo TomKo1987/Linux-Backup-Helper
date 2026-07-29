@@ -5,6 +5,7 @@ import subprocess
 import threading
 import time
 from functools import lru_cache
+from os.path import abspath, expanduser
 
 from PyQt6.QtWidgets import QMessageBox
 
@@ -237,6 +238,51 @@ def is_ssh(path: str) -> bool:
         return True
     m = _SSH_HOST_RE.match(path)
     return bool(m and m.group(1))
+
+
+_SSH_USER_HOST_RE = re.compile(r"^(?:(?P<user>[^/@\s]+)@)?(?P<host>[^/@\s:]+):(?!//)(?P<rpath>.+)$")
+
+
+def to_browsable_uri(path: str) -> str:
+    p = (path or "").strip()
+    if not p:
+        return p
+    if p.startswith("cifs://"):
+        return "smb://" + p[len("cifs://"):]
+    if p.startswith("smb://"):
+        return p
+    if p.startswith("ssh://"):
+        return "sftp://" + p[len("ssh://"):]
+    m = _SSH_USER_HOST_RE.match(p)
+    if m:
+        user  = m.group("user")
+        host  = m.group("host")
+        rpath = m.group("rpath")
+        if not rpath.startswith("/"):
+            rpath = "/" + rpath
+        return f"sftp://{(user + '@') if user else ''}{host}{rpath}"
+    return abspath(expanduser(p))
+
+
+def open_in_file_manager(path: str) -> tuple[bool, str]:
+    target = to_browsable_uri(path)
+    if not target:
+        return False, "No path given."
+    if not is_smb(target) and not target.startswith("sftp://"):
+        if os.path.isfile(target):
+            target = os.path.dirname(target) or target
+        elif not os.path.exists(target):
+            return False, f"Path does not exist:\n{target}"
+    try:
+        subprocess.Popen(
+            ["xdg-open", target],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        logger.warning("open_in_file_manager xdg-open: %s", exc)
+        return False, str(exc)
+    return True, ""
 
 
 def build_rsync_cmd(src: str, dst: str, *, delete: bool = False, exclude: list[str] | None = None,

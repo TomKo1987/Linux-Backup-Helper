@@ -1,14 +1,14 @@
 import os
 
-from PyQt6.QtCore import QEvent, QObject, Qt
+from PyQt6.QtCore import QEvent, QObject, QPoint, QPointF, Qt
 from PyQt6.QtGui import QColor, QFont, QFontMetrics
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
-    QLabel, QLineEdit, QListWidget, QMessageBox, QPlainTextEdit, QPushButton, QSizePolicy,
-    QSpinBox, QSplitter, QVBoxLayout, QWidget,
+    QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit,
+    QPushButton, QSizePolicy, QSpinBox, QSplitter, QVBoxLayout, QWidget,
 )
 
-from state import RESTART_DIALOG, S, _HOME, _norm_paths, apply_replacements
+from state import RESTART_DIALOG, S, _HOME, _norm_paths, apply_replacements, logger
 from themes import apply_tooltip, current_theme, font_scale
 from ui_utils import block_set, browse_field, hdr_label, ok_cancel_buttons, sep
 
@@ -153,7 +153,7 @@ class ExcludeDialog(QDialog):
             if is_dir:
                 nav_btn = QPushButton("▶")
                 nav_btn.setFixedSize(28, 24)
-                nav_btn.setToolTip(f"Browse into {name}")
+                apply_tooltip(nav_btn, f"Browse into {name}")
                 nav_btn.setStyleSheet(
                     f"QPushButton{{font-size:{fs['sm']}px;color:{t['accent']};"
                     f"background:{t['bg3']};border:1px solid {t['bg3']};border-radius:3px;}}"
@@ -386,7 +386,7 @@ class EntryDialog(QDialog):
         title_row.addStretch()
         layout_btn = QPushButton("Side-by-Side View" if self.stacked else "Stacked View")
         layout_btn.setFixedHeight(28)
-        layout_btn.setToolTip("Toggle between side-by-side and stacked layout")
+        apply_tooltip(layout_btn, "Toggle between side-by-side and stacked layout")
         layout_btn.clicked.connect(self._toggle_layout)
         title_row.addWidget(layout_btn)
         root.addLayout(title_row)
@@ -461,40 +461,62 @@ class EntryDialog(QDialog):
         self._src_list.itemDoubleClicked.connect(lambda item: self._edit_pair(self._src_list.row(item)))
         self._dst_list.itemDoubleClicked.connect(lambda item: self._edit_pair(self._dst_list.row(item)))
 
-        def _panel(_label: str, _lw: QListWidget) -> QWidget:
-            w  = QWidget()
+        self._src_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._dst_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._src_list.customContextMenuRequested.connect(
+            lambda pos: self._show_list_context_menu(self._src_list, True, pos))
+        self._dst_list.customContextMenuRequested.connect(
+            lambda pos: self._show_list_context_menu(self._dst_list, False, pos))
+
+        def _panel(_label: str, _lw: QListWidget, _is_source: bool) -> QWidget:
+            w = QWidget()
             vl = QVBoxLayout(w)
             vl.setContentsMargins(0, 0, 0, 0)
             vl.setSpacing(4)
+            hl = QHBoxLayout()
+            hl.setContentsMargins(0, 0, 0, 0)
+            hl.setSpacing(6)
             lbl = QLabel(_label)
             lbl.setStyleSheet(f"font-weight:bold;font-size:{fs['lg']}px;color:{t['accent']};padding:1px 0;")
-            vl.addWidget(lbl)
+            hl.addWidget(lbl)
+            hl.addStretch(1)
+            fm_btn = QPushButton("📂 Open in file manager")
+            apply_tooltip(fm_btn, f"Open the selected {_label.lower()} path in the default file manager", wrap=False)
+            fm_btn.setStyleSheet(f"font-size:{fs['md']}px;")
+            fm_btn.clicked.connect(lambda _=False, is_src=_is_source: self._open_in_file_manager(is_src))
+            if _is_source:
+                self._src_fm_btn = fm_btn
+            else:
+                self._dst_fm_btn = fm_btn
+            hl.addWidget(fm_btn)
+            vl.addLayout(hl)
             vl.addWidget(_lw, 1)
             return w
 
         orientation    = Qt.Orientation.Vertical if self.stacked else Qt.Orientation.Horizontal
         self._splitter = QSplitter(orientation)
         self._splitter.setChildrenCollapsible(False)
-        self._splitter.addWidget(_panel("Source",      self._src_list))
-        self._splitter.addWidget(_panel("Destination", self._dst_list))
+        self._splitter.addWidget(_panel("Source",      self._src_list, True))
+        self._splitter.addWidget(_panel("Destination", self._dst_list, False))
         self._splitter.setSizes([10000, 10000])
         root.addWidget(self._splitter, 1)
+        self._update_fm_buttons()
 
         root.addWidget(sep())
         tb = QHBoxLayout()
         tb.setSpacing(6)
         for label, tip, fn in [
-            ("➕ Add Pair",  "Add a new source/destination pair",                    self._add_pair),
-            ("✏️ Edit",      "Edit selected pair (or double-click)",                  self._edit_selected),
-            ("🚫 Exclude",   "Exclude files/subdirs within the selected source dir",  self._exclude_selected),
-            ("🛠 Advanced",  "Configure advanced backup/restore behaviour (mirror "
-                            "delete, versioned archives) for this entry",           self._open_advanced),
+            ("➕ Add Pair", "Add a new source/destination pair",                     self._add_pair),
+            ("✏️ Edit",     "Edit selected pair (or double-click)",                  self._edit_selected),
+            ("🚫 Exclude",  "Exclude files/subdirs within the selected source dir",  self._exclude_selected),
+            ("🛠 Advanced", "Configure advanced backup/restore behaviour (mirror "
+                            "delete, versioned archives) for this entry",            self._open_advanced),
             ("🗑 Remove",    "Remove selected pair",                                  self._remove_selected),
             ("▲ Move Up",   "Move selected pair up",                                 self._move_up),
             ("▼ Move Down", "Move selected pair down",                               self._move_down),
         ]:
             b = QPushButton(label)
-            b.setToolTip(tip)
+            apply_tooltip(b, tip)
             b.setFixedHeight(32)
             b.setMinimumWidth(110)
             b.clicked.connect(fn)
@@ -522,7 +544,7 @@ class EntryDialog(QDialog):
 
         root.addWidget(sep())
         hooks_btn = QPushButton("🪝 Hooks…")
-        hooks_btn.setToolTip("Configure pre/post shell hooks for this entry")
+        apply_tooltip(hooks_btn, "Configure pre/post shell hooks for this entry")
         hooks_btn.clicked.connect(self._edit_hooks)
 
         bot_row = QHBoxLayout()
@@ -544,16 +566,67 @@ class EntryDialog(QDialog):
         self._src_list.clear()
         self._dst_list.clear()
         expand = os.path.expanduser
-        fmt    = expand if self._show_full_paths else (lambda p: apply_replacements(expand(p)))
+        fmt = expand if self._show_full_paths else (lambda p: apply_replacements(expand(p)))
         for src, dst in self.pairs:
-            self._src_list.addItem(str(fmt(src)))
-            self._dst_list.addItem(str(fmt(dst)))
+            src_item = QListWidgetItem(str(fmt(src)))
+            self._src_list.addItem(src_item)
+            dst_item = QListWidgetItem(str(fmt(dst)))
+            self._dst_list.addItem(dst_item)
+
         self._src_hint.setVisible(self._src_list.count() == 0)
         self._src_hint.setGeometry(self._src_list.rect())
+        self._update_fm_buttons()
 
     def _on_full_paths_toggled(self, checked: bool) -> None:
         self._show_full_paths = checked
         self._populate_lists()
+
+    def _update_fm_buttons(self) -> None:
+        has_pairs = bool(self.pairs)
+        if hasattr(self, "_src_fm_btn"):
+            self._src_fm_btn.setEnabled(has_pairs)
+        if hasattr(self, "_dst_fm_btn"):
+            self._dst_fm_btn.setEnabled(has_pairs)
+
+    def _show_list_context_menu(self, lw: QListWidget, is_source: bool, pos: QPoint | QPointF) -> None:
+        point = pos.toPoint() if isinstance(pos, QPointF) else pos
+        item = lw.itemAt(point)
+        if item is None:
+            return
+        row = lw.row(item)
+        if not (0 <= row < len(self.pairs)):
+            return
+        lw.setCurrentRow(row)
+
+        menu     = QMenu(self)
+        act_fm   = menu.addAction("📂  Open in File Manager")
+        act_copy = menu.addAction("📋  Copy full path")
+        chosen   = menu.exec(lw.mapToGlobal(point))
+        if chosen == act_fm:
+            self._open_in_file_manager(is_source)
+        elif chosen == act_copy:
+            raw = self.pairs[row][0 if is_source else 1]
+            clipboard = QApplication.clipboard()
+            if clipboard is not None:
+                clipboard.setText(os.path.expanduser(raw.strip()))
+
+    def _open_in_file_manager(self, is_source: bool) -> None:
+        row = self._src_list.currentRow()
+        if row < 0:
+            row = self._dst_list.currentRow()
+        if not (0 <= row < len(self.pairs)):
+            QMessageBox.information(self, "Open in File Manager", "Please select a pair first.")
+            return
+        raw = self.pairs[row][0 if is_source else 1].strip()
+        if not raw:
+            side = "source" if is_source else "destination"
+            QMessageBox.information(self, "Open in File Manager", f"This pair has no {side} path set.")
+            return
+        from drive_utils import open_in_file_manager
+        ok, err = open_in_file_manager(raw)
+        if not ok:
+            logger.warning("EntryDialog open_in_file_manager: %s", err)
+            QMessageBox.warning(self, "Open in File Manager", f"Could not open file manager:\n{err}")
 
     @staticmethod
     def _set_row_colours(lw: QListWidget, row: int, bg: QColor, fg: QColor) -> None:

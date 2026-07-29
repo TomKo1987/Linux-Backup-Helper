@@ -1224,10 +1224,15 @@ class CopyWorker(QThread):
             except Exception as exc:
                 logger.error("SMB share error //%s/%s: %s", host, share, exc)
                 er_w = []
+                _err_counts: dict = {}
                 for _job in share_groups[(host, share)]["get"] + share_groups[(host, share)]["put"]:
                     src = (_job.src_url if _job.kind == "smb_put" else f"smb://{host}/{share}/{_job.remote_path}")
                     er_w.append((src, f"Share processing crashed: {exc}", 0))
+                    if _job.title:
+                        _err_counts.setdefault(_job.title, [0, 0, 0, 0])[2] += 1
                 flusher.push(er=er_w)
+                if _err_counts:
+                    tracker.batch_update(_err_counts)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=_SMB_WORKERS) as pool:
             futs = [pool.submit(run_share, h, sh) for h, sh in share_groups if not cancel.is_set()]

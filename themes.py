@@ -4,7 +4,7 @@ import threading as _threading
 from functools import lru_cache
 
 from PyQt6.QtCore import Qt, QEvent, QObject
-from PyQt6.QtWidgets import QApplication, QDialog, QVBoxLayout, QScrollArea, QLabel, QPushButton
+from PyQt6.QtWidgets import QApplication, QDialog, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget
 
 from state import S, logger, invalidate_tooltip_cache
 
@@ -512,8 +512,9 @@ def apply_tooltip(widget, text: str, max_width: int | None = None, *, wrap: bool
     if not wrap or is_preformatted_table:
         wrapped = f"<div style='white-space:nowrap;'>{text}</div>"
         widget.setToolTip(wrapped)
-        widget.setToolTipDuration(600_000)
-        widget.setCursor(Qt.CursorShape.WhatsThisCursor)
+        if isinstance(widget, QWidget):
+            widget.setToolTipDuration(600_000)
+            widget.setCursor(Qt.CursorShape.WhatsThisCursor)
         return
 
     chars_per_line = max(40, max_width // 8)
@@ -522,19 +523,20 @@ def apply_tooltip(widget, text: str, max_width: int | None = None, *, wrap: bool
     is_long = approx_lines > _TOOLTIP_LONG_LINE_THRESHOLD
 
     hover_text = text
-    if is_long:
+    if is_long and isinstance(widget, QWidget):
         hover_text += "<br><br><i>(Click for full text in a scrollable window)</i>"
 
     wrapped = f"<div style='width:{max_width}px; white-space:normal;'>{hover_text}</div>"
     widget.setToolTip(wrapped)
-    widget.setToolTipDuration(600_000)
-    widget.setCursor(Qt.CursorShape.WhatsThisCursor)
 
-    if is_long:
-        full_html = f"<div style='width:{max_width}px; white-space:normal;'>{text}</div>"
-        click_filter = _TooltipClickFilter(widget, full_html, max_width)
-        widget.installEventFilter(click_filter)
-        widget._tooltip_click_filter = click_filter
+    if isinstance(widget, QWidget):
+        widget.setToolTipDuration(600_000)
+        widget.setCursor(Qt.CursorShape.WhatsThisCursor)
+        if is_long:
+            full_html = f"<div style='width:{max_width}px; white-space:normal;'>{text}</div>"
+            click_filter = _TooltipClickFilter(widget, full_html, max_width)
+            widget.installEventFilter(click_filter)
+            widget._tooltip_click_filter = click_filter
 
 
 @lru_cache(maxsize=16)
