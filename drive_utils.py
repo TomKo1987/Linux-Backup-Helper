@@ -2,6 +2,7 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 import threading
 import time
 from functools import lru_cache
@@ -278,11 +279,24 @@ def open_in_file_manager(path: str) -> tuple[bool, str]:
             ["xdg-open", target],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             start_new_session=True,
+            env=_clean_subprocess_env(),
         )
     except OSError as exc:
         logger.warning("open_in_file_manager xdg-open: %s", exc)
         return False, str(exc)
     return True, ""
+
+
+def _clean_subprocess_env() -> dict:
+    env = os.environ.copy()
+    if getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS"):
+        for var in ("LD_LIBRARY_PATH", "LD_PRELOAD"):
+            orig = env.pop(f"{var}_ORIG", None)
+            if orig is not None:
+                env[var] = orig
+            else:
+                env.pop(var, None)
+    return env
 
 
 def build_rsync_cmd(src: str, dst: str, *, delete: bool = False, exclude: list[str] | None = None,
