@@ -15,6 +15,7 @@ from state import apply_replacements, logger
 from themes import current_theme, font_sz
 from ui_utils import _StandardKeysMixin, size_to_screen
 
+from backup_lock import acquire_backup_lock, backup_lock_holder_pid, release_backup_lock
 from copy_worker_core import _check_destination_space, _format_unit, _cached_mono_style, _notify
 from copy_worker import CopyWorker, _NF_MARK
 
@@ -701,6 +702,19 @@ class CopyDialog(_StandardKeysMixin, QDialog):
                 pre_deleted: "list | None" = None, pre_errors: "list | None" = None) -> None:
         super().__init__(parent)
         self.setWindowTitle(operation)
+
+        self._lock_denied = not acquire_backup_lock()
+        if self._lock_denied:
+            holder = backup_lock_holder_pid()
+            msg = ("Another backup is already running (either from the main window "
+                   "or a scheduled headless backup)"
+                   + (f" — process PID {holder}." if holder else ".")
+                   + "\n\nPlease wait for it to finish before starting a new one.")
+            logger.warning("CopyDialog: refused to start, backup lock already held (pid=%s)", holder)
+            QTimer.singleShot(0, lambda: (QMessageBox.warning(self, "Backup Already Running", msg), self.reject()))
+            self.worker = None
+            return
+
         self._t = current_theme()
         t       = self._t
 
@@ -934,6 +948,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
     def _on_done(self, c, s, e, d, cancelled) -> None:
         self._tick.stop()
         elapsed = self._final_elapsed = self.timer.elapsed() // 1000
+        release_backup_lock()
 
         try:
             from history import append_history
@@ -973,7 +988,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         for w in (self._w_copied, self._w_skipped, self._w_deleted, self._w_errors):
             w.flush_final()
 
-        if self._cancel_connected:
+        if self._cancel_connected and self.worker is not None:
             try:
                 self.cancel_btn.clicked.disconnect(self.worker.cancel)
             except RuntimeError:
@@ -1026,10 +1041,14 @@ class CopyDialog(_StandardKeysMixin, QDialog):
             QTimer.singleShot(0, _show_popup)
 
     def closeEvent(self, event) -> None:
+        if self.worker is None:
+            super().closeEvent(event)
+            return
         if self.worker.isRunning():
             self.worker.cancel()
             self.cancel_btn.setText("⏹ Cancelling…")
             self.cancel_btn.setEnabled(False)
             event.ignore()
         else:
+            release_backup_lock()
             super().closeEvent(event)

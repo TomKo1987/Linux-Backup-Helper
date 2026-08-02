@@ -543,6 +543,10 @@ class _ShareProcessor:
         if self._cancel.is_set():
             return
 
+        get_jobs, unsafe_get_errors = self._split_unsafe(get_jobs, is_get=True)
+        put_jobs, unsafe_put_errors = self._split_unsafe(put_jobs, is_get=False)
+        unsafe_errors = unsafe_get_errors + unsafe_put_errors
+
         sk_immediate: list = []
         get_transfer: list = []
 
@@ -569,6 +573,9 @@ class _ShareProcessor:
                     sk_immediate.append((j.src_url, "Up to date"))
                 else:
                     put_transfer.append(j)
+
+        if unsafe_errors and not self._cancel.is_set():
+            self._record([], [], unsafe_errors)
 
         for i in range(0, len(sk_immediate), _SMB_CHUNK):
             if self._cancel.is_set():
@@ -607,6 +614,18 @@ class _ShareProcessor:
                     max_workers=min(4, len(put_batches) or 1)) as _ppool:
                 pfuts = [_ppool.submit(_run_put_batch, b) for b in put_batches if not self._cancel.is_set()]
                 _run_futures(pfuts, self._cancel, "smb put batch")
+
+    @staticmethod
+    def _split_unsafe(jobs: list, *, is_get: bool) -> "tuple[list, list]":
+        safe: list = []
+        errors: list = []
+        for j in jobs:
+            if '"' in j.remote_path or (not is_get and '"' in j.src_url):
+                url = f"smb://{j.host}/{j.share}/{j.remote_path}" if is_get else j.src_url
+                errors.append((url, 'Skipped: filename contains a double quote (") which smbclient cannot safely escape'))
+            else:
+                safe.append(j)
+        return safe, errors
 
     def _remote_index(self, put_jobs: list) -> dict:
         needed = {(os.path.dirname(j.remote_path).replace("\\", "/") or "").split("/")[0] for j in put_jobs}

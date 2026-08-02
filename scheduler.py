@@ -91,7 +91,7 @@ def install_timer(interval_key: str, backup_headers: list[str], *, on_calendar: 
         "\n"
         "[Service]\n"
         "Type=oneshot\n"
-        f"ExecStart={python_exe} \"{exe_path}\" --headless-backup-b64 \"{headers_b64}\"\n"
+        f"ExecStart=\"{python_exe}\" \"{exe_path}\" --headless-backup-b64 \"{headers_b64}\"\n"
     )
 
     timer = (

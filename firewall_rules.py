@@ -89,8 +89,32 @@ def build_ufw_command(rule: dict) -> list[str]:
     return cmd
 
 
-def build_ufw_commands(rules: list[dict]) -> list[list[str]]:
+def _rules_cover_ssh(rules: list[dict]) -> bool:
+    for rule in rules:
+        norm = normalize_rule(rule)
+        if norm["action"] != "allow" or norm["direction"] != "in":
+            continue
+        port = norm["port"]
+        if not port:
+            return True
+        if is_port_range(port):
+            try:
+                lo, hi = (int(p) for p in port.split(":", 1))
+            except ValueError:
+                continue
+            if lo <= 22 <= hi:
+                return True
+        elif port.strip() == "22":
+            return True
+    return False
+
+
+def build_ufw_commands(rules: list[dict], *, ensure_ssh_allowed: bool = True) -> list[list[str]]:
     cmds = [["sudo", "ufw", "default", "deny", "incoming"], ["sudo", "ufw", "default", "allow", "outgoing"]]
+
+    if ensure_ssh_allowed and not _rules_cover_ssh(rules):
+        cmds.append(["sudo", "ufw", "allow", "in", "22/tcp", "comment", "Auto-added: prevent SSH lockout"])
+
     for rule in rules:
         cmds.append(build_ufw_command(rule))
     cmds.extend([["sudo", "ufw", "--force", "enable"], ["sudo", "ufw", "reload"]])
@@ -128,8 +152,13 @@ def build_firewalld_rich_rule(rule: dict) -> str | None:
     return f'rule family="{source_family(rule["source"])}"{src}{port}{proto} {action}{limit_clause}'
 
 
-def build_firewalld_commands(rules: list[dict]) -> list[list[str]]:
+def build_firewalld_commands(rules: list[dict], *, ensure_ssh_allowed: bool = True) -> list[list[str]]:
     cmds = [["sudo", "firewall-cmd", "--set-default-zone=drop"]]
+
+    if ensure_ssh_allowed and not _rules_cover_ssh(rules):
+        cmds.append(["sudo", "firewall-cmd", "--zone=drop", "--add-service=ssh", "--permanent"])
+        cmds.append(["sudo", "firewall-cmd", "--zone=drop", "--add-service=ssh"])
+
     for rule in rules:
         action_val = normalize_rule(rule)["action"]
 

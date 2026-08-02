@@ -309,7 +309,7 @@ def build_rsync_cmd(src: str, dst: str, *, delete: bool = False, exclude: list[s
         cmd.append("--dry-run")
     for ex in (exclude or []):
         cmd += [f"--exclude={ex}"]
-    cmd += [src, dst]
+    cmd += ["--", src, dst]
     return cmd
 
 
