@@ -22,12 +22,12 @@ class ScanVerifyDialog(_StandardKeysMixin, QDialog):
         self._size_to_screen()
 
     def closeEvent(self, event) -> None:
-        for tab in (getattr(self, "_capture_tab", None), getattr(self, "_verify_tab", None)):
+        for tab in (getattr(self, "_capture_tab", None), getattr(self, "_verify_tab", None),
+                   getattr(self, "_packagediff_tab", None)):
             if tab is not None:
                 worker = getattr(tab, "_worker", None)
                 if isinstance(worker, QThread) and worker.isRunning():
-                    worker.quit()
-                    worker.wait(2000)
+                    worker.wait()
         super().closeEvent(event)
 
     _MIN_W, _MIN_H = 1250, 850
@@ -73,9 +73,10 @@ class ScanVerifyDialog(_StandardKeysMixin, QDialog):
         tabs = QTabWidget()
         self._capture_tab = _CaptureTab(self._helper)
         self._verify_tab = _VerifyTab(self._helper)
+        self._packagediff_tab = _PackageDiffTab(self._helper)
         tabs.addTab(self._capture_tab, "🔍  System Scan")
         tabs.addTab(self._verify_tab, "✅  Verify Profile")
-        tabs.addTab(_PackageDiffTab(self._helper), "📦  Package Diff")
+        tabs.addTab(self._packagediff_tab, "📦  Package Diff")
         lay.addWidget(tabs, 1)
 
         close_btn = QPushButton("Close")

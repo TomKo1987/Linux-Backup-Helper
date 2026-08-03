@@ -27,6 +27,8 @@ The idea behind this project is to automatically configure a newly installed Lin
 - **Backup History** — browse past backup runs, with CSV/JSON export
 - **Backup Stats** — visual statistics dashboard for backup activity
 - **Quick Backup** — one-click backup of individual headers from the system tray menu
+- **SSH / Remote Backup Support** — copy files to and from remote hosts via SSH (rsync)
+- **Firewall Settings** — configure `ufw`/`firewalld` rules from within System Manager
 - System tray integration for background operation
 - Theming support with multiple built-in themes
 - Extensive error handling and user feedback
@@ -179,6 +181,41 @@ The **Profile Compare** dialog compares two backup profiles side by side — pac
 
 ---
 
+## SSH / Remote Backup Support
+
+Linux-Backup-Helper can copy files to and from a remote host over SSH, using `rsync` as the transfer engine. Source and/or destination paths can be given as a standard SSH/rsync target:
+
+```
+host:/rest-of-path
+```
+or
+```
+ssh://user@host/rest-of-path
+```
+
+**Example:**
+```
+192.168.0.53:/home/user/data
+```
+
+### Requirements for SSH support
+
+- `rsync` must be installed locally. The `install.sh` script will ask you whether to install it.
+- An SSH client and a working key-based or agent-based login to the remote host are recommended, since headless/scheduled backups cannot answer an interactive password prompt.
+- New SSH host keys are trusted automatically on first connection (`StrictHostKeyChecking=accept-new`); if a host's key later changes, the connection is refused rather than silently accepted, protecting against man-in-the-middle attacks after the first successful connection.
+
+---
+
+## Firewall Settings
+
+System Manager can configure a basic firewall (`ufw` or `firewalld`) as part of setting up a new system, based on a list of custom allow/deny rules you define.
+
+- **Default policy:** incoming traffic is denied by default, outgoing traffic is allowed by default; your custom rules are then applied on top.
+- **Built-in SSH-lockout protection:** if none of your rules explicitly allow incoming SSH (port 22), a rule allowing it is added automatically before the firewall is enabled, so that applying a fresh configuration over an SSH session cannot lock you out. This still applies even if you don't intend to use SSH — you can remove the auto-added rule afterwards once you've confirmed access another way.
+- Requires `ufw` or `firewalld` to be installed (see Requirements).
+
+---
+
 ## Samba / SMB Support
 
 Linux-Backup-Helper can copy files to and from Samba network shares. Source and/or destination paths must follow this pattern:
@@ -201,6 +238,13 @@ smb://192.168.0.53/share/mydata
 - On Debian/Ubuntu: `sudo apt install smbclient`
 - On Fedora: `sudo dnf install samba-client`
 - On openSUSE: `sudo zypper install samba-client`
+
+To **mount** an SMB share as a drive (rather than copying via `smbclient` directly), the `mount.cifs` helper from the `cifs-utils` package is required as well. The `install.sh` script will ask you whether to install `cifs-utils` alongside `smbclient`.
+
+- On Arch-based systems, `cifs-utils` is a dependency of `smbclient` and is installed automatically alongside it — no separate step needed.
+- On Debian/Ubuntu: `sudo apt install cifs-utils`
+- On Fedora: `sudo dnf install cifs-utils`
+- On openSUSE: `sudo zypper install cifs-utils`
 
 **On the remote machine** (the system hosting the share):
 
@@ -236,7 +280,7 @@ chmod +x install.sh
 ./install.sh
 ```
 
-The script installs `inxi` and all Python dependencies automatically. It will also ask whether you want to install `smbclient` for SMB/Samba share support.
+The script installs `inxi` and all Python dependencies automatically. It will also ask whether you want to install `rsync` (for SSH/remote backup support), `smbclient` and `cifs-utils` (for SMB/Samba share support, see [Requirements for SMB support](#requirements-for-smb-support)), and a firewall backend (`ufw`/`firewalld`, for the Firewall Settings feature).
 
 ### Install as a package (pip)
 
@@ -260,7 +304,7 @@ To uninstall:
 pip uninstall linux-backup-helper
 ```
 
-> **Note:** `inxi` and optionally `smbclient` still need to be installed separately via your system package manager (see Quick install above or the Requirements section).
+> **Note:** `inxi` and, optionally, `rsync`, `smbclient`, `cifs-utils`, and a firewall backend still need to be installed separately via your system package manager (see Quick install above or the Requirements section).
 
 ### Manual install
 
@@ -290,7 +334,12 @@ pyinstaller --onefile main.py
 - **OS:** Linux (tested on Arch Linux; should work on most distributions)
 - **Python:** 3.10+
 - **Python packages:** PyQt6, keyring, secretstorage
-- **System packages:** `inxi` (required), `smbclient` (optional — only needed for SMB/Samba share support)
+- **System packages:**
+  - `inxi` (required)
+  - `rsync` (optional — only needed for SSH/remote backups, see [SSH / Remote Backup Support](#ssh--remote-backup-support))
+  - `smbclient` (optional — only needed for SMB/Samba share support)
+  - `cifs-utils` (optional — only needed to mount SMB shares via `mount.cifs`; on Arch this comes automatically with `smbclient`)
+  - `ufw` or `firewalld` (optional — only needed for the Firewall Settings feature)
 
 ---
 

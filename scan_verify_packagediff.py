@@ -12,12 +12,14 @@ from scan_verify_helpers import (
 )
 
 
-def _get_package_diff(helper: "LinuxDistroHelper") -> tuple[list[str], list[str]]:
+def _get_package_diff(helper: "LinuxDistroHelper") -> tuple[list[str], list[str], str]:
+    error = ""
     try:
         basic, aur = helper.get_explicitly_installed_packages()
         explicit: set[str] = set(basic) | set(aur)
-    except RuntimeError:
+    except RuntimeError as exc:
         explicit = set()
+        error = str(exc)
 
     profile     = all_profile_pkg_names()
     sm_managed = _get_sm_managed_packages(helper)
@@ -30,7 +32,7 @@ def _get_package_diff(helper: "LinuxDistroHelper") -> tuple[list[str], list[str]
 
     not_tracked = sorted(p for p in explicit - profile if not _should_ignore(p))
     missing     = sorted(set(helper.filter_not_installed(sorted(profile))))
-    return not_tracked, missing
+    return not_tracked, missing, error
 
 
 class _PackageDiffWorker(QThread):
@@ -113,11 +115,10 @@ class _PackageDiffTab(QWidget):
         worker = _PackageDiffWorker(self._helper, self)
         self._worker = worker
         worker.done.connect(self._on_done)
-        worker.finished.connect(worker.deleteLater)
         worker.start()
 
     def _on_done(self, result: tuple) -> None:
-        not_tracked, missing = result
+        not_tracked, missing, error = result
 
         self._list_untracked.clear()
         for p in not_tracked:
@@ -131,7 +132,18 @@ class _PackageDiffTab(QWidget):
         self._list_missing_lbl.setText(
             f"✗  In profile, not installed ({len(missing)})")
 
-        self._status.setText(
-            f"{len(not_tracked)} not tracked  ·  {len(missing)} missing from the system")
+        if error:
+            t = current_theme()
+            self._status.setStyleSheet(f"color:{t['warning']};font-size:{font_sz(-1)}px;font-weight:bold;")
+            self._status.setText(
+                f"⚠  Installed-package detection unavailable ({error}) — "
+                f"only 'in profile, not installed' could be checked.")
+        else:
+            t = current_theme()
+            self._status.setStyleSheet(f"color:{t['text_dim']};font-size:{font_sz(-1)}px;")
+            self._status.setText(
+                f"{len(not_tracked)} not tracked  ·  {len(missing)} missing from the system")
         self._run_btn.setEnabled(True)
-        
+        win = self.window()
+        if hasattr(win, "fit_to_content"):
+            win.fit_to_content()

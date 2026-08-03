@@ -12,9 +12,7 @@ from PyQt6.QtWidgets import (
 
 from dotfiles_manager import first_path
 from linux_distro_helper import LinuxDistroHelper, USER_SHELLS, ARCH_KERNEL_VARIANTS
-from state import (
-    S, logger, active_pkg_names, active_dotfiles
-)
+from state import S, logger, active_pkg_names, active_dotfiles
 from themes import current_theme, font_sz
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
@@ -61,13 +59,13 @@ def _hash_v(p: Path) -> str | None:
 
 def _surface_mtime(path: Path) -> float:
     best = _mtime(path)
-    if path.is_dir():
-        try:
+    try:
+        if path.is_dir():
             for child in path.iterdir():
                 t = _mtime(child)
                 best = max(best, t)
-        except OSError:
-            pass
+    except OSError:
+        pass
     return best
 
 
@@ -236,18 +234,34 @@ def _service_is_active(name: str) -> bool:
         return False
 
 
+def _safe_exists(path: Path) -> bool:
+    try:
+        return path.exists()
+    except OSError:
+        return False
+
+
 def _collect_verify_paths() -> list[str]:
     paths: list[str] = []
     for sf in active_dotfiles():
         for key in ("source", "destination"):
             v = first_path(sf.get(key, "")).strip()
-            if v: paths.append(str(_ep(v)))
+            if not v:
+                continue
+            try:
+                paths.append(str(_ep(v)))
+            except OSError:
+                continue
     for entry in S.entries:
         if isinstance(entry, dict):
             for key in ("source", "destination"):
                 for p in entry.get(key, []):
-                    if p:
+                    if not p:
+                        continue
+                    try:
                         paths.append(str(_ep(p)))
+                    except OSError:
+                        continue
     return paths
 
 
@@ -256,12 +270,15 @@ def _check_dotfile_status(sf: dict) -> "dict | None":
     dst_raw = first_path(sf.get("destination", "")).strip()
     if not src_raw or not dst_raw:
         return None
-    src = _ep(src_raw)
-    dst = _ep(dst_raw)
+    try:
+        src = _ep(src_raw)
+        dst = _ep(dst_raw)
+    except OSError:
+        return {"name": src_raw, "status": "src_missing", "src": src_raw, "dst": dst_raw}
     name = src.name or str(src)
-    if not src.exists():
+    if not _safe_exists(src):
         status = "src_missing"
-    elif not dst.exists():
+    elif not _safe_exists(dst):
         status = "dst_missing"
     else:
         h_src, h_dst = _hash_v(src), _hash_v(dst)
@@ -352,48 +369,65 @@ class _VerifyWorker(QThread):
         res: dict = {"pkgs": [], "sys_files": [], "backups": [], "services": []}
 
         self.progress.emit("Checking packages…")
-        all_pkgs = ([(n, "basic") for n in active_pkg_names(S.basic_packages)] +
-                    [(n, "aur") for n in active_pkg_names(S.aur_packages)] +
-                    [(n, "specific") for n in active_pkg_names(S.specific_packages, is_specific=True)])
-        if all_pkgs:
-            names = [n for n, _ in all_pkgs]
-            missing = set(self._h.filter_not_installed(names))
-            res["pkgs"] = [{"name": n, "kind": k, "installed": n not in missing} for n, k in all_pkgs]
+        try:
+            all_pkgs = ([(n, "basic") for n in active_pkg_names(S.basic_packages)] +
+                        [(n, "aur") for n in active_pkg_names(S.aur_packages)] +
+                        [(n, "specific") for n in active_pkg_names(S.specific_packages, is_specific=True)])
+            if all_pkgs:
+                names = [n for n, _ in all_pkgs]
+                missing = set(self._h.filter_not_installed(names))
+                res["pkgs"] = [{"name": n, "kind": k, "installed": n not in missing} for n, k in all_pkgs]
+        except Exception as exc:
+            logger.warning("VerifyWorker: package check failed: %s", exc)
 
         self.progress.emit("Checking dotfiles…")
-        for sf in S.dotfiles:
-            if not isinstance(sf, dict) or sf.get("disabled"):
-                continue
-            entry = _check_dotfile_status(sf)
-            if entry is not None:
-                res["sys_files"].append(entry)
+        try:
+            for sf in S.dotfiles:
+                if not isinstance(sf, dict) or sf.get("disabled"):
+                    continue
+                entry = _check_dotfile_status(sf)
+                if entry is not None:
+                    res["sys_files"].append(entry)
+        except Exception as exc:
+            logger.warning("VerifyWorker: dotfile check failed: %s", exc)
 
         self.progress.emit("Checking backup entries…")
+        from drive_utils import is_smb, is_ssh
+
         for entry in S.entries:
             if not isinstance(entry, dict):
                 continue
-            issues: list[str] = []
-            from drive_utils import is_smb, is_ssh
+            try:
+                issues: list[str] = []
 
-            for s in entry.get("source", []):
-                if not is_smb(s) and not is_ssh(s) and not _ep(s).exists():
-                    issues.append(f"Source missing: {s}")
-            for d in entry.get("destination", []):
-                if not is_smb(d) and not is_ssh(d) and not _ep(d).exists():
-                    issues.append(f"Destination missing: {d}")
-            if not issues:
-                srcs, dsts = entry.get("source", []), entry.get("destination", [])
-                if srcs and dsts:
-                    src_t = max((_surface_mtime(_ep(s)) for s in srcs), default=0.0)
-                    dst_t = max((_surface_mtime(_ep(d)) for d in dsts), default=0.0)
-                    if src_t > dst_t + 2:
-                        issues.append("Backup may be outdated (source newer than destination)")
-            res["backups"].append({"header": entry.get("header", ""), "title": entry.get("title", ""),
-                                   "status": "issues" if issues else "ok", "issues": issues})
+                for s in entry.get("source", []):
+                    if not is_smb(s) and not is_ssh(s) and not _safe_exists(_ep(s)):
+                        issues.append(f"Source missing: {s}")
+                for d in entry.get("destination", []):
+                    if not is_smb(d) and not is_ssh(d) and not _safe_exists(_ep(d)):
+                        issues.append(f"Destination missing: {d}")
+                if not issues:
+                    srcs, dsts = entry.get("source", []), entry.get("destination", [])
+                    if srcs and dsts:
+                        src_t = max((_surface_mtime(_ep(s)) for s in srcs), default=0.0)
+                        dst_t = max((_surface_mtime(_ep(d)) for d in dsts), default=0.0)
+                        if src_t > dst_t + 2:
+                            issues.append("Backup may be outdated (source newer than destination)")
+                res["backups"].append({"header": entry.get("header", ""), "title": entry.get("title", ""),
+                                       "status": "issues" if issues else "ok", "issues": issues})
+            except Exception as exc:
+                logger.warning("VerifyWorker: backup entry check failed for '%s': %s",
+                               entry.get("title", ""), exc)
+                res["backups"].append({"header": entry.get("header", ""), "title": entry.get("title", ""),
+                                       "status": "issues",
+                                       "issues": [f"Could not check this entry: {exc}"]})
 
         self.progress.emit("Checking services…")
-        for op, svc in _get_active_sm_services(self._h):
-            res["services"].append({"op": op, "service": svc, "active": _service_is_active(svc)})
+        try:
+            for op, svc in _get_active_sm_services(self._h):
+                res["services"].append({"op": op, "service": svc, "active": _service_is_active(svc)})
+        except Exception as exc:
+            logger.warning("VerifyWorker: service check failed: %s", exc)
 
         self.done.emit(res)
 
