@@ -31,9 +31,11 @@ def _mtime(path: Path) -> float:
         return 0.0
 
 
-def _sha256(path: Path, limit: int = 8 * 1024 * 1024) -> str | None:
+def _sha256(path: Path, size: "int | None" = None, limit: int = 8 * 1024 * 1024) -> str | None:
     try:
-        if path.stat().st_size > limit:
+        if size is None:
+            size = path.stat().st_size
+        if size > limit:
             return None
         h = hashlib.sha256()
         with open(path, "rb") as f:
@@ -45,8 +47,8 @@ def _sha256(path: Path, limit: int = 8 * 1024 * 1024) -> str | None:
 
 
 @_lru_cache(maxsize=1024)
-def _sha256_cached(path_str: str, _mtime_ns: int, _size: int) -> str | None:
-    return _sha256(Path(path_str))
+def _sha256_cached(path_str: str, _mtime_ns: int, size: int) -> str | None:
+    return _sha256(Path(path_str), size=size)
 
 
 def _hash_v(p: Path) -> str | None:

@@ -605,7 +605,7 @@ class CopyWorker(QThread):
                     self.scan_finished.emit(0)
                 if active_ssh and not self._cancel.is_set():
                     self._copy_ssh_tasks(active_ssh, flusher, tracker)
-                self._run_post_hooks(local_tasks + ssh_tasks)
+                self._run_post_hooks(active_local + active_ssh)
                 flusher.flush()
                 tracker.emit_all(self.entry_status)
                 cancelled = self._cancel.is_set()

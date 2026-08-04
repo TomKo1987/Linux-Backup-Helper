@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
 )
 
 from linux_distro_helper import LinuxDistroHelper
-from state import S
+from state import S, logger
 from themes import current_theme, font_sz
 from ui_utils import _StandardKeysMixin
 
@@ -27,7 +27,8 @@ class ScanVerifyDialog(_StandardKeysMixin, QDialog):
             if tab is not None:
                 worker = getattr(tab, "_worker", None)
                 if isinstance(worker, QThread) and worker.isRunning():
-                    worker.wait()
+                    if not worker.wait(5000):
+                        logger.warning("ScanVerifyDialog: worker did not finish within timeout on close")
         super().closeEvent(event)
 
     _MIN_W, _MIN_H = 1250, 850

@@ -950,6 +950,9 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         elapsed = self._final_elapsed = self.timer.elapsed() // 1000
         release_backup_lock()
 
+        self.copied, self.skipped, self.errors, self.deleted = c, s, e, d
+        self._done = self._total
+
         try:
             from history import append_history
             append_history(operation=self._operation, copied=c, skipped=s, errors=self._display_errors,
@@ -965,9 +968,6 @@ class CopyDialog(_StandardKeysMixin, QDialog):
                 if cap > 0:
                     widget.bulk_add([fmt(*args) for args in islice(pending, cap)])
                 pending.clear()
-
-        self.copied, self.skipped, self.errors, self.deleted = c, s, e, d
-        self._done = self._total
 
         tstr = f"{elapsed // 60:02d}:{elapsed % 60:02d}"
 
