@@ -16,7 +16,7 @@ from state import logger
 from copy_worker_core import (
     _CHUNK, _IO_BUF, _WORKERS, _FLUSH_THRESH, _FLUSH_INTERVAL, _SCAN_EMIT_SECS,
     _SCAN_PIPE_BATCH, _LOCAL_BATCH, _CLAIM_SIZE, _PIPE_MAXSIZE,
-    _SMB_WORKERS, _PID, _O_NOATIME, _tls, _seen_dirs_lock, _seen_dirs_global, _TIME_CHECK_EVERY,
+    _SMB_WORKERS, _PID, _EUID, _O_NOATIME, _tls, _seen_dirs_lock, _seen_dirs_global, _TIME_CHECK_EVERY,
     _smb_procs, _smb_procs_lock,
     _scale_params, _scan_dir_entries,
     _ensure_dir, _parse_smb, _run_futures, _silent_unlink
@@ -258,7 +258,9 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
 
 
 def _copy_file(src, dst, cancel, cached_st=None):
-    if os.path.islink(src):
+    if cached_st is True:
+        return _copy_symlink(src, dst)
+    if cached_st is None and os.path.islink(src):
         return _copy_symlink(src, dst)
 
     for _attempt in range(2):
@@ -276,14 +278,13 @@ def _copy_file(src, dst, cancel, cached_st=None):
                 except OSError:
                     return "error", "Source unreadable", 0
 
-            if _is_up_to_date_local(dst, st):
+            if _attempt == 0 and _is_up_to_date_local(dst, st):
                 return "skip", "Up to date", st.st_size
 
             if not _ensure_dir(os.path.dirname(dst)):
                 return "error", "Directory could not be created", 0
 
-            _euid = os.geteuid()
-            _may_use_noatime = _euid == 0 or st.st_uid == _euid
+            _may_use_noatime = _EUID == 0 or st.st_uid == _EUID
             try:
                 rfd = os.open(src, os.O_RDONLY | (_O_NOATIME if _may_use_noatime else 0))
             except OSError:
@@ -474,6 +475,8 @@ class CopyWorker(QThread):
         self._mirror_titles: set[str] = self._extract_mirror_flags(tasks)
         self.tasks = self._normalize_tasks(tasks)
         self._cancel = threading.Event()
+        self._pre_fired_titles: set[str] = set()
+        self._post_fired_titles: set[str] = set()
 
     @staticmethod
     def _extract_mirror_flags(tasks) -> set[str]:
@@ -555,8 +558,10 @@ class CopyWorker(QThread):
             if _t and _t not in seen:
                 seen.add(_t)
                 _pre, _ = self._hooks.get(_t, ([], []))
-                if _pre and not self._fire_hooks(_t, "pre", _pre, abort=True):
-                    skip_titles.add(_t)
+                if _pre:
+                    self._pre_fired_titles.add(_t)
+                    if not self._fire_hooks(_t, "pre", _pre, abort=True):
+                        skip_titles.add(_t)
         return skip_titles
 
     def _run_post_hooks(self, tasks: list) -> None:
@@ -564,15 +569,31 @@ class CopyWorker(QThread):
         for _s, _d, _t, _exc in tasks:
             if _t and _t not in seen:
                 seen.add(_t)
-                _, _post = self._hooks.get(_t, ([], []))
-                if _post:
-                    self._fire_hooks(_t, "post", _post, abort=False)
+                self._run_post_hooks_for_title(_t)
+
+    def _run_post_hooks_for_title(self, title: str) -> None:
+        if not title or title in self._post_fired_titles:
+            return
+        self._post_fired_titles.add(title)
+        _, _post = self._hooks.get(title, ([], []))
+        if _post:
+            self._fire_hooks(title, "post", _post, abort=False)
+
+    def _run_pending_post_hooks(self) -> None:
+        for title in sorted(self._pre_fired_titles - self._post_fired_titles):
+            self._run_post_hooks_for_title(title)
 
     def run(self) -> None:
         with _seen_dirs_lock:
             _seen_dirs_global.clear()
         if hasattr(_tls, "seen_dirs"):
             _tls.seen_dirs.clear()
+        try:
+            self._run_impl()
+        finally:
+            self._run_pending_post_hooks()
+
+    def _run_impl(self) -> None:
         pw: "_SecurePw | None" = None
         try:
             smb_tasks, ssh_tasks, local_tasks = [], [], []
@@ -708,108 +729,128 @@ class CopyWorker(QThread):
             if pw is not None:
                 pw.clear()
 
-    def _copy_ssh_tasks(
+    def _copy_one_ssh_task(
             self,
-            tasks: list[tuple[str, str, str, frozenset]],
+            src: str, dst: str, title: str, extra: tuple,
             flusher: "_Flusher",
             tracker: "_EntryTracker",
     ) -> None:
         def _track(ok: int, skip: int, err: int, deleted: int = 0) -> None:
             tracker.batch_update({title: (ok, skip, err, deleted)} if title else {})
 
-        for src, dst, title, *extra in tasks:
-            if self._cancel.is_set():
-                break
+        if self._cancel.is_set():
+            return
 
-            self.scan_progress.emit(f"rsync  {title or src}", 0)
+        self.scan_progress.emit(f"rsync  {title or src}", 0)
 
-            rsync_src = _rsync_src_arg(src)
-            excludes_raw = list(extra[0]) if extra and extra[0] else None
-            excludes = _rsync_excludes(rsync_src, excludes_raw)
-            mirror = title in self._mirror_titles
+        rsync_src = _rsync_src_arg(src)
+        excludes_raw = list(extra[0]) if extra and extra[0] else None
+        excludes = _rsync_excludes(rsync_src, excludes_raw)
+        mirror = title in self._mirror_titles
 
-            cmd = build_rsync_cmd(rsync_src, dst, exclude=excludes, delete=mirror)
-            logger.debug("_copy_ssh_tasks: %s", " ".join(cmd))
+        cmd = build_rsync_cmd(rsync_src, dst, exclude=excludes, delete=mirror)
+        logger.debug("_copy_ssh_tasks: %s", " ".join(cmd))
 
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+        except (OSError, FileNotFoundError) as exc:
+            logger.error("rsync launch failed for '%s': %s", src, exc)
+            flusher.push(er=[(src, str(exc), 0)])
+            _track(0, 0, 1)
+            return
+
+        if proc.stdout is None:
+            logger.error("rsync stdout is None for '%s'", src)
+            proc.kill()
+            proc.wait()
+            flusher.push(er=[(src, "rsync stdout unavailable", 0)])
+            _track(0, 0, 1)
+            return
+
+        last_pct = 0
+        deleted_this_task: list = []
+        _tid = threading.get_ident()
+        with _smb_procs_lock:
+            _smb_procs[_tid] = proc
+        if self._cancel.is_set():
             try:
-                proc = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=1,
-                )
-            except (OSError, FileNotFoundError) as exc:
-                logger.error("rsync launch failed for '%s': %s", src, exc)
-                flusher.push(er=[(src, str(exc), 0)])
-                _track(0, 0, 1)
-                continue
-
-            if proc.stdout is None:
-                logger.error("rsync stdout is None for '%s'", src)
                 proc.kill()
-                proc.wait()
-                flusher.push(er=[(src, "rsync stdout unavailable", 0)])
-                _track(0, 0, 1)
-                continue
-
-            last_pct = 0
-            deleted_this_task: list = []
-            _tid = threading.get_ident()
-            with _smb_procs_lock:
-                _smb_procs[_tid] = proc
-            if self._cancel.is_set():
-                try:
-                    proc.kill()
-                except OSError:
-                    pass
+            except OSError:
+                pass
+        try:
             try:
-                try:
-                    for line in proc.stdout:
-                        if self._cancel.is_set():
-                            proc.kill()
-                            break
-                        line = line.rstrip()
-                        m = self._RSYNC_PROGRESS_RE.match(line)
-                        if m:
-                            pct = int(m.group(2))
-                            if pct != last_pct:
-                                last_pct = pct
-                                self.scan_progress.emit(
-                                    f"rsync  {title or src}  {pct}%  {m.group(3)}",
-                                    pct,
-                                )
-                            continue
-                        dm = self._RSYNC_DELETE_RE.match(line) if mirror else None
-                        if dm:
-                            rel = dm.group(1).strip()
-                            display_path = _ssh_join(dst, rel)
-                            deleted_this_task.append((display_path, "Mirror delete (remote)", 0))
-                        elif line:
-                            logger.debug("rsync: %s", line)
-                except OSError as exc:
-                    logger.warning("rsync read error for '%s': %s", src, exc)
+                for line in proc.stdout:
+                    if self._cancel.is_set():
+                        proc.kill()
+                        break
+                    line = line.rstrip()
+                    m = self._RSYNC_PROGRESS_RE.match(line)
+                    if m:
+                        pct = int(m.group(2))
+                        if pct != last_pct:
+                            last_pct = pct
+                            self.scan_progress.emit(
+                                f"rsync  {title or src}  {pct}%  {m.group(3)}",
+                                pct,
+                            )
+                        continue
+                    dm = self._RSYNC_DELETE_RE.match(line) if mirror else None
+                    if dm:
+                        rel = dm.group(1).strip()
+                        display_path = _ssh_join(dst, rel)
+                        deleted_this_task.append((display_path, "Mirror delete (remote)", 0))
+                    elif line:
+                        logger.debug("rsync: %s", line)
+            except OSError as exc:
+                logger.warning("rsync read error for '%s': %s", src, exc)
 
-                proc.wait()
-            finally:
-                with _smb_procs_lock:
-                    _smb_procs.pop(_tid, None)
+            proc.wait()
+        finally:
+            with _smb_procs_lock:
+                _smb_procs.pop(_tid, None)
 
+        if deleted_this_task:
+            flusher.push(de=deleted_this_task, force=True)
+        if self._cancel.is_set():
             if deleted_this_task:
-                flusher.push(de=deleted_this_task, force=True)
-            if self._cancel.is_set():
-                if deleted_this_task:
-                    _track(0, 0, 0, len(deleted_this_task))
-                break
+                _track(0, 0, 0, len(deleted_this_task))
+            return
 
-            if proc.returncode == 0:
-                flusher.push(ok=[(src, dst, 0)])
-                _track(1, 0, 0, len(deleted_this_task))
-                logger.info("rsync OK: %s → %s", src, dst)
-            else:
-                flusher.push(er=[(src, f"rsync exit {proc.returncode}", 0)])
-                _track(0, 0, 1, len(deleted_this_task))
-                logger.error("rsync exit %d: %s → %s", proc.returncode, src, dst)
+        if proc.returncode == 0:
+            flusher.push(ok=[(src, dst, 0)])
+            _track(1, 0, 0, len(deleted_this_task))
+            logger.info("rsync OK: %s → %s", src, dst)
+        else:
+            flusher.push(er=[(src, f"rsync exit {proc.returncode}", 0)])
+            _track(0, 0, 1, len(deleted_this_task))
+            logger.error("rsync exit %d: %s → %s", proc.returncode, src, dst)
+
+    def _copy_ssh_tasks(
+            self,
+            tasks: list[tuple[str, str, str, frozenset]],
+            flusher: "_Flusher",
+            tracker: "_EntryTracker",
+    ) -> None:
+        if not tasks:
+            return
+        if len(tasks) == 1:
+            src, dst, title, *extra = tasks[0]
+            self._copy_one_ssh_task(src, dst, title, tuple(extra), flusher, tracker)
+            return
+
+        workers = min(_SMB_WORKERS, len(tasks))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            futs = [
+                pool.submit(self._copy_one_ssh_task, src, dst, title, tuple(extra), flusher, tracker)
+                for src, dst, title, *extra in tasks
+            ]
+            _run_futures(futs, self._cancel, "rsync task")
 
     def _scan_local_all(self, tasks: list, not_found: "list | None" = None) -> list:
         cancel = self._cancel

@@ -212,7 +212,8 @@ def _preview_ssh_mirror_delete(src: str, dst: str, excl) -> "list[str] | None":
     from copy_worker import _rsync_excludes, _rsync_src_arg, _ssh_join
 
     rsync_src = _rsync_src_arg(src)
-    excludes_abs = _abs_excludes(excl, src, src)
+    s_key = _exclude_key(src)
+    excludes_abs = _abs_excludes(excl, s_key, src)
     rsync_excludes = _rsync_excludes(rsync_src, list(excludes_abs) if excludes_abs else None)
     cmd = build_rsync_cmd(rsync_src, dst, delete=True, exclude=rsync_excludes, dry_run=True)
     try:
@@ -290,6 +291,14 @@ def apply_advanced_options(tasks: list[tuple], *, interactive: bool = True, pare
         mirror_remote = False
         ssh_mirror_pairs: list[tuple[str, str]] = []
 
+        if len(src_list) != len(dst_list):
+            logger.warning(
+                "apply_advanced_options [%s]: source/destination count mismatch "
+                "(%d source(s) vs %d destination(s)) — only the first %d pair(s) "
+                "will be considered for advanced options; the copy step will skip "
+                "this entry entirely",
+                title, len(src_list), len(dst_list), min(len(src_list), len(dst_list)))
+
         for i, (s, d) in enumerate(zip(src_list, dst_list)):
             s_str, d_str = str(s), str(d)
             s_local, d_local = _is_local(s_str), _is_local(d_str)
@@ -318,12 +327,15 @@ def apply_advanced_options(tasks: list[tuple], *, interactive: bool = True, pare
                 if s_local and d_local:
                     s_abs = os.path.abspath(os.path.expanduser(s_str))
                     d_abs = os.path.abspath(os.path.expanduser(d_str))
-                    if os.path.isfile(s_abs):
-                        continue
-                    if not os.path.isdir(s_abs):
-                        logger.warning(
-                            "Mirror delete [%s]: source %r missing — skipping cleanup for safety",
-                            title, apply_replacements(s_abs))
+                    try:
+                        s_is_dir = os.path.isdir(s_abs)
+                    except OSError:
+                        s_is_dir = False
+                    if not s_is_dir:
+                        if not os.path.exists(s_abs):
+                            logger.warning(
+                                "Mirror delete [%s]: source %r missing — skipping cleanup for safety",
+                                title, apply_replacements(s_abs))
                         continue
                     excludes = _abs_excludes(excl, s_abs, s_str)
                     extraneous = find_extraneous_paths(s_abs, d_abs, excludes)

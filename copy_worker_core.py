@@ -17,6 +17,7 @@ _WORKERS         = min(12, max(4, os.cpu_count() or 4))
 _SMB_WORKERS     = 10
 _SMB_TIMEOUT     = 10
 _SMB_FILE_SECS   = 3
+_SMB_MIN_BYTES_PER_SEC = 512 * 1024
 _SMB_CHUNK       = 1_000
 _FLUSH_THRESH    = 2_500
 _FLUSH_INTERVAL  = 0.3
@@ -113,6 +114,7 @@ def _check_destination_space(tasks: list[tuple]) -> list[str]:
 _CACHE_MISS = object()
 _O_NOATIME  = getattr(os, "O_NOATIME", 0)
 _PID        = os.getpid()
+_EUID       = os.geteuid()
 _tls        = threading.local()
 _TIME_CHECK_EVERY = 32
 _seen_dirs_global: set[str] = set()
@@ -123,12 +125,12 @@ _smb_procs: dict[int, subprocess.Popen] = {}
 _smb_procs_lock = threading.Lock()
 
 
-def _classify_entry(e: "os.DirEntry") -> "tuple[bool, bool] | None":
+def _classify_entry(e: "os.DirEntry") -> "tuple[bool, bool, bool] | None":
     try:
         is_symlink = e.is_symlink()
         is_dir_eff = (not is_symlink) and e.is_dir(follow_symlinks=False)
         is_file_eff = is_symlink or e.is_file(follow_symlinks=False)
-        return is_dir_eff, is_file_eff
+        return is_dir_eff, is_file_eff, is_symlink
     except OSError:
         return None
 
@@ -143,16 +145,19 @@ def _scan_dir_entries(src: str, dst: str, excl: frozenset, cancel: threading.Eve
             cls = _classify_entry(e)
             if cls is None:
                 continue
-            is_dir_eff, is_file_eff = cls
+            is_dir_eff, is_file_eff, is_symlink = cls
             dst_path = os.path.join(dst, e.name)
             if is_dir_eff:
                 yield True, e.path, dst_path, None
             elif is_file_eff:
-                try:
-                    st = e.stat(follow_symlinks=False)
-                except OSError:
-                    st = None
-                yield False, e.path, dst_path, st
+                if is_symlink:
+                    yield False, e.path, dst_path, True
+                else:
+                    try:
+                        st = e.stat(follow_symlinks=False)
+                    except OSError:
+                        st = None
+                    yield False, e.path, dst_path, st
 
 
 def _ensure_dir(path: str) -> bool:
