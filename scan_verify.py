@@ -1,4 +1,5 @@
 from PyQt6.QtCore import Qt, QThread, QTimer
+from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import (
     QApplication, QDialog, QHBoxLayout, QLabel, QPushButton, QTabWidget, QVBoxLayout
 )
@@ -21,7 +22,7 @@ class ScanVerifyDialog(_StandardKeysMixin, QDialog):
         self._build_ui()
         self._size_to_screen()
 
-    def closeEvent(self, event) -> None:
+    def closeEvent(self, a0: QCloseEvent | None) -> None:
         for tab in (getattr(self, "_capture_tab", None), getattr(self, "_verify_tab", None),
                    getattr(self, "_packagediff_tab", None)):
             if tab is not None:
@@ -29,7 +30,7 @@ class ScanVerifyDialog(_StandardKeysMixin, QDialog):
                 if isinstance(worker, QThread) and worker.isRunning():
                     if not worker.wait(5000):
                         logger.warning("ScanVerifyDialog: worker did not finish within timeout on close")
-        super().closeEvent(event)
+        super().closeEvent(a0)
 
     _MIN_W, _MIN_H = 1250, 850
 

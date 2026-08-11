@@ -3,7 +3,7 @@ import subprocess
 import threading
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFontDatabase, QTextCursor
+from PyQt6.QtGui import QFontDatabase, QTextCursor, QCloseEvent
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton,
     QTextEdit, QVBoxLayout, QWidget,
@@ -112,13 +112,13 @@ class SysInfoDialog(_TextViewDialog):
         except RuntimeError:
             pass
 
-    def closeEvent(self, event) -> None:
+    def closeEvent(self, a0: QCloseEvent | None) -> None:
         try:
             self.done_sig.disconnect()
         except (RuntimeError, TypeError):
             pass
         self._closed.set()
-        super().closeEvent(event)
+        super().closeEvent(a0)
 
 class NotesDialog(_StandardKeysMixin, QDialog):
     def __init__(self, parent=None) -> None:
@@ -218,12 +218,13 @@ class NotesDialog(_StandardKeysMixin, QDialog):
         self._discarded = True
         self.reject()
 
-    def closeEvent(self, event) -> None:
+    def closeEvent(self, a0: QCloseEvent | None) -> None:
         if not self._saved and not self._discarded:
             S.notes = self._edit.toPlainText()
             save_profile()
             self._saved = True
-        event.accept()
+        if a0 is not None:
+            a0.accept()
 
 
 class _ThemeDialog(_StandardKeysMixin, QDialog):

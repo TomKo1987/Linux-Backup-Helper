@@ -39,7 +39,7 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
         self.setWindowTitle("System Manager Options")
         self.setMinimumSize(1200, 680)
         self._distro = distro or LinuxDistroHelper()
-        self._session = self._distro.detect_session()
+        self._session: str = self._distro.detect_session() or ""
         self._aur_helper_installed: bool | None = None
         self._verifier_threads: list[PackageVerifierThread] = []
         self._build()
@@ -52,7 +52,7 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
         else:
             aur_helper_info = ""
         info = QLabel(
-            f"Recognized Linux distribution: {self._distro.distro_pretty_name}   |   Session: {self._session}{aur_helper_info}")
+            f"Recognized Linux distribution: {str(self._distro.distro_pretty_name)}   |   Session: {str(self._session)}{aur_helper_info}")
         info.setStyleSheet(style_label_info(bold=True) + f"font-size:{font_sz()}px")
         info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(info)
@@ -573,8 +573,8 @@ class SystemManagerLauncher:
         self.parent = _parent
         self.failed_attempts = getattr(_parent, "sm_failed_attempts", 0)
         self._distro = LinuxDistroHelper()
-        self._distro_name = self._distro.distro_pretty_name
-        self._session = self._distro.detect_session()
+        self._distro_name: str = self._distro.distro_pretty_name
+        self._session: str = self._distro.detect_session() or ""
         self._sudo_checkbox: QCheckBox | None = None
         self._op_text: dict[str, str] | None = None
         self._op_tips: dict[str, str] | None = None
@@ -635,7 +635,7 @@ class SystemManagerLauncher:
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
         distro_lbl = QLabel(
-            f"Recognized Linux distribution: {self._distro_name}   |   Session: {self._session}{aur_helper_info}")
+            f"Recognized Linux distribution: {str(self._distro_name)}   |   Session: {str(self._session)}{aur_helper_info}")
         distro_lbl.setStyleSheet(style_label_info(bold=True) + f"font-size:{font_sz()}px")
         distro_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         content_layout.addWidget(distro_lbl)

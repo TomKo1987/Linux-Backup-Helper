@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtGui import QColor, QFont, QCloseEvent
 from PyQt6.QtWidgets import (
     QCheckBox, QDialog, QFrame, QHBoxLayout, QLabel, QListWidget,
     QListWidgetItem, QMessageBox, QPushButton, QSplitter, QTextEdit,
@@ -236,12 +236,13 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
         self._build_ui()
         self._load_files()
         register_style_listener(self._refresh_styles)
+        self.finished.connect(lambda _r: unregister_style_listener(self._refresh_styles))
 
-    def closeEvent(self, event) -> None:
+    def closeEvent(self, a0: QCloseEvent | None) -> None:
         if isinstance(self._worker, QThread) and self._worker.isRunning():
             self._worker.quit()
             self._worker.wait(2000)
-        super().closeEvent(event)
+        super().closeEvent(a0)
 
     def _build_ui(self) -> None:
         self._header_frame = QFrame()
@@ -325,10 +326,6 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
         lay.addWidget(splitter, 1)
         lay.addWidget(self._bottom_frame)
         self._apply_styles()
-
-    def done(self, result: int) -> None:
-        unregister_style_listener(self._refresh_styles)
-        super().done(result)
 
     def _apply_styles(self) -> None:
         t = current_theme()

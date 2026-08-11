@@ -236,7 +236,10 @@ class _SmbClient:
     def _run_with_creds(self, input_data: str, timeout: int,
                         cancel: "threading.Event | None" = None) -> "tuple[subprocess.Popen | None, str, str]":
         argv, tmp_dir, cred_path = self._argv_with_creds()
-        wipe_fn = (lambda: _wipe_smb_cred(str(tmp_dir), str(cred_path))) if (tmp_dir and cred_path) else None
+        wipe_fn = None
+        if tmp_dir and cred_path:
+            _tmp_dir, _cred_path = tmp_dir, cred_path
+            wipe_fn = lambda: _wipe_smb_cred(_tmp_dir, _cred_path)
 
         return self._spawn(argv, input_data, timeout, wipe_fn=wipe_fn, cancel=cancel)
 

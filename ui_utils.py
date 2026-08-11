@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QTextCursor
+from PyQt6.QtGui import QTextCursor, QKeyEvent
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
     QHBoxLayout, QLabel, QLayout, QLineEdit, QMessageBox, QPushButton,
@@ -218,15 +218,17 @@ def ask_profile_name(title: str, default: str, parent=None) -> str | None:
 
 
 class _StandardKeysMixin(_MixinBase):
-    def keyPressEvent(self, event) -> None:
-        k = event.key()
+    def keyPressEvent(self, a0: QKeyEvent | None) -> None:
+        if a0 is None:
+            return
+        k = a0.key()
         if k in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
             widget = self.focusWidget()
             if widget is not None and isinstance(widget, QPushButton):
                 widget.click()
             else:
-                super().keyPressEvent(event)
+                super().keyPressEvent(a0)
         elif k == Qt.Key.Key_Escape:
             self.close()
         else:
-            super().keyPressEvent(event)
+            super().keyPressEvent(a0)

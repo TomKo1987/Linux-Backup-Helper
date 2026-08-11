@@ -277,6 +277,7 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
         self._entries: list[dict] = []
         self._load()
         register_style_listener(self._refresh_on_theme)
+        self.finished.connect(lambda _r: unregister_style_listener(self._refresh_on_theme))
 
     def _load(self) -> None:
         name = S.profile_name or "(no profile)"
@@ -391,9 +392,6 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
         except OSError as exc:
             QMessageBox.critical(self, "Export failed", f"The file could not be written:\n{exc}")
 
-    def done(self, result: int) -> None:
-        unregister_style_listener(self._refresh_on_theme)
-        super().done(result)
 
     def _on_select(self, row: int) -> None:
         if row < 0 or row >= len(self._entries):

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from itertools import islice
 
 from PyQt6.QtCore import Qt, QElapsedTimer, QTimer, pyqtSignal
+from PyQt6.QtGui import QResizeEvent, QCloseEvent
 from PyQt6.QtWidgets import (
     QProgressBar, QPushButton, QScrollArea, QTabWidget, QVBoxLayout, QApplication, QWidget, QSpinBox,
     QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QSizePolicy, QTextEdit,
@@ -413,8 +414,8 @@ class _SummaryWidget(QWidget):
 
         self._entry_list_widget.adjustSize()
 
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
+    def resizeEvent(self, a0: QResizeEvent | None) -> None:
+        super().resizeEvent(a0)
         self._update_segments(*self._last_seg_counts)
         if not self._entry_refresh_pending:
             self._entry_refresh_pending = True
@@ -1040,15 +1041,16 @@ class CopyDialog(_StandardKeysMixin, QDialog):
 
             QTimer.singleShot(0, _show_popup)
 
-    def closeEvent(self, event) -> None:
+    def closeEvent(self, a0: QCloseEvent | None) -> None:
         if self.worker is None:
-            super().closeEvent(event)
+            super().closeEvent(a0)
             return
         if self.worker.isRunning():
             self.worker.cancel()
             self.cancel_btn.setText("⏹ Cancelling…")
             self.cancel_btn.setEnabled(False)
-            event.ignore()
+            if a0 is not None:
+                a0.ignore()
         else:
             release_backup_lock()
-            super().closeEvent(event)
+            super().closeEvent(a0)

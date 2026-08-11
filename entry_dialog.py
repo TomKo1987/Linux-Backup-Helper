@@ -1,7 +1,7 @@
 import os
 
 from PyQt6.QtCore import QEvent, QObject, QPoint, QPointF, Qt
-from PyQt6.QtGui import QColor, QFont, QFontMetrics
+from PyQt6.QtGui import QColor, QFont, QFontMetrics, QShowEvent
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit,
@@ -17,9 +17,9 @@ class _HintResizer(QObject):
         super().__init__(watched)
         self._hint = hint_label
 
-    def eventFilter(self, obj, event):
-        if event.type() == QEvent.Type.Resize:
-            self._hint.setGeometry(obj.rect())
+    def eventFilter(self, a0: QObject | None, a1: QEvent | None) -> bool:
+        if a1 is not None and a1.type() == QEvent.Type.Resize and isinstance(a0, QWidget):
+            self._hint.setGeometry(a0.rect())
         return False
 
 class ExcludeDialog(QDialog):
@@ -323,6 +323,8 @@ class EntryDialog(QDialog):
         self._e: dict = entry or {}
         self._show_full_paths: bool = False
         self._pairs_provided: bool  = _pairs is not None
+        self._src_fm_btn: QPushButton | None = None
+        self._dst_fm_btn: QPushButton | None = None
         raw_details: dict = (entry or {}).get("details", {})
         raw_excl: dict = raw_details.get("exclude_paths", {})
         self._pair_excludes: dict[str, list[str]] = {str(k): list(v) for k, v in raw_excl.items() if isinstance(v, list)}
@@ -358,9 +360,9 @@ class EntryDialog(QDialog):
         return (max(1200, min(max_px * 2 + 150, screen.width() - pad)),
                 max(800, min(screen.height() - pad, 950)) + 10)
 
-    def showEvent(self, event) -> None:
-        super().showEvent(event)
-        if not event.spontaneous():
+    def showEvent(self, a0: QShowEvent | None) -> None:
+        super().showEvent(a0)
+        if a0 is not None and not a0.spontaneous():
             w, h = self._compute_size()
             self.setMinimumSize(w, h)
             self.resize(w, h)
@@ -583,9 +585,9 @@ class EntryDialog(QDialog):
 
     def _update_fm_buttons(self) -> None:
         has_pairs = bool(self.pairs)
-        if hasattr(self, "_src_fm_btn"):
+        if self._src_fm_btn is not None:
             self._src_fm_btn.setEnabled(has_pairs)
-        if hasattr(self, "_dst_fm_btn"):
+        if self._dst_fm_btn is not None:
             self._dst_fm_btn.setEnabled(has_pairs)
 
     def _show_list_context_menu(self, lw: QListWidget, is_source: bool, pos: QPoint | QPointF) -> None:

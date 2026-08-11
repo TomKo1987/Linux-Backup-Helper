@@ -3,6 +3,7 @@ import time
 from pathlib import Path
 
 from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import (
     QDialog, QFrame, QHBoxLayout, QLabel, QProgressBar,
     QPushButton, QVBoxLayout,
@@ -241,11 +242,11 @@ class IntegrityCheckerDialog(_StandardKeysMixin, QDialog):
         self._results: list[dict] = []
         self._build()
 
-    def closeEvent(self, event) -> None:
+    def closeEvent(self, a0: QCloseEvent | None) -> None:
         if self._worker and self._worker.isRunning():
             self._worker.quit()
             self._worker.wait(2000)
-        super().closeEvent(event)
+        super().closeEvent(a0)
 
     def _build(self) -> None:
         t = current_theme()

@@ -291,13 +291,17 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, aur_he
             "Install kernel headers: (Headers for installed kernel(s) already installed. No changes necessary.)" if not _missing_hdrs
             else f"Install kernel headers: {', '.join(_missing_hdrs)}")
     else:
-        _hpkg = distro.get_kernel_headers_pkg() or "linux-headers"
+        _hpkg = str(distro.get_kernel_headers_pkg() or "linux-headers")
         _hdr_done = " (No changes necessary)" if (op_status and op_status.get("kernel_headers_installed")) else ""
         headers_text = f"Install kernel header(s) (Package: '{_hpkg}'){_hdr_done}"
 
     dk = ((default_kernel_override if default_kernel_override is not None else S.default_kernel) or "")
     dk_pkg = dk or system_default_variant or "(not selected)"
-    sys_def_info = f" [System default: {system_default_variant}]" if system_default_variant and system_default_variant != dk_pkg else ""
+    if system_default_variant and system_default_variant != dk_pkg:
+        _sdv: str = system_default_variant
+        sys_def_info = f" [System default: {_sdv}]"
+    else:
+        sys_def_info = ""
     dk_note = " (Is already default. No changes necessary.)" if (
             op_status and op_status.get("default_kernel_ok")) else sys_def_info
 

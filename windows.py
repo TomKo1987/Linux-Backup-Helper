@@ -1,4 +1,5 @@
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QShowEvent, QCloseEvent, QKeyEvent
 from PyQt6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget, QScrollArea,
     QApplication, QCheckBox, QDialog, QMessageBox, QPushButton
@@ -53,6 +54,7 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
 
         self._setup_ui()
         register_style_listener(self._refresh_styles)
+        self.finished.connect(lambda _r: self._cleanup_connections())
 
     def _entry_filter(self, _entry: dict) -> bool:
         return True
@@ -241,18 +243,14 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
         self.changed.emit()
         self.done(RESTART_DIALOG)
 
-    def showEvent(self, event) -> None:
-        super().showEvent(event)
-        if not event.spontaneous():
+    def showEvent(self, a0: QShowEvent | None) -> None:
+        super().showEvent(a0)
+        if a0 is not None and not a0.spontaneous():
             for cb, *_ in self.checkbox_dirs:
                 block_set(cb, False)
             if self._selectall:
                 block_set(self._selectall, False)
                 self._selectall.setFocus()
-
-    def done(self, result: int) -> None:
-        self._cleanup_connections()
-        super().done(result)
 
     def _cleanup_connections(self) -> None:
         if self._connections_cleaned:
@@ -265,8 +263,11 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
             except (TypeError, RuntimeError):
                 pass
 
-    def keyPressEvent(self, event) -> None:
-        k = event.key()
+    def keyPressEvent(self, a0: QKeyEvent | None) -> None:
+        if a0 is None:
+            super().keyPressEvent(a0)
+            return
+        k = a0.key()
         if k in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
             focused = self.focusWidget()
             if isinstance(focused, QCheckBox):
@@ -276,11 +277,11 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
                 else:
                     focused.toggle()
                 return
-        super().keyPressEvent(event)
+        super().keyPressEvent(a0)
 
-    def closeEvent(self, event) -> None:
+    def closeEvent(self, a0: QCloseEvent | None) -> None:
         self._cleanup_connections()
-        super().closeEvent(event)
+        super().closeEvent(a0)
 
 
 class _CopyMixin:
@@ -339,8 +340,8 @@ class BackupWindow(_CopyMixin, _BaseCheckboxWindow):
     _cols_key     = "backup_window_columns"
     _op_label     = "Backup"
 
-    def _entry_filter(self, entry: dict) -> bool:
-        return not entry.get("details", {}).get("no_backup", False)
+    def _entry_filter(self, _entry: dict) -> bool:
+        return not _entry.get("details", {}).get("no_backup", False)
 
 
 class RestoreWindow(_CopyMixin, _BaseCheckboxWindow):
@@ -349,8 +350,8 @@ class RestoreWindow(_CopyMixin, _BaseCheckboxWindow):
     _op_label = "Restore"
     _is_restore = True
 
-    def _entry_filter(self, entry: dict) -> bool:
-        return not entry.get("details", {}).get("no_restore", False)
+    def _entry_filter(self, _entry: dict) -> bool:
+        return not _entry.get("details", {}).get("no_restore", False)
 
     def _tips(self) -> dict | None: return restore_tooltips()
 
@@ -513,7 +514,7 @@ class SettingsWindow(_BaseCheckboxWindow):
         if dlg.was_changed:
             self.changed.emit()
             self.done(RESTART_DIALOG)
-    def _samba_credentials(self) -> None: SambaPasswordDialog.open(self)
+    def _samba_credentials(self) -> None: SambaPasswordDialog.show_dialog(self)
 
     def _manage_profiles(self) -> None:
         dlg = ProfilesDialog(self)

@@ -16,7 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from PyQt6.QtCore import Qt, QElapsedTimer, QThread, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QIcon, QTextCursor
+from PyQt6.QtGui import QColor, QIcon, QTextCursor, QCloseEvent, QKeyEvent
 from PyQt6.QtWidgets import (
     QApplication, QDialog, QFileDialog, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMessageBox, QPushButton, QTextEdit, QVBoxLayout, QWidget,
@@ -418,11 +418,11 @@ class SystemManagerDialog(_StandardKeysMixin, QDialog):
         except Exception as exc:
             logger.error("_update_elapsed: %s", exc)
 
-    def keyPressEvent(self, event) -> None:
-        if event.key() == Qt.Key.Key_Tab:
+    def keyPressEvent(self, a0: QKeyEvent | None) -> None:
+        if a0 is not None and a0.key() == Qt.Key.Key_Tab:
             self.focusNextChild()
         else:
-            super().keyPressEvent(event)
+            super().keyPressEvent(a0)
 
     def on_input_requested(self, prompt: str) -> None:
         t = current_theme()
@@ -443,11 +443,12 @@ class SystemManagerDialog(_StandardKeysMixin, QDialog):
         self._input_edit.clear()
         self.inputProvided.emit(answer)
 
-    def closeEvent(self, event) -> None:
+    def closeEvent(self, a0: QCloseEvent | None) -> None:
         if self._done or self._auth_failed:
-            super().closeEvent(event)
+            super().closeEvent(a0)
         else:
-            event.ignore()
+            if a0 is not None:
+                a0.ignore()
 
 
 class SystemManagerThread(QThread):
@@ -1536,7 +1537,8 @@ class SystemManagerThread(QThread):
                 if created:
                     target_conf = created
 
-        return self._apply_systemd_boot_default(str(target_conf), esp)
+        assert target_conf is not None
+        return self._apply_systemd_boot_default(target_conf, esp)
 
     def _find_uki_entry(self, kernel_pkg: str, esp: Path) -> str | None:
         efi_linux = esp / "EFI" / "Linux"

@@ -488,8 +488,8 @@ class _TooltipClickFilter(QObject):
         self._html_text = html_text
         self._max_width = max_width
 
-    def eventFilter(self, obj, event) -> bool:
-        if obj is self._host and event.type() == QEvent.Type.MouseButtonRelease:
+    def eventFilter(self, a0: QObject | None, a1: QEvent | None) -> bool:
+        if a0 is self._host and a1 is not None and a1.type() == QEvent.Type.MouseButtonRelease:
             dlg = _TooltipDialog(self._host.window(), self._html_text, self._max_width)
             dlg.show()
             return False
@@ -497,6 +497,7 @@ class _TooltipClickFilter(QObject):
 
 
 _TOOLTIP_LONG_LINE_THRESHOLD = 28
+_tooltip_click_filters: list[QObject] = []
 
 
 def apply_tooltip(widget, text: str, max_width: int | None = None, *, wrap: bool = True) -> None:
@@ -536,7 +537,7 @@ def apply_tooltip(widget, text: str, max_width: int | None = None, *, wrap: bool
             full_html = f"<div style='width:{max_width}px; white-space:normal;'>{text}</div>"
             click_filter = _TooltipClickFilter(widget, full_html, max_width)
             widget.installEventFilter(click_filter)
-            widget._tooltip_click_filter = click_filter
+            _tooltip_click_filters.append(click_filter)
 
 
 @lru_cache(maxsize=16)

@@ -7,6 +7,7 @@ from functools import lru_cache
 
 import keyring
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import (
     QCheckBox, QDialog, QErrorMessage, QHBoxLayout, QLabel,
     QLineEdit, QMessageBox, QPushButton, QVBoxLayout,
@@ -127,12 +128,12 @@ class _VerifyPasswordDialog(QDialog):
         self._err_lbl.setText(f"Incorrect password. Remaining attempts: {remaining}")
         self._pw_input.setFocus()
 
-    def closeEvent(self, event) -> None:
+    def closeEvent(self, a0: QCloseEvent | None) -> None:
         self._pw_input.clear()
         if self._stored_pw is not None:
             self._stored_pw.clear()
             self._stored_pw = None
-        super().closeEvent(event)
+        super().closeEvent(a0)
 
 
 class SambaPasswordManager:
@@ -249,7 +250,7 @@ class SambaPasswordManager:
 class SambaPasswordDialog(_StandardKeysMixin, QDialog):
 
     @classmethod
-    def open(cls, parent=None) -> None:
+    def show_dialog(cls, parent=None) -> None:
         manager                      = SambaPasswordManager()
         username, stored_pw, from_kw = manager.get_credentials()
         if stored_pw:
@@ -426,6 +427,6 @@ class SambaPasswordDialog(_StandardKeysMixin, QDialog):
         self._cleanup()
         super().reject()
 
-    def closeEvent(self, event) -> None:
+    def closeEvent(self, a0: QCloseEvent | None) -> None:
         self._cleanup()
-        super().closeEvent(event)
+        super().closeEvent(a0)

@@ -91,16 +91,17 @@ class ProfilesDialog(QDialog):
         ProfileCompareDialog(self).exec()
 
     def _load(self) -> None:
-        name = self._selected_name()
-        if not name:
+        _name = self._selected_name()
+        if not _name:
             QMessageBox.information(self, "Load Profile", "Please select a profile first.")
             return
+        name: str = _name
         if name == S.profile_name:
             QMessageBox.information(self, "Load Profile", f"'{name}' is already the active profile.")
             return
         _clear_default_flag(S.profile_name, "_load")
 
-        if self._activate_profile(str(name)):
+        if self._activate_profile(name):
             QMessageBox.information(self, "Profile Loaded", f"Profile '{name}' is now active.")
         else:
             QMessageBox.critical(self, "Error", f"Could not load profile '{name}'.")
@@ -157,8 +158,9 @@ class ProfilesDialog(QDialog):
         QMessageBox.information(self, "Duplicated", f"'{src_name}' duplicated as '{name}'.")
 
     def _del(self) -> None:
-        name = self._selected_name()
-        if not name: return
+        _name = self._selected_name()
+        if not _name: return
+        name: str = _name
         if name == S.profile_name:
             QMessageBox.warning(self, "Delete Profile", "Cannot delete the currently active profile.")
             return

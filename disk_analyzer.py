@@ -914,8 +914,8 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
         QApplication.clipboard().setText(buf.getvalue())
         self._status.setText("✓ Results copied to clipboard as CSV")
 
-    def closeEvent(self, event: QCloseEvent) -> None:
+    def closeEvent(self, a0: QCloseEvent | None) -> None:
         self._cancel.set()
         if self._worker and self._worker.isRunning():
             self._worker.wait(800)
-        super().closeEvent(event)
+        super().closeEvent(a0)

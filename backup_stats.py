@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from PyQt6.QtCore import Qt, QPointF
 from PyQt6.QtGui import (
     QColor, QPainter, QPainterPath, QPen, QBrush, QFont, QFontMetrics,
-    QLinearGradient,
+    QLinearGradient, QPaintEvent, QCloseEvent,
 )
 from PyQt6.QtWidgets import (
     QComboBox, QDialog, QFrame, QHBoxLayout, QLabel,
@@ -75,7 +75,7 @@ class _BarChart(QWidget):
         self.setMinimumHeight(220)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-    def paintEvent(self, _event) -> None:
+    def paintEvent(self, a0: QPaintEvent | None) -> None:
         if not self._bars:
             return
         t     = current_theme()
@@ -159,7 +159,7 @@ class _Sparkline(QWidget):
         self.setMinimumHeight(180)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-    def paintEvent(self, _event) -> None:
+    def paintEvent(self, a0: QPaintEvent | None) -> None:
         if len(self._points) < 2:
             return
         t    = current_theme()
@@ -243,9 +243,9 @@ class BackupStatsDialog(_StandardKeysMixin, QDialog):
         self._reload()
         register_style_listener(self._reload)
 
-    def closeEvent(self, event) -> None:
+    def closeEvent(self, a0: QCloseEvent | None) -> None:
         unregister_style_listener(self._reload)
-        super().closeEvent(event)
+        super().closeEvent(a0)
 
     def _build_shell(self) -> None:
         t = current_theme()

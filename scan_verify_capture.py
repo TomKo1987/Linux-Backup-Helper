@@ -225,7 +225,7 @@ class _CaptureTab(QWidget):
                 name_lbl.setTextFormat(Qt.TextFormat.RichText)
                 name_lbl.setMinimumWidth(250)
                 name_lbl.setStyleSheet(f"color:{t['text']};font-family:monospace;background:transparent;")
-                path_lbl = QLabel(f"{apply_replacements(f['src'])} 🢥 {apply_replacements(f['dst'])}")
+                path_lbl = QLabel(f"{apply_replacements(str(f['src']))} 🢥 {apply_replacements(str(f['dst']))}")
                 path_lbl.setStyleSheet(f"color:{t['muted']};font-size:{font_sz(-2)}px;"
                                        f"font-family:monospace;background:transparent;")
                 path_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -409,7 +409,7 @@ class _CaptureTab(QWidget):
             active     = svc_info["active"]
             in_profile = svc_info["in_profile"]
 
-            label       = _OP_LABELS.get(op, op)
+            label       = str(_OP_LABELS.get(op, op) or op)
             active_icon = "✅" if active else "⬜"
 
             row_w = QWidget()
@@ -514,9 +514,15 @@ class _CaptureTab(QWidget):
 
         _status_labels = {"ok": "OK", "changed": "Changed", "dst_missing": "Not backed up",
                           "src_missing": "Source missing"}
-        _section("Dotfiles", [("✓" if f["status"] == "ok" else "⚠",
-                                   f"{f['name']}  [{_status_labels.get(f['status'], f['status'])}]  {f['src']} 🢥 {f['dst']}")
-                                  for f in res.get("sys_files", [])])
+        _dotfile_rows: list[tuple[str, str]] = []
+        for f in res.get("sys_files", []):
+            _icon = "✓" if f["status"] == "ok" else "⚠"
+            _status_key: str = str(f["status"])
+            _status_text: str = _status_labels.get(_status_key, _status_key)
+            _src: str = str(f["src"])
+            _dst: str = str(f["dst"])
+            _dotfile_rows.append((_icon, f"{f['name']}  [{_status_text}]  {_src} 🢥 {_dst}"))
+        _section("Dotfiles", _dotfile_rows)
 
         services = res.get("services", [])
         _section("Services", [("✓" if s["active"] else "⚠", f"{s['service']}.service ({s['op']})") for s in services])

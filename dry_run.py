@@ -3,7 +3,7 @@ import threading
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSortFilterProxyModel
-from PyQt6.QtGui import QColor, QStandardItemModel, QStandardItem
+from PyQt6.QtGui import QColor, QStandardItemModel, QStandardItem, QCloseEvent, QMouseEvent
 from PyQt6.QtWidgets import (
     QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
     QMessageBox, QProgressBar, QPushButton, QTabWidget, QTableView,
@@ -546,11 +546,12 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         self._results: list[dict] = []
         self._build()
 
-    def closeEvent(self, event) -> None:
+    def closeEvent(self, a0: QCloseEvent | None) -> None:
         if self._worker and self._worker.isRunning():
             self._worker.cancel()
             self._worker.wait(3000)
-        event.accept()
+        if a0 is not None:
+            a0.accept()
 
     def _build(self) -> None:
         t   = current_theme()
@@ -695,7 +696,9 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
             self._worker.wait(3000)
         new_mode = "restore" if self._mode == "backup" else "backup"
         self.accept()
-        DryRunDialog(self.parent(), mode=new_mode).exec()
+        _parent = self.parent()
+        _parent_widget = _parent if isinstance(_parent, QWidget) else None
+        DryRunDialog(_parent_widget, mode=new_mode).exec()
 
     def _stat_btn(self, text: str, color: str, page: int) -> QPushButton:
         btn = QPushButton(text)
@@ -892,12 +895,12 @@ class _ModeCard(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._frame)
 
-    def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
+    def mousePressEvent(self, a0: QMouseEvent | None) -> None:
+        if a0 is not None and a0.button() == Qt.MouseButton.LeftButton:
             parent = self.parent()
             if isinstance(parent, DryRunModeDialog):
                 parent.card_clicked(self)
-        super().mousePressEvent(event)
+        super().mousePressEvent(a0)
 
 
 class DryRunModeDialog(_StandardKeysMixin, QDialog):

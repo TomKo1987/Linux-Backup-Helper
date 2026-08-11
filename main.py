@@ -28,7 +28,7 @@ from pathlib import Path
 from PyQt6.QtCore import QByteArray, QThread
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QAction
-from PyQt6.QtGui import QIcon, QPixmap
+from PyQt6.QtGui import QIcon, QPixmap, QCloseEvent
 from PyQt6.QtWidgets import (
     QInputDialog, QMainWindow, QGridLayout, QFileDialog, QVBoxLayout,
     QMenu, QMessageBox, QPushButton, QSystemTrayIcon, QWidget, QApplication
@@ -332,13 +332,15 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
         self._quitting = True
         QApplication.quit()
 
-    def closeEvent(self, event) -> None:
+    def closeEvent(self, a0: QCloseEvent | None) -> None:
         if self._quitting:
             self._refresh_timer.stop()
             unregister_style_listener(self._build_ui)
-            event.accept()
+            if a0 is not None:
+                a0.accept()
         else:
-            event.ignore()
+            if a0 is not None:
+                a0.ignore()
             self._exit()
 
 def _first_run_wizard(parent) -> bool:
@@ -476,6 +478,7 @@ def main():
             except (json.JSONDecodeError, ValueError, binascii.Error, UnicodeDecodeError):
                 headers = []
         else:
+            assert args.headless_headers is not None
             _raw = str(args.headless_headers)
             try:
                 _parsed = json.loads(_raw)
