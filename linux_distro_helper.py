@@ -862,7 +862,7 @@ class LinuxDistroHelper:
 
     def detect_installed_kernel_variants(self) -> set[str]:
         installed: set[str] = set()
-        for pkg in ARCH_KERNEL_VARIANTS.keys():
+        for pkg in ARCH_KERNEL_VARIANTS:
             if self.package_is_installed(pkg):
                 installed.add(pkg)
         return installed

@@ -66,6 +66,7 @@ _SMB_DOWN_RE = re.compile(
 )
 
 
+# noinspection PyTypeChecker
 _NOTIFY_SEND: str | None = shutil.which("notify-send")
 
 

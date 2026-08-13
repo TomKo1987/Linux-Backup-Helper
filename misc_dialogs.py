@@ -276,10 +276,10 @@ class _ThemeDialog(_StandardKeysMixin, QDialog):
         if chosen_font == "(System Default)":
             chosen_font = ""
         S.ui.update(
-            theme=self._theme_cb.currentText(), font_family=chosen_font, font_size=int(self._size_cb.currentText()))
+            theme=self._theme_cb.currentText(), font_family=chosen_font, font_size=int(self._size_cb.currentText()),
+            disable_tray_icon=self._tray_cb.isChecked())
         apply_style()
         if save:
-            S.ui["disable_tray_icon"] = self._tray_cb.isChecked()
             save_profile()
 
     def _on_ok(self) -> None:

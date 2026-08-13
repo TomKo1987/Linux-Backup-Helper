@@ -298,7 +298,7 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, aur_he
     dk = ((default_kernel_override if default_kernel_override is not None else S.default_kernel) or "")
     dk_pkg = dk or system_default_variant or "(not selected)"
     if system_default_variant and system_default_variant != dk_pkg:
-        _sdv: str = system_default_variant
+        _sdv: str = str(system_default_variant)
         sys_def_info = f" [System default: {_sdv}]"
     else:
         sys_def_info = ""

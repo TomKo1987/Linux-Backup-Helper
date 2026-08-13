@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QVBoxLayout, QWidget,
 )
 
-from state import logger
+from state import S, logger, save_profile
 from themes import current_theme, font_sz
 from ui_utils import _StandardKeysMixin, hdr_label, sep, size_to_screen
 
@@ -176,9 +176,10 @@ class _HookList(QWidget):
 
 
 class HooksDialog(_StandardKeysMixin, QDialog):
-    def __init__(self, parent, entry: dict) -> None:
+    def __init__(self, parent, entry: dict, *, persist_target: dict | None = None) -> None:
         super().__init__(parent)
         self._entry = entry
+        self._persist_target = persist_target
         self.setWindowTitle(f"Hooks — {entry.get('title', '?')}")
         size_to_screen(self, 1500, 1000)
         self._build()
@@ -234,4 +235,19 @@ class HooksDialog(_StandardKeysMixin, QDialog):
         details = self._entry.setdefault("details", {})
         details["pre_hooks"]  = self._pre.get_hooks()
         details["post_hooks"] = self._post.get_hooks()
+
+        target = self._persist_target
+        if isinstance(target, dict):
+            idx = next((i for i, e in enumerate(S.entries) if e is target), None)
+            if idx is not None:
+                target_details = dict(S.entries[idx].get("details", {}))
+                target_details["pre_hooks"]  = details["pre_hooks"]
+                target_details["post_hooks"] = details["post_hooks"]
+                S.entries[idx]["details"] = target_details
+                if not save_profile():
+                    QMessageBox.warning(
+                        self, "Save Failed",
+                        "The hooks could not be saved to the profile. "
+                        "Please check the log for details.")
+
         self.accept()

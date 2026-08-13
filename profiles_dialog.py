@@ -15,7 +15,7 @@ from profile_compare import ProfileCompareDialog
 from state import (
     S, _HOME, _PROFILES_DIR, _PROFILE_RE, _atomic_write, list_profiles, load_profile, logger, save_profile,
 )
-from themes import current_theme
+from themes import apply_style, current_theme
 from ui_utils import ask_profile_name, btn_row, hdr_label, sep
 
 _ARCHIVE_MAX_PROFILE_BYTES = 1024 * 1024
@@ -62,6 +62,7 @@ class ProfilesDialog(QDialog):
     def _activate_profile(self, name: str) -> bool:
         if load_profile(_PROFILES_DIR / f"{name}.json"):
             save_profile()
+            apply_style()
             self.was_changed = True
             self._refresh()
             return True
@@ -122,7 +123,9 @@ class ProfilesDialog(QDialog):
             QMessageBox.critical(self, "Error", f"Could not save profile '{name}'.")
             if prev_name:
                 load_profile(_PROFILES_DIR / f"{prev_name}.json")
+                apply_style()
             return
+        apply_style()
         self.was_changed = True
         self._refresh()
         QMessageBox.information(self, "Profile Created", f"Blank profile '{name}' created and is now active.\n\n"

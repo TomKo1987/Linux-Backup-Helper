@@ -103,6 +103,7 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
         self._build_ui()
         self._setup_tray()
         register_style_listener(self._build_ui)
+        register_style_listener(self._sync_tray)
 
         self._refresh_timer = QTimer(self)
         self._refresh_timer.timeout.connect(self._refresh_status_panel)
@@ -176,9 +177,6 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
     def _open_settings(self) -> None:
         self._open(base_window, "Settings", setup_fn=lambda d: d.changed.connect(apply_style))
         self._build_ui()
-        self._apply_tray_setting()
-        if hasattr(self, "tray"):
-            self._build_tray_menu()
         self._refresh_status_panel()
 
     def _launch_scan_verify(self) -> None:
@@ -221,6 +219,11 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
             del self.tray
         elif not disabled and not hasattr(self, "tray"):
             self._setup_tray()
+
+    def _sync_tray(self) -> None:
+        self._apply_tray_setting()
+        if hasattr(self, "tray"):
+            self._build_tray_menu()
 
     def _build_tray_menu(self) -> None:
         menu = QMenu()
@@ -420,7 +423,10 @@ def _first_run_wizard(parent) -> bool:
             try:
                 _PROFILES_DIR.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(path, dest)
-                return startup_load()
+                ok = startup_load()
+                if ok:
+                    apply_style()
+                return ok
             except OSError as e:
                 QMessageBox.critical(parent, "Import Failed", f"Could not copy profile:\n{e}")
                 break

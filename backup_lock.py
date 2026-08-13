@@ -2,10 +2,30 @@ import atexit
 import errno
 import fcntl
 import os
+import tempfile
+from pathlib import Path
 
-from state import _CONFIG_DIR, logger
+from state import _CONFIG_DIR, _USER, logger
 
-_LOCK_PATH = _CONFIG_DIR / "backup.lock"
+
+def _runtime_dir() -> Path:
+    for candidate in (
+        os.environ.get("XDG_RUNTIME_DIR"),
+        tempfile.gettempdir(),
+    ):
+        if not candidate:
+            continue
+        p = Path(candidate)
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+            if os.access(p, os.W_OK):
+                return p
+        except OSError:
+            continue
+    return _CONFIG_DIR
+
+
+_LOCK_PATH = _runtime_dir() / f"backup-helper-{_USER}.lock"
 
 _lock_fd: int | None = None
 
@@ -16,7 +36,7 @@ def acquire_backup_lock() -> bool:
         return True
 
     try:
-        _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        _LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(str(_LOCK_PATH), os.O_CREAT | os.O_RDWR, 0o600)
     except OSError as exc:
         logger.warning("backup_lock: could not open lock file: %s", exc)
@@ -52,6 +72,10 @@ def release_backup_lock() -> None:
         pass
     try:
         os.close(_lock_fd)
+    except OSError:
+        pass
+    try:
+        _LOCK_PATH.unlink(missing_ok=True)
     except OSError:
         pass
     _lock_fd = None

@@ -75,7 +75,7 @@ def export_history_csv(profile_name: str) -> str:
         extrasaction="ignore",
     )
     writer.writeheader()
-    writer.writerows({**{"deleted": 0}, **e} for e in entries)
+    writer.writerows({"deleted": 0, **e} for e in entries)
     return out.getvalue()
 
 

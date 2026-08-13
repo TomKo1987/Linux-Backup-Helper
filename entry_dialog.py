@@ -8,9 +8,10 @@ from PyQt6.QtWidgets import (
     QPushButton, QSizePolicy, QSpinBox, QSplitter, QVBoxLayout, QWidget,
 )
 
-from state import RESTART_DIALOG, S, _HOME, _norm_paths, apply_replacements, logger
+from state import RESTART_DIALOG, S, _HOME, _norm_paths, apply_replacements, logger, save_profile
 from themes import apply_tooltip, current_theme, font_scale
 from ui_utils import block_set, browse_field, hdr_label, ok_cancel_buttons, sep
+
 
 class _HintResizer(QObject):
     def __init__(self, watched, hint_label):
@@ -192,11 +193,12 @@ class ExcludeDialog(QDialog):
 
 class AdvancedOptionsDialog(QDialog):
 
-    def __init__(self, parent, options: dict):
+    def __init__(self, parent, options: dict, on_save=None):
         super().__init__(parent)
         self.setWindowTitle("Advanced Options")
-        self.setMinimumWidth(640)
+        self.setMinimumSize(700, 450)
         self._opt: dict = dict(options)
+        self._on_save = on_save
         self._build()
 
     def _build(self) -> None:
@@ -303,6 +305,11 @@ class AdvancedOptionsDialog(QDialog):
             "versioned_archive":     self._versioned_cb.isChecked(),
             "max_versions":          self._max_spin.value(),
         }
+        if self._on_save is not None:
+            try:
+                self._on_save(dict(self._opt))
+            except Exception as exc:
+                logger.error("AdvancedOptionsDialog: on_save callback failed: %s", exc)
         self.accept()
 
     @property
@@ -560,9 +567,13 @@ class EntryDialog(QDialog):
         if not hasattr(self, "_e") or not isinstance(self._e, dict):
             self._e = {}
         entry = {**self.snapshot, "details": dict(self._e.get("details", {}))}
-        dlg = HooksDialog(self, entry)
+        original = self._entry_snapshot if isinstance(self._entry_snapshot, dict) else None
+        persist_target = original if (original and any(e is original for e in S.entries)) else None
+        dlg = HooksDialog(self, entry, persist_target=persist_target)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._e.setdefault("details", {}).update(entry.get("details", {}))
+            if persist_target is not None:
+                self._entry_snapshot.setdefault("details", {}).update(entry.get("details", {}))
 
     def _populate_lists(self) -> None:
         self._src_list.clear()
@@ -830,7 +841,26 @@ class EntryDialog(QDialog):
             self._populate_lists()
 
     def _open_advanced(self) -> None:
-        dlg = AdvancedOptionsDialog(self, self._advanced)
+        def _persist(new_advanced: dict) -> None:
+            self._advanced = new_advanced
+            original = self._entry_snapshot if isinstance(self._entry_snapshot, dict) else None
+            if not original:
+                return
+            idx = next((i for i, e in enumerate(S.entries) if e is original), None)
+            if idx is None:
+                return
+            details = dict(S.entries[idx].get("details", {}))
+            details.update(new_advanced)
+            S.entries[idx]["details"] = details
+            self._e["details"] = details
+            self._entry_snapshot["details"] = details
+            if not save_profile():
+                QMessageBox.warning(
+                    self, "Save Failed",
+                    "The advanced options could not be saved to the profile. "
+                    "Please check the log for details.")
+
+        dlg = AdvancedOptionsDialog(self, self._advanced, on_save=_persist)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._advanced = dlg.result_options
 

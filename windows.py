@@ -281,6 +281,9 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
 
     def closeEvent(self, a0: QCloseEvent | None) -> None:
         self._cleanup_connections()
+        theme_dlg = getattr(self, "_theme_dlg", None)
+        if theme_dlg is not None:
+            theme_dlg.close()
         super().closeEvent(a0)
 
 
