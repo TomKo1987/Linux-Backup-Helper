@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 
 from state import active_dotfiles
 from themes import current_theme, font_sz, register_style_listener, unregister_style_listener
-from ui_utils import _StandardKeysMixin
+from ui_utils import color_style, header_bar_style, _StandardKeysMixin
 
 
 def first_path(v) -> str:
@@ -338,7 +338,7 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
         dim = t["text_dim"]
 
         self.setStyleSheet(f"background:{bg};color:{fg};")
-        self._header_frame.setStyleSheet(f"background:{bg2};border-bottom:1px solid {sep_col};")
+        self._header_frame.setStyleSheet(header_bar_style(bg2, sep_col))
         self._title_lbl.setStyleSheet(
             f"font-size:{font_sz(5)}px;font-weight:bold;color:{acc};background:transparent;")
         self._sub_lbl.setStyleSheet(
@@ -353,7 +353,7 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
             f"QListWidget::item:selected{{background:{bg2};color:{acc};border-left:3px solid {acc};}}"
             f"QListWidget::item:hover:!selected{{background:{bg2};}}"
         )
-        self._backup_cb.setStyleSheet(f"color:{dim};font-size:{font_sz(-1)}px;")
+        self._backup_cb.setStyleSheet(color_style(dim, font_sz(-1)))
         self._btn_deploy_sel.setStyleSheet(self._btn_style(t, primary=True))
         self._btn_deploy_all.setStyleSheet(self._btn_style(t, primary=False))
         self._diff_title.setStyleSheet(
@@ -480,8 +480,7 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
             self._diff_view.setHtml(
                 f"<p style='color:{err_col};font-family:monospace;font-size:{font_sz()}px;'>"
                 f"✗  Source not found:<br>{src}</p>")
-            self._status_lbl.setText("⚠ Source missing")
-            self._status_lbl.setStyleSheet(f"color:{err_col};font-size:{font_sz()}px;")
+            self._set_status("⚠ Source missing", err_col)
             return
 
         src_text = _read_safe(src)
@@ -492,22 +491,19 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
             self._diff_view.setHtml(
                 f"<p style='color:{err_col};font-family:monospace;font-size:{font_sz()}px;'>"
                 f"✗  Source file not found:<br>{src}</p>")
-            self._status_lbl.setText("⚠ Source missing")
-            self._status_lbl.setStyleSheet(f"color:{err_col};font-size:{font_sz()}px;")
+            self._set_status("⚠ Source missing", err_col)
             return
 
         if dst_text is None:
             if _path_exists(dst):
-                self._status_lbl.setText("🔒 No read access")
-                self._status_lbl.setStyleSheet(f"color:{t['warning']};font-size:{font_sz()}px;")
+                self._set_status("🔒 No read access", t['warning'])
                 warn_col = t["warning"]
                 self._diff_view.setHtml(
                     f"<p style='color:{warn_col};font-family:monospace;font-size:{font_sz()}px;'>"
                     f"🔒  File exists but cannot be read without elevated permissions.<br>"
                     f"Deploy will use <code>sudo cp</code> automatically.</p>")
             else:
-                self._status_lbl.setText("★ Not on system yet")
-                self._status_lbl.setStyleSheet(f"color:{t['warning']};font-size:{font_sz()}px;")
+                self._set_status("★ Not on system yet", t['warning'])
                 warn_col = t["warning"]
                 text_col = t["text"]
                 escaped_preview = _html.escape(src_text[:4000])
@@ -520,13 +516,15 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
         src_lines = src_text.splitlines(keepends=True)
         dst_lines = dst_text.splitlines(keepends=True)
         if src_lines == dst_lines:
-            self._status_lbl.setText("✓ Identical")
-            self._status_lbl.setStyleSheet(f"color:{t['success']};font-size:{font_sz()}px;")
+            self._set_status("✓ Identical", t['success'])
         else:
-            self._status_lbl.setText("≠ Different")
-            self._status_lbl.setStyleSheet(f"color:{t['warning']};font-size:{font_sz()}px;")
+            self._set_status("≠ Different", t['warning'])
 
         self._diff_view.setHtml(_colored_diff_html(src_lines, dst_lines, t))
+
+    def _set_status(self, text: str, color: str) -> None:
+        self._status_lbl.setText(text)
+        self._status_lbl.setStyleSheet(color_style(color, font_sz()))
 
     def _show_dir_status(self, src: Path, dst: Path, t: dict) -> None:
         src_list = _dir_listing(src)
@@ -535,8 +533,7 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
             self._diff_view.setHtml(
                 f"<p style='color:{err_col};font-family:monospace;font-size:{font_sz()}px;'>"
                 f"✗  Source directory not readable:<br>{src}</p>")
-            self._status_lbl.setText("⚠ Source unreadable")
-            self._status_lbl.setStyleSheet(f"color:{err_col};font-size:{font_sz()}px;")
+            self._set_status("⚠ Source unreadable", err_col)
             return
 
         if not _is_dir_safe(dst):
@@ -544,8 +541,7 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
             text_col = t["text"]
             files_preview = "<br>".join(_html.escape(p) for p in sorted(src_list)[:200])
             more = "" if len(src_list) <= 200 else f"<br>… and {len(src_list) - 200} more"
-            self._status_lbl.setText("★ Not on system yet")
-            self._status_lbl.setStyleSheet(f"color:{warn_col};font-size:{font_sz()}px;")
+            self._set_status("★ Not on system yet", warn_col)
             self._diff_view.setHtml(
                 f"<p style='color:{warn_col};font-family:monospace;font-size:{font_sz()}px;'>"
                 f"★  Destination directory does not exist yet — will be created ({len(src_list)} file(s)):</p>"
@@ -558,15 +554,13 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
         changed = sorted(k for k in (set(src_list) & set(dst_list)) if src_list[k] != dst_list[k])
 
         if not only_src and not only_dst and not changed:
-            self._status_lbl.setText("✓ Identical")
-            self._status_lbl.setStyleSheet(f"color:{t['success']};font-size:{font_sz()}px;")
+            self._set_status("✓ Identical", t['success'])
             self._diff_view.setHtml(
                 f"<p style='color:{t['success']};font-family:monospace;font-size:{font_sz()}px;'>"
                 f"✓  Directory contents are identical ({len(src_list)} file(s)) — nothing to deploy.</p>")
             return
 
-        self._status_lbl.setText("≠ Different")
-        self._status_lbl.setStyleSheet(f"color:{t['warning']};font-size:{font_sz()}px;")
+        self._set_status("≠ Different", t['warning'])
 
         rows = []
         add_col = t.get("success", "#4ec994")

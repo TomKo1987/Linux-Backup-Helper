@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
 from linux_distro_helper import LinuxDistroHelper
 from state import S, logger
 from themes import current_theme, font_sz
-from ui_utils import _StandardKeysMixin
+from ui_utils import color_style, _StandardKeysMixin
 
 from scan_verify_capture import _CaptureTab
 from scan_verify_verify import _VerifyTab
@@ -69,7 +69,7 @@ class ScanVerifyDialog(_StandardKeysMixin, QDialog):
                       f"Package manager: <b>{self._helper.pkg_manager_name()}</b>  •  "
                       f"Profile: <b>{S.profile_name or 'none'}</b>")
         info.setTextFormat(Qt.TextFormat.RichText)
-        info.setStyleSheet(f"color:{t['muted']};font-size:{font_sz(-1)}px;")
+        info.setStyleSheet(color_style(t['muted'], font_sz(-1)))
         lay.addWidget(info)
 
         tabs = QTabWidget()

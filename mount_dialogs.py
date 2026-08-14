@@ -6,9 +6,9 @@ from dialog_base import _ListDialog
 from drive_utils import get_mounts, is_mounted
 from state import S, save_profile
 from themes import apply_tooltip, current_theme
-from ui_utils import hdr_label, ok_cancel_buttons, sep
+from ui_utils import _StandardKeysMixin, hdr_label, ok_cancel_buttons, sep
 
-class MountDialog(QDialog):
+class MountDialog(_StandardKeysMixin, QDialog):
 
     def __init__(self, parent, opt: dict | None):
         super().__init__(parent)

@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
 from linux_distro_helper import LinuxDistroHelper
 from state import all_profile_pkg_names
 from themes import current_theme, font_sz
+from ui_utils import color_style
 
 from scan_verify_helpers import (
     _get_sm_managed_packages, _get_arch_de_deps, _IGNORE_EXACT, _IGNORE_PREFIXES
@@ -104,7 +105,7 @@ class _PackageDiffTab(QWidget):
         lay.addLayout(cols, 1)
 
         self._status = QLabel("Click ‘Check Now’ to compare System vs. Profile.")
-        self._status.setStyleSheet(f"color:{dim};font-size:{font_sz(-1)}px;")
+        self._status.setStyleSheet(color_style(dim, font_sz(-1)))
         lay.addWidget(self._status)
 
     def _run(self) -> None:
@@ -140,7 +141,7 @@ class _PackageDiffTab(QWidget):
                 f"only 'in profile, not installed' could be checked.")
         else:
             t = current_theme()
-            self._status.setStyleSheet(f"color:{t['text_dim']};font-size:{font_sz(-1)}px;")
+            self._status.setStyleSheet(color_style(t['text_dim'], font_sz(-1)))
             self._status.setText(
                 f"{len(not_tracked)} not tracked  ·  {len(missing)} missing from the system")
         self._run_btn.setEnabled(True)

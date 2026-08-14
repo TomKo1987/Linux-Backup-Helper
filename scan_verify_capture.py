@@ -7,14 +7,13 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QWidget
 )
 
-from drive_utils import check_drives_to_mount, mount_required_drives
 from linux_distro_helper import LinuxDistroHelper, SESSIONS
 from state import S, _HOME, save_profile, all_profile_pkg_names, sort_pkg_list, sort_specific_pkg_list, apply_replacements
 from themes import current_theme, font_sz
-from ui_utils import sep
+from ui_utils import color_style, sep
 
 from scan_verify_helpers import (
-    _collect_verify_paths, _get_arch_de_deps, _get_sm_managed_packages,
+    _ensure_drives_mounted, _get_arch_de_deps, _get_sm_managed_packages,
     _make_progress_widget, _CaptureWorker, _IGNORE_EXACT, _IGNORE_PREFIXES
 )
 
@@ -85,14 +84,12 @@ class _CaptureTab(QWidget):
         self._scroll.hide()
         self._btns.hide()
 
-        needed = check_drives_to_mount(_collect_verify_paths())
-        if needed:
-            if not mount_required_drives(needed, parent=self.window()):
-                t = current_theme()
-                self._prog_label.setText("⚠  Capture cancelled: required drive(s) not mounted.")
-                self._prog_label.setStyleSheet(f"color:{t['warning']};font-weight:bold;")
-                self._prog_bar.hide()
-                return
+        if not _ensure_drives_mounted(self.window()):
+            t = current_theme()
+            self._prog_label.setText("⚠  Capture cancelled: required drive(s) not mounted.")
+            self._prog_label.setStyleSheet(f"color:{t['warning']};font-weight:bold;")
+            self._prog_bar.hide()
+            return
 
         worker = _CaptureWorker(self._helper)
         worker.progress.connect(self._prog_label.setText)
@@ -307,7 +304,7 @@ class _CaptureTab(QWidget):
                       "removed from Basic Packages if present.")
         hint.setTextFormat(Qt.TextFormat.RichText)
         hint.setWordWrap(True)
-        hint.setStyleSheet(f"color:{t['muted']};font-size:{font_sz(-1)}px;")
+        hint.setStyleSheet(color_style(t['muted'], font_sz(-1)))
         vl.addWidget(hint)
 
         sess_row = QHBoxLayout()
@@ -385,7 +382,7 @@ class _CaptureTab(QWidget):
                       "<br>Services already in your profile are shown with a ✓ in profile badge.")
         hint.setTextFormat(Qt.TextFormat.RichText)
         hint.setWordWrap(True)
-        hint.setStyleSheet(f"color:{t['muted']};font-size:{font_sz(-1)}px;")
+        hint.setStyleSheet(color_style(t['muted'], font_sz(-1)))
         vl.addWidget(hint)
 
         _OP_LABELS: dict[str, str] = {"enable_bluetooth_service": "Bluetooth",

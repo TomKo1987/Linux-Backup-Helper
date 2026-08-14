@@ -20,7 +20,7 @@ from themes import (
     current_theme, font_sz
 )
 from tooltips import sudo_checkbox_tooltip
-from ui_utils import ask_text, ok_cancel_buttons
+from ui_utils import ask_text, checkbox_row_frame_style, ok_cancel_buttons
 
 from system_manager_helpers import (
     _is_specific, _commit_pkgs, _pkg_checkboxes, _scroll_dlg, _read_import_file, _pkg_form_dialog,
@@ -137,7 +137,7 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
                     r_idx = row + j // cols
                     frame = QFrame()
                     bg = t["bg2"] if r_idx % 2 == 0 else t["bg3"]
-                    frame.setStyleSheet(f"QFrame{{background-color:{bg};border-radius:4px;}}")
+                    frame.setStyleSheet(checkbox_row_frame_style(bg))
                     flay = QHBoxLayout(frame)
                     flay.setContentsMargins(6, 3, 6, 3)
                     flay.addWidget(cb)
@@ -148,7 +148,7 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
                 r_idx = i // cols
                 frame = QFrame()
                 bg = t["bg2"] if r_idx % 2 == 0 else t["bg3"]
-                frame.setStyleSheet(f"QFrame{{background-color:{bg};border-radius:4px;}}")
+                frame.setStyleSheet(checkbox_row_frame_style(bg))
                 flay = QHBoxLayout(frame)
                 flay.setContentsMargins(6, 3, 6, 3)
                 flay.addWidget(cb)

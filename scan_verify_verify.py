@@ -3,13 +3,12 @@ from PyQt6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget
 )
 
-from drive_utils import check_drives_to_mount, mount_required_drives
 from linux_distro_helper import LinuxDistroHelper
 from state import S, apply_replacements
 from themes import current_theme, font_sz
 
 from scan_verify_helpers import (
-    _clean_title, _collect_verify_paths, _make_progress_widget, _Section, _VerifyWorker
+    _clean_title, _ensure_drives_mounted, _make_progress_widget, _Section, _VerifyWorker
 )
 
 
@@ -49,6 +48,13 @@ class _VerifyTab(QWidget):
         row.addWidget(refresh_btn)
         lay.addLayout(row)
 
+    def _show_summary(self, text: str, color: str) -> None:
+        t = current_theme()
+        self._summary.setStyleSheet(f"font-size:{font_sz(1)}px;font-weight:bold;padding:8px;"
+                                    f"border-radius:4px;background:{t['bg2']};color:{color};")
+        self._summary.setText(text)
+        self._summary.show()
+
     def _start(self) -> None:
         if isinstance(self._worker, QThread) and self._worker.isRunning():
             return
@@ -57,16 +63,11 @@ class _VerifyTab(QWidget):
         self._prog_widget.show()
         self._prog_label.setText("Preparing…")
 
-        needed = check_drives_to_mount(_collect_verify_paths())
-        if needed:
-            if not mount_required_drives(needed, parent=self.window()):
-                self._prog_widget.hide()
-                t = current_theme()
-                self._summary.setStyleSheet(f"font-size:{font_sz(1)}px;font-weight:bold;padding:8px;"
-                                            f"border-radius:4px;background:{t['bg2']};color:{t['warning']};")
-                self._summary.setText("⚠  Verify cancelled: required drive(s) not mounted.")
-                self._summary.show()
-                return
+        if not _ensure_drives_mounted(self.window()):
+            self._prog_widget.hide()
+            t = current_theme()
+            self._show_summary("⚠  Verify cancelled: required drive(s) not mounted.", t["warning"])
+            return
 
         worker = _VerifyWorker(self._helper)
         worker.progress.connect(self._prog_label.setText)
@@ -171,11 +172,6 @@ class _VerifyTab(QWidget):
             win.fit_to_content()
 
         if total_issues == 0:
-            self._summary.setStyleSheet(f"font-size:{font_sz(1)}px;font-weight:bold;padding:8px;"
-                                        f"border-radius:4px;background:{t['bg2']};color:{t['success']};")
-            self._summary.setText("✅  Everything looks good — system matches profile.")
+            self._show_summary("✅  Everything looks good — system matches profile.", t["success"])
         else:
-            self._summary.setStyleSheet(f"font-size:{font_sz(1)}px;font-weight:bold;padding:8px;"
-                                        f"border-radius:4px;background:{t['bg2']};color:{t['warning']};")
-            self._summary.setText(f"⚠  {total_issues} issue(s) found — click section headers to expand details.")
-        self._summary.show()
+            self._show_summary(f"⚠  {total_issues} issue(s) found — click section headers to expand details.", t["warning"])

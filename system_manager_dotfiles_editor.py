@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
 from dotfiles_manager import first_path
 from state import S, _HOME, apply_replacements, save_profile
 from themes import font_sz, current_theme, tri_state_legend_html
-from ui_utils import browse_field
+from ui_utils import browse_field, checkbox_row_frame_style, color_style
 
 from system_manager_helpers import (
     _scroll_dlg, _read_import_file, TriCheckBox, _make_tri_cb, _add_select_all_tri,
@@ -51,7 +51,7 @@ class _DotfilesEditorMixin(_DotfilesMixinBase):
 
             outer = QFrame()
             bg = t["bg2"] if idx % 2 == 0 else t["bg3"]
-            outer.setStyleSheet(f"QFrame{{background-color:{bg};border-radius:6px;}}")
+            outer.setStyleSheet(checkbox_row_frame_style(bg, 6))
             outer_vlay = QVBoxLayout(outer)
             outer_vlay.setContentsMargins(6, 2, 6, 2)
             outer_vlay.setSpacing(0)
@@ -78,7 +78,7 @@ class _DotfilesEditorMixin(_DotfilesMixinBase):
 
             for lbl_text, ed in [("Source:", src_ed), ("Destination:", dst_ed)]:
                 lbl = QLabel(lbl_text)
-                lbl.setStyleSheet(f"color:{t['muted']};font-size:{font_sz(-1)}px;")
+                lbl.setStyleSheet(color_style(t['muted'], font_sz(-1)))
                 det_lay.addWidget(lbl)
                 det_lay.addWidget(browse_field(self, ed))
 

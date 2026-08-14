@@ -3,14 +3,14 @@ import os
 from PyQt6.QtCore import QEvent, QObject, QPoint, QPointF, Qt
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QShowEvent
 from PyQt6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
+    QApplication, QCheckBox, QComboBox, QDialog, QFormLayout, QHBoxLayout,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit,
     QPushButton, QSizePolicy, QSpinBox, QSplitter, QVBoxLayout, QWidget,
 )
 
 from state import RESTART_DIALOG, S, _HOME, _norm_paths, apply_replacements, logger, save_profile
 from themes import apply_tooltip, current_theme, font_scale
-from ui_utils import block_set, browse_field, hdr_label, ok_cancel_buttons, sep
+from ui_utils import block_set, browse_field, color_style, hdr_label, ok_cancel_buttons, sep
 
 
 class _HintResizer(QObject):
@@ -53,7 +53,7 @@ class ExcludeDialog(QDialog):
         self._up_btn.setFixedWidth(70)
         self._up_btn.clicked.connect(self._go_up)
         self._path_lbl = QLabel()
-        self._path_lbl.setStyleSheet(f"color:{t['text_dim']};font-size:{fs['sm']}px;")
+        self._path_lbl.setStyleSheet(color_style(t['text_dim'], fs['sm']))
         nav_row.addWidget(self._up_btn)
         nav_row.addWidget(self._path_lbl, 1)
         layout.addLayout(nav_row)
@@ -732,11 +732,7 @@ class EntryDialog(QDialog):
         dst_ed = _path_row("Destination path:", dst, "Enter path or use '📄 File' or '📁 Directory'")
 
         vl.addWidget(sep())
-        _buttons = QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel  # type: ignore[attr-defined]
-        bb     = QDialogButtonBox(_buttons)
-        bb.accepted.connect(dlg.accept)
-        bb.rejected.connect(dlg.reject)
-        vl.addWidget(bb)
+        vl.addWidget(ok_cancel_buttons(dlg, dlg.accept, ok_label="Ok"))
 
         dlg.adjustSize()
         if dlg.exec() != QDialog.DialogCode.Accepted:

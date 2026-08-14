@@ -7,7 +7,7 @@ from pathlib import Path
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QDialog, QDialogButtonBox, QFileDialog, QLabel, QListWidget, QListWidgetItem, QMessageBox,
+    QDialog, QFileDialog, QLabel, QListWidget, QListWidgetItem, QMessageBox,
     QPushButton, QVBoxLayout,
 )
 
@@ -16,7 +16,7 @@ from state import (
     S, _HOME, _PROFILES_DIR, _PROFILE_RE, _atomic_write, list_profiles, load_profile, logger, save_profile,
 )
 from themes import apply_style, current_theme
-from ui_utils import ask_profile_name, btn_row, hdr_label, sep
+from ui_utils import ask_profile_name, btn_row, hdr_label, ok_cancel_buttons, sep
 
 _ARCHIVE_MAX_PROFILE_BYTES = 1024 * 1024
 
@@ -283,11 +283,7 @@ class ProfilesDialog(QDialog):
             bg.addButton(rb_all)
             vl.addWidget(rb_sel)
             vl.addWidget(rb_all)
-            _buttons = QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel  # type: ignore[attr-defined]
-            bb = QDialogButtonBox(_buttons)
-            bb.accepted.connect(choice_dlg.accept)
-            bb.rejected.connect(choice_dlg.reject)
-            vl.addWidget(bb)
+            vl.addWidget(ok_cancel_buttons(choice_dlg, choice_dlg.accept, ok_label="Ok"))
             if choice_dlg.exec() != QDialog.DialogCode.Accepted: return
             export_all = rb_all.isChecked()
 

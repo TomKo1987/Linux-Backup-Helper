@@ -2,7 +2,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QDialog, QHBoxLayout, QListWidget, QPushButton, QTextEdit, QVBoxLayout, QWidget
 
 from themes import current_theme, font_sz
-from ui_utils import btn_row, hdr_label, sep
+from ui_utils import btn_row, footer_bar_style, hdr_label, sep
 
 
 class _UserRoleListMixin:
@@ -58,7 +58,7 @@ class _TextViewDialog(QDialog):
         layout.addWidget(self.view, 1)
 
         bot = QWidget()
-        bot.setStyleSheet(f"background:{t['bg2']};border-top:1px solid {t['header_sep']};")
+        bot.setStyleSheet(footer_bar_style(t['bg2'], t['header_sep']))
         bl  = QHBoxLayout(bot)
         bl.setContentsMargins(12, 8, 12, 8)
         bl.setSpacing(8)

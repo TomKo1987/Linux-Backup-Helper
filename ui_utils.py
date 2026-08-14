@@ -56,7 +56,7 @@ def build_dialog_shell(
     lay.setSpacing(0)
 
     hdr = QFrame()
-    hdr.setStyleSheet(f"background:{t['bg2']};border-bottom:1px solid {t['header_sep']};")
+    hdr.setStyleSheet(header_bar_style(t['bg2'], t['header_sep']))
     hl = QHBoxLayout(hdr)
     hl.setContentsMargins(16, 10, 16, 10)
     title_lbl = QLabel(f"{icon}  {title}" if icon else title)
@@ -83,7 +83,7 @@ def build_dialog_shell(
     lay.addWidget(scroll, 1)
 
     ftr = QFrame()
-    ftr.setStyleSheet(f"background:{t['bg2']};border-top:1px solid {t['header_sep']};")
+    ftr.setStyleSheet(footer_bar_style(t['bg2'], t['header_sep']))
     fl = QHBoxLayout(ftr)
     fl.setContentsMargins(12, 8, 12, 8)
     for w in footer_extra or ():
@@ -128,6 +128,26 @@ def hdr_label(text: str, color: str = "", size: int | None = None) -> QLabel:
                       f"color:{color or current_theme()['accent']};padding:4px 0;")
     lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
     return lbl
+
+
+def color_style(color: str, size: int) -> str:
+    return f"color:{color};font-size:{size}px;"
+
+
+def header_bar_style(bg: str, _sep: str) -> str:
+    return f"background:{bg};border-bottom:1px solid {_sep};"
+
+
+def footer_bar_style(bg: str, _sep: str) -> str:
+    return f"background:{bg};border-top:1px solid {_sep};"
+
+
+def card_frame_style(bg: str, radius: int = 8) -> str:
+    return f"QFrame{{background:{bg}; border-radius:{radius}px;}}"
+
+
+def checkbox_row_frame_style(bg: str, radius: int = 4) -> str:
+    return f"QFrame{{background-color:{bg};border-radius:{radius}px;}}"
 
 
 def ok_cancel_buttons(dialog: QDialog, ok_fn, ok_label: str = "Save", cancel_label: str = "Cancel", cancel_fn=None) -> QDialogButtonBox:
@@ -218,15 +238,18 @@ def ask_profile_name(title: str, default: str, parent=None) -> str | None:
 
 
 class _StandardKeysMixin(_MixinBase):
+    def _handle_return(self, widget) -> bool:
+        if isinstance(widget, QPushButton):
+            widget.click()
+            return True
+        return False
+
     def keyPressEvent(self, a0: QKeyEvent | None) -> None:
         if a0 is None:
             return
         k = a0.key()
         if k in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
-            widget = self.focusWidget()
-            if widget is not None and isinstance(widget, QPushButton):
-                widget.click()
-            else:
+            if not self._handle_return(self.focusWidget()):
                 super().keyPressEvent(a0)
         elif k == Qt.Key.Key_Escape:
             self.close()

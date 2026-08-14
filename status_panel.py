@@ -1,6 +1,7 @@
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from state import S, logger
+from ui_utils import footer_bar_style
 
 
 class StatusPanel(QWidget):
@@ -14,7 +15,7 @@ class StatusPanel(QWidget):
         bg2 = t["bg2"]
         sep = t["header_sep"]
         dim = t["text_dim"]
-        self.setStyleSheet(f"background:{bg2};border-top:1px solid {sep};")
+        self.setStyleSheet(footer_bar_style(bg2, sep))
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(12, 6, 12, 6)

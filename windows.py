@@ -1,5 +1,5 @@
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QShowEvent, QCloseEvent, QKeyEvent
+from PyQt6.QtGui import QShowEvent, QCloseEvent
 from PyQt6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget, QScrollArea,
     QApplication, QCheckBox, QDialog, QMessageBox, QPushButton
@@ -14,7 +14,7 @@ from samba_credentials import SambaPasswordDialog
 from state import S, _PROFILES_DIR, RESTART_DIALOG, apply_replacements, save_profile
 from themes import current_theme, font_scale, register_style_listener, unregister_style_listener, apply_tooltip
 from tooltips import backup_tooltips, restore_tooltips, copy_logic_tooltip
-from ui_utils import block_set, btn_row, _StandardKeysMixin
+from ui_utils import block_set, btn_row, header_bar_style, _StandardKeysMixin
 
 _COLS_NARROW, _COLS_WIDE = 2, 4
 
@@ -41,7 +41,7 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
 
         t = current_theme()
         self._top_wrap = QWidget()
-        self._top_wrap.setStyleSheet(f"background:{t['bg2']};border-bottom:1px solid {t['header_sep']};")
+        self._top_wrap.setStyleSheet(header_bar_style(t['bg2'], t['header_sep']))
         self._top_hbox = QHBoxLayout(self._top_wrap)
         self._top_hbox.setContentsMargins(5, 5, 5, 5)
         self.main_layout.addWidget(self._top_wrap)
@@ -263,21 +263,13 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
             except (TypeError, RuntimeError):
                 pass
 
-    def keyPressEvent(self, a0: QKeyEvent | None) -> None:
-        if a0 is None:
-            super().keyPressEvent(a0)
-            return
-        k = a0.key()
-        if k in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
-            focused = self.focusWidget()
-            if isinstance(focused, QCheckBox):
-                if focused == self._selectall:
-                    focused.toggle()
-                    self._toggle_all()
-                else:
-                    focused.toggle()
-                return
-        super().keyPressEvent(a0)
+    def _handle_return(self, widget) -> bool:
+        if isinstance(widget, QCheckBox):
+            widget.toggle()
+            if widget == self._selectall:
+                self._toggle_all()
+            return True
+        return super()._handle_return(widget)
 
     def closeEvent(self, a0: QCloseEvent | None) -> None:
         self._cleanup_connections()

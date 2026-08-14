@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
 
 from state import S, _LOG_HIST_DIR, _atomic_write, logger
 from themes import current_theme, font_sz, register_style_listener, unregister_style_listener
-from ui_utils import _StandardKeysMixin, size_to_screen
+from ui_utils import footer_bar_style, header_bar_style, _StandardKeysMixin, size_to_screen
 
 
 def _history_path(profile_name: str) -> Path:
@@ -167,7 +167,7 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
         self.setStyleSheet(f"background:{bg};")
 
         header_bar = QFrame()
-        header_bar.setStyleSheet(f"background:{bg2}; border-bottom:1px solid {sep};")
+        header_bar.setStyleSheet(header_bar_style(bg2, sep))
         hb_lay = QHBoxLayout(header_bar)
         hb_lay.setContentsMargins(14, 10, 14, 10)
 
@@ -224,7 +224,7 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
         content.addWidget(detail_frame, 2)
 
         bottom = QFrame()
-        bottom.setStyleSheet(f"background:{bg2}; border-top:1px solid {sep};")
+        bottom.setStyleSheet(footer_bar_style(bg2, sep))
         bot_lay = QHBoxLayout(bottom)
         bot_lay.setContentsMargins(12, 8, 12, 8)
 

@@ -7,6 +7,7 @@ from PyQt6.QtCore import Qt, QEvent, QObject
 from PyQt6.QtWidgets import QApplication, QDialog, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget
 
 from state import S, logger, invalidate_tooltip_cache
+from ui_utils import _StandardKeysMixin
 
 THEMES: dict[str, dict[str, str]] = {
     "Ayu Dark": {
@@ -450,7 +451,7 @@ def _visible_text_len(html_text: str) -> int:
     return len(_TAG_RE.sub('', html_text))
 
 
-class _TooltipDialog(QDialog):
+class _TooltipDialog(_StandardKeysMixin, QDialog):
 
     def __init__(self, parent, html_text: str, max_width: int) -> None:
         super().__init__(parent)

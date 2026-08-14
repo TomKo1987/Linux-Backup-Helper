@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
 from dialog_base import _TextViewDialog
 from state import RESTART_DIALOG, S, _LOG_FILE, apply_replacements, logger, save_profile
 from themes import THEMES, apply_style, current_theme, font_sz
-from ui_utils import _StandardKeysMixin, hdr_label, ok_cancel_buttons
+from ui_utils import _StandardKeysMixin, footer_bar_style, header_bar_style, hdr_label, ok_cancel_buttons
 
 class LogViewer(_TextViewDialog):
 
@@ -21,7 +21,7 @@ class LogViewer(_TextViewDialog):
         super().__init__(parent, "Log Viewer", (1350, 950),
                          extra_buttons=[("🔄 Refresh", self._load), ("🗑 Clear", self._clear)])
         top = QWidget()
-        top.setStyleSheet(f"background:{t['bg2']};border-bottom:1px solid {t['header_sep']};")
+        top.setStyleSheet(header_bar_style(t['bg2'], t['header_sep']))
         tl  = QHBoxLayout(top)
         tl.setContentsMargins(14, 8, 14, 8)
         tl.addStretch()
@@ -146,7 +146,7 @@ class NotesDialog(_StandardKeysMixin, QDialog):
         layout.setSpacing(0)
 
         hdr = QFrame()
-        hdr.setStyleSheet(f"background:{bg2};border-bottom:1px solid {sep_col};")
+        hdr.setStyleSheet(header_bar_style(bg2, sep_col))
         hl = QHBoxLayout(hdr)
         hl.setContentsMargins(14, 10, 14, 10)
         title_lbl = QLabel(f"📝  Notes  ·  {profile}")
@@ -175,7 +175,7 @@ class NotesDialog(_StandardKeysMixin, QDialog):
         self._edit.setPlainText(S.notes)
 
         ftr = QFrame()
-        ftr.setStyleSheet(f"background:{bg2};border-top:1px solid {sep_col};")
+        ftr.setStyleSheet(footer_bar_style(bg2, sep_col))
         fl = QHBoxLayout(ftr)
         fl.setContentsMargins(12, 8, 12, 8)
         fl.addStretch()

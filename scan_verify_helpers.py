@@ -11,9 +11,11 @@ from PyQt6.QtWidgets import (
 )
 
 from dotfiles_manager import first_path
+from drive_utils import check_drives_to_mount, mount_required_drives
 from linux_distro_helper import LinuxDistroHelper, USER_SHELLS, ARCH_KERNEL_VARIANTS
 from state import S, logger, active_pkg_names, active_dotfiles
 from themes import current_theme, font_sz
+from ui_utils import color_style
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 
@@ -243,6 +245,16 @@ def _safe_exists(path: Path) -> bool:
         return False
 
 
+def _ensure_drives_mounted(parent) -> bool:
+    """Check whether any drives referenced by verify paths need mounting and,
+    if so, prompt to mount them. Returns True if it's safe to proceed
+    (nothing needed, or mounting succeeded), False if the caller should abort."""
+    needed = check_drives_to_mount(_collect_verify_paths())
+    if not needed:
+        return True
+    return mount_required_drives(needed, parent=parent)
+
+
 def _collect_verify_paths() -> list[str]:
     paths: list[str] = []
     for sf in active_dotfiles():
@@ -461,11 +473,11 @@ class _Section(QWidget):
 
         title_lbl = QLabel(f"<b>{title}</b>")
         title_lbl.setTextFormat(Qt.TextFormat.RichText)
-        title_lbl.setStyleSheet(f"color:{color};font-size:{font_sz(1)}px;")
+        title_lbl.setStyleSheet(color_style(color, font_sz(1)))
         title_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
         status_lbl = QLabel(status_txt)
-        status_lbl.setStyleSheet(f"color:{color};font-size:{font_sz(-1)}px;")
+        status_lbl.setStyleSheet(color_style(color, font_sz(-1)))
 
         hdr = QWidget()
         hdr.setStyleSheet(f"background:{t['bg2']};border:1px solid {t['header_sep']};border-radius:4px;padding:2px;")

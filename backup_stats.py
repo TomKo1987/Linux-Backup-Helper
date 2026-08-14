@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
 from history import load_history as _load_all_history, _fmt_duration as _fmt_dur
 from state import S
 from themes import current_theme, font_sz, register_style_listener, unregister_style_listener
-from ui_utils import _StandardKeysMixin, build_dialog_shell, clear_layout, sep, size_to_screen
+from ui_utils import _StandardKeysMixin, build_dialog_shell, clear_layout, color_style, sep, size_to_screen
 
 
 def _parse_ts(ts: str) -> datetime | None:
@@ -280,7 +280,7 @@ class BackupStatsDialog(_StandardKeysMixin, QDialog):
         if not entries:
             lbl = QLabel("No backup history available for the selected range.")
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setStyleSheet(f"color:{current_theme()['text_dim']};font-size:{font_sz(1)}px;")
+            lbl.setStyleSheet(color_style(current_theme()['text_dim'], font_sz(1)))
             self._body_lay.addWidget(lbl)
             return
 

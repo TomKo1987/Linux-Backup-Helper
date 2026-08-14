@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
 
 from state import active_pkg_names, list_profiles, snapshot_profile
 from themes import current_theme, font_sz
-from ui_utils import _StandardKeysMixin, hdr_label, sep
+from ui_utils import color_style, _StandardKeysMixin, hdr_label, sep
 
 __all__ = ["ProfileCompareDialog"]
 
@@ -96,13 +96,13 @@ def _simple_value_diff(name_a: str, name_b: str, label_a: str, label_b: str,
 
     if same:
         lbl = QLabel(f"✓  Identical in both profiles:  {label_a}")
-        lbl.setStyleSheet(f"color:{t['success']};font-size:{font_sz(0)}px;")
+        lbl.setStyleSheet(color_style(t['success'], font_sz(0)))
         lay.addWidget(lbl)
     else:
         row_a = QLabel(f"'{name_a}':  {label_a or '(none)'}")
-        row_a.setStyleSheet(f"color:{t['info']};font-size:{font_sz(0)}px;")
+        row_a.setStyleSheet(color_style(t['info'], font_sz(0)))
         row_b = QLabel(f"'{name_b}':  {label_b or '(none)'}")
-        row_b.setStyleSheet(f"color:{t['accent']};font-size:{font_sz(0)}px;")
+        row_b.setStyleSheet(color_style(t['accent'], font_sz(0)))
         lay.addWidget(row_a)
         lay.addWidget(row_b)
     lay.addStretch()
@@ -127,7 +127,7 @@ class ProfileCompareDialog(_StandardKeysMixin, QDialog):
         lay.addWidget(hdr_label("⚖  Profile Compare"))
 
         info = QLabel("Compare packages, dotfiles, backup entries and system settings between two profiles.")
-        info.setStyleSheet(f"color:{t['text_dim']};font-size:{font_sz(-1)}px;")
+        info.setStyleSheet(color_style(t['text_dim'], font_sz(-1)))
         lay.addWidget(info)
         lay.addWidget(sep())
 
@@ -158,7 +158,7 @@ class ProfileCompareDialog(_StandardKeysMixin, QDialog):
         self._status_lbl = QLabel(
             "Select two profiles and press Compare." if profiles
             else "No saved profiles found.")
-        self._status_lbl.setStyleSheet(f"color:{t['text_dim']};font-size:{font_sz(-1)}px;")
+        self._status_lbl.setStyleSheet(color_style(t['text_dim'], font_sz(-1)))
         lay.addWidget(self._status_lbl)
 
         self._tabs = QTabWidget()
@@ -268,7 +268,7 @@ class ProfileCompareDialog(_StandardKeysMixin, QDialog):
             note = QLabel(f"⚠  {len(changed)} entr{'y' if len(changed) == 1 else 'ies'} exist in both "
                           f"profiles but have different source/destination paths (marked above).")
             t = current_theme()
-            note.setStyleSheet(f"color:{t['warning']};font-size:{font_sz(-1)}px;")
+            note.setStyleSheet(color_style(t['warning'], font_sz(-1)))
             note.setWordWrap(True)
             lay.addWidget(note)
 

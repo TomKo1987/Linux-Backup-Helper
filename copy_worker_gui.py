@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
 
 from state import apply_replacements, logger
 from themes import current_theme, font_sz
-from ui_utils import _StandardKeysMixin, size_to_screen
+from ui_utils import card_frame_style, _StandardKeysMixin, size_to_screen
 
 from backup_lock import acquire_backup_lock, backup_lock_holder_pid, release_backup_lock
 from copy_worker_core import _check_destination_space, _format_unit, _cached_mono_style, _notify
@@ -22,7 +22,7 @@ from copy_worker import CopyWorker, _NF_MARK
 
 
 @dataclass
-class _StatCard:
+class _ProgressStatCard:
     frame:    QFrame
     val_lbl:  QLabel
     size_lbl: QLabel
@@ -31,7 +31,7 @@ class _StatCard:
     def set_size(self, text: str) -> None: self.size_lbl.setText(text)
 
 
-def _make_stat_card(color: "str | None", title: str, val: str = "0", size_title: int = 0, size_val: int = 0, bold_val: bool = True) -> _StatCard:
+def _make_stat_card(color: "str | None", title: str, val: str = "0", size_title: int = 0, size_val: int = 0, bold_val: bool = True) -> _ProgressStatCard:
     t       = current_theme()
     s_title = size_title or font_sz(3)
     s_val   = size_val   or font_sz(16)
@@ -70,7 +70,7 @@ def _make_stat_card(color: "str | None", title: str, val: str = "0", size_title:
     val_row.addStretch()
     inner.addLayout(val_row)
 
-    return _StatCard(frame=frame, val_lbl=val_lbl, size_lbl=size_lbl)
+    return _ProgressStatCard(frame=frame, val_lbl=val_lbl, size_lbl=size_lbl)
 
 
 class _SummaryWidget(QWidget):
@@ -137,7 +137,7 @@ class _SummaryWidget(QWidget):
 
         self._progress_card = QFrame()
         self._progress_card.setObjectName("progressCard")
-        self._progress_card.setStyleSheet(f"QFrame{{background:{t['bg3']}; border-radius:8px;}}")
+        self._progress_card.setStyleSheet(card_frame_style(t["bg3"]))
 
         prog_lay = QVBoxLayout(self._progress_card)
         prog_lay.setContentsMargins(20, 14, 20, 14)
@@ -177,7 +177,7 @@ class _SummaryWidget(QWidget):
 
         self._rate_card = QFrame()
         self._rate_card.setObjectName("rateCard")
-        self._rate_card.setStyleSheet(f"QFrame{{background:{t['bg3']}; border-radius:8px;}}")
+        self._rate_card.setStyleSheet(card_frame_style(t["bg3"]))
 
         rate_lay = QVBoxLayout(self._rate_card)
         rate_lay.setContentsMargins(20, 14, 20, 14)
@@ -225,7 +225,7 @@ class _SummaryWidget(QWidget):
 
         self._entry_card = QFrame()
         self._entry_card.setObjectName("entryCard")
-        self._entry_card.setStyleSheet(f"QFrame{{background:{t['bg3']}; border-radius:8px;}}")
+        self._entry_card.setStyleSheet(card_frame_style(t["bg3"]))
 
         entry_lay = QVBoxLayout(self._entry_card)
         entry_lay.setContentsMargins(15, 10, 15, 10)

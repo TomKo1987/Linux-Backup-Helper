@@ -16,7 +16,7 @@ from copy_worker import _is_up_to_date_local, _is_symlink_up_to_date
 from drive_utils import is_smb, is_ssh
 from state import S
 from themes import current_theme, font_sz
-from ui_utils import _StandardKeysMixin, size_to_screen
+from ui_utils import color_style, _StandardKeysMixin, size_to_screen
 
 __all__ = ["DryRunDialog", "DryRunModeDialog", "launch_dry_run"]
 
@@ -27,6 +27,27 @@ def _hline(color: str) -> QFrame:
     line.setStyleSheet(f"background:{color};border:none;")
     line.setFixedHeight(1)
     return line
+
+
+class _ChipStackMixin:
+    """Shared chip-tab/stacked-widget switching behavior for tab widgets that
+    show a row of colored chip buttons above a QStackedWidget.
+
+    Classes using this mixin must set: self._active_idx (int), self._stack
+    (QStackedWidget), self._chips (list[QPushButton]), self._chip_colors (list[str]).
+    """
+
+    _active_idx: int
+    _stack: QStackedWidget
+    _chips: list
+    _chip_colors: list
+
+    def _switch(self, idx: int) -> None:
+        if idx == self._active_idx:
+            return
+        self._active_idx = idx
+        self._stack.setCurrentIndex(idx)
+        _style_chip_tabs(self._chips, self._chip_colors, idx)
 
 
 class _DryRunWorker(QThread):
@@ -260,7 +281,7 @@ class _SearchableList(QWidget):
             self._filter(current_filter)
 
 
-class _EntryTabWidget(QWidget):
+class _EntryTabWidget(_ChipStackMixin, QWidget):
 
     def __init__(self, result: dict, parent=None) -> None:
         super().__init__(parent)
@@ -319,13 +340,6 @@ class _EntryTabWidget(QWidget):
 
         self._active_idx = -1
         self._switch(2 if n_err else 0)
-
-    def _switch(self, idx: int) -> None:
-        if idx == self._active_idx:
-            return
-        self._active_idx = idx
-        self._stack.setCurrentIndex(idx)
-        _style_chip_tabs(self._chips, self._chip_colors, idx)
 
     @staticmethod
     def _badge(text: str, color: str) -> QLabel:
@@ -392,7 +406,7 @@ class _OverviewTab(QWidget):
         lay.addWidget(self._table, 1)
 
         self._count_lbl = QLabel("")
-        self._count_lbl.setStyleSheet(f"color:{t['text_dim']};font-size:{font_sz(-2)}px;")
+        self._count_lbl.setStyleSheet(color_style(t['text_dim'], font_sz(-2)))
         lay.addWidget(self._count_lbl)
 
     def add_result(self, result: dict) -> None:
@@ -438,7 +452,7 @@ class _OverviewTab(QWidget):
         self._model.removeRows(0, self._model.rowCount())
 
 
-class _GlobalViewTab(QWidget):
+class _GlobalViewTab(_ChipStackMixin, QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         t   = current_theme()
@@ -524,13 +538,6 @@ class _GlobalViewTab(QWidget):
         self._active_idx = -1
         self._switch(idx)
 
-    def _switch(self, idx: int) -> None:
-        if idx == self._active_idx:
-            return
-        self._active_idx = idx
-        self._stack.setCurrentIndex(idx)
-        _style_chip_tabs(self._chips, self._chip_colors, idx)
-
 
 # noinspection PyUnresolvedReferences
 class DryRunDialog(_StandardKeysMixin, QDialog):
@@ -602,13 +609,13 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         info = QLabel(info_text)
         info.setTextFormat(Qt.TextFormat.RichText)
         info.setWordWrap(True)
-        info.setStyleSheet(f"color:{t['text_dim']};font-size:{font_sz(-1)}px;")
+        info.setStyleSheet(color_style(t['text_dim'], font_sz(-1)))
         lay.addWidget(info)
         lay.addWidget(_hline(t["header_sep"]))
 
         prog_row = QHBoxLayout()
         self._prog_label = QLabel("Press  ▶ Start Scan  to begin…")
-        self._prog_label.setStyleSheet(f"color:{t['text_dim']};font-size:{font_sz(-1)}px;")
+        self._prog_label.setStyleSheet(color_style(t['text_dim'], font_sz(-1)))
         self._prog_bar = QProgressBar()
         self._prog_bar.setRange(0, 100)
         self._prog_bar.setValue(0)
@@ -928,7 +935,7 @@ class DryRunModeDialog(_StandardKeysMixin, QDialog):
         sub = QLabel("Select the direction to simulate.\nNothing will be written to disk.")
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
         sub.setWordWrap(True)
-        sub.setStyleSheet(f"color:{t['text_dim']};font-size:{font_sz(0)}px;")
+        sub.setStyleSheet(color_style(t['text_dim'], font_sz(0)))
         lay.addWidget(sub)
         lay.addWidget(_hline(t["header_sep"]))
 

@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 
 from state import _HOME, logger
 from themes import current_theme, font_sz
-from ui_utils import _StandardKeysMixin
+from ui_utils import footer_bar_style, header_bar_style, _StandardKeysMixin
 
 _PROC_MOUNTS_OCTAL_RE = re.compile(r"\\(\d{3})")
 _SIZE_UNITS = ("B", "KB", "MB", "GB", "TB")
@@ -353,7 +353,7 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
         self.setStyleSheet(f"background:{bg};color:{fg};")
 
         header = QFrame()
-        header.setStyleSheet(f"background:{bg2};border-bottom:1px solid {sep};")
+        header.setStyleSheet(header_bar_style(bg2, sep))
         hl = QHBoxLayout(header)
         hl.setContentsMargins(14, 10, 14, 10)
         title = QLabel("💽  Disk Usage Analyzer")
@@ -367,7 +367,7 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
         hl.addWidget(kbd)
 
         nav_frame = QFrame()
-        nav_frame.setStyleSheet(f"background:{bg2};border-bottom:1px solid {sep};")
+        nav_frame.setStyleSheet(header_bar_style(bg2, sep))
         nbl = QHBoxLayout(nav_frame)
         nbl.setContentsMargins(12, 6, 12, 6)
         nbl.setSpacing(6)
@@ -405,7 +405,7 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
         nbl.addWidget(self._breadcrumb, 1)
 
         path_frame = QFrame()
-        path_frame.setStyleSheet(f"background:{bg2};border-bottom:1px solid {sep};")
+        path_frame.setStyleSheet(header_bar_style(bg2, sep))
         pl = QHBoxLayout(path_frame)
         pl.setContentsMargins(12, 8, 12, 8)
         pl.setSpacing(8)
@@ -446,7 +446,7 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
         )
 
         ctrl_frame = QFrame()
-        ctrl_frame.setStyleSheet(f"background:{bg2};border-bottom:1px solid {sep};")
+        ctrl_frame.setStyleSheet(header_bar_style(bg2, sep))
         cl = QHBoxLayout(ctrl_frame)
         cl.setContentsMargins(12, 6, 12, 6)
         cl.setSpacing(10)
@@ -526,7 +526,7 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
         self._legend.setStyleSheet(f"color:{dim};font-size:{font_sz(-2)}px;padding:2px 12px;")
 
         bottom = QFrame()
-        bottom.setStyleSheet(f"background:{bg2};border-top:1px solid {sep};")
+        bottom.setStyleSheet(footer_bar_style(bg2, sep))
         bl = QVBoxLayout(bottom)
         bl.setContentsMargins(0, 0, 0, 0)
         bl.setSpacing(0)
@@ -878,6 +878,7 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
             ("xterm",          ["xterm", "-e", f"bash -c 'cd {shlex.quote(p)} && exec $SHELL'"]),
         ]
         for term, cmd in candidates:
+            # noinspection deprecation
             if shutil.which(term):
                 try:
                     subprocess.Popen(

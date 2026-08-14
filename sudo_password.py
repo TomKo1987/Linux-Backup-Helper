@@ -1,13 +1,15 @@
 from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout
 
+from ui_utils import _StandardKeysMixin
+
 __all__ = ["SudoPasswordDialog", "SecureString"]
 
 _NOTE_NORMAL  = "Note: Only one authentication attempt will be made."
 _NOTE_WARNING = "⚠  Third attempt!<br>Your password may be temporarily blocked if entered incorrectly again."
 
 
-class SudoPasswordDialog(QDialog):
+class SudoPasswordDialog(_StandardKeysMixin, QDialog):
     sudo_password_entered = pyqtSignal(object)
 
     def __init__(self, parent=None) -> None:
