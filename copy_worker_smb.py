@@ -19,7 +19,8 @@ if TYPE_CHECKING:
 from copy_worker_core import (
     _SMB_WORKERS, _SMB_TIMEOUT, _SMB_FILE_SECS, _SMB_CHUNK, _SMB_MIN_BYTES_PER_SEC,
     _SHM_DIR, _smb_procs, _smb_procs_lock, _SMB_LINE_RE, _SKIP_RE, _CACHE_MISS,
-    _is_unreachable, _parse_smb, _q, _run_futures, _ensure_dir, _silent_unlink
+    _is_unreachable, _parse_smb, _q, _run_futures, _ensure_dir, _silent_unlink,
+    _parse_smb_mtime, _SMB_MTIME_TOLERANCE
 )
 
 
@@ -114,23 +115,30 @@ def _smb_path_excluded(full_url: str, excludes: frozenset) -> bool:
 
 @dataclass
 class _SmbJob:
-    src_url:     str
-    dst_path:    str
-    kind:        str
-    host:        str
-    share:       str
-    remote_path: str
-    remote_size: int = -1
-    title:       str = ""
-    local_size:  int = -1
+    src_url:      str
+    dst_path:     str
+    kind:         str
+    host:         str
+    share:        str
+    remote_path:  str
+    remote_size:  int = -1
+    title:        str = ""
+    local_size:   int = -1
+    remote_mtime: int = -1
+    local_mtime:  int = -1
 
     def size_matches_local(self) -> bool:
         if self.kind != "smb_get" or self.remote_size < 0:
             return False
         try:
-            return self.remote_size == os.stat(self.dst_path).st_size
+            st = os.stat(self.dst_path)
         except OSError:
             return False
+        if self.remote_size != st.st_size:
+            return False
+        if self.remote_mtime >= 0:
+            return abs(self.remote_mtime - int(st.st_mtime)) <= _SMB_MTIME_TOLERANCE
+        return True
 
 
 def _build_smb_get_cmds(jobs: list[_SmbJob]) -> str:
@@ -269,34 +277,36 @@ class _SmbClient:
                 continue
             m = _SMB_LINE_RE.match(line)
             if m:
-                name, flags, size_s = m.groups()
+                name, flags, size_s, ts_s = m.groups()
                 name = name.strip()
                 if name not in (".", "..") and "D" not in flags:
-                    index[f"{cur_dir}/{name}".lstrip("/")] = (int(size_s),)
+                    index[f"{cur_dir}/{name}".lstrip("/")] = (int(size_s), _parse_smb_mtime(ts_s))
         return index
 
-    def stat_path(self, rpath: str) -> "tuple[str, int]":
+    def stat_path(self, rpath: str) -> "tuple[str, int, int]":
         rpath = rpath.replace("\\", "/").strip("/")
         if not rpath:
-            return "dir", -1
+            return "dir", -1, -1
         parent = os.path.dirname(rpath)
         name = os.path.basename(rpath)
         cmd = f'cd "/{_q(parent)}"\nls\n' if parent else "ls\n"
         proc, stdout, stderr = self._run_with_creds(cmd, _SMB_TIMEOUT)
         if proc is None:
-            return "unreachable", -1
+            return "unreachable", -1, -1
         if proc.returncode != 0:
-            return ("unreachable", -1) if _is_unreachable(stderr) else ("missing", -1)
+            return ("unreachable", -1, -1) if _is_unreachable(stderr) else ("missing", -1, -1)
         for line in stdout.splitlines():
             line = line.strip()
             if not line or line.startswith("\\"):
                 continue
             m = _SMB_LINE_RE.match(line)
             if m:
-                ent_name, flags, size_s = m.groups()
+                ent_name, flags, size_s, ts_s = m.groups()
                 if ent_name.strip() == name:
-                    return ("dir", -1) if "D" in flags else ("file", int(size_s))
-        return "missing", -1
+                    if "D" in flags:
+                        return "dir", -1, -1
+                    return "file", int(size_s), _parse_smb_mtime(ts_s)
+        return "missing", -1, -1
 
     def probe(self) -> str:
         if self._user and self._pw:
@@ -414,13 +424,13 @@ class _SmbScanner:
                 idx = self._ls_cache[ck]
         return idx
 
-    def _cached_stat(self, host: str, share: str, rpath: str) -> "tuple[str, int]":
+    def _cached_stat(self, host: str, share: str, rpath: str) -> "tuple[str, int, int]":
         ck = f"{host}:{share}:{rpath}"
         with self._cache_lock:
             if ck in self._stat_cache:
                 return self._stat_cache[ck]
         if self._cancel.is_set():
-            return "unreachable", -1
+            return "unreachable", -1, -1
         result = self._client(host, share).stat_path(rpath)
         with self._cache_lock:
             if ck not in self._stat_cache:
@@ -439,7 +449,7 @@ class _SmbScanner:
         lexp: list = []
         lerr: list = []
 
-        kind, size = self._cached_stat(host, share, rpath)
+        kind, size, mtime = self._cached_stat(host, share, rpath)
 
         if kind == "unreachable":
             lerr.append((src_url, "NT_STATUS_HOST_UNREACHABLE", title))
@@ -448,14 +458,14 @@ class _SmbScanner:
         elif kind == "file":
             if not _SKIP_RE.search(os.path.basename(rpath)) and not _smb_path_excluded(src_url, excludes):
                 lexp.append(_SmbJob(src_url=src_url, dst_path=dst, kind="smb_get", host=host, share=share,
-                                    remote_path=rpath, remote_size=size, title=title))
+                                    remote_path=rpath, remote_size=size, remote_mtime=mtime, title=title))
         else:
             idx = self._cached_index(host, share, rpath)
             if idx is None:
                 lerr.append((src_url, "NT_STATUS_HOST_UNREACHABLE", title))
             elif idx:
                 prefix = rpath.rstrip("/") + "/" if rpath else None
-                for path, (sz,) in idx.items():
+                for path, (sz, mt) in idx.items():
                     if self._cancel.is_set():
                         break
                     if _SKIP_RE.search(os.path.basename(path)):
@@ -471,7 +481,7 @@ class _SmbScanner:
                         rel = os.path.basename(path)
                     dst_path = str(_Path(dst) / str(rel))
                     lexp.append(_SmbJob(src_url=src_url, dst_path=dst_path, kind="smb_get", host=host, share=share,
-                                        remote_path=path, remote_size=sz, title=title))
+                                        remote_path=path, remote_size=sz, remote_mtime=mt, title=title))
         with self._result_lock:
             expanded.extend(lexp)
             errors.extend(lerr)
@@ -483,11 +493,15 @@ class _SmbScanner:
             return
         rp = f"{rpath}/{os.path.basename(src)}".lstrip("/")
         try:
-            local_sz = os.stat(src).st_size
+            _st = os.stat(src)
+            local_sz = _st.st_size
+            local_mt = int(_st.st_mtime)
         except OSError:
             local_sz = -1
+            local_mt = -1
         with self._result_lock:
-            expanded.append(_SmbJob(src, "", "smb_put", host, share, rp, title=title, local_size=local_sz))
+            expanded.append(_SmbJob(src, "", "smb_put", host, share, rp, title=title,
+                                    local_size=local_sz, local_mtime=local_mt))
         self._report(1)
 
     def _do_put_dir(self, src, host, share, rpath, title, expanded, excludes: frozenset = frozenset()) -> None:
@@ -522,7 +536,8 @@ class _SmbScanner:
                         elif _stat_mod.S_ISREG(e_st.st_mode):
                             rel = os.path.relpath(e.path, src)
                             rp = f"{rpath}/{rel}".replace(os.sep, "/").lstrip("/")
-                            lexp.append(_SmbJob(e.path, "", "smb_put", host, share, rp, title=title, local_size=e_st.st_size))
+                            lexp.append(_SmbJob(e.path, "", "smb_put", host, share, rp, title=title,
+                                                local_size=e_st.st_size, local_mtime=int(e_st.st_mtime)))
             except (PermissionError, FileNotFoundError, NotADirectoryError):
                 pass
         with self._result_lock:
@@ -586,7 +601,22 @@ class _ShareProcessor:
                     continue
                 key  = j.remote_path.replace("\\", "/").lstrip("/")
                 meta = ri.get(key)
-                if meta and isinstance(meta, (tuple, list)) and len(meta) > 0 and local_sz == meta[0]:
+                same_size = (meta and isinstance(meta, (tuple, list)) and len(meta) > 0
+                            and local_sz == meta[0])
+                remote_mtime = meta[1] if (meta and isinstance(meta, (tuple, list)) and len(meta) > 1) else -1
+                if j.local_mtime >= 0:
+                    local_mt = j.local_mtime
+                else:
+                    try:
+                        local_mt = int(os.stat(j.src_url).st_mtime)
+                    except OSError:
+                        local_mt = -1
+                mtime_known_and_matches = (
+                    remote_mtime >= 0 and local_mt >= 0
+                    and abs(remote_mtime - local_mt) <= _SMB_MTIME_TOLERANCE
+                )
+                mtime_unknown = remote_mtime < 0 or local_mt < 0
+                if same_size and (mtime_known_and_matches or mtime_unknown):
                     sk_immediate.append((j.src_url, "Up to date"))
                 else:
                     put_transfer.append(j)

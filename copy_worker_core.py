@@ -53,8 +53,36 @@ _SKIP_RE = re.compile(
 
 _SMB_LINE_RE = re.compile(
     r"^(.+?)\s+([ADRHNSV]*)\s*(?:\(.*?\)\s*)?(\d+)"
-    r"\s+\w{3}\s+\w{3}\s+[\s\d]\d\s+[\d:]+\s*\d*$"
+    r"\s+(\w{3}\s+\w{3}\s+[\s\d]\d\s+[\d:]+\s*\d*)$"
 )
+
+_SMB_MTIME_RE = re.compile(
+    r"^\w{3}\s+(\w{3})\s+(\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})\s+(\d{4})$"
+)
+_SMB_MONTHS = {
+    "Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "Jun": 6,
+    "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12,
+}
+
+_SMB_MTIME_TOLERANCE = 2
+
+
+def _parse_smb_mtime(raw: str) -> int:
+    m = _SMB_MTIME_RE.match(raw.strip())
+    if not m:
+        return -1
+    mon_s, day_s, hh, mm, ss, year_s = m.groups()
+    month = _SMB_MONTHS.get(mon_s)
+    if month is None:
+        return -1
+    try:
+        import time as _time
+        return int(_time.mktime((
+            int(year_s), month, int(day_s),
+            int(hh), int(mm), int(ss), 0, 0, -1,
+        )))
+    except (ValueError, OverflowError):
+        return -1
 
 _SMB_DOWN_RE = re.compile(
     r"HOST IS DOWN|NT_STATUS_HOST_UNREACHABLE|NT_STATUS_IO_TIMEOUT|"
@@ -65,8 +93,7 @@ _SMB_DOWN_RE = re.compile(
     re.I,
 )
 
-
-# noinspection PyTypeChecker
+# noinspection deprecation
 _NOTIFY_SEND: str | None = shutil.which("notify-send")
 
 
