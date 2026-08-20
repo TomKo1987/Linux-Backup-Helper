@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
 
 from state import active_dotfiles
 from themes import current_theme, font_sz, register_style_listener, unregister_style_listener
+from translations import tr
 from ui_utils import color_style, header_bar_style, _StandardKeysMixin
 
 
@@ -106,7 +107,7 @@ def _colored_diff_html(src_lines: list[str], dst_lines: list[str], theme: dict) 
                                      fromfile="current system", tofile="profile source"))
     if not diff:
         return (f"<p style='color:{add_col};font-family:monospace;font-size:{fs}px;'>"
-                f"✓  Files are identical — nothing to deploy.</p>")
+                f"✓  {tr('Files are identical — nothing to deploy.')}</p>")
 
     truncated = False
     if len(diff) > 2000:
@@ -133,7 +134,7 @@ def _colored_diff_html(src_lines: list[str], dst_lines: list[str], theme: dict) 
             + "</div>")
     if truncated:
         html += (f"<p style='color:{ctx_col};font-family:monospace;font-size:{fs}px;'>"
-                 f"… diff truncated (more than 2000 lines)</p>")
+                 f"… {tr('diff truncated (more than 2000 lines)')}</p>")
     return html
 
 
@@ -152,7 +153,7 @@ class _DeployWorker(QThread):
             src = _expand(first_path(f.get("source", "")))
             dst = _expand(first_path(f.get("destination", "")))
             if not _path_exists(src):
-                self.progress.emit(f"  ✗ Source not found: {src}", True)
+                self.progress.emit(f"  ✗ {tr('Source not found: {src}', src=src)}", True)
                 err += 1
                 continue
 
@@ -167,7 +168,7 @@ class _DeployWorker(QThread):
                     else:
                         shutil.copytree(src, dst, symlinks=True)
                     n = sum(1 for _ in dst.rglob("*") if _.is_file())
-                    self.progress.emit(f"  ✓ {src.name}/  →  {dst}  ({n} file(s))", False)
+                    self.progress.emit(f"  ✓ {src.name}/  →  {dst}  ({tr('{n} file(s)', n=n)})", False)
                 else:
                     shutil.copy2(src, dst)
                     self.progress.emit(f"  ✓ {src.name}  →  {dst}", False)
@@ -188,7 +189,7 @@ class _DeployWorker(QThread):
                                 capture_output=True, text=True, timeout=15)
                         if bres.returncode != 0:
                             self.progress.emit(
-                                f"  ✗ {src.name}: sudo backup failed: {bres.stderr.strip()}, skipping overwrite", True)
+                                f"  ✗ {src.name}: {tr('sudo backup failed: {err}, skipping overwrite', err=bres.stderr.strip())}", True)
                             err += 1
                             continue
 
@@ -207,14 +208,14 @@ class _DeployWorker(QThread):
 
                     if r.returncode == 0:
                         suffix = "/" if is_dir else ""
-                        self.progress.emit(f"  ✓ {src.name}{suffix}  →  {dst}  (via sudo)", False)
+                        self.progress.emit(f"  ✓ {src.name}{suffix}  →  {dst}  ({tr('via sudo')})", False)
                         ok += 1
                     else:
                         self.progress.emit(
-                            f"  ✗ {src.name}: sudo cp failed: {r.stderr.strip()}", True)
+                            f"  ✗ {src.name}: {tr('sudo cp failed: {err}', err=r.stderr.strip())}", True)
                         err += 1
                 except subprocess.TimeoutExpired:
-                    self.progress.emit(f"  ✗ {src.name}: sudo cp timed out", True)
+                    self.progress.emit(f"  ✗ {src.name}: {tr('sudo cp timed out')}", True)
                     err += 1
                 except Exception as exc2:
                     self.progress.emit(f"  ✗ {src.name}: {exc2}", True)
@@ -229,7 +230,7 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Dotfiles Manager")
+        self.setWindowTitle(tr("Dotfiles Manager"))
         self.setMinimumSize(1500, 1000)
         self._files:  list[dict]     = []
         self._worker: _DeployWorker | None = None
@@ -248,8 +249,8 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
         self._header_frame = QFrame()
         hl = QHBoxLayout(self._header_frame)
         hl.setContentsMargins(14, 10, 14, 10)
-        self._title_lbl = QLabel("📄  Dotfiles Manager")
-        self._sub_lbl = QLabel("Deploy tracked config files from your profile to the live system")
+        self._title_lbl = QLabel(f"📄  {tr('Dotfiles Manager')}")
+        self._sub_lbl = QLabel(tr("Deploy tracked config files from your profile to the live system"))
         hl.addWidget(self._title_lbl)
         hl.addStretch()
         hl.addWidget(self._sub_lbl)
@@ -262,22 +263,22 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
         ll.setContentsMargins(8, 8, 4, 8)
         ll.setSpacing(6)
 
-        self._list_hdr_lbl = QLabel("Tracked Files")
+        self._list_hdr_lbl = QLabel(tr("Tracked Files"))
         ll.addWidget(self._list_hdr_lbl)
 
         self._list = QListWidget()
         self._list.currentRowChanged.connect(self._on_select)
         ll.addWidget(self._list)
 
-        self._backup_cb = QCheckBox("Create .bak backup before overwriting")
+        self._backup_cb = QCheckBox(tr("Create .bak backup before overwriting"))
         self._backup_cb.setChecked(True)
         ll.addWidget(self._backup_cb)
 
-        self._btn_deploy_sel = QPushButton("⬇  Deploy Selected")
+        self._btn_deploy_sel = QPushButton(f"⬇  {tr('Deploy Selected')}")
         self._btn_deploy_sel.setMinimumHeight(36)
         self._btn_deploy_sel.clicked.connect(self._deploy_selected)
 
-        self._btn_deploy_all = QPushButton("⬇⬇  Deploy All Changed")
+        self._btn_deploy_all = QPushButton(f"⬇⬇  {tr('Deploy All Changed')}")
         self._btn_deploy_all.setMinimumHeight(36)
         self._btn_deploy_all.clicked.connect(self._deploy_all_changed)
 
@@ -290,7 +291,7 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
         rl.setSpacing(4)
 
         diff_hdr_row = QHBoxLayout()
-        self._diff_title = QLabel("Select a file to see the diff")
+        self._diff_title = QLabel(tr("Select a file to see the diff"))
         self._status_lbl = QLabel()
         diff_hdr_row.addWidget(self._diff_title)
         diff_hdr_row.addStretch()
@@ -313,7 +314,7 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
         self._info_lbl = QLabel()
         bl.addWidget(self._info_lbl)
         bl.addStretch()
-        self._close_btn = QPushButton("Close")
+        self._close_btn = QPushButton(tr("Close"))
         self._close_btn.setMinimumHeight(32)
         self._close_btn.setMinimumWidth(100)
         self._close_btn.clicked.connect(self.accept)
@@ -389,11 +390,11 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
         t = current_theme()
 
         if not self._files:
-            item = QListWidgetItem("  No dotfiles configured in profile.")
+            item = QListWidgetItem(f"  {tr('No dotfiles configured in profile.')}")
             item.setForeground(QColor(t["text_dim"]))
             item.setFlags(Qt.ItemFlag.NoItemFlags)
             self._list.addItem(item)
-            self._info_lbl.setText("Configure dotfiles in Settings → Dotfiles.")
+            self._info_lbl.setText(tr("Configure dotfiles in Settings → Dotfiles."))
             return
 
         identical = changed = missing = 0
@@ -447,8 +448,9 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
             self._list.addItem(item)
 
         self._info_lbl.setText(
-            f"{len(self._files)} files tracked  —  "
-            f"✓ {identical} identical  ·  ≠ {changed} changed/new  ·  ✗ {missing} missing source"
+            tr("{count} files tracked  —  "
+               "✓ {identical} identical  ·  ≠ {changed} changed/new  ·  ✗ {missing} missing source",
+               count=len(self._files), identical=identical, changed=changed, missing=missing)
         )
 
         if self._list.count() > 0:
@@ -479,8 +481,8 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
             err_col = t["error"]
             self._diff_view.setHtml(
                 f"<p style='color:{err_col};font-family:monospace;font-size:{font_sz()}px;'>"
-                f"✗  Source not found:<br>{src}</p>")
-            self._set_status("⚠ Source missing", err_col)
+                f"✗  {tr('Source not found:')}<br>{src}</p>")
+            self._set_status(f"⚠ {tr('Source missing')}", err_col)
             return
 
         src_text = _read_safe(src)
@@ -490,35 +492,35 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
             err_col = t["error"]
             self._diff_view.setHtml(
                 f"<p style='color:{err_col};font-family:monospace;font-size:{font_sz()}px;'>"
-                f"✗  Source file not found:<br>{src}</p>")
-            self._set_status("⚠ Source missing", err_col)
+                f"✗  {tr('Source file not found:')}<br>{src}</p>")
+            self._set_status(f"⚠ {tr('Source missing')}", err_col)
             return
 
         if dst_text is None:
             if _path_exists(dst):
-                self._set_status("🔒 No read access", t['warning'])
+                self._set_status(f"🔒 {tr('No read access')}", t['warning'])
                 warn_col = t["warning"]
                 self._diff_view.setHtml(
                     f"<p style='color:{warn_col};font-family:monospace;font-size:{font_sz()}px;'>"
-                    f"🔒  File exists but cannot be read without elevated permissions.<br>"
-                    f"Deploy will use <code>sudo cp</code> automatically.</p>")
+                    f"🔒  {tr('File exists but cannot be read without elevated permissions.')}<br>"
+                    f"{tr('Deploy will use')} <code>sudo cp</code> {tr('automatically.')}</p>")
             else:
-                self._set_status("★ Not on system yet", t['warning'])
+                self._set_status(f"★ {tr('Not on system yet')}", t['warning'])
                 warn_col = t["warning"]
                 text_col = t["text"]
                 escaped_preview = _html.escape(src_text[:4000])
                 self._diff_view.setHtml(
                     f"<p style='color:{warn_col};font-family:monospace;font-size:{font_sz()}px;'>"
-                    f"★  Destination does not exist yet — will be created:</p>"
+                    f"★  {tr('Destination does not exist yet — will be created:')}</p>"
                     f"<pre style='color:{text_col};font-family:monospace;font-size:{font_sz(-1)}px;'>{escaped_preview}</pre>")
             return
 
         src_lines = src_text.splitlines(keepends=True)
         dst_lines = dst_text.splitlines(keepends=True)
         if src_lines == dst_lines:
-            self._set_status("✓ Identical", t['success'])
+            self._set_status(f"✓ {tr('Identical')}", t['success'])
         else:
-            self._set_status("≠ Different", t['warning'])
+            self._set_status(f"≠ {tr('Different')}", t['warning'])
 
         self._diff_view.setHtml(_colored_diff_html(src_lines, dst_lines, t))
 
@@ -532,19 +534,19 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
             err_col = t["error"]
             self._diff_view.setHtml(
                 f"<p style='color:{err_col};font-family:monospace;font-size:{font_sz()}px;'>"
-                f"✗  Source directory not readable:<br>{src}</p>")
-            self._set_status("⚠ Source unreadable", err_col)
+                f"✗  {tr('Source directory not readable:')}<br>{src}</p>")
+            self._set_status(f"⚠ {tr('Source unreadable')}", err_col)
             return
 
         if not _is_dir_safe(dst):
             warn_col = t["warning"]
             text_col = t["text"]
             files_preview = "<br>".join(_html.escape(p) for p in sorted(src_list)[:200])
-            more = "" if len(src_list) <= 200 else f"<br>… and {len(src_list) - 200} more"
-            self._set_status("★ Not on system yet", warn_col)
+            more = "" if len(src_list) <= 200 else f"<br>… {tr('and {n} more', n=len(src_list) - 200)}"
+            self._set_status(f"★ {tr('Not on system yet')}", warn_col)
             self._diff_view.setHtml(
                 f"<p style='color:{warn_col};font-family:monospace;font-size:{font_sz()}px;'>"
-                f"★  Destination directory does not exist yet — will be created ({len(src_list)} file(s)):</p>"
+                f"★  {tr('Destination directory does not exist yet — will be created ({n} file(s)):', n=len(src_list))}</p>"
                 f"<pre style='color:{text_col};font-family:monospace;font-size:{font_sz(-1)}px;'>{files_preview}{more}</pre>")
             return
 
@@ -554,13 +556,13 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
         changed = sorted(k for k in (set(src_list) & set(dst_list)) if src_list[k] != dst_list[k])
 
         if not only_src and not only_dst and not changed:
-            self._set_status("✓ Identical", t['success'])
+            self._set_status(f"✓ {tr('Identical')}", t['success'])
             self._diff_view.setHtml(
                 f"<p style='color:{t['success']};font-family:monospace;font-size:{font_sz()}px;'>"
-                f"✓  Directory contents are identical ({len(src_list)} file(s)) — nothing to deploy.</p>")
+                f"✓  {tr('Directory contents are identical ({n} file(s)) — nothing to deploy.', n=len(src_list))}</p>")
             return
 
-        self._set_status("≠ Different", t['warning'])
+        self._set_status(f"≠ {tr('Different')}", t['warning'])
 
         rows = []
         add_col = t.get("success", "#4ec994")
@@ -577,17 +579,17 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
                         f"font-size:{font_sz(-1)}px;white-space:pre;'>- {_html.escape(p)}</p>")
 
         legend = (f"<p style='color:{ctx_col};font-family:monospace;font-size:{font_sz(-1)}px;'>"
-                 f"+ new/missing on system   ≠ different   - only on system (not in profile)</p>")
+                 f"+ {tr('new/missing on system')}   ≠ {tr('different')}   - {tr('only on system (not in profile)')}</p>")
         bg = t.get("bg", "#1a1b26")
         html = legend + f"<div style='background:{bg};padding:8px;border-radius:4px;'>" + "\n".join(rows) + "</div>"
         self._diff_view.setHtml(html)
 
     def _deploy(self, files: list[dict]) -> None:
         if not files:
-            QMessageBox.information(self, "Nothing to deploy", "No files to deploy.")
+            QMessageBox.information(self, tr("Nothing to deploy"), tr("No files to deploy."))
             return
         if isinstance(self._worker, QThread) and self._worker.isRunning():
-            QMessageBox.warning(self, "Busy", "Deployment already running.")
+            QMessageBox.warning(self, tr("Busy"), tr("Deployment already running."))
             return
 
         names = "\n".join(
@@ -595,9 +597,10 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
             for f in files
         )
         ans = QMessageBox.question(
-            self, "Confirm Deploy",
-            f"Deploy {len(files)} file(s) to the live system?\n\n{names}\n\n"
-            f"{'A .bak backup will be created before overwriting.' if self._backup_cb.isChecked() else 'No backup will be created.'}",
+            self, tr("Confirm Deploy"),
+            tr("Deploy {n} file(s) to the live system?\n\n{names}\n\n{backup_note}",
+               n=len(files), names=names,
+               backup_note=(tr('A .bak backup will be created before overwriting.') if self._backup_cb.isChecked() else tr('No backup will be created.'))),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if ans != QMessageBox.StandardButton.Yes:
@@ -616,14 +619,14 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
             col = t["error"] if err else t["success"]
             self._diff_view.append(
                 f"<p style='color:{col};font-family:monospace;font-size:{font_sz(1)}px;font-weight:bold;'>"
-                f"Deploy complete: {ok} succeeded, {err} failed.</p>")
+                f"{tr('Deploy complete: {ok} succeeded, {err} failed.', ok=ok, err=err)}</p>")
             self._load_files()
 
         worker.progress.connect(_on_progress)
         worker.finished.connect(_on_done)
         self._diff_view.clear()
         self._diff_view.setHtml(
-            f"<p style='color:{t['accent']};font-family:monospace;font-size:{font_sz()}px;'>Deploying…</p>")
+            f"<p style='color:{t['accent']};font-family:monospace;font-size:{font_sz()}px;'>{tr('Deploying…')}</p>")
         worker.start()
 
     def _deploy_selected(self) -> None:

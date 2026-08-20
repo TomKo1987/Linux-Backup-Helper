@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 
 from state import _HOME, logger
 from themes import current_theme, font_sz
+from translations import tr
 from ui_utils import footer_bar_style, header_bar_style, _StandardKeysMixin
 
 _PROC_MOUNTS_OCTAL_RE = re.compile(r"\\(\d{3})")
@@ -168,7 +169,7 @@ class _ScanWorker(QThread):
                                 if path != self._root:
                                     sizes[path] = sz
                                     n_found += 1
-                                    self.progress.emit(f"Scanning\u2026 {n_found} entries found")
+                                    self.progress.emit(tr("Scanning\u2026 {n} entries found", n=n_found))
                             except ValueError:
                                 pass
                 finally:
@@ -282,7 +283,7 @@ class _DiskInfoBar(QFrame):
         fs    = info.get("fstype", "?")
         mnt   = info.get("mount",  "?")
         self._lbl_dev.setText(
-            f"Partition:  {dev}  │  Filesystem: {fs}  │  Mountpoint: {mnt}"
+            tr("Partition:  {dev}  │  Filesystem: {fs}  │  Mountpoint: {mnt}", dev=dev, fs=fs, mnt=mnt)
         )
 
         total = info["total"]
@@ -291,9 +292,8 @@ class _DiskInfoBar(QFrame):
         pct   = info["fraction_used"] * 100
 
         self._lbl_stats.setText(
-            f"Total: {_fmt_size(total)}   │   "
-            f"Used: {_fmt_size(used)} ({pct:.1f}%)   │   "
-            f"Free: {_fmt_size(free)}"
+            tr("Total: {total}   │   Used: {used} ({pct:.1f}%)   │   Free: {free}",
+               total=_fmt_size(total), used=_fmt_size(used), pct=pct, free=_fmt_size(free))
         )
 
         bar_width = 40
@@ -310,7 +310,7 @@ class _DiskInfoBar(QFrame):
             f"color:{bar_color};font-family:monospace;"
             f"font-size:{font_sz(-1)}px;background:transparent;"
         )
-        self._lbl_bar.setText(f"[{bar}]  {pct:.1f}% used")
+        self._lbl_bar.setText(tr("[{bar}]  {pct:.1f}% used", bar=bar, pct=pct))
         self.setVisible(True)
 
 
@@ -324,7 +324,7 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Disk Usage Analyzer")
+        self.setWindowTitle(tr("Disk Usage Analyzer"))
         self.setMinimumSize(1200, 1100)
 
         self._worker:       _ScanWorker | None = None
@@ -356,13 +356,13 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
         header.setStyleSheet(header_bar_style(bg2, sep))
         hl = QHBoxLayout(header)
         hl.setContentsMargins(14, 10, 14, 10)
-        title = QLabel("💽  Disk Usage Analyzer")
+        title = QLabel(tr("💽  Disk Usage Analyzer"))
         title.setStyleSheet(
             f"font-size:{font_sz(5)}px;font-weight:bold;color:{acc};background:transparent;"
         )
         hl.addWidget(title)
         hl.addStretch()
-        kbd = QLabel("F5 = Refresh")
+        kbd = QLabel(tr("F5 = Refresh"))
         kbd.setStyleSheet(f"color:{dim};font-size:{font_sz(-2)}px;background:transparent;")
         hl.addWidget(kbd)
 
@@ -372,24 +372,24 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
         nbl.setContentsMargins(12, 6, 12, 6)
         nbl.setSpacing(6)
 
-        self._back_btn = QPushButton("◀ Back")
+        self._back_btn = QPushButton(tr("◀ Back"))
         self._back_btn.setFixedHeight(28)
         self._back_btn.setStyleSheet(self._btn_ss(t))
-        self._back_btn.setToolTip("Navigate back (Alt+Left)")
+        self._back_btn.setToolTip(tr("Navigate back (Alt+Left)"))
         self._back_btn.clicked.connect(self._nav_back_action)
         QShortcut(QKeySequence("Alt+Left"), self).activated.connect(self._nav_back_action)
 
-        self._up_btn = QPushButton("↑ Up")
+        self._up_btn = QPushButton(tr("↑ Up"))
         self._up_btn.setFixedHeight(28)
         self._up_btn.setStyleSheet(self._btn_ss(t))
-        self._up_btn.setToolTip("Go to parent directory (Alt+Up)")
+        self._up_btn.setToolTip(tr("Go to parent directory (Alt+Up)"))
         self._up_btn.clicked.connect(self._nav_up)
         QShortcut(QKeySequence("Alt+Up"), self).activated.connect(self._nav_up)
 
-        self._fwd_btn = QPushButton("▶ Fwd")
+        self._fwd_btn = QPushButton(tr("▶ Fwd"))
         self._fwd_btn.setFixedHeight(28)
         self._fwd_btn.setStyleSheet(self._btn_ss(t))
-        self._fwd_btn.setToolTip("Navigate forward (Alt+Right)")
+        self._fwd_btn.setToolTip(tr("Navigate forward (Alt+Right)"))
         self._fwd_btn.clicked.connect(self._nav_forward_action)
         QShortcut(QKeySequence("Alt+Right"), self).activated.connect(self._nav_forward_action)
 
@@ -418,17 +418,17 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
         )
         self._path_edit.returnPressed.connect(self._start_scan)
 
-        browse_btn = QPushButton("📁 Browse")
+        browse_btn = QPushButton(tr("📁 Browse"))
         browse_btn.setMinimumHeight(34)
         browse_btn.clicked.connect(self._browse)
         browse_btn.setStyleSheet(self._btn_ss(t))
 
-        self._scan_btn = QPushButton("🔍 Scan")
+        self._scan_btn = QPushButton(tr("🔍 Scan"))
         self._scan_btn.setMinimumHeight(34)
         self._scan_btn.setStyleSheet(self._btn_ss(t, primary=True))
         self._scan_btn.clicked.connect(self._start_scan)
 
-        pl.addWidget(QLabel("Directory:"))
+        pl.addWidget(QLabel(tr("Directory:")))
         pl.addWidget(self._path_edit, 1)
         pl.addWidget(browse_btn)
         pl.addWidget(self._scan_btn)
@@ -451,16 +451,16 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
         cl.setContentsMargins(12, 6, 12, 6)
         cl.setSpacing(10)
 
-        sort_lbl = QLabel("Sort:")
+        sort_lbl = QLabel(tr("Sort:"))
         sort_lbl.setStyleSheet(f"color:{dim};background:transparent;font-size:{font_sz(-1)}px;")
 
         self._sort_combo = QComboBox()
         self._sort_combo.addItems([
-            "Size ↓ (largest first)",
-            "Size ↑ (smallest first)",
-            "Name A→Z",
-            "Name Z→A",
-            "Type (folders first)",
+            tr("Size ↓ (largest first)"),
+            tr("Size ↑ (smallest first)"),
+            tr("Name A→Z"),
+            tr("Name Z→A"),
+            tr("Type (folders first)"),
         ])
         self._sort_combo.setStyleSheet(
             f"QComboBox{{background:{bg3};border:1px solid {sep};border-radius:4px;"
@@ -471,11 +471,11 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
         )
         self._sort_combo.currentIndexChanged.connect(self._on_sort_changed)
 
-        filter_lbl = QLabel("Filter:")
+        filter_lbl = QLabel(tr("Filter:"))
         filter_lbl.setStyleSheet(f"color:{dim};background:transparent;font-size:{font_sz(-1)}px;")
 
         self._filter_edit = QLineEdit()
-        self._filter_edit.setPlaceholderText("Filter results by name…")
+        self._filter_edit.setPlaceholderText(tr("Filter results by name…"))
         self._filter_edit.setStyleSheet(
             f"QLineEdit{{background:{bg3};border:1px solid {sep};border-radius:4px;"
             f"color:{fg};padding:3px 8px;font-size:{font_sz()}px;}}"
@@ -485,7 +485,7 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
 
         clear_btn = QPushButton("✕")
         clear_btn.setFixedSize(22, 22)
-        clear_btn.setToolTip("Clear filter")
+        clear_btn.setToolTip(tr("Clear filter"))
         clear_btn.setStyleSheet(
             f"QPushButton{{background:{bg3};border:1px solid {sep};border-radius:4px;"
             f"color:{dim};padding:0;font-size:{font_sz(-1)}px;}}"
@@ -493,9 +493,9 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
         )
         clear_btn.clicked.connect(self._filter_edit.clear)
 
-        export_btn = QPushButton("📋 Copy CSV")
+        export_btn = QPushButton(tr("📋 Copy CSV"))
         export_btn.setFixedHeight(26)
-        export_btn.setToolTip("Copy results as CSV to clipboard")
+        export_btn.setToolTip(tr("Copy results as CSV to clipboard"))
         export_btn.setStyleSheet(self._btn_ss(t))
         export_btn.clicked.connect(self._export_clipboard)
 
@@ -519,7 +519,7 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
         self._list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._list.customContextMenuRequested.connect(self._show_context_menu)
 
-        self._status = QLabel("Enter a directory and press Scan or F5.")
+        self._status = QLabel(tr("Enter a directory and press Scan or F5."))
         self._status.setStyleSheet(f"color:{dim};font-size:{font_sz(-1)}px;padding:4px 12px;")
 
         self._legend = QLabel("")
@@ -537,7 +537,7 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
         sr.setContentsMargins(0, 0, 12, 0)
         sr.addWidget(self._status)
         sr.addStretch()
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(tr("Close"))
         close_btn.setMinimumHeight(32)
         close_btn.setMinimumWidth(100)
         close_btn.setStyleSheet(self._btn_ss(t))
@@ -583,7 +583,7 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
 
     def _browse(self) -> None:
         path = QFileDialog.getExistingDirectory(
-            self, "Select Directory", self._path_edit.text() or str(_HOME)
+            self, tr("Select Directory"), self._path_edit.text() or str(_HOME)
         )
         if path:
             self._path_edit.setText(path)
@@ -635,7 +635,7 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
         root = Path(os.path.expandvars(os.path.expanduser(raw)))
 
         if not root.is_dir():
-            QMessageBox.warning(self, "Invalid Directory", f"Not a directory:\n{root}")
+            QMessageBox.warning(self, tr("Invalid Directory"), tr("Not a directory:\n{path}", path=root))
             return
 
         if push_history and root != self._scan_root:
@@ -658,7 +658,7 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
         self._legend.setText("")
         self._progress.setVisible(True)
         self._scan_btn.setEnabled(False)
-        self._status.setText("Scanning…")
+        self._status.setText(tr("Scanning…"))
 
         self._worker = _ScanWorker(root, self._cancel)
         self._worker.progress.connect(self._status.setText)
@@ -729,7 +729,7 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
             if is_mount:
                 icon = "💿 "
                 line1 = f"{icon}{display}"
-                line2 = "       [mount point — excluded from scan]"
+                line2 = tr("       [mount point — excluded from scan]")
                 item = QListWidgetItem(f"{line1}\n{line2}")
                 item.setForeground(QColor(warn_col))
                 self._list.addItem(item)
@@ -743,11 +743,12 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
             size_str = _fmt_size(size)
             pct_scan = (size / max(scan_total, 1)) * 100
 
-            count_str = f"  [{_fmt_count(file_count)} files]" if is_dir else ""
+            count_str = tr("  [{n} files]", n=_fmt_count(file_count)) if is_dir else ""
 
             line1 = f"{icon}{display}"
             line2 = (
-                f"  {size_str:>10}   {pct_scan:5.1f}% of scan      {bar}{count_str}"
+                tr("  {size:>10}   {pct:5.1f}% of scan      {bar}{count}",
+                   size=size_str, pct=pct_scan, bar=bar, count=count_str)
             )
 
             item = QListWidgetItem(f"{line1}\n{line2}")
@@ -757,7 +758,7 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
             shown_total += size
             shown_count += 1
 
-        elapsed_str = f"  (Scan: {self._elapsed:.1f}s)" if self._elapsed else ""
+        elapsed_str = tr("  (Scan: {s:.1f}s)", s=self._elapsed) if self._elapsed else ""
 
         visible_mounts = sum(
             1 for x in sorted_r
@@ -767,13 +768,12 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
         mount_note = ""
         if self._skipped_mounts or visible_mounts:
             total_excl = self._skipped_mounts + visible_mounts
-            mount_note = f"  ·  ⚠ {total_excl} mount point(s) excluded"
+            mount_note = tr("  ·  ⚠ {n} mount point(s) excluded", n=total_excl)
 
         if query:
             self._status.setText(
-                f"{shown_count} results for '{text}'  ·  "
-                f"Shown: {_fmt_size(shown_total)}  ·  "
-                f"Total entries: {len(self._results)}"
+                tr("{count} results for '{q}'  ·  Shown: {shown}  ·  Total entries: {total}",
+                   count=shown_count, q=text, shown=_fmt_size(shown_total), total=len(self._results))
             )
         else:
             dir_count = sum(1 for x in self._results if x[_R_IS_DIR] and not x[_R_IS_MOUNT])
@@ -781,17 +781,18 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
 
             pct_of_disk = (shown_total / max(disk_used, 1)) * 100 if disk_used else 0
             self._status.setText(
-                f"{shown_count} entries  ·  "
-                f"{dir_count} folders · {file_count} files  ·  "
-                f"Scan total: {_fmt_size(shown_total)} ({pct_of_disk:.1f}% of used disk space)"
-                f"{mount_note}{elapsed_str}"
+                tr("{count} entries  ·  {dirs} folders · {files} files  ·  "
+                   "Scan total: {total} ({pct:.1f}% of used disk space){mounts}{elapsed}",
+                   count=shown_count, dirs=dir_count, files=file_count,
+                   total=_fmt_size(shown_total), pct=pct_of_disk,
+                   mounts=mount_note, elapsed=elapsed_str)
             )
 
-        legend_parts = ["% = share of total scanned size", "Sizes = actual allocated blocks (same as `du -sh`)"]
+        legend_parts = [tr("% = share of total scanned size"), tr("Sizes = actual allocated blocks (same as `du -sh`)")]
 
         if self._skipped_mounts or visible_mounts:
             legend_parts.append(
-                "💿 = mount point on different filesystem — excluded to avoid double-counting"
+                tr("💿 = mount point on different filesystem — excluded to avoid double-counting")
             )
         self._legend.setText("  ℹ  " + "  ·  ".join(legend_parts))
 
@@ -835,12 +836,12 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
                 break
 
         menu       = QMenu(self)
-        act_drill  = menu.addAction("🔍  Scan this directory") if path.is_dir() else None
-        act_fm     = menu.addAction("📁  Open in File Manager")
-        act_term   = menu.addAction("🖥  Open Terminal here")
+        act_drill  = menu.addAction(tr("🔍  Scan this directory")) if path.is_dir() else None
+        act_fm     = menu.addAction(tr("📁  Open in File Manager"))
+        act_term   = menu.addAction(tr("🖥  Open Terminal here"))
         menu.addSeparator()
-        act_copy   = menu.addAction("📋  Copy path")
-        act_size   = menu.addAction(f"📊  Size: {size_str}")
+        act_copy   = menu.addAction(tr("📋  Copy path"))
+        act_size   = menu.addAction(tr("📊  Size: {size}", size=size_str))
         act_size.setEnabled(False)
 
         global_pos = self._list.mapToGlobal(pos)
@@ -889,9 +890,9 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
                 except OSError as exc:
                     logger.warning("DiskAnalyzer terminal %s: %s", term, exc)
         QMessageBox.information(
-            self, "No terminal found",
-            "No supported terminal emulator found.\n"
-            "Please install one (e.g. gnome-terminal, konsole, alacritty, xterm).",
+            self, tr("No terminal found"),
+            tr("No supported terminal emulator found.\n"
+               "Please install one (e.g. gnome-terminal, konsole, alacritty, xterm)."),
         )
 
     def _export_clipboard(self) -> None:
@@ -899,7 +900,7 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
             return
         buf = io.StringIO()
         w   = csv.writer(buf)
-        w.writerow(["Name", "Path", "Size (bytes)", "Size (human)", "Type", "Files"])
+        w.writerow([tr("Name"), tr("Path"), tr("Size (bytes)"), tr("Size (human)"), tr("Type"), tr("Files")])
         for entry in self._sorted_results():
             path       = entry[_R_PATH]
             size       = entry[_R_SIZE]
@@ -910,10 +911,10 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
                 name = str(path.relative_to(self._scan_root))
             except ValueError:
                 name = str(path)
-            kind = "mount" if is_mount else ("dir" if is_dir else "file")
+            kind = tr("mount") if is_mount else (tr("dir") if is_dir else tr("file"))
             w.writerow([name, str(path), size, _fmt_size(size), kind, file_count])
         QApplication.clipboard().setText(buf.getvalue())
-        self._status.setText("✓ Results copied to clipboard as CSV")
+        self._status.setText(tr("✓ Results copied to clipboard as CSV"))
 
     def closeEvent(self, a0: QCloseEvent | None) -> None:
         self._cancel.set()

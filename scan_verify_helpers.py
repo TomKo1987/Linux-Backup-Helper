@@ -15,6 +15,7 @@ from drive_utils import check_drives_to_mount, mount_required_drives
 from linux_distro_helper import LinuxDistroHelper, USER_SHELLS, ARCH_KERNEL_VARIANTS
 from state import S, logger, active_pkg_names, active_dotfiles
 from themes import current_theme, font_sz
+from translations import tr
 from ui_utils import color_style
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
@@ -313,14 +314,14 @@ class _CaptureWorker(QThread):
 
     def run(self) -> None:
         res: dict = {"basic": [], "aur": [], "specific": [], "sys_files": [], "services": [], "error": ""}
-        self.progress.emit("Scanning installed packages…")
+        self.progress.emit(tr("Scanning installed packages…"))
         try:
             res["basic"], res["aur"] = self._h.get_explicitly_installed_packages()
         except Exception as exc:
             res["error"] = str(exc)
             logger.error("CaptureWorker: %s", exc)
 
-        self.progress.emit("Checking dotfiles…")
+        self.progress.emit(tr("Checking dotfiles…"))
         try:
             for sf in active_dotfiles():
                 entry = _check_dotfile_status(sf)
@@ -329,7 +330,7 @@ class _CaptureWorker(QThread):
         except Exception as exc:
             logger.warning("CaptureWorker: dotfile check failed: %s", exc)
 
-        self.progress.emit("Scanning active services…")
+        self.progress.emit(tr("Scanning active services…"))
         try:
             all_services = _get_all_sm_services(self._h)
             for op, svc in all_services:
@@ -338,7 +339,7 @@ class _CaptureWorker(QThread):
         except Exception as exc:
             logger.warning("CaptureWorker: service scan failed: %s", exc)
 
-        self.progress.emit("Checking specific packages…")
+        self.progress.emit(tr("Checking specific packages…"))
         try:
             spec_entries = [p for p in S.specific_packages if
                             isinstance(p, dict) and not p.get("disabled") and p.get("package")]
@@ -351,7 +352,7 @@ class _CaptureWorker(QThread):
         except Exception as exc:
             logger.warning("CaptureWorker: specific package check failed: %s", exc)
 
-        self.progress.emit("Checking profile package status…")
+        self.progress.emit(tr("Checking profile package status…"))
         try:
             profile_basic_names = active_pkg_names(S.basic_packages)
             profile_aur_names = active_pkg_names(S.aur_packages)
@@ -382,7 +383,7 @@ class _VerifyWorker(QThread):
     def run(self) -> None:
         res: dict = {"pkgs": [], "sys_files": [], "backups": [], "services": []}
 
-        self.progress.emit("Checking packages…")
+        self.progress.emit(tr("Checking packages…"))
         try:
             all_pkgs = ([(n, "basic") for n in active_pkg_names(S.basic_packages)] +
                         [(n, "aur") for n in active_pkg_names(S.aur_packages)] +
@@ -394,7 +395,7 @@ class _VerifyWorker(QThread):
         except Exception as exc:
             logger.warning("VerifyWorker: package check failed: %s", exc)
 
-        self.progress.emit("Checking dotfiles…")
+        self.progress.emit(tr("Checking dotfiles…"))
         try:
             for sf in S.dotfiles:
                 if not isinstance(sf, dict) or sf.get("disabled"):
@@ -405,7 +406,7 @@ class _VerifyWorker(QThread):
         except Exception as exc:
             logger.warning("VerifyWorker: dotfile check failed: %s", exc)
 
-        self.progress.emit("Checking backup entries…")
+        self.progress.emit(tr("Checking backup entries…"))
         from drive_utils import is_smb, is_ssh
 
         for entry in S.entries:
@@ -416,17 +417,17 @@ class _VerifyWorker(QThread):
 
                 for s in entry.get("source", []):
                     if not is_smb(s) and not is_ssh(s) and not _safe_exists(_ep(s)):
-                        issues.append(f"Source missing: {s}")
+                        issues.append(tr("Source missing: {p}", p=s))
                 for d in entry.get("destination", []):
                     if not is_smb(d) and not is_ssh(d) and not _safe_exists(_ep(d)):
-                        issues.append(f"Destination missing: {d}")
+                        issues.append(tr("Destination missing: {p}", p=d))
                 if not issues:
                     srcs, dsts = entry.get("source", []), entry.get("destination", [])
                     if srcs and dsts:
                         src_t = max((_surface_mtime(_ep(s)) for s in srcs), default=0.0)
                         dst_t = max((_surface_mtime(_ep(d)) for d in dsts), default=0.0)
                         if src_t > dst_t + 2:
-                            issues.append("Backup may be outdated (source newer than destination)")
+                            issues.append(tr("Backup may be outdated (source newer than destination)"))
                 res["backups"].append({"header": entry.get("header", ""), "title": entry.get("title", ""),
                                        "status": "issues" if issues else "ok", "issues": issues})
             except Exception as exc:
@@ -434,9 +435,9 @@ class _VerifyWorker(QThread):
                                entry.get("title", ""), exc)
                 res["backups"].append({"header": entry.get("header", ""), "title": entry.get("title", ""),
                                        "status": "issues",
-                                       "issues": [f"Could not check this entry: {exc}"]})
+                                       "issues": [tr("Could not check this entry: {e}", e=exc)]})
 
-        self.progress.emit("Checking services…")
+        self.progress.emit(tr("Checking services…"))
         try:
             for op, svc in _get_active_sm_services(self._h):
                 res["services"].append({"op": op, "service": svc, "active": _service_is_active(svc)})
@@ -460,9 +461,12 @@ class _Section(QWidget):
         arrow = "▼" if start_expanded else "▶"
         color = bad_color if n_bad else ok_color
         if n_bad:
-            status_txt = f"⚠  {n_bad} issue{'s' if n_bad > 1 else ''}   {ok} / {total}"
+            if n_bad > 1:
+                status_txt = tr("⚠  {n} issues   {ok} / {total}", n=n_bad, ok=ok, total=total)
+            else:
+                status_txt = tr("⚠  {n} issue   {ok} / {total}", n=n_bad, ok=ok, total=total)
         else:
-            status_txt = f"✅  {ok} / {total}"
+            status_txt = tr("✅  {ok} / {total}", ok=ok, total=total)
 
         self._arrow_lbl = QLabel(arrow)
         self._arrow_lbl.setFixedWidth(18)
@@ -574,7 +578,9 @@ class _Section(QWidget):
         self._content_lay.addWidget(grp)
 
 
-def _make_progress_widget(initial_text: str = "Scanning…") -> tuple[QWidget, QLabel, QProgressBar]:
+def _make_progress_widget(initial_text: str = "") -> tuple[QWidget, QLabel, QProgressBar]:
+    if not initial_text:
+        initial_text = tr("Scanning…")
     widget = QWidget()
     pw = QVBoxLayout(widget)
     pw.setContentsMargins(0, 0, 0, 0)

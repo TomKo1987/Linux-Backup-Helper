@@ -11,6 +11,7 @@ from os.path import abspath, expanduser
 from PyQt6.QtWidgets import QMessageBox
 
 from state import S, logger, _USER
+from translations import tr
 
 _DRIVE_NAME_RE = re.compile(r"^[\w\- .()@:]+$")
 
@@ -82,15 +83,15 @@ def _untrack_session_mount(drive: dict) -> None:
 
 def _validate_cmd(cmd: str) -> tuple[bool, str, list[str]]:
     if not cmd:
-        return False, "Empty command", []
+        return False, tr("Empty command"), []
     if any(seq in cmd for seq in _SHELL_INJECTION_SEQS):
-        return False, "Dangerous characters in command", []
+        return False, tr("Dangerous characters in command"), []
     try:
         tokens = shlex.split(cmd)
     except ValueError as e:
         return False, str(e), []
     if not tokens:
-        return False, "No command tokens found", []
+        return False, tr("No command tokens found"), []
     expanded = [os.path.expanduser(tok) for tok in tokens]
     base = os.path.basename(expanded[0])
     if base == "sudo":
@@ -98,17 +99,17 @@ def _validate_cmd(cmd: str) -> tuple[bool, str, list[str]]:
             if (tok in ("-u", "--user")
                     or tok.startswith("--user=")
                     or (tok.startswith("-u") and len(tok) > 2)):
-                return False, "sudo user-switching flags are not permitted", []
+                return False, tr("sudo user-switching flags are not permitted"), []
             if not tok.startswith("-"):
                 base = os.path.basename(tok)
                 break
         else:
-            return False, "sudo without a command", []
+            return False, tr("sudo without a command"), []
     if base not in _ALLOWED_MOUNT_CMDS:
-        return False, f"'{base}' is not an allowed command", []
+        return False, tr("'{base}' is not an allowed command", base=base), []
     for tok in expanded:
         if ".." in tok.split("/"):
-            return False, f"Path traversal detected in token: {tok!r}", []
+            return False, tr("Path traversal detected in token: {tok!r}", tok=tok), []
     return True, "", expanded
 
 
@@ -130,18 +131,18 @@ def _execute_drive_op(drive: dict, cmd_key: str, timeout: int) -> tuple[bool, st
     name = drive.get("drive_name", "?")
     cmd = _str(drive.get(cmd_key))
     if not cmd:
-        return False, f"No {cmd_key.replace('_', ' ')} configured for '{name}'."
+        return False, tr("No {cmd_key} configured for '{name}'.", cmd_key=cmd_key.replace('_', ' '), name=name)
     ok, reason, tokens = _validate_cmd(cmd)
     if not ok:
-        return False, f"Drive '{name}': {reason}"
+        return False, tr("Drive '{name}': {reason}", name=name, reason=reason)
     try:
         result = subprocess.run(tokens, capture_output=True, text=True, timeout=timeout)
         if result.returncode == 0:
             return True, ""
-        return False, result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
+        return False, result.stderr.strip() or result.stdout.strip() or tr("exit code {code}", code=result.returncode)
     except subprocess.TimeoutExpired:
         logger.debug("_execute_drive_op: '%s' (%s) timed out after %ds", name, cmd_key, timeout)
-        return False, f"Timed out after {timeout}s"
+        return False, tr("Timed out after {timeout}s", timeout=timeout)
     except Exception as e:
         logger.debug("_execute_drive_op: '%s' (%s) raised %s: %s", name, cmd_key, type(e).__name__, e)
         return False, str(e)
@@ -198,7 +199,7 @@ def mount_drive(drive: dict) -> tuple[bool, str]:
         is_managed = has_managed_mount_path(drive)
         if not mounted_confirmed:
             if not is_managed:
-                msg = f"Mount command succeeded but '{name}' not visible in /proc/mounts after 1 s"
+                msg = tr("Mount command succeeded but '{name}' not visible in /proc/mounts after 1 s", name=name)
                 logger.error("mount_drive: %s", msg)
                 return False, msg
             _track_session_mount(drive)
@@ -208,7 +209,7 @@ def mount_drive(drive: dict) -> tuple[bool, str]:
                 _track_session_mount(drive)
         logger.info("Mounted '%s' (confirmed=%s)", name, mounted_confirmed)
         return True, ""
-    msg = f"Mount failed for '{name}': {error_msg}"
+    msg = tr("Mount failed for '{name}': {error_msg}", name=name, error_msg=error_msg)
     logger.error("mount_drive: %s", msg)
     return False, msg
 
@@ -220,7 +221,7 @@ def unmount_drive(drive: dict) -> tuple[bool, str]:
         _untrack_session_mount(drive)
         logger.info("Unmounted '%s'", name)
         return True, ""
-    msg = f"Unmount failed for '{name}': {error_msg}"
+    msg = tr("Unmount failed for '{name}': {error_msg}", name=name, error_msg=error_msg)
     logger.error("unmount_drive: %s", msg)
     return False, msg
 
@@ -268,12 +269,12 @@ def to_browsable_uri(path: str) -> str:
 def open_in_file_manager(path: str) -> tuple[bool, str]:
     target = to_browsable_uri(path)
     if not target:
-        return False, "No path given."
+        return False, tr("No path given.")
     if not is_smb(target) and not target.startswith("sftp://"):
         if os.path.isfile(target):
             target = os.path.dirname(target) or target
         elif not os.path.exists(target):
-            return False, f"Path does not exist:\n{target}"
+            return False, tr("Path does not exist:\n{target}", target=target)
     try:
         subprocess.Popen(
             ["xdg-open", target],
@@ -350,29 +351,29 @@ def mount_required_drives(drives: list[dict], parent=None) -> bool:
         is_managed = has_managed_mount_path(opt)
 
         if is_managed:
-            msg = (f"'{drive_name}' is required, but cannot be automatically detected due to an external mount path."
-                   f"\n\nRun mount command now?")
+            msg = tr("'{drive_name}' is required, but cannot be automatically detected due to an external mount path."
+                     "\n\nRun mount command now?", drive_name=drive_name)
         else:
-            msg = f"'{drive_name}' is required but not mounted.\n\nRun mount command now?"
+            msg = tr("'{drive_name}' is required but not mounted.\n\nRun mount command now?", drive_name=drive_name)
 
-        answer = QMessageBox.question(parent, "Drive Required", msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        answer = QMessageBox.question(parent, tr("Drive Required"), msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
 
         if answer != QMessageBox.StandardButton.Yes:
             if is_managed:
                 logger.info("Skipping mount for managed drive '%s'; continuing operation.", drive_name)
                 QMessageBox.information(
-                    parent, "Skipping Drive", f"'{drive_name}' was not mounted.\n\n"
-                                              f"Since this drive uses an external mount path, the operation will continue.\n"
-                                              f"Files on this drive may be unavailable.")
+                    parent, tr("Skipping Drive"), tr("'{drive_name}' was not mounted.\n\n"
+                                              "Since this drive uses an external mount path, the operation will continue.\n"
+                                              "Files on this drive may be unavailable.", drive_name=drive_name))
                 continue
-            QMessageBox.warning(parent, "Operation Cancelled",
-                                f"The required drive '{drive_name}' was not mounted.\n\nThe operation has been cancelled.")
+            QMessageBox.warning(parent, tr("Operation Cancelled"),
+                                tr("The required drive '{drive_name}' was not mounted.\n\nThe operation has been cancelled.", drive_name=drive_name))
             return False
 
         success, error_msg = mount_drive(opt)
         if not success:
-            QMessageBox.critical(parent, "Mount Failed",
-                                 f"Could not mount '{drive_name}':\n\n{error_msg}\n\nThe operation has been cancelled.")
+            QMessageBox.critical(parent, tr("Mount Failed"),
+                                 tr("Could not mount '{drive_name}':\n\n{error_msg}\n\nThe operation has been cancelled.", drive_name=drive_name, error_msg=error_msg))
             return False
 
     return True

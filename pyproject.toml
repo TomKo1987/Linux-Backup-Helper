@@ -63,6 +63,7 @@ py-modules = [
     "system_manager_options",
     "themes",
     "tooltips",
+    "translations",
     "ui_utils",
     "windows",
 ]

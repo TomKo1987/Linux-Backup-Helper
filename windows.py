@@ -14,6 +14,7 @@ from samba_credentials import SambaPasswordDialog
 from state import S, _PROFILES_DIR, RESTART_DIALOG, apply_replacements, save_profile
 from themes import current_theme, font_scale, register_style_listener, unregister_style_listener, apply_tooltip
 from tooltips import backup_tooltips, restore_tooltips, copy_logic_tooltip
+from translations import register_language_listener, unregister_language_listener, tr
 from ui_utils import block_set, btn_row, header_bar_style, _StandardKeysMixin
 
 _COLS_NARROW, _COLS_WIDE = 2, 4
@@ -27,7 +28,7 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
 
     def __init__(self, parent) -> None:
         super().__init__(parent)
-        self.setWindowTitle(self._window_title)
+        self.setWindowTitle(tr(self._window_title))
         self._connections_cleaned = False
 
         self.checkbox_dirs: list[tuple[QCheckBox, list, list, str, dict]] = []
@@ -54,6 +55,7 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
 
         self._setup_ui()
         register_style_listener(self._refresh_styles)
+        register_language_listener(self._refresh_styles)
         self.finished.connect(lambda _r: self._cleanup_connections())
 
     def _entry_filter(self, _entry: dict) -> bool:
@@ -61,6 +63,7 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
 
     def _refresh_styles(self) -> None:
         saved = {id(e): cb.isChecked() for cb, *_, e in self.checkbox_dirs}
+        self.setWindowTitle(tr(self._window_title))
         self._setup_ui()
         for cb, *_, e in self.checkbox_dirs:
             if id(e) in saved:
@@ -89,20 +92,23 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
 
         parts = []
         if no_b and no_r:
-            parts.append("Excluded from backup and restore")
+            parts.append(tr("Excluded from backup and restore"))
         elif no_b:
-            parts.append("Excluded from backup")
+            parts.append(tr("Excluded from backup"))
         elif no_r:
-            parts.append("Excluded from restore")
+            parts.append(tr("Excluded from restore"))
 
         if has_path_excl:
-            parts.append(f"Contains {path_excl_count} excluded subpath{'s' if path_excl_count > 1 else ''}")
+            if path_excl_count > 1:
+                parts.append(tr("Contains {count} excluded subpaths", count=path_excl_count))
+            else:
+                parts.append(tr("Contains {count} excluded subpath", count=path_excl_count))
 
         if details.get("versioned_archive"):
             max_v = details.get("max_versions") or 0
-            parts.append(f"Versioned archive (keep {max_v if max_v else 'unlimited'})")
+            parts.append(tr("Versioned archive (keep {n})", n=(max_v if max_v else tr("unlimited"))))
         elif details.get("mirror_delete"):
-            parts.append("Mirror delete active")
+            parts.append(tr("Mirror delete active"))
 
         return " | ".join(parts)
 
@@ -144,10 +150,10 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
 
         next_cols = _COLS_NARROW if self.cols == _COLS_WIDE else _COLS_WIDE
 
-        self._selectall = QCheckBox("Select All")
+        self._selectall = QCheckBox(tr("Select All"))
         self._selectall.clicked.connect(self._toggle_all)
 
-        self._col_btn = QPushButton(f"{next_cols} Columns")
+        self._col_btn = QPushButton(tr("{n} Columns", n=next_cols))
         self._col_btn.clicked.connect(self._toggle_cols)
 
         self._top_hbox.addWidget(self._selectall)
@@ -179,7 +185,7 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
             hdr_data = S.headers[h]
             inactive = hdr_data.get("inactive", False)
             color = t["text_dim"] if inactive else hdr_data.get("color", "#ffffff")
-            label = f"{h} (Inactive)" if inactive else h
+            label = tr("{name} (Inactive)", name=h) if inactive else h
 
             hdr_lbl = QLabel(label)
             hdr_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -257,6 +263,7 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
             return
         self._connections_cleaned = True
         unregister_style_listener(self._refresh_styles)
+        unregister_language_listener(self._refresh_styles)
         for cb, *_ in self.checkbox_dirs:
             try:
                 cb.stateChanged.disconnect()
@@ -297,7 +304,7 @@ class _CopyMixin:
                 post_hooks = details.get("post_hooks", [])
                 selected.append((src, dst, title, excl, pre_hooks, post_hooks, details))
         if not selected:
-            QMessageBox.information(self, "Note", "Nothing selected.")
+            QMessageBox.information(self, tr("Note"), tr("Nothing selected."))
             return
 
         paths = [p for src, dst, _title, *_ in selected for p in src + dst]
@@ -316,12 +323,12 @@ class _CopyMixin:
         btn_style   = f"font-size:{fs['xl']}px;font-weight:bold;"
         close_style = f"font-size:{fs['xl']}px;"
 
-        action_btn = QPushButton(self._op_label)  # type: ignore[attr-defined]
+        action_btn = QPushButton(tr(self._op_label))  # type: ignore[attr-defined]
         action_btn.setMinimumHeight(30)
         action_btn.setStyleSheet(btn_style)
         action_btn.clicked.connect(self._start_copy)  # type: ignore[attr-defined]
 
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(tr("Close"))
         close_btn.setMinimumHeight(30)
         close_btn.setStyleSheet(close_style)
         close_btn.clicked.connect(self.close)
@@ -370,31 +377,31 @@ class SettingsWindow(_BaseCheckboxWindow):
         t = current_theme()
         fs = font_scale()
         path = (str(_PROFILES_DIR / f"{S.profile_name}.json") if S.profile_name else str(_PROFILES_DIR))
-        lbl = QLabel(f"<span style='font-size:{fs['lg']}px;color:{t['accent2']}'> 󰔨   {apply_replacements(path)}</span>")
+        lbl = QLabel(f"<span style='font-size:{fs['lg']}px;color:{t['accent2']}'> 󰔨   {apply_replacements(path)}</span>")  # noqa: path not translated (file path)
         lbl.setTextFormat(Qt.TextFormat.RichText)
         apply_tooltip(lbl, copy_logic_tooltip())
         return lbl
 
     def _add_action_buttons(self, grid: QGridLayout, row: int) -> None:
-        grid.addLayout(btn_row([("System Manager Options", self._open_sm_options)]), row, 0, 1, self.cols)
+        grid.addLayout(btn_row([(tr("System Manager Options"), self._open_sm_options)]), row, 0, 1, self.cols)
         row += 1
 
-        grid.addLayout(btn_row([("New Entry", self._new_entry), ("Edit Entry", self._edit_entry),
-                                ("Delete Entry", self._del_entry), ("Header Settings", self._header_settings)]),
+        grid.addLayout(btn_row([(tr("New Entry"), self._new_entry), (tr("Edit Entry"), self._edit_entry),
+                                (tr("Delete Entry"), self._del_entry), (tr("Header Settings"), self._header_settings)]),
                        row, 0, 1, self.cols)
         row += 1
 
-        grid.addLayout(btn_row([("Mount Options", self._manage_mounts), ("Samba Credentials", self._samba_credentials),
-                                ("Profile Manager", self._manage_profiles)]), row, 0, 1, self.cols)
+        grid.addLayout(btn_row([(tr("Mount Options"), self._manage_mounts), (tr("Samba Credentials"), self._samba_credentials),
+                                (tr("Profile Manager"), self._manage_profiles)]), row, 0, 1, self.cols)
         row += 1
 
-        grid.addLayout(btn_row([("Auto-Backup", self._open_scheduler),
-                                ("Change Theme", self._change_theme),
-                                ("Disk Analyzer", self._open_disk_analyzer)]),
+        grid.addLayout(btn_row([(tr("Auto-Backup"), self._open_scheduler),
+                                (tr("Theme && Language"), self._change_theme),
+                                (tr("Disk Analyzer"), self._open_disk_analyzer)]),
                        row, 0, 1, self.cols)
         row += 1
 
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(tr("Close"))
         close_btn.clicked.connect(self.close)
         grid.addWidget(close_btn, row, 0, 1, self.cols)
 
@@ -423,15 +430,15 @@ class SettingsWindow(_BaseCheckboxWindow):
     def _new_entry(self) -> None:
         if not S.headers:
             QMessageBox.information(
-                self, "No Headers Found", "Before creating an entry you need at least one header.\n\n"
+                self, tr("No Headers Found"), tr("Before creating an entry you need at least one header.\n\n"
                                           "Headers group your entries and can each have their own colour.\n"
-                                          "The Header Settings dialog will open now — click '🆕 New' to add one.")
+                                          "The Header Settings dialog will open now — click '🆕 New' to add one."))
             dlg = HeaderSettingsDialog(self)
             if dlg.exec() != QDialog.DialogCode.Accepted:
                 return
             if not S.headers:
                 QMessageBox.warning(
-                    self, "No Headers", "Please add at least one header before creating an entry.")
+                    self, tr("No Headers"), tr("Please add at least one header before creating an entry."))
                 return
             save_profile()
             self.changed.emit()
@@ -446,7 +453,7 @@ class SettingsWindow(_BaseCheckboxWindow):
     def _edit_entry(self) -> None:
         checked = [(cb, entry) for cb, *_, entry in self.checkbox_dirs if cb.isChecked()]
         if not checked:
-            QMessageBox.information(self, "Edit Entry", "Please check one or more entries to edit.")
+            QMessageBox.information(self, tr("Edit Entry"), tr("Please check one or more entries to edit."))
             return
 
         changed_any = False
@@ -455,7 +462,7 @@ class SettingsWindow(_BaseCheckboxWindow):
         for i, (_, original_entry) in enumerate(checked):
             if not original_entry:
                 continue
-            title  = f"Edit Entry ({i + 1}/{total}) — {original_entry['title']}" if total > 1 else None
+            title  = tr("Edit Entry ({i}/{total}) — {name}", i=i + 1, total=total, name=original_entry['title']) if total > 1 else None
             result = self._run_entry_dialog(original_entry, window_title=title)
             if result is not None:
                 idx = next((j for j, e in enumerate(S.entries) if e is original_entry), None)
@@ -471,9 +478,9 @@ class SettingsWindow(_BaseCheckboxWindow):
                     changed_any    = True
                 else:
                     QMessageBox.warning(
-                        self, "Edit Failed",
-                        f"Could not locate entry '{original_entry.get('title', '?')}' "
-                        "in the current profile.\nPlease re-select and try again.",
+                        self, tr("Edit Failed"),
+                        tr("Could not locate entry '{name}' "
+                        "in the current profile.\nPlease re-select and try again.", name=original_entry.get('title', '?')),
                     )
 
         if changed_any:
@@ -484,10 +491,10 @@ class SettingsWindow(_BaseCheckboxWindow):
     def _del_entry(self) -> None:
         to_delete = [entry for cb, *_, entry in self.checkbox_dirs if cb.isChecked()]
         if not to_delete:
-            QMessageBox.information(self, "Delete Entry", "Please check one or more entries to delete.")
+            QMessageBox.information(self, tr("Delete Entry"), tr("Please check one or more entries to delete."))
             return
         names = ", ".join(e["title"].replace("<br>", " ") for e in to_delete)
-        if (QMessageBox.question(self, "Delete", f"Really delete: {names}?",
+        if (QMessageBox.question(self, tr("Delete"), tr("Really delete: {names}?", names=names),
                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) ==
                 QMessageBox.StandardButton.Yes):
             ids_to_delete = {id(e) for e in to_delete}
@@ -509,6 +516,7 @@ class SettingsWindow(_BaseCheckboxWindow):
         if dlg.was_changed:
             self.changed.emit()
             self.done(RESTART_DIALOG)
+
     def _samba_credentials(self) -> None: SambaPasswordDialog.show_dialog(self)
 
     def _manage_profiles(self) -> None:

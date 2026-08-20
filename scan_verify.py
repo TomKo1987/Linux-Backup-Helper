@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
 from linux_distro_helper import LinuxDistroHelper
 from state import S, logger
 from themes import current_theme, font_sz
+from translations import tr
 from ui_utils import color_style, _StandardKeysMixin
 
 from scan_verify_capture import _CaptureTab
@@ -17,7 +18,7 @@ from scan_verify_packagediff import _PackageDiffTab
 class ScanVerifyDialog(_StandardKeysMixin, QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Scan & Verify")
+        self.setWindowTitle(tr("Scan & Verify"))
         self._helper = LinuxDistroHelper()
         self._build_ui()
         self._size_to_screen()
@@ -66,8 +67,8 @@ class ScanVerifyDialog(_StandardKeysMixin, QDialog):
         lay.setSpacing(8)
 
         info = QLabel(f"<b>{self._helper.distro_pretty_name}</b>  •  "
-                      f"Package manager: <b>{self._helper.pkg_manager_name()}</b>  •  "
-                      f"Profile: <b>{S.profile_name or 'none'}</b>")
+                      f"{tr('Package manager:')} <b>{self._helper.pkg_manager_name()}</b>  •  "
+                      f"{tr('Profile:')} <b>{S.profile_name or tr('none')}</b>")
         info.setTextFormat(Qt.TextFormat.RichText)
         info.setStyleSheet(color_style(t['muted'], font_sz(-1)))
         lay.addWidget(info)
@@ -76,12 +77,12 @@ class ScanVerifyDialog(_StandardKeysMixin, QDialog):
         self._capture_tab = _CaptureTab(self._helper)
         self._verify_tab = _VerifyTab(self._helper)
         self._packagediff_tab = _PackageDiffTab(self._helper)
-        tabs.addTab(self._capture_tab, "🔍  System Scan")
-        tabs.addTab(self._verify_tab, "✅  Verify Profile")
-        tabs.addTab(self._packagediff_tab, "📦  Package Diff")
+        tabs.addTab(self._capture_tab, f"🔍  {tr('System Scan')}")
+        tabs.addTab(self._verify_tab, f"✅  {tr('Verify Profile')}")
+        tabs.addTab(self._packagediff_tab, f"📦  {tr('Package Diff')}")
         lay.addWidget(tabs, 1)
 
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(tr("Close"))
         close_btn.clicked.connect(self.accept)
         row = QHBoxLayout()
         row.addStretch()

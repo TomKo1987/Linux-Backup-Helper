@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
 from linux_distro_helper import LinuxDistroHelper
 from state import all_profile_pkg_names
 from themes import current_theme, font_sz
+from translations import tr
 from ui_utils import color_style
 
 from scan_verify_helpers import (
@@ -65,9 +66,9 @@ class _PackageDiffTab(QWidget):
         lay.setSpacing(8)
 
         hdr = QHBoxLayout()
-        title = QLabel("📦  Package Diff: System vs. Profile")
+        title = QLabel(tr("📦  Package Diff: System vs. Profile"))
         title.setStyleSheet(f"font-size:{font_sz(2)}px;font-weight:bold;color:{acc};")
-        self._run_btn = QPushButton("🔄 Check Now")
+        self._run_btn = QPushButton(tr("🔄 Check Now"))
         self._run_btn.setMinimumHeight(32)
         self._run_btn.clicked.connect(self._run)
         hdr.addWidget(title)
@@ -83,7 +84,7 @@ class _PackageDiffTab(QWidget):
         cols.setSpacing(10)
 
         col_u = QVBoxLayout()
-        self._list_untracked_lbl = QLabel("⚠  Installed, not in profile (0)")
+        self._list_untracked_lbl = QLabel(tr("⚠  Installed, not in profile (0)"))
         self._list_untracked_lbl.setStyleSheet(
             f"font-weight:bold;color:{t['warning']};font-size:{font_sz(1)}px;")
         self._list_untracked = QListWidget()

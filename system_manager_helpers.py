@@ -21,6 +21,7 @@ from themes import (
     tri_styles, apply_tooltip, style_checkbox_select_all, tri_state_legend_html
 )
 from tooltips import sm_tooltips
+from translations import tr
 from ui_utils import ok_cancel_buttons, sep
 
 _STATE_ACTIVE = Qt.CheckState.Checked
@@ -81,7 +82,7 @@ def _scroll_dlg(_parent, title: str, body: QWidget, on_save=None) -> tuple[QDial
     sa.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
     sa.setWidget(body)
     lay.addWidget(sa)
-    bb = ok_cancel_buttons(dlg, lambda: on_save(dlg) if on_save else dlg.accept(), cancel_label="Close")
+    bb = ok_cancel_buttons(dlg, lambda: on_save(dlg) if on_save else dlg.accept(), cancel_label=tr("Close"))
     lay.addWidget(bb)
     body.adjustSize()
     sz = body.sizeHint()
@@ -126,8 +127,8 @@ def _pkg_checkboxes(packages: list, is_specific: bool) -> list[TriCheckBox]:
             disabled = p.get("disabled", False)
         else:
             name, disabled = str(p), False
-        tip = (f"<b>Package:</b> {name}<br><br><i>Left-click package to change status. "
-               f"Right-click to edit.</i><br><br>{legend}")
+        tip = tr("<b>Package:</b> {name}<br><br><i>Left-click package to change status. "
+                 "Right-click to edit.</i><br><br>{legend}", name=name, legend=legend)
         cb = _make_tri_cb(name, disabled, tip)
         cb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         result.append(cb)
@@ -135,7 +136,7 @@ def _pkg_checkboxes(packages: list, is_specific: bool) -> list[TriCheckBox]:
 
 
 def _add_select_all_tri(layout, checkboxes: list[TriCheckBox], cols: int = 1) -> None:
-    sa = TriCheckBox("Set All: Active / Disabled / Delete")
+    sa = TriCheckBox(tr("Set All: Active / Disabled / Delete"))
     sa.setStyleSheet(style_checkbox_select_all())
     all_active = all(cb.checkState() == _STATE_ACTIVE for cb in checkboxes)
     sa.setCheckState(_STATE_ACTIVE if all_active else _STATE_DISABLED)
@@ -224,7 +225,7 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, aur_he
     str, tuple[str, str]]:
     helper = aur_helper_override or S.aur_helper
     tips = sm_tooltips()
-    _NO_CHANGE = " (No changes necessary.)"
+    _NO_CHANGE = tr(" (No changes necessary.)")
 
     def _done(key: str) -> str:
         return _NO_CHANGE if (op_status and op_status.get(key)) else ""
@@ -259,7 +260,7 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, aur_he
 
     install_cmd = distro.get_pkg_install_cmd("...")
     if session is None:
-        session = distro.detect_session() or "current session"
+        session = distro.detect_session() or tr("current session")
 
     pm_name = distro.pkg_manager_name()
     cron_svc = distro.get_cron_service_name()
@@ -274,10 +275,11 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, aur_he
     missing_kernels = sorted(str(k) for k in kti if k and k not in _ik)
 
     if not missing_kernels:
-        kernels_text = "Install kernel(s): (No changes necessary.)"
+        kernels_text = tr("Install kernel(s): (No changes necessary.)")
     else:
         kernels_list = ", ".join(missing_kernels)
-        kernels_text = f"Install kernel(s): {kernels_list}{_done('kernels_all_installed')}"
+        kernels_text = tr("Install kernel(s): {kernels_list}{done}", kernels_list=kernels_list,
+                          done=_done('kernels_all_installed'))
 
     if distro.family() == "arch":
         _future_hdr = set(_ik) | set(kti)
@@ -288,96 +290,114 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, aur_he
                 ARCH_KERNEL_VARIANTS[v][1])
         ]
         headers_text = (
-            "Install kernel headers: (Headers for installed kernel(s) already installed. No changes necessary.)" if not _missing_hdrs
-            else f"Install kernel headers: {', '.join(_missing_hdrs)}")
+            tr("Install kernel headers: (Headers for installed kernel(s) already installed. No changes necessary.)")
+            if not _missing_hdrs
+            else tr("Install kernel headers: {hdrs}", hdrs=', '.join(_missing_hdrs)))
     else:
         _hpkg = str(distro.get_kernel_headers_pkg() or "linux-headers")
-        _hdr_done = " (No changes necessary)" if (op_status and op_status.get("kernel_headers_installed")) else ""
-        headers_text = f"Install kernel header(s) (Package: '{_hpkg}'){_hdr_done}"
+        _hdr_done = tr(" (No changes necessary)") if (op_status and op_status.get("kernel_headers_installed")) else ""
+        headers_text = tr("Install kernel header(s) (Package: '{hpkg}'){done}", hpkg=_hpkg, done=_hdr_done)
 
     dk = ((default_kernel_override if default_kernel_override is not None else S.default_kernel) or "")
-    dk_pkg = dk or system_default_variant or "(not selected)"
+    dk_pkg = dk or system_default_variant or tr("(not selected)")
     if system_default_variant and system_default_variant != dk_pkg:
-        _sdv: str = str(system_default_variant)
-        sys_def_info = f" [System default: {_sdv}]"
+        _sdv: str = system_default_variant or ""
+        sys_def_info = tr(" [System default: {sdv}]", sdv=_sdv)
     else:
         sys_def_info = ""
-    dk_note = " (Is already default. No changes necessary.)" if (
+    dk_note = tr(" (Is already default. No changes necessary.)") if (
             op_status and op_status.get("default_kernel_ok")) else sys_def_info
 
-    return {"copy_dotfiles": ("Copy 'Dotfiles' (Using 'sudo cp')", _tip("copy_dotfiles")),
+    return {"copy_dotfiles": (tr("Copy 'Dotfiles' (Using 'sudo cp')"), _tip("copy_dotfiles")),
             "update_mirrors": (
-                "Mirror update<br>(Install 'reflector' and get the 10 fastest servers in your country, or worldwide if location is not detected)",
+                tr("Mirror update<br>(Install 'reflector' and get the 10 fastest servers in your country, or worldwide if location is not detected)"),
                 _tip("update_mirrors")),
             "set_user_shell": (
-                f"Change shell for current user (Install shell package and set as default.){_done('shell_ok')}",
+                tr("Change shell for current user (Install shell package and set as default.){done}",
+                   done=_done('shell_ok')),
                 _tip("set_user_shell")),
             "update_system": (
-                f"System update (Using '{_installed_helper_for_update} -Syu --noconfirm')" if _installed_helper_for_update else
-                f"System update (Using '{distro.get_update_system_cmd()}')",
+                tr("System update (Using '{cmd} -Syu --noconfirm')", cmd=_installed_helper_for_update)
+                if _installed_helper_for_update else
+                tr("System update (Using '{cmd}')", cmd=distro.get_update_system_cmd()),
                 _tip("update_system")),
             "install_ucode": (
-                f"Install {cpu_label} CPU microcode updates (Package: '{ucode_pkg}'){_done('ucode_installed')}",
+                tr("Install {cpu_label} CPU microcode updates (Package: '{ucode_pkg}'){done}",
+                   cpu_label=cpu_label, ucode_pkg=ucode_pkg, done=_done('ucode_installed')),
                 _tip("install_ucode")),
             "install_kernels": (kernels_text, _tip("install_kernels")),
             "install_kernel_headers": (headers_text, _tip("install_kernel_headers")),
-            "set_default_kernel": (f"Set default boot kernel to: {dk_pkg}{dk_note}", _tip("set_default_kernel")),
-            "install_basic_packages": (f"Install 'Basic Packages' (Using '{install_cmd}')",
+            "set_default_kernel": (tr("Set default boot kernel to: {dk_pkg}{dk_note}", dk_pkg=dk_pkg, dk_note=dk_note),
+                                   _tip("set_default_kernel")),
+            "install_basic_packages": (tr("Install 'Basic Packages' (Using '{cmd}')", cmd=install_cmd),
                                        _tip("install_basic_packages")),
-            "install_aur_helper": (f"Install '{helper}' (required for 'AUR Packages'){_done('aur_helper_installed')}",
+            "install_aur_helper": (tr("Install '{helper}' (required for 'AUR Packages'){done}",
+                                      helper=helper, done=_done('aur_helper_installed')),
                                    _tip("install_aur_helper")),
-            "install_aur_packages": (f"Install 'AUR Packages' ('{helper}' required. Using '{helper} -S --needed ...')",
+            "install_aur_packages": (tr("Install 'AUR Packages' ('{helper}' required. Using '{helper} -S --needed ...')",
+                                        helper=helper),
                                      _tip("install_aur_packages")),
-            "install_specific_packages": (f"Install 'Specific Packages' for {session} (Using '{install_cmd}')",
+            "install_specific_packages": (tr("Install 'Specific Packages' for {session} (Using '{cmd}')",
+                                             session=session, cmd=install_cmd),
                                           _tip("install_specific_packages")),
             "enable_flatpak_integration": (
-                f"Enable Flatpak integration (Install '{pkglist(distro.get_flatpak_packages)}' and add Flathub remote)",
+                tr("Enable Flatpak integration (Install '{pkgs}' and add Flathub remote)",
+                   pkgs=pkglist(distro.get_flatpak_packages)),
                 _tip("enable_flatpak_integration")),
             "enable_printer_support": (
-                f"Initialise printer support<br>(Install '{pkglist(distro.get_printer_packages)}'. Enable & start 'cups.service')",
+                tr("Initialise printer support<br>(Install '{pkgs}'. Enable & start 'cups.service')",
+                   pkgs=pkglist(distro.get_printer_packages)),
                 _tip("enable_printer_support")),
             "enable_ssh_service": (
-                f"Initialise SSH server (Install '{pkglist(distro.get_ssh_packages)}'. Enable & start '{distro.get_ssh_service_name()}.service')",
+                tr("Initialise SSH server (Install '{pkgs}'. Enable & start '{svc}.service')",
+                   pkgs=pkglist(distro.get_ssh_packages), svc=distro.get_ssh_service_name()),
                 _tip("enable_ssh_service")),
             "enable_samba_network_filesharing": (
-                f"Initialise Samba (network file-sharing). (Install '{pkglist(distro.get_samba_packages)}'. "
-                f"Enable & start '{distro.get_samba_service_name()}.service')",
+                tr("Initialise Samba (network file-sharing). (Install '{pkgs}'. "
+                   "Enable & start '{svc}.service')",
+                   pkgs=pkglist(distro.get_samba_packages), svc=distro.get_samba_service_name()),
                 _tip("enable_samba_network_filesharing")),
             "enable_bluetooth_service": (
-                f"Initialise Bluetooth (Install '{pkglist(distro.get_bluetooth_packages)}'. Enable & start 'bluetooth.service')",
+                tr("Initialise Bluetooth (Install '{pkgs}'. Enable & start 'bluetooth.service')",
+                   pkgs=pkglist(distro.get_bluetooth_packages)),
                 _tip("enable_bluetooth_service")),
             "enable_atd_service": (
-                f"Initialise atd (Install '{pkglist(distro.get_at_packages)}'. Enable & start 'atd.service')",
+                tr("Initialise atd (Install '{pkgs}'. Enable & start 'atd.service')",
+                   pkgs=pkglist(distro.get_at_packages)),
                 _tip("enable_atd_service")),
             "enable_cronie_service": (
-                f"Initialise {cron_svc} (Install '{pkglist(distro.get_cron_packages)}'. Enable & start '{cron_svc}.service')",
+                tr("Initialise {svc} (Install '{pkgs}'. Enable & start '{svc}.service')",
+                   svc=cron_svc, pkgs=pkglist(distro.get_cron_packages)),
                 _tip("enable_cronie_service")),
             "install_snap": (
-                f"Initialise Snap (Install '{pkglist(distro.get_snap_packages)}'. Enable & start 'snapd.service')",
+                tr("Initialise Snap (Install '{pkgs}'. Enable & start 'snapd.service')",
+                   pkgs=pkglist(distro.get_snap_packages)),
                 _tip("install_snap")),
             "enable_ntp_sync": (
-                (f"Enable network time synchronisation (Install '{pkglist(distro.get_ntp_packages)}'. "
-                 f"Enable & start '{distro.get_ntp_service_name()}.service')")
+                tr("Enable network time synchronisation (Install '{pkgs}'. "
+                   "Enable & start '{svc}.service')", pkgs=pkglist(distro.get_ntp_packages),
+                   svc=distro.get_ntp_service_name())
                 if distro.get_ntp_packages() else
-                (f"Enable network time synchronisation (Already provided by the base system. "
-                 f"Enable & start '{distro.get_ntp_service_name()}.service')"),
+                tr("Enable network time synchronisation (Already provided by the base system. "
+                   "Enable & start '{svc}.service')", svc=distro.get_ntp_service_name()),
                 _tip("enable_ntp_sync")),
             "enable_firewall": (
-                f"Initialise firewall (Install '{pkglist(distro.get_firewall_packages)}'. "
-                f"Enable & start '{distro.get_firewall_service_name()}.service' and apply rules.)",
+                tr("Initialise firewall (Install '{pkgs}'. "
+                   "Enable & start '{svc}.service' and apply rules.)",
+                   pkgs=pkglist(distro.get_firewall_packages), svc=distro.get_firewall_service_name()),
                 _tip("enable_firewall")),
-            "enable_fstrim_timer": ("Enable periodic SSD TRIM (Enable & start 'fstrim.timer')",
+            "enable_fstrim_timer": (tr("Enable periodic SSD TRIM (Enable & start 'fstrim.timer')"),
                                     _tip("enable_fstrim_timer")),
-            "remove_orphaned_packages": ("Remove orphaned package(s) (and unused Flatpak runtimes if installed)",
+            "remove_orphaned_packages": (tr("Remove orphaned package(s) (and unused Flatpak runtimes if installed)"),
                                          _tip("remove_orphaned_packages")),
-            "clean_cache": ("Clean cache (for '" + pm_name + "'"
-                            + (", '" + "', '".join(_installed_helpers_for_cache[:-1]) + "' and '" +
+            "clean_cache": (tr("Clean cache (for '{pm_name}'{extra})", pm_name=pm_name, extra=(
+                            (", '" + "', '".join(_installed_helpers_for_cache[:-1]) + "' and '" +
                                _installed_helpers_for_cache[
                                    -1] + "'" if len(_installed_helpers_for_cache) > 1 else (
                 " and '" + _installed_helpers_for_cache[0] + "'"
-                if _installed_helpers_for_cache else "")) + ")", _tip("clean_cache")),
+                if _installed_helpers_for_cache else "")))), _tip("clean_cache")),
             "clean_journal_logs": (
-                "Clean systemd journal logs (Limit size to 100M using 'sudo journalctl --vacuum-size=100M')",
+                tr("Clean systemd journal logs (Limit size to 100M using 'sudo journalctl --vacuum-size=100M')"),
                 _tip("clean_journal_logs"))}
 
 
@@ -385,7 +405,7 @@ def _read_import_file(_parent, path: str) -> list[str] | None:
     try:
         return Path(path).read_text(encoding="utf-8").splitlines()
     except Exception as e:
-        QMessageBox.critical(_parent, "Error", f"Read failed: {e}")
+        QMessageBox.critical(_parent, tr("Error"), tr("Read failed: {e}", e=e))
         return None
 
 
@@ -399,7 +419,7 @@ def _pkg_form_dialog(_parent, title: str, *, prefill_name: str = "", prefill_ses
     form = QFormLayout()
     name_ed = QLineEdit(prefill_name)
     name_ed.setMinimumHeight(36)
-    form.addRow("Package:", name_ed)
+    form.addRow(tr("Package:"), name_ed)
 
     sess_cb = None
     if with_session:
@@ -408,7 +428,7 @@ def _pkg_form_dialog(_parent, title: str, *, prefill_name: str = "", prefill_ses
         if prefill_sess:
             sess_cb.setCurrentText(prefill_sess)
         sess_cb.setMinimumHeight(36)
-        form.addRow("Session:", sess_cb)
+        form.addRow(tr("Session:"), sess_cb)
 
     lay.addLayout(form)
     lay.addWidget(ok_cancel_buttons(dlg, dlg.accept))
@@ -418,13 +438,14 @@ def _pkg_form_dialog(_parent, title: str, *, prefill_name: str = "", prefill_ses
 
     name = name_ed.text().strip()
     if not name:
-        QMessageBox.warning(_parent, "Error", "Package name required.")
+        QMessageBox.warning(_parent, tr("Error"), tr("Package name required."))
         return None
     if not is_valid_pkg_name(name):
         QMessageBox.warning(
-            _parent, "Error",
-            f"'{name}' is not a valid package name.\n\n"
-            "Allowed: letters, digits, '.', '_', '+', '-' (must not start with a separator)."
+            _parent, tr("Error"),
+            tr("'{name}' is not a valid package name.\n\n"
+               "Allowed: letters, digits, '.', '_', '+', '-' (must not start with a separator).",
+               name=name)
         )
         return None
 

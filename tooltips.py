@@ -7,6 +7,7 @@ from typing import Any
 from linux_distro_helper import LinuxDistroHelper
 from state import S, apply_replacements, logger, register_invalidate_hook, active_pkg_names, active_dotfiles
 from themes import current_theme, font_sz
+from translations import tr
 
 _cache: tuple[dict, dict, dict | None] | None = None
 _cache_lock = threading.Lock()
@@ -47,10 +48,10 @@ def _entry_tooltip_html(title: str, src_lines: list, dst_lines: list, bg: str, b
             f"<b>{safe_title}</b></td></tr><tr>"
             f"<td style='background-color: {bg2}; font-size: {font_sz_fn(-3)}px; color: {c_data}; line-height: 1.4; "
             f"{cell_padding} vertical-align: top; white-space: nowrap'>"
-            f"<span style='{label_style};'>Source:</span><br>{s_html}</td>"
+            f"<span style='{label_style};'>{tr('Source:')}</span><br>{s_html}</td>"
             f"<td style='background-color: {bg3}; font-size: {font_sz_fn(-3)}px; color: {c_data}; line-height: 1.4; "
             f"{cell_padding} vertical-align: top; white-space: nowrap'>"
-            f"<span style='{label_style}'>Destination:</span><br>{d_html}</td>"
+            f"<span style='{label_style}'>{tr('Destination:')}</span><br>{d_html}</td>"
             f"</tr></table>")
 
 
@@ -58,7 +59,7 @@ def _dotfiles_tooltip_html(sys_files: list, t: dict, font_sz_fn) -> str:
     cols = 2 if len(sys_files) > 8 else 1
     header = (f"<tr><td colspan='{cols}' style='padding:4px 5px 2px;font-size:{font_sz_fn(-1)}px;"
               f"font-weight:bold;white-space:nowrap;color:{t['accent2']};border-bottom:1px solid {t['header_sep']}'>"
-              f"Dotfiles ({len(sys_files)})</td></tr>")
+              f"{tr('Dotfiles')} ({len(sys_files)})</td></tr>")
     cells = []
     for sf in sys_files:
         src = sf.get("source", "")
@@ -114,8 +115,8 @@ def _specific_pkgs_tooltip_html(sp_active: list, session: str | None, t: dict, f
             rows.append(f"<tr style='background-color:{t['bg2'] if (j // cols) % 2 == 0 else t['bg3']};'>{cells}</tr>")
 
     header = (f"<tr><td colspan='{cols}' style='padding:4px 5px 2px;font-size:{font_sz_fn(-1)}px;font-weight:bold;"
-              f"color:{t['accent2']};border-bottom:1px solid {t['header_sep']};'>Specific Packages "
-              f"for {_html.escape(session or 'current session')} ({len(sp_active)})</td></tr>")
+              f"color:{t['accent2']};border-bottom:1px solid {t['header_sep']};'>{tr('Specific Packages')} "
+              f"{tr('for {session}', session=_html.escape(session or tr('current session')))} ({len(sp_active)})</td></tr>")
     return (f"<table style='font-family:monospace;font-size:{font_sz_fn(-2)}px; white-space:nowrap'>"
             f"{header}{''.join(rows)}</table>")
 
@@ -155,7 +156,7 @@ def generate_tooltip() -> tuple[dict, dict, dict | None] | tuple[dict[Any, str],
     if active_sys_files:
         sm_tips["copy_dotfiles"] = _dotfiles_tooltip_html(active_sys_files, t, font_sz)
 
-    for key, pkgs, label in [("install_basic_packages", S.basic_packages, "Basic Packages"), ("install_aur_packages", S.aur_packages, "AUR Packages")]:
+    for key, pkgs, label in [("install_basic_packages", S.basic_packages, tr("Basic Packages")), ("install_aur_packages", S.aur_packages, tr("AUR Packages"))]:
         active_names = [_html.escape(n) for n in active_pkg_names(pkgs)]
         if active_names:
             sm_tips[key] = _packages_tooltip_html(label, active_names, t, font_sz)
@@ -173,7 +174,7 @@ def generate_tooltip() -> tuple[dict, dict, dict | None] | tuple[dict[Any, str],
     if _system_shell:
         sm_tips["set_user_shell"] = (f"<table style='white-space:nowrap; font-family:monospace;'>"
                                      f"<tr><td style='padding:4px 5px 2px;font-size:{font_sz(-1)}px;font-weight:bold;"
-                                     f"color:{t['accent2']};border-bottom:1px solid {t['header_sep']};'>Current User Shell</td></tr>"
+                                     f"color:{t['accent2']};border-bottom:1px solid {t['header_sep']};'>{tr('Current User Shell')}</td></tr>"
                                      f"<tr style='background-color:{t['bg2']};'><td style='padding:8px 6px;border:1px solid "
                                      f"{t['header_sep']};color:{t['success']};'>{_html.escape(_system_shell)}</td></tr></table>")
 
@@ -186,7 +187,7 @@ def generate_tooltip() -> tuple[dict, dict, dict | None] | tuple[dict[Any, str],
 
 def copy_logic_tooltip() -> str:
     t = current_theme()
-    return (
+    return tr(
         "<b>Copy &amp; Skip Logic</b><br><br>"
         "<b>Local File Logic:</b><br>"
         "- A file is <b>copied</b> if the destination is missing, the <b>size differs</b>, "
@@ -241,9 +242,9 @@ def copy_logic_tooltip() -> str:
         "For SSH/rsync the same list is applied using each item's canonical casing, since rsync itself has no "
         "case-insensitive exclude option.</i><br><br>"
         "<b>Status Colors:</b><br>"
-        f"- <span style='color:{t['success']};'>Green</span> = Success, "
-        f"<span style='color:{t['warning']};'>Yellow</span> = Skipped, "
-        f"<span style='color:{t['error']};'>Red</span> = Error.<br><br><br>"
+        "- <span style='color:{success};'>Green</span> = Success, "
+        "<span style='color:{warning};'>Yellow</span> = Skipped, "
+        "<span style='color:{error};'>Red</span> = Error.<br><br><br>"
         "<b>Samba Credentials &amp; Keyring</b><br><br>"
         "- Passwords are <b>never stored in plain text</b>. The system uses a priority chain:<br>"
         "  1. <b>KDE KWallet:</b> Looks for <code>'smb-[username]'</code> in the <code>'kdewallet'</code> folder.<br>"
@@ -260,12 +261,13 @@ def copy_logic_tooltip() -> str:
         "- <b>Memory Safety:</b> The core password buffer (<code>SecureString</code>) is a mutable <code>bytearray</code> that is <b>manually zeroed</b> after use. "
         "During the credential-file write step the raw <code>bytearray</code> is written to <code>/dev/shm</code> directly — no intermediate "
         "immutable <code>str</code> or <code>bytes</code> copy is ever created — and it is <b>zeroed byte-by-byte</b> immediately afterwards in a "
-        "<code>finally</code> block, before the file itself is wiped and deleted."
+        "<code>finally</code> block, before the file itself is wiped and deleted.",
+        success=t['success'], warning=t['warning'], error=t['error']
     )
 
 
 def sudo_checkbox_tooltip() -> str:
-    return ("<b>How your sudo password is used — and why it is safe:</b><br><br>"
+    return tr("<b>How your sudo password is used — and why it is safe:</b><br><br>"
             "Your password is held <b>only in memory</b> as a mutable <code>bytearray</code> "
             "(via <code>SecureString</code>) — it is <b>never written to any file</b>, "
             "not even to a RAM-backed <code>tmpfs</code> such as <code>/dev/shm</code>.<br><br>"

@@ -185,13 +185,14 @@ from PyQt6.QtWidgets import (
 from linux_distro_helper import LinuxDistroHelper
 from state import S, save_profile
 from themes import current_theme
+from translations import tr
 from ui_utils import ok_cancel_buttons
 
 
 class RuleDialog(QDialog):
     def __init__(self, parent=None, rule=None):
         super().__init__(parent)
-        self.setWindowTitle("Edit Rule" if rule else "Add Rule")
+        self.setWindowTitle(tr("Edit Rule") if rule else tr("Add Rule"))
         self.rule = rule or {}
         self.setMinimumWidth(400)
         lay = QFormLayout(self)
@@ -209,20 +210,20 @@ class RuleDialog(QDialog):
         self.proto_cb.setCurrentText(self.rule.get("proto", "both"))
 
         self.src_ed = QLineEdit(str(self.rule.get("source", "")))
-        self.src_ed.setPlaceholderText("e.g. 192.168.0.0/24 or any")
+        self.src_ed.setPlaceholderText(tr("e.g. 192.168.0.0/24 or any"))
 
         self.port_ed = QLineEdit(str(self.rule.get("port", "")))
-        self.port_ed.setPlaceholderText("e.g. 1982")
+        self.port_ed.setPlaceholderText(tr("e.g. 1982"))
 
         self.comment_ed = QLineEdit(str(self.rule.get("comment", "")))
-        self.comment_ed.setPlaceholderText("e.g. Yeelight Discovery")
+        self.comment_ed.setPlaceholderText(tr("e.g. Yeelight Discovery"))
 
-        lay.addRow("Action:", self.action_cb)
-        lay.addRow("Direction:", self.dir_cb)
-        lay.addRow("Protocol:", self.proto_cb)
-        lay.addRow("Source:", self.src_ed)
-        lay.addRow("Port:", self.port_ed)
-        lay.addRow("Comment:", self.comment_ed)
+        lay.addRow(tr("Action:"), self.action_cb)
+        lay.addRow(tr("Direction:"), self.dir_cb)
+        lay.addRow(tr("Protocol:"), self.proto_cb)
+        lay.addRow(tr("Source:"), self.src_ed)
+        lay.addRow(tr("Port:"), self.port_ed)
+        lay.addRow(tr("Comment:"), self.comment_ed)
 
         lay.addWidget(ok_cancel_buttons(self, self.accept))
 
@@ -240,13 +241,13 @@ class RuleDialog(QDialog):
 class FirewallSettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Firewall Settings")
+        self.setWindowTitle(tr("Firewall Settings"))
         self.setMinimumSize(1250, 1000)
         self.rules = [normalize_rule(r) for r in S.firewall_config.get("rules", [])]
 
         lay = QVBoxLayout(self)
         top_row = QHBoxLayout()
-        top_row.addWidget(QLabel("Firewall Backend:"))
+        top_row.addWidget(QLabel(tr("Firewall Backend:")))
 
         self.backend_cb = QComboBox()
         self.backend_cb.addItems(["ufw", "firewalld"])
@@ -262,19 +263,19 @@ class FirewallSettingsDialog(QDialog):
         lay.addLayout(top_row)
 
         quick_row = QHBoxLayout()
-        quick_row.addWidget(QLabel("Raw Rule:"))
+        quick_row.addWidget(QLabel(tr("Raw Rule:")))
         self.raw_input = QLineEdit()
         self.raw_input.setPlaceholderText(
-            "e.g. sudo ufw default deny  OR  sudo ufw allow in from 192.168.0.0/24 to any port 1982 proto udp comment 'Yeelight'")
+            tr("e.g. sudo ufw default deny  OR  sudo ufw allow in from 192.168.0.0/24 to any port 1982 proto udp comment 'Yeelight'"))
         self.raw_input.returnPressed.connect(self._add_raw_rule)
-        quick_add_btn = QPushButton("Quick Add")
+        quick_add_btn = QPushButton(tr("Quick Add"))
         quick_add_btn.clicked.connect(self._add_raw_rule)
         quick_row.addWidget(self.raw_input, 1)
         quick_row.addWidget(quick_add_btn)
         lay.addLayout(quick_row)
 
         self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["Action", "Dir", "Proto", "Source", "Port", "Comment"])
+        self.table.setHorizontalHeaderLabels([tr("Action"), tr("Dir"), tr("Proto"), tr("Source"), tr("Port"), tr("Comment")])
 
         header = self.table.horizontalHeader()
         if header is not None:
@@ -293,11 +294,11 @@ class FirewallSettingsDialog(QDialog):
         self._refresh_table()
 
         btn_row = QHBoxLayout()
-        add_btn = QPushButton("Add Rule")
+        add_btn = QPushButton(tr("Add Rule"))
         add_btn.clicked.connect(self._add_rule)
-        edit_btn = QPushButton("Edit Rule")
+        edit_btn = QPushButton(tr("Edit Rule"))
         edit_btn.clicked.connect(self._edit_rule)
-        del_btn = QPushButton("Remove Rule")
+        del_btn = QPushButton(tr("Remove Rule"))
         del_btn.clicked.connect(self._del_rule)
 
         btn_row.addWidget(add_btn)
@@ -439,13 +440,13 @@ class FirewallSettingsDialog(QDialog):
 def firewall_rules_tooltip() -> str:
     rules = S.firewall_config.get("rules", [])
     if not rules:
-        return "No custom firewall rules configured."
+        return tr("No custom firewall rules configured.")
 
     t = current_theme()
     header_cells = "".join(
         f"<th style='text-align:left;padding:3px 14px 3px 4px;"
         f"border-bottom:2px solid {t['header_sep']};'>{h}</th>"
-        for h in ("#", "Action", "Dir", "Proto", "Source", "Port", "Comment")
+        for h in ("#", tr("Action"), tr("Dir"), tr("Proto"), tr("Source"), tr("Port"), tr("Comment"))
     )
     rows = []
     for i, r in enumerate(rules):
@@ -453,7 +454,7 @@ def firewall_rules_tooltip() -> str:
         action = norm["action"]
         direction = norm["direction"]
         proto = norm["proto"] if norm["proto"] != "both" else ""
-        source = norm["source"] or "any"
+        source = norm["source"] or tr("any")
         port = norm["port"]
         comment = norm["comment"]
         row_bg = f"background:{t['bg2']};" if i % 2 else ""
@@ -466,6 +467,6 @@ def firewall_rules_tooltip() -> str:
         )
         rows.append(f"<tr style='{row_bg}'>{num_cell}{cells}</tr>")
 
-    return (f"<b>Firewall Rules:</b>"
+    return (f"<b>{tr('Firewall Rules:')}</b>"
             f"<table style='border-collapse:collapse;margin-top:4px;'>"
             f"<tr>{header_cells}</tr>{''.join(rows)}</table>")

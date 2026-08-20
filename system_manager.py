@@ -27,6 +27,7 @@ from firewall_rules import build_firewalld_commands, build_ufw_commands
 from linux_distro_helper import LinuxDistroHelper, ARCH_KERNEL_VARIANTS
 from state import S, _HOME, _USER, logger, apply_replacements, _ANSI_RE, active_pkg_names, active_dotfiles
 from themes import current_theme, font_sz
+from translations import tr
 from ui_utils import _StandardKeysMixin
 
 
@@ -164,7 +165,7 @@ class SystemManagerDialog(_StandardKeysMixin, QDialog):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("System Manager")
+        self.setWindowTitle(tr("System Manager"))
         self._task_status: dict[str, str] = {}
         self._done = self._auth_failed = self._has_error = False
         self._timer, self._ticker = QElapsedTimer(), QTimer(self)
@@ -183,7 +184,7 @@ class SystemManagerDialog(_StandardKeysMixin, QDialog):
         self._text_edit.setReadOnly(True)
         self._text_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self._text_edit.setHtml(f"<p style='color:{t['success']};font-size:{font_sz(6)}px;text-align:center;margin-top:25px;'>"
-                                f"<b>System Manager</b><br>Initialising…</p>")
+                                f"<b>{tr('System Manager')}</b><br>{tr('Initialising…')}</p>")
 
         self._fail_lbl = QLabel()
         self._fail_lbl.setWordWrap(True)
@@ -197,7 +198,7 @@ class SystemManagerDialog(_StandardKeysMixin, QDialog):
         shadow.setXOffset(15)
         shadow.setYOffset(15)
 
-        self._checklist_lbl = QLabel("Pending Operations:")
+        self._checklist_lbl = QLabel(tr("Pending Operations:"))
         self._checklist_lbl.setMinimumWidth(self.RIGHT_W)
         self._checklist_lbl.setStyleSheet(f"color:{t['info']};font-size:{font_sz(4)}px;font-weight:bold;padding:10px;{grad}{bs}")
 
@@ -206,19 +207,19 @@ class SystemManagerDialog(_StandardKeysMixin, QDialog):
         self._checklist.setStyleSheet(f"QListWidget{{font-size:{font_sz()}px;padding:4px;{grad}{bs}}}"
                                       "QListWidget::item{padding:4px;border-radius:4px;border:1px solid transparent;}")
 
-        self._elapsed_lbl = QLabel("Elapsed time:\n00s")
+        self._elapsed_lbl = QLabel(tr("Elapsed time:\n{s}", s="00s"))
         self._elapsed_lbl.setGraphicsEffect(shadow)
         self._elapsed_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._elapsed_lbl.setMinimumSize(self.RIGHT_W, 75)
         self._elapsed_lbl.setStyleSheet(
             f"color:{t['info']};font-size:{font_sz(3)}px;font-weight:bold;padding:3px;text-align:center;{grad}{bs}")
 
-        self._close_btn = QPushButton("Close")
+        self._close_btn = QPushButton(tr("Close"))
         self._close_btn.setEnabled(False)
         self._close_btn.setMinimumSize(*self.BUTTON_SIZE)
         self._close_btn.clicked.connect(self.accept)
 
-        self._save_log_btn = QPushButton("Save Log")
+        self._save_log_btn = QPushButton(tr("Save Log"))
         self._save_log_btn.setMinimumSize(*self.BUTTON_SIZE)
         self._save_log_btn.clicked.connect(self._save_log)
 
@@ -244,7 +245,7 @@ class SystemManagerDialog(_StandardKeysMixin, QDialog):
         self._input_edit = QLineEdit()
         self._input_edit.setFixedHeight(36)
         self._input_edit.returnPressed.connect(self._on_input_confirmed)
-        self._input_send_btn = QPushButton("↵  Send")
+        self._input_send_btn = QPushButton(f"↵  {tr('Send')}")
         self._input_send_btn.setFixedHeight(36)
         self._input_send_btn.setMinimumWidth(90)
         self._input_send_btn.clicked.connect(self._on_input_confirmed)
@@ -311,7 +312,7 @@ class SystemManagerDialog(_StandardKeysMixin, QDialog):
     def mark_done(self, failed_count: int = 0) -> None:
         if self._done: return
         if failed_count:
-            self._fail_lbl.setText(f" ⚠️ Failed authentication attempts: {failed_count}")
+            self._fail_lbl.setText(tr(" ⚠️ Failed authentication attempts: {n}", n=failed_count))
         self._fail_lbl.setVisible(bool(failed_count))
         self._auth_failed = bool(failed_count)
         self._finalize_ui()
@@ -324,16 +325,16 @@ class SystemManagerDialog(_StandardKeysMixin, QDialog):
 
     def _save_log(self) -> None:
         default_name = f"system_manager_log_{time.strftime('%Y-%m-%d_%H-%M-%S')}.txt"
-        path, _ = QFileDialog.getSaveFileName(self, "Save System Manager Log", default_name, "Text Files (*.txt)")
+        path, _ = QFileDialog.getSaveFileName(self, tr("Save System Manager Log"), default_name, tr("Text Files (*.txt)"))
         if not path:
             return
         try:
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(self._text_edit.toPlainText())
         except OSError as exc:
-            QMessageBox.warning(self, "Save Log Failed", f"Could not save log:\n{exc}")
+            QMessageBox.warning(self, tr("Save Log Failed"), tr("Could not save log:\n{error}", error=exc))
         else:
-            QMessageBox.information(self, "Log Saved", f"Log successfully saved to:\n{path}")
+            QMessageBox.information(self, tr("Log Saved"), tr("Log successfully saved to:\n{path}", path=path))
 
     def _init_checklist(self, task_descs: list[tuple[str, str]]) -> None:
         t = current_theme()
@@ -372,17 +373,17 @@ class SystemManagerDialog(_StandardKeysMixin, QDialog):
                     self.on_task_status(task_id, _Status.ERROR)
                     break
 
-        self._append_html(f"<p style='{_Style.style_str('error')}'>Operation failed!</p>")
+        self._append_html(f"<p style='{_Style.style_str('error')}'>{tr('Operation failed!')}</p>")
 
         ec = QColor(t["error"])
         r, g, b = ec.red(), ec.green(), ec.blue()
         self._append_html(f"<hr style='border:none;margin:10px 20px;border-top:1px dashed rgba({r},{g},{b},0.4);'>"
                           f"<div style='padding:15px;margin:10px;border-radius:10px;border-left:4px solid {t['error']};'>"
                           f"<p style='color:{t['error']};font-size:{font_sz(4)}px;text-align:center;'>"
-                          f"<b>⚠️ System Manager Aborted</b><br>"
-                          f"<span style='font-size:{font_sz(2)}px;'>{pm_name} database lock detected!</span><br>"
+                          f"<b>⚠️ {tr('System Manager Aborted')}</b><br>"
+                          f"<span style='font-size:{font_sz(2)}px;'>{tr('{pm} database lock detected!', pm=pm_name)}</span><br>"
                           f"<span style='color:{t['text']};font-size:{font_sz()}px;'>"
-                          f"(Remove with: <code>{hint}</code>)</span></p></div><br>")
+                          f"{tr('(Remove with: <code>{hint}</code>)', hint=hint)}</span></p></div><br>")
 
         self.mark_done()
         self.cancelRequested.emit()
@@ -392,15 +393,15 @@ class SystemManagerDialog(_StandardKeysMixin, QDialog):
         t = current_theme()
         err = self._has_error
         colour = t["warning" if err else "success"]
-        icon, summary = ("⚠️", "Completed with issues") if err else ("✅", "Successfully Completed")
+        icon, summary = ("⚠️", tr("Completed with issues")) if err else ("✅", tr("Successfully Completed"))
         co = QColor(colour)
         r, g, b = co.red(), co.green(), co.blue()
-        outcome = "completed with warnings/errors" if err else "successfully completed all operations"
+        outcome = tr("completed with warnings/errors") if err else tr("successfully completed all operations")
         self._append_html(f"<hr style='border:none;margin:25px 50px;border-top:2px solid {colour};'>"
                           f"<div style='text-align:center;padding:20px;margin:15px 30px;border-radius:15px;"
                           f"border:1px solid rgba({r},{g},{b},0.3);'><p style='color:{colour};font-size:{font_sz(6)}px;"
                           f"font-weight:bold;'>{icon} {summary}</p><p style='color:{colour};font-size:{font_sz(4)}px;"
-                          f"'>System Manager {outcome}<br></p></div>")
+                          f"'>{tr('System Manager {outcome}', outcome=outcome)}<br></p></div>")
         self._checklist_lbl.setText(f"{icon} {summary}")
         self._checklist_lbl.setStyleSheet(f"color:{colour};font-size:{font_sz(4)}px;font-weight:bold;padding:10px;"
                                           f"background-color:rgba({r},{g},{b},0.15);{_Style.border_style()}")
@@ -411,8 +412,8 @@ class SystemManagerDialog(_StandardKeysMixin, QDialog):
             s = max(0, int(self._timer.elapsed() / 1000))
             h, rem = divmod(s, 3600)
             m, s = divmod(rem, 60)
-            self._elapsed_lbl.setText(f"Elapsed time:\n{h:02}h {m:02}m {s:02}s" if h else
-                                      f"Elapsed time:\n{m:02}m {s:02}s" if m else f"Elapsed time:\n{s:02}s")
+            self._elapsed_lbl.setText(tr("Elapsed time:\n{t}", t=f"{h:02}h {m:02}m {s:02}s") if h else
+                                      tr("Elapsed time:\n{t}", t=f"{m:02}m {s:02}s") if m else tr("Elapsed time:\n{t}", t=f"{s:02}s"))
         except (RuntimeError, AttributeError):
             self._ticker.stop()
         except Exception as exc:
@@ -429,7 +430,7 @@ class SystemManagerDialog(_StandardKeysMixin, QDialog):
         QApplication.processEvents()
         self._input_prompt_lbl.setStyleSheet(f"color:{t['warning']};font-size:{font_sz(1)}px;font-weight:bold;"
                                              f"padding:6px 8px;border-left:3px solid {t['warning']};background:{t['bg3']};")
-        self._input_prompt_lbl.setText("⚠ Provider selection required:")
+        self._input_prompt_lbl.setText(tr("⚠ Provider selection required:"))
         self._input_edit.clear()
         self._input_edit.setPlaceholderText(prompt)
         self._input_panel.setVisible(True)
@@ -507,7 +508,7 @@ class SystemManagerThread(QThread):
             if not self.terminated: self._run_all_tasks()
         except Exception as exc:
             try:
-                self.outputReceived.emit(f"Critical error: {exc}", "error")
+                self.outputReceived.emit(tr("Critical error: {exc}", exc=exc), "error")
             except RuntimeError:
                 logger.error("SystemManagerThread: dialog gone during error emit: %s", exc)
         finally:
@@ -550,31 +551,31 @@ class SystemManagerThread(QThread):
         all_tasks = {
             **self._base_tasks(),
             **self._service_tasks(),
-            "remove_orphaned_packages": ("Removing orphaned packages…", self._remove_orphans),
-            "clean_cache": ("Cleaning cache…", self._clean_cache),
-            "clean_journal_logs": ("Cleaning systemd journal logs…", self._clean_journal_logs)
+            "remove_orphaned_packages": (tr("Removing orphaned packages…"), self._remove_orphans),
+            "clean_cache": (tr("Cleaning cache…"), self._clean_cache),
+            "clean_journal_logs": (tr("Cleaning systemd journal logs…"), self._clean_journal_logs)
         }
         self._enabled_tasks = {k: v for k, v in all_tasks.items() if k in S.system_manager_ops}
         self.taskListReady.emit([(k, d) for k, (d, _) in self._enabled_tasks.items()])
 
     def _base_tasks(self) -> dict:
-        return {"copy_dotfiles": ("Copying Dotfiles…", self._copy_dotfiles),
-                "update_mirrors": ("Updating mirrors…", self._update_mirrors),
-                "update_system": ("Updating system…", self._update_system),
-                "set_user_shell": ("Setting user shell…", self._set_shell),
-                "install_ucode": ("Installing CPU microcode…", self._install_ucode),
-                "install_kernels": ("Installing kernel(s)…", self._install_kernels),
-                "install_kernel_headers": ("Installing headers…", self._install_kernel_headers),
-                "set_default_kernel": ("Setting default boot kernel…", self._set_default_kernel),
-                "install_basic_packages": ("Installing Basic Packages…",
-                                           lambda: self._batch_install(S.basic_packages, "Basic Package")),
+        return {"copy_dotfiles": (tr("Copying Dotfiles…"), self._copy_dotfiles),
+                "update_mirrors": (tr("Updating mirrors…"), self._update_mirrors),
+                "update_system": (tr("Updating system…"), self._update_system),
+                "set_user_shell": (tr("Setting user shell…"), self._set_shell),
+                "install_ucode": (tr("Installing CPU microcode…"), self._install_ucode),
+                "install_kernels": (tr("Installing kernel(s)…"), self._install_kernels),
+                "install_kernel_headers": (tr("Installing headers…"), self._install_kernel_headers),
+                "set_default_kernel": (tr("Setting default boot kernel…"), self._set_default_kernel),
+                "install_basic_packages": (tr("Installing Basic Packages…"),
+                                           lambda: self._batch_install(S.basic_packages, tr("Basic Package"))),
 
-                "install_aur_helper": (f"Installing {S.aur_helper}…", self._install_aur_helper),
-                "install_aur_packages": (f"Installing AUR Packages with {S.aur_helper}…",
-                                         lambda: self._batch_install(S.aur_packages, "AUR Package", use_aur=True)),
+                "install_aur_helper": (tr("Installing {helper}…", helper=S.aur_helper), self._install_aur_helper),
+                "install_aur_packages": (tr("Installing AUR Packages with {helper}…", helper=S.aur_helper),
+                                         lambda: self._batch_install(S.aur_packages, tr("AUR Package"), use_aur=True)),
 
-                "install_specific_packages": ("Installing Specific Packages…", self._install_specific),
-                "enable_flatpak_integration": ("Enabling Flatpak integration…", self._install_flatpak)}
+                "install_specific_packages": (tr("Installing Specific Packages…"), self._install_specific),
+                "enable_flatpak_integration": (tr("Enabling Flatpak integration…"), self._install_flatpak)}
 
     _OPTIONAL_SVC_PKGS: dict[str, tuple[str, ...]] = {
         "cups": ("system-config-printer",),
@@ -583,22 +584,22 @@ class SystemManagerThread(QThread):
     def _service_tasks(self) -> dict:
         if not self.distro: return {}
         d = self.distro
-        specs = {"enable_printer_support": ("Initialising printer support…", "cups", d.get_printer_packages),
-                 "enable_ssh_service": ("Initialising SSH server…", d.get_ssh_service_name(), d.get_ssh_packages),
-                 "enable_samba_network_filesharing": ("Initialising Samba…", d.get_samba_service_name(),
+        specs = {"enable_printer_support": (tr("Initialising printer support…"), "cups", d.get_printer_packages),
+                 "enable_ssh_service": (tr("Initialising SSH server…"), d.get_ssh_service_name(), d.get_ssh_packages),
+                 "enable_samba_network_filesharing": (tr("Initialising Samba…"), d.get_samba_service_name(),
                                                       d.get_samba_packages),
-                 "enable_bluetooth_service": ("Initialising Bluetooth…", "bluetooth", d.get_bluetooth_packages),
-                 "enable_atd_service": ("Initialising atd…", "atd", d.get_at_packages),
-                 "enable_cronie_service": (f"Initialising {d.get_cron_service_name()}…", d.get_cron_service_name(),
+                 "enable_bluetooth_service": (tr("Initialising Bluetooth…"), "bluetooth", d.get_bluetooth_packages),
+                 "enable_atd_service": (tr("Initialising atd…"), "atd", d.get_at_packages),
+                 "enable_cronie_service": (tr("Initialising {svc}…", svc=d.get_cron_service_name()), d.get_cron_service_name(),
                                            d.get_cron_packages),
-                 "install_snap": ("Installing Snap…", "snapd", d.get_snap_packages),
-                 "enable_ntp_sync": (f"Initialising {d.get_ntp_service_name()}…", d.get_ntp_service_name(),
+                 "install_snap": (tr("Installing Snap…"), "snapd", d.get_snap_packages),
+                 "enable_ntp_sync": (tr("Initialising {svc}…", svc=d.get_ntp_service_name()), d.get_ntp_service_name(),
                                      d.get_ntp_packages),
-                 "enable_fstrim_timer": ("Enabling SSD TRIM (fstrim.timer)…", "fstrim.timer", lambda: [])}
+                 "enable_fstrim_timer": (tr("Enabling SSD TRIM (fstrim.timer)…"), "fstrim.timer", lambda: [])}
         if d.firewall_supported() or S.firewall_config.get("backend"):
             fw_backend = S.firewall_config.get("backend") or d.get_firewall_service_name()
             fw_pkgs = ["ufw"] if fw_backend == "ufw" else ["firewalld"]
-            specs["enable_firewall"] = ("Initialising firewall…", fw_backend, lambda: fw_pkgs)
+            specs["enable_firewall"] = (tr("Initialising firewall…"), fw_backend, lambda: fw_pkgs)
 
         return {
             k: (desc, lambda s=svc, p=pkg_fn: self._setup_service(s, p(), optional=self._OPTIONAL_SVC_PKGS.get(s, ())))
@@ -619,12 +620,12 @@ class SystemManagerThread(QThread):
                 res = fn()
                 status = _Status.ERROR if res is False else _Status.WARNING if res == _Status.WARNING else _Status.SUCCESS
             except Exception as exc:
-                self.outputReceived.emit(f"Task '{task_id}' failed: {exc}", "error")
+                self.outputReceived.emit(tr("Task '{task_id}' failed: {exc}", task_id=task_id, exc=exc), "error")
                 status = _Status.ERROR
             self.taskStatusChanged.emit(task_id, status)
             self._task_status[task_id] = status
             if status == _Status.ERROR:
-                self.outputReceived.emit(f"Aborting remaining tasks due to failure in '{task_id}'.", "error")
+                self.outputReceived.emit(tr("Aborting remaining tasks due to failure in '{task_id}'.", task_id=task_id), "error")
                 for remaining_id, _ in task_items[idx + 1:]:
                     self.taskStatusChanged.emit(remaining_id, _Status.WARNING)
                     self._task_status[remaining_id] = _Status.WARNING
@@ -753,7 +754,7 @@ class SystemManagerThread(QThread):
                 )
 
         except (OSError, subprocess.SubprocessError) as exc:
-            self.outputReceived.emit(f"Command launch error: {exc}", "error")
+            self.outputReceived.emit(tr("Command launch error: {exc}", exc=exc), "error")
             return SimpleNamespace(returncode=1, stdout="", stderr=str(exc))
 
         out_q: queue.Queue = queue.Queue()
@@ -976,7 +977,7 @@ class SystemManagerThread(QThread):
         self.outputReceived.emit(msg_ok if ok else msg_err, "success" if ok else "error")
 
     def _verify_sudo(self) -> bool:
-        self.outputReceived.emit("Verifying sudo access…", "operation")
+        self.outputReceived.emit(tr("Verifying sudo access…"), "operation")
         try:
             subprocess.run(["sudo", "-k"], capture_output=True, timeout=5)
         except (OSError, subprocess.SubprocessError):
@@ -1041,21 +1042,23 @@ class SystemManagerThread(QThread):
                 except OSError:
                     pass
             try:
-                self.outputReceived.emit("Sudo access successfully verified" if ok else "Authentication failed: Invalid Password",
+                self.outputReceived.emit(tr("Sudo access successfully verified") if ok else tr("Authentication failed: Invalid Password"),
                                          "success" if ok else "error")
             except RuntimeError:
                 pass
         return ok
 
-    def _install_pkg(self, name: str, label: str = "Package") -> bool:
+    def _install_pkg(self, name: str, label: str | None = None) -> bool:
+        if label is None:
+            label = tr("Package")
         if not self.distro or not self._pkg_cache: return False
-        self.outputReceived.emit(f"Installing {label}: {name}", "info")
+        self.outputReceived.emit(tr("Installing {label}: {name}", label=label, name=name), "info")
         if self._pkg_cache.is_installed(name):
-            self.outputReceived.emit(f"{name} already installed", "success")
+            self.outputReceived.emit(tr("{name} already installed", name=name), "success")
             return True
         ok = (self._exec(self.distro.get_pkg_install_cmd(name), stream=True).returncode == 0)
         if ok: self._pkg_cache.mark_installed(name)
-        self._emit_result(ok, f"{name} successfully installed", f"failed to install {name}")
+        self._emit_result(ok, tr("{name} successfully installed", name=name), tr("failed to install {name}", name=name))
         return ok
 
     def _install_with_retry(self, pkgs: list[str], bulk_fn, single_fn) -> list[str]:
@@ -1069,7 +1072,7 @@ class SystemManagerThread(QThread):
             if p not in still_missing and self._pkg_cache: self._pkg_cache.mark_installed(p)
         failed = []
         if still_missing:
-            self.outputReceived.emit("Some packages were not installed — trying them individually…", "warning")
+            self.outputReceived.emit(tr("Some packages were not installed — trying them individually…"), "warning")
             for i, pkg in enumerate(still_missing):
                 if self.terminated:
                     failed.extend(still_missing[i:])
@@ -1083,7 +1086,7 @@ class SystemManagerThread(QThread):
 
     def _batch_install(self, pkg_list, label: str, *, use_aur: bool = False) -> str | bool:
         if not self.distro:
-            self.outputReceived.emit(f"Cannot install {label}s: no distro helper", "error")
+            self.outputReceived.emit(tr("Cannot install {label}s: no distro helper", label=label), "error")
             return False
         all_names = active_pkg_names(pkg_list)
         items = []
@@ -1094,24 +1097,24 @@ class SystemManagerThread(QThread):
                 logger.warning("_batch_install: skipping invalid package name %r", n)
 
         if not items:
-            self.outputReceived.emit(f"No active {label}s configured", "info")
+            self.outputReceived.emit(tr("No active {label}s configured", label=label), "info")
             return _Status.SUCCESS
 
         to_install = self.distro.filter_not_installed(items)
         if not to_install:
-            self.outputReceived.emit(f"All {label}s already installed", "success")
+            self.outputReceived.emit(tr("All {label}s already installed", label=label), "success")
             return _Status.SUCCESS
 
         failed = []
         if use_aur:
             if not self.distro.has_aur:
-                self.outputReceived.emit(f"AUR is not supported on this distribution — skipping {label}s", "warning")
+                self.outputReceived.emit(tr("AUR is not supported on this distribution — skipping {label}s", label=label), "warning")
                 return _Status.WARNING
             helper = self._effective_aur_helper() or S.aur_helper
             if not (shutil.which(helper) or (self._pkg_cache and self._pkg_cache.is_installed(helper))):
                 self.outputReceived.emit(
-                    f"AUR helper '{helper}' is not installed — cannot install {label}s. "
-                    f"Enable 'Install AUR helper' first.", "error")
+                    tr("AUR helper '{helper}' is not installed — cannot install {label}s. "
+                    "Enable 'Install AUR helper' first.", helper=helper, label=label), "error")
                 return False
             def bulk(b):
                 return self._exec([helper, "-S", "--needed", "--noconfirm", *b], stream=True)
@@ -1129,16 +1132,16 @@ class SystemManagerThread(QThread):
                 failed.extend(to_install[i:])
                 break
             batch = to_install[i:i + 20]
-            self.outputReceived.emit(f"Installing: {', '.join(batch)}", "info")
+            self.outputReceived.emit(tr("Installing: {names}", names=", ".join(batch)), "info")
             failed.extend(self._install_with_retry(batch, bulk, single))
 
-        self._emit_result(not failed, f"All {label}s successfully installed", f"Failed {label}(s): {', '.join(failed)}")
+        self._emit_result(not failed, tr("All {label}s successfully installed", label=label), tr("Failed {label}(s): {names}", label=label, names=", ".join(failed)))
         return _Status.SUCCESS if not failed else _Status.WARNING
 
     def _copy_dotfiles(self) -> bool:
         files = active_dotfiles()
         if not files:
-            self.outputReceived.emit("No dotfiles configured", "warning")
+            self.outputReceived.emit(tr("No dotfiles configured"), "warning")
             return True
 
         from drive_utils import check_drives_to_mount, mount_drive
@@ -1148,31 +1151,31 @@ class SystemManagerThread(QThread):
                  for p in (first_path(f.get("source", "")), first_path(f.get("destination", "")))
                  if p]):
             name = drive.get("drive_name", "?")
-            self.outputReceived.emit(f"Mounting drive: '{name}'…", "info")
+            self.outputReceived.emit(tr("Mounting drive: '{name}'…", name=name), "info")
             ok, err = mount_drive(drive)
-            if not ok: self.outputReceived.emit(f"Failed to mount '{name}': {err}", "error"); return False
-            self.outputReceived.emit(f"Mounted '{name}'", "success")
+            if not ok: self.outputReceived.emit(tr("Failed to mount '{name}': {err}", name=name, err=err), "error"); return False
+            self.outputReceived.emit(tr("Mounted '{name}'", name=name), "success")
 
         overall = True
         for f in files:
             src = os.path.expandvars(os.path.expanduser(first_path(f.get("source", "")).strip()))
             dst = os.path.expandvars(os.path.expanduser(first_path(f.get("destination", "")).strip()))
             if not Path(src).exists():
-                self.outputReceived.emit(f"Source not found: {src}", "error")
+                self.outputReceived.emit(tr("Source not found: {src}", src=src), "error")
                 overall = False
                 continue
 
             dst_dir = Path(dst).parent
             if not dst_dir.exists() and self._exec(["sudo", "mkdir", "-p", "--mode=755", str(dst_dir)]).returncode != 0:
-                self.outputReceived.emit(f"Cannot create directory: {dst_dir}", "error")
+                self.outputReceived.emit(tr("Cannot create directory: {dst_dir}", dst_dir=dst_dir), "error")
                 overall = False
                 continue
 
             cmd = ["sudo", "cp"] + (["-r"] if Path(src).is_dir() else []) + [src, dst]
             if self._exec(cmd, stream=True).returncode == 0:
-                self.outputReceived.emit(f"Copied successfully:\n'{src}' 󰧂 '{dst}'", "success")
+                self.outputReceived.emit(tr("Copied successfully:\n'{src}' 󰧂 '{dst}'", src=src, dst=dst), "success")
             else:
-                self.outputReceived.emit(f"Error copying: {src}", "error")
+                self.outputReceived.emit(tr("Error copying: {src}", src=src), "error")
                 overall = False
         return overall
 
@@ -1190,23 +1193,23 @@ class SystemManagerThread(QThread):
     def _update_mirrors(self) -> bool:
         if not self.distro: return False
         if self.distro.family() != "arch":
-            self.outputReceived.emit("Mirror update is only supported on Arch Linux", "info")
+            self.outputReceived.emit(tr("Mirror update is only supported on Arch Linux"), "info")
             return True
 
         country = self._detect_country()
-        self.outputReceived.emit(f"Detected country: {country}" if country else "No country detected — using worldwide mirrors",
+        self.outputReceived.emit(tr("Detected country: {country}", country=country) if country else tr("No country detected — using worldwide mirrors"),
                                  "info" if country else "warning")
 
         if shutil.which("reflector"):
-            self.outputReceived.emit("Package reflector already installed", "info")
+            self.outputReceived.emit(tr("Package reflector already installed"), "info")
         elif self._exec(self.distro.get_pkg_install_cmd("reflector"), stream=True).returncode != 0:
-            self.outputReceived.emit("Failed to install reflector", "error")
+            self.outputReceived.emit(tr("Failed to install reflector"), "error")
             return False
 
         cmd = ["sudo", "-S", "reflector", "--verbose", "--latest", "10",
                "--protocol", "https", "--sort", "rate", "--save", "/etc/pacman.d/mirrorlist"]
         if country: cmd += ["--country", country]
-        self.outputReceived.emit(f"Running: {' '.join(cmd)}", "info")
+        self.outputReceived.emit(tr("Running: {cmd}", cmd=' '.join(cmd)), "info")
         return self._exec(cmd, stream=True).returncode == 0
 
     def _effective_aur_helper(self) -> str | None:
@@ -1219,7 +1222,7 @@ class SystemManagerThread(QThread):
 
     def _update_flatpak_apps(self) -> None:
         if shutil.which("flatpak"):
-            self.outputReceived.emit("Updating Flatpak apps…", "info")
+            self.outputReceived.emit(tr("Updating Flatpak apps…"), "info")
             self._exec(["flatpak", "update", "-y"], stream=True)
 
     def _update_system(self) -> bool:
@@ -1229,13 +1232,13 @@ class SystemManagerThread(QThread):
             if eff_helper:
                 sys_ok = (self._exec([eff_helper, "-Syu", "--noconfirm"], stream=True, timeout=None).returncode == 0)
                 self._update_flatpak_apps()
-                self._emit_result(sys_ok, "System successfully updated", "System update failed")
+                self._emit_result(sys_ok, tr("System successfully updated"), tr("System update failed"))
                 return sys_ok
 
         cmd_str = self.distro.get_update_system_cmd()
         sys_ok = (self._exec(cmd_str, stream=True, timeout=None).returncode == 0)
         self._update_flatpak_apps()
-        self._emit_result(sys_ok, "System successfully updated", "System update failed")
+        self._emit_result(sys_ok, tr("System successfully updated"), tr("System update failed"))
         return sys_ok
 
     def _set_shell(self) -> bool:
@@ -1257,35 +1260,35 @@ class SystemManagerThread(QThread):
 
         try:
             current = pwd.getpwnam(_USER).pw_shell
-            self.outputReceived.emit(f"User: '{_USER}'  current shell: {current}", "info")
+            self.outputReceived.emit(tr("User: '{_USER}'  current shell: {current}", _USER=_USER, current=current), "info")
         except KeyError as exc:
-            self.outputReceived.emit(f"Cannot determine current shell: {exc}", "error")
+            self.outputReceived.emit(tr("Cannot determine current shell: {exc}", exc=exc), "error")
             return False
 
         if os.path.realpath(current) == os.path.realpath(shell):
-            self.outputReceived.emit(f"Shell is already '{target}' ({shell})", "success")
+            self.outputReceived.emit(tr("Shell is already '{target}' ({shell})", target=target, shell=shell), "success")
             return True
 
         if not self.distro.package_is_installed(pkg):
-            self.outputReceived.emit(f"Installing shell package: {pkg}", "info")
-            if not self._install_pkg(pkg, "Shell Package"): return False
+            self.outputReceived.emit(tr("Installing shell package: {pkg}", pkg=pkg), "info")
+            if not self._install_pkg(pkg, tr("Shell Package")): return False
             shell = _locate_shell(binary)
 
         if not Path(shell).exists():
-            self.outputReceived.emit(f"Shell binary '{shell}' not found.", "error")
+            self.outputReceived.emit(tr("Shell binary '{shell}' not found.", shell=shell), "error")
             return False
 
         try:
             shells_path = Path("/etc/shells")
             if shells_path.exists():
                 if shell not in [s.strip() for s in shells_path.read_text(encoding="utf-8").splitlines()]:
-                    self.outputReceived.emit(f"Adding '{shell}' to /etc/shells…", "info")
+                    self.outputReceived.emit(tr("Adding '{shell}' to /etc/shells…", shell=shell), "info")
                     self._exec(["sudo", "sh", "-c", f"echo {shlex.quote(shell)} >> /etc/shells"])
         except OSError as exc:
-            self.outputReceived.emit(f"Could not verify /etc/shells: {exc}", "warning")
+            self.outputReceived.emit(tr("Could not verify /etc/shells: {exc}", exc=exc), "warning")
 
         ok = (self._exec(["sudo", "chsh", "-s", shell, _USER], stream=True).returncode == 0)
-        self._emit_result(ok, f"Shell for '{_USER}' set to '{shell}'", f"Shell for '{_USER}' failed to change to '{shell}'")
+        self._emit_result(ok, tr("Shell for '{user}' set to '{shell}'", user=_USER, shell=shell), tr("Shell for '{user}' failed to change to '{shell}'", user=_USER, shell=shell))
         return ok
 
     def _install_ucode(self) -> bool | str:
@@ -1294,20 +1297,20 @@ class SystemManagerThread(QThread):
         pkg = self.distro.get_ucode_package()
         if not pkg:
             vendor = self.distro.detect_cpu_vendor() or "unknown"
-            self.outputReceived.emit(f"No microcode package available for {vendor} CPU on {self.distro.pkg_manager_name()} — skipping", "warning")
+            self.outputReceived.emit(tr("No microcode package available for {vendor} CPU on {pm} — skipping", vendor=vendor, pm=self.distro.pkg_manager_name()), "warning")
             return _Status.WARNING
         if self._pkg_cache and self._pkg_cache.is_installed(pkg):
-            self.outputReceived.emit(f"Microcode already installed ({pkg})", "success")
+            self.outputReceived.emit(tr("Microcode already installed ({pkg})", pkg=pkg), "success")
             return True
-        return self._install_pkg(pkg, "CPU Microcode")
+        return self._install_pkg(pkg, tr("CPU Microcode"))
 
     def _install_kernels(self) -> bool | str:
         if not self.distro:
             return False
         if self.distro.family() != "arch":
             self.outputReceived.emit(
-                f"Kernel variant management is only supported on Arch Linux "
-                f"(detected: {self.distro.family()})", "warning")
+                tr("Kernel variant management is only supported on Arch Linux "
+                "(detected: {family})", family=self.distro.family()), "warning")
             return _Status.WARNING
         targets = S.effective_kernels
         bootloader = LinuxDistroHelper.detect_bootloader()
@@ -1319,15 +1322,15 @@ class SystemManagerThread(QThread):
             pkgs = ARCH_KERNEL_VARIANTS.get(variant)
 
             if not pkgs:
-                self.outputReceived.emit(f"Unknown kernel variant: {variant!r} — skipping", "warning")
+                self.outputReceived.emit(tr("Unknown kernel variant: {variant!r} — skipping", variant=variant), "warning")
                 continue
 
             if self._pkg_cache and self._pkg_cache.is_installed(pkgs[0]):
-                self.outputReceived.emit(f"{variant} already installed — skipping", "success")
+                self.outputReceived.emit(tr("{variant} already installed — skipping", variant=variant), "success")
                 continue
 
             kernel_pkg = pkgs[0]
-            if not self._install_pkg(kernel_pkg, "Kernel Package"):
+            if not self._install_pkg(kernel_pkg, tr("Kernel Package")):
                 overall = False
                 continue
 
@@ -1335,29 +1338,29 @@ class SystemManagerThread(QThread):
             if esp is not None:
                 if uki_mode:
                     self.outputReceived.emit(
-                        f"UKI mode detected — systemd-boot will auto-discover '{variant}'; "
-                        f"no .conf entry needed.", "info"
+                        tr("UKI mode detected — systemd-boot will auto-discover '{variant}'; "
+                        "no .conf entry needed.", variant=variant), "info"
                     )
                 else:
                     entries_dir = esp / "loader" / "entries"
                     self._exec(["sudo", "mkdir", "-p", str(entries_dir)], stream=False)
                     if not self._create_systemd_boot_entry(kernel_pkg, entries_dir, esp):
                         self.outputReceived.emit(
-                            f"Kernel '{variant}' installed, but failed to create systemd-boot entry — "
-                            f"please create it manually.", "warning"
+                            tr("Kernel '{variant}' installed, but failed to create systemd-boot entry — "
+                            "please create it manually.", variant=variant), "warning"
                         )
                     else:
-                        self.outputReceived.emit(f"systemd-boot entry created for {variant}", "success")
+                        self.outputReceived.emit(tr("systemd-boot entry created for {variant}", variant=variant), "success")
 
         if newly_installed and bootloader == "grub":
-            self.outputReceived.emit("Regenerating /boot/grub/grub.cfg for newly installed kernel(s)…", "info")
+            self.outputReceived.emit(tr("Regenerating /boot/grub/grub.cfg for newly installed kernel(s)…"), "info")
             if self._exec(["sudo", "grub-mkconfig", "-o", "/boot/grub/grub.cfg"], stream=True, timeout=120).returncode != 0:
                 self.outputReceived.emit(
-                    "grub-mkconfig failed — new kernel(s) may not appear in the GRUB menu until it is regenerated manually.",
+                    tr("grub-mkconfig failed — new kernel(s) may not appear in the GRUB menu until it is regenerated manually."),
                     "warning")
                 overall = False
 
-        self._emit_result(overall, "Kernel(s) successfully installed", "One or more kernels failed to install")
+        self._emit_result(overall, tr("Kernel(s) successfully installed"), tr("One or more kernels failed to install"))
         return overall
 
     def _install_kernel_headers(self) -> bool:
@@ -1366,7 +1369,7 @@ class SystemManagerThread(QThread):
         if self.distro.family() == "arch":
             installed_variants = self.distro.detect_installed_kernel_variants()
             if not installed_variants:
-                return self._install_pkg(self.distro.get_kernel_headers_pkg(), "Headers Package")
+                return self._install_pkg(self.distro.get_kernel_headers_pkg(), tr("Headers Package"))
             overall = True
             for variant in sorted(installed_variants):
                 pkgs = ARCH_KERNEL_VARIANTS.get(variant)
@@ -1374,37 +1377,37 @@ class SystemManagerThread(QThread):
                     continue
                 header_pkg = pkgs[1]
                 if self._pkg_cache and self._pkg_cache.is_installed(header_pkg):
-                    self.outputReceived.emit(f"{header_pkg} already installed — skipping", "success")
+                    self.outputReceived.emit(tr("{header_pkg} already installed — skipping", header_pkg=header_pkg), "success")
                     continue
-                if not self._install_pkg(header_pkg, "Headers Package"):
+                if not self._install_pkg(header_pkg, tr("Headers Package")):
                     overall = False
             return overall
-        return self._install_pkg(self.distro.get_kernel_headers_pkg(), "Headers Package")
+        return self._install_pkg(self.distro.get_kernel_headers_pkg(), tr("Headers Package"))
 
     def _set_default_kernel(self) -> bool | str:
         target = (S.default_kernel or "").strip()
         if not target:
-            self.outputReceived.emit("No default kernel configured — skipping", "warning")
+            self.outputReceived.emit(tr("No default kernel configured — skipping"), "warning")
             return _Status.WARNING
 
         if self.distro and self.distro.family() != "arch":
             self.outputReceived.emit(
-                f"Default kernel selection is only supported "
-                f"on Arch Linux (detected: {self.distro.family()})", "warning")
+                tr("Default kernel selection is only supported "
+                "on Arch Linux (detected: {family})", family=self.distro.family()), "warning")
             return _Status.WARNING
 
         pkgs = ARCH_KERNEL_VARIANTS.get(target)
         if not pkgs:
-            self.outputReceived.emit(f"Unknown kernel variant: {target!r}", "error")
+            self.outputReceived.emit(tr("Unknown kernel variant: {target!r}", target=target), "error")
             return False
 
         kernel_pkg = pkgs[0]
-        self.outputReceived.emit(f"Setting default kernel to: {kernel_pkg}", "info")
+        self.outputReceived.emit(tr("Setting default kernel to: {kernel_pkg}", kernel_pkg=kernel_pkg), "info")
 
         bootloader = LinuxDistroHelper.detect_bootloader()
         current_default_variant = LinuxDistroHelper.detect_system_default_kernel(bootloader)
         if current_default_variant and current_default_variant == target:
-            self.outputReceived.emit(f"{kernel_pkg} is already default", "success")
+            self.outputReceived.emit(tr("{kernel_pkg} is already default", kernel_pkg=kernel_pkg), "success")
             return True
 
         if bootloader == "grub":
@@ -1413,8 +1416,8 @@ class SystemManagerThread(QThread):
             esp = LinuxDistroHelper.detect_esp()
             return self._set_systemd_boot_default(kernel_pkg, esp)
 
-        self.outputReceived.emit("No supported bootloader found (grub.cfg or loader.conf). "
-                                 "Please set the default kernel manually.", "warning")
+        self.outputReceived.emit(tr("No supported bootloader found (grub.cfg or loader.conf). "
+                                 "Please set the default kernel manually."), "warning")
         return _Status.WARNING
 
     def _set_grub_default(self, kernel_pkg: str) -> bool | str:
@@ -1423,35 +1426,35 @@ class SystemManagerThread(QThread):
         try:
             text = grub_env.read_text(encoding="utf-8")
         except OSError as exc:
-            self.outputReceived.emit(f"Cannot read {grub_env}: {exc}", "error")
+            self.outputReceived.emit(tr("Cannot read {grub_env}: {exc}", grub_env=grub_env, exc=exc), "error")
             return False
 
         if "GRUB_DEFAULT=saved" not in text:
-            self.outputReceived.emit("Patching /etc/default/grub: setting GRUB_DEFAULT=saved…", "info")
+            self.outputReceived.emit(tr("Patching /etc/default/grub: setting GRUB_DEFAULT=saved…"), "info")
             new_text = re.sub(r"^GRUB_DEFAULT=.*$", "GRUB_DEFAULT=saved", text, flags=re.MULTILINE)
             if "GRUB_DEFAULT=" not in text:
                 new_text = "GRUB_DEFAULT=saved\n" + new_text
             ok = self._exec([
                 "sudo", "sh", "-c", f"printf '%s' {shlex.quote(new_text)} > /etc/default/grub"], stream=True).returncode == 0
             if not ok:
-                self.outputReceived.emit("Failed to patch /etc/default/grub", "error")
+                self.outputReceived.emit(tr("Failed to patch /etc/default/grub"), "error")
                 return False
 
-        self.outputReceived.emit("Regenerating /boot/grub/grub.cfg…", "info")
+        self.outputReceived.emit(tr("Regenerating /boot/grub/grub.cfg…"), "info")
         rc = self._exec(["sudo", "grub-mkconfig", "-o", "/boot/grub/grub.cfg"], stream=True, timeout=120).returncode
         if rc != 0:
-            self.outputReceived.emit("grub-mkconfig failed — aborting default-kernel set", "error")
+            self.outputReceived.emit(tr("grub-mkconfig failed — aborting default-kernel set"), "error")
             return False
 
         entry_id = self._find_grub_entry(kernel_pkg)
         if entry_id is None:
-            self.outputReceived.emit(f"Could not locate a GRUB menu entry for '{kernel_pkg}' in grub.cfg.\n"
-                                     "The kernel packages were installed — please set the boot default manually via GRUB.", "warning")
+            self.outputReceived.emit(tr("Could not locate a GRUB menu entry for '{kernel_pkg}' in grub.cfg.\n"
+                                     "The kernel packages were installed — please set the boot default manually via GRUB.", kernel_pkg=kernel_pkg), "warning")
             return _Status.WARNING
 
-        self.outputReceived.emit(f"Found GRUB entry: {entry_id!r}", "info")
+        self.outputReceived.emit(tr("Found GRUB entry: {entry_id!r}", entry_id=entry_id), "info")
         ok = self._exec(["sudo", "grub-set-default", entry_id], stream=True).returncode == 0
-        self._emit_result(ok, f"GRUB default set to '{kernel_pkg}'", "grub-set-default failed")
+        self._emit_result(ok, tr("GRUB default set to '{pkg}'", pkg=kernel_pkg), tr("grub-set-default failed"))
         return ok
 
     @staticmethod
@@ -1524,8 +1527,8 @@ class SystemManagerThread(QThread):
                 if uki_entry:
                     return self._apply_systemd_boot_default(uki_entry, esp)
                 self.outputReceived.emit(
-                    f"UKI mode detected but no matching .efi found for '{kernel_pkg}'. "
-                    f"Please run 'bootctl set-default' manually.", "warning")
+                    tr("UKI mode detected but no matching .efi found for '{kernel_pkg}'. "
+                    "Please run 'bootctl set-default' manually.", kernel_pkg=kernel_pkg), "warning")
                 return _Status.WARNING
             created = self._create_systemd_boot_entry(kernel_pkg, entries_dir, esp)
             if not created:
@@ -1575,7 +1578,7 @@ class SystemManagerThread(QThread):
 
         for img in (vmlinuz, initramfs):
             if self._exec(["sudo", "test", "-f", str(img)], stream=False).returncode != 0:
-                self.outputReceived.emit(f"Kernel image not found: {img}", "warning")
+                self.outputReceived.emit(tr("Kernel image not found: {img}", img=img), "warning")
                 return None
 
         running_variant = LinuxDistroHelper.detect_running_kernel_variant()
@@ -1595,7 +1598,7 @@ class SystemManagerThread(QThread):
             template_content = self._read_file_sudo(entry_files[0])
 
         if not template_content:
-            self.outputReceived.emit(f"No template found in {entries_dir}", "error")
+            self.outputReceived.emit(tr("No template found in {entries_dir}", entries_dir=entries_dir), "error")
             return None
 
         _token_re = re.compile(r"(?<![\w-])" + re.escape(running_kern_pkg) + r"(?![\w-])")
@@ -1610,19 +1613,19 @@ class SystemManagerThread(QThread):
             if r.returncode == 0:
                 self._update_sort_keys(f"{kernel_pkg}.conf", entries_dir, esp)
                 self._exec(["sync"], stream=False)
-                self.outputReceived.emit(f"Created boot entry: {dest_path}", "success")
+                self.outputReceived.emit(tr("Created boot entry: {dest_path}", dest_path=dest_path), "success")
                 return f"{kernel_pkg}.conf"
-            self.outputReceived.emit("Failed to write boot entry", "error")
+            self.outputReceived.emit(tr("Failed to write boot entry"), "error")
             return None
         except Exception as exc:
-            self.outputReceived.emit(f"Error creating boot entry: {exc}", "error")
+            self.outputReceived.emit(tr("Error creating boot entry: {exc}", exc=exc), "error")
             return None
 
     def _apply_systemd_boot_default(self, entry_conf: str, esp: Path) -> bool | str:
         ok = self._exec(["sudo", "bootctl", "set-default", entry_conf], stream=False, timeout=15).returncode == 0
         if not ok:
             loader_conf = esp / "loader" / "loader.conf"
-            self.outputReceived.emit(f"Writing default to loader.conf: {entry_conf}", "info")
+            self.outputReceived.emit(tr("Writing default to loader.conf: {entry_conf}", entry_conf=entry_conf), "info")
             conf_text = self._read_file_sudo(loader_conf) or ""
             if re.search(r"^default\s+", conf_text, re.MULTILINE):
                 new_conf = re.sub(r"^default\s+\S+", f"default {entry_conf}", conf_text, flags=re.MULTILINE)
@@ -1633,10 +1636,10 @@ class SystemManagerThread(QThread):
                  f"printf '%s' {shlex.quote(new_conf)} > {shlex.quote(str(loader_conf))}"],
                 stream=False).returncode == 0
             if not ok:
-                self._emit_result(False, "", f"Failed to update {loader_conf}")
+                self._emit_result(False, "", tr("Failed to update {path}", path=loader_conf))
                 return False
 
-        self._emit_result(True, f"systemd-boot default set to '{entry_conf}'", "")
+        self._emit_result(True, tr("systemd-boot default set to '{path}'", path=entry_conf), "")
         self._update_sort_keys(entry_conf, esp / "loader" / "entries", esp)
         return True
 
@@ -1717,10 +1720,10 @@ class SystemManagerThread(QThread):
     def _install_aur_helper(self) -> bool:
         helper = S.aur_helper
         if not self.distro or not self.distro.has_aur:
-            self.outputReceived.emit(f"{helper} is not supported on this distribution", "warning")
+            self.outputReceived.emit(tr("{helper} is not supported on this distribution", helper=helper), "warning")
             return True
         if self._pkg_cache and self._pkg_cache.is_installed(helper):
-            self.outputReceived.emit(f"{helper} already installed", "success")
+            self.outputReceived.emit(tr("{helper} already installed", helper=helper), "success")
             return True
 
         build_deps = ["base-devel", "git"]
@@ -1771,105 +1774,105 @@ class SystemManagerThread(QThread):
         pkgs = sorted((f for f in target_dir.iterdir() if f.name.endswith((".pkg.tar.zst", ".pkg.tar.xz", ".pkg.tar.gz", ".pkg.tar.lz4", ".pkg.tar"))), key=_pkg_key)
 
         if not pkgs:
-            self.outputReceived.emit(f"No {helper} package file found after build", "error")
+            self.outputReceived.emit(tr("No {helper} package file found after build", helper=helper), "error")
             return False
 
         ok = (self._exec(["sudo", "pacman", "-U", "--noconfirm", str(pkgs[0])], stream=True).returncode == 0)
         shutil.rmtree(target_dir, ignore_errors=True)
         if ok and self._pkg_cache: self._pkg_cache.mark_installed(helper)
-        self._emit_result(ok, f"{helper} successfully installed", f"{helper} installation failed")
+        self._emit_result(ok, tr("{helper} successfully installed", helper=helper), tr("{helper} installation failed", helper=helper))
         return ok
 
     def _install_specific(self) -> str | bool:
         if not self.distro: return False
         if not (session := self.distro.detect_session()):
-            self.outputReceived.emit("Cannot determine desktop session — skipping specific packages", "warning")
+            self.outputReceived.emit(tr("Cannot determine desktop session — skipping specific packages"), "warning")
             return _Status.SUCCESS
-        self.outputReceived.emit(f"Detected session: {session}", "success")
+        self.outputReceived.emit(tr("Detected session: {session}", session=session), "success")
 
         session_pkgs = [p for p in (S.specific_packages or [])
                         if isinstance(p, dict) and p.get("session") == session]
         pkgs = [n for n in active_pkg_names(session_pkgs, is_specific=True) if self.distro.valid(n)]
         to_install = self.distro.filter_not_installed(pkgs) if pkgs else []
         if not to_install:
-            self.outputReceived.emit(f"All Specific Packages for {session} already installed", "success")
+            self.outputReceived.emit(tr("All Specific Packages for {session} already installed", session=session), "success")
             return _Status.SUCCESS
 
-        self.outputReceived.emit(f"Installing: {', '.join(to_install)}", "info")
+        self.outputReceived.emit(tr("Installing: {names}", names=", ".join(to_install)), "info")
         _distro = self.distro
         failed = self._install_with_retry(to_install, lambda batch: self._exec(_distro.get_batch_install_cmd(batch), stream=True),
                                           lambda pkg: self._exec(_distro.get_pkg_install_cmd(pkg), stream=True))
 
-        self._emit_result(not failed, "All Specific Packages successfully installed", f"Failed to install: {', '.join(failed)}")
+        self._emit_result(not failed, tr("All Specific Packages successfully installed"), tr("Failed to install: {names}", names=", ".join(failed)))
         return _Status.SUCCESS if not failed else _Status.WARNING
 
     def _install_flatpak(self) -> bool:
         if not self.distro: return False
-        results = [self._install_pkg(p, "Flatpak") for p in self.distro.get_flatpak_packages()]
+        results = [self._install_pkg(p, tr("Flatpak")) for p in self.distro.get_flatpak_packages()]
         if not all(results):
             return False
-        self.outputReceived.emit("Adding Flathub remote…", "info")
+        self.outputReceived.emit(tr("Adding Flathub remote…"), "info")
         try:
             cmd = self.distro.flatpak_add_flathub()
-            self.outputReceived.emit(f"Running: {cmd}", "info")
+            self.outputReceived.emit(tr("Running: {cmd}", cmd=cmd), "info")
             ok = (self._exec(cmd, stream=True).returncode == 0)
-            self._emit_result(ok, "Flathub remote successfully added", "Failed to add Flathub remote")
+            self._emit_result(ok, tr("Flathub remote successfully added"), tr("Failed to add Flathub remote"))
             return ok
         except Exception as exc:
-            self.outputReceived.emit(f"Flathub setup error: {exc}", "error")
+            self.outputReceived.emit(tr("Flathub setup error: {exc}", exc=exc), "error")
             return False
 
     def _setup_service(self, service: str, packages: list, *, optional: tuple[str, ...] = ()) -> bool:
         if packages:
             for p in packages:
-                ok = self._install_pkg(p, "Service Package")
+                ok = self._install_pkg(p, tr("Service Package"))
                 if not ok and p not in optional:
                     return False
                 if not ok:
-                    self.outputReceived.emit(f"Optional package '{p}' could not be installed — continuing", "warning")
+                    self.outputReceived.emit(tr("Optional package '{p}' could not be installed — continuing", p=p), "warning")
         return self._enable_service(service)
 
     def _enable_service(self, service: str) -> bool:
         if service.endswith(".timer") and not shutil.which("systemctl"):
             self.outputReceived.emit(
-                f"{service} is a systemd timer with no equivalent on this init system — skipping", "warning")
+                tr("{service} is a systemd timer with no equivalent on this init system — skipping", service=service), "warning")
             return True
         if shutil.which("systemctl"):
             unit_suffix = ".timer" if service.endswith(".timer") else ".service"
             svc = service if service.endswith((".service", ".timer")) else f"{service}{unit_suffix}"
-            self.outputReceived.emit(f"Checking {svc} (systemd)", "info")
+            self.outputReceived.emit(tr("Checking {svc} (systemd)", svc=svc), "info")
 
             is_enabled = self._exec(["systemctl", "is-enabled", "--quiet", svc]).returncode == 0
             is_active = self._exec(["systemctl", "is-active", "--quiet", svc]).returncode == 0
 
             if is_enabled and is_active:
-                self.outputReceived.emit(f"{svc} already enabled and active — nothing to do", "success")
+                self.outputReceived.emit(tr("{svc} already enabled and active — nothing to do", svc=svc), "success")
                 return True
             if is_enabled and not is_active:
-                self.outputReceived.emit(f"{svc} already enabled, starting it now", "info")
+                self.outputReceived.emit(tr("{svc} already enabled, starting it now", svc=svc), "info")
                 ok = (self._exec(["sudo", "systemctl", "start", svc], stream=True).returncode == 0)
             else:
-                self.outputReceived.emit(f"Enabling {svc} (systemd)", "info")
+                self.outputReceived.emit(tr("Enabling {svc} (systemd)", svc=svc), "info")
                 ok = (self._exec(["sudo", "systemctl", "enable", "--now", svc], stream=True).returncode == 0)
 
         elif shutil.which("rc-update") and shutil.which("rc-service"):
-            self.outputReceived.emit(f"Checking {service} (OpenRC)", "info")
+            self.outputReceived.emit(tr("Checking {service} (OpenRC)", service=service), "info")
             _rc_show = self._exec(["rc-update", "show", "default"], stream=False).stdout
             already_enabled = service in _rc_show.split()
             already_active = self._exec(["rc-service", service, "status"]).returncode == 0
             if already_enabled and already_active:
-                self.outputReceived.emit(f"{service} already enabled and active", "success")
+                self.outputReceived.emit(tr("{service} already enabled and active", service=service), "success")
                 return True
             if not already_enabled:
-                self.outputReceived.emit(f"Enabling {service} (OpenRC)", "info")
+                self.outputReceived.emit(tr("Enabling {service} (OpenRC)", service=service), "info")
                 self._exec(["sudo", "rc-update", "add", service, "default"], stream=True)
             ok = already_active or (self._exec(["sudo", "rc-service", service, "start"],
                                                 stream=True).returncode == 0)
 
         elif shutil.which("sv") and os.path.isdir("/var/service"):
-            self.outputReceived.emit(f"Enabling {service} (runit)", "info")
+            self.outputReceived.emit(tr("Enabling {service} (runit)", service=service), "info")
             if os.path.exists(f"/var/service/{service}"):
-                self.outputReceived.emit(f"{service} already enabled", "success")
+                self.outputReceived.emit(tr("{service} already enabled", service=service), "success")
                 return True
             ok = False
             if os.path.isdir(f"/etc/sv/{service}"):
@@ -1879,29 +1882,29 @@ class SystemManagerThread(QThread):
                     ok = (self._exec(["sudo", "sv", "up", service], stream=True).returncode == 0)
 
         elif os.path.isfile(f"/etc/rc.d/rc.{service}"):
-            self.outputReceived.emit(f"Enabling {service} (BSD-style rc.d)", "info")
+            self.outputReceived.emit(tr("Enabling {service} (BSD-style rc.d)", service=service), "info")
             rc_script = f"/etc/rc.d/rc.{service}"
             if not os.access(rc_script, os.X_OK):
                 ok = (self._exec(["sudo", "chmod", "+x", rc_script], stream=True).returncode == 0)
                 if not ok:
-                    self.outputReceived.emit(f"Failed to make {rc_script} executable", "error")
+                    self.outputReceived.emit(tr("Failed to make {rc_script} executable", rc_script=rc_script), "error")
             else:
                 ok = True
             if ok:
                 start_ok = (self._exec(["sudo", rc_script, "start"], stream=True).returncode == 0)
                 if not start_ok:
-                    self.outputReceived.emit(f"{rc_script} start returned non-zero — checking if already running", "warning")
+                    self.outputReceived.emit(tr("{rc_script} start returned non-zero — checking if already running", rc_script=rc_script), "warning")
                     status_ok = (self._exec(["sudo", rc_script, "status"], stream=False).returncode == 0)
                     if not status_ok:
-                        self.outputReceived.emit(f"{rc_script} does not appear to be running", "error")
+                        self.outputReceived.emit(tr("{rc_script} does not appear to be running", rc_script=rc_script), "error")
                         ok = False
 
         else:
-            self.outputReceived.emit(f"Unsupported init system. Please enable '{service}' manually.", "warning")
+            self.outputReceived.emit(tr("Unsupported init system. Please enable '{service}' manually.", service=service), "warning")
             return True
 
         if ok:
-            self.outputReceived.emit(f"{service} successfully enabled", "success")
+            self.outputReceived.emit(tr("{service} successfully enabled", service=service), "success")
             if service == "ufw":
                 cmds = build_ufw_commands(S.firewall_config.get("rules", []))
                 for c in cmds:
@@ -1913,7 +1916,7 @@ class SystemManagerThread(QThread):
                     if self._exec(c, stream=True).returncode != 0: return False
 
         else:
-            self.outputReceived.emit(f"Failed to enable {service}", "error")
+            self.outputReceived.emit(tr("Failed to enable {service}", service=service), "error")
         return ok
 
     def _remove_orphans(self) -> bool:
@@ -1924,49 +1927,49 @@ class SystemManagerThread(QThread):
             raw = self._exec(cmd, stream=False, timeout=60).stdout.strip()
             pkgs = self.distro.parse_orphan_output(raw) if raw else []
             if not pkgs:
-                self.outputReceived.emit("No orphaned system packages found", "success")
+                self.outputReceived.emit(tr("No orphaned system packages found"), "success")
             else:
-                self.outputReceived.emit(f"Found orphaned packages: {', '.join(pkgs)}", "info")
+                self.outputReceived.emit(tr("Found orphaned packages: {names}", names=", ".join(pkgs)), "info")
                 rem_cmd = self.distro.get_batch_remove_cmd(pkgs)
                 if rem_cmd:
                     ok = (self._exec(rem_cmd, stream=True).returncode == 0)
-                    self._emit_result(ok, "Orphaned system packages successfully removed",
-                                      "Could not remove orphaned system packages")
+                    self._emit_result(ok, tr("Orphaned system packages successfully removed"),
+                                      tr("Could not remove orphaned system packages"))
         else:
-            self.outputReceived.emit("System orphan removal not supported on this distribution", "info")
+            self.outputReceived.emit(tr("System orphan removal not supported on this distribution"), "info")
 
         if shutil.which("flatpak"):
-            self.outputReceived.emit("Removing unused Flatpak runtimes…", "info")
+            self.outputReceived.emit(tr("Removing unused Flatpak runtimes…"), "info")
             fp_ok = (self._exec(["flatpak", "uninstall", "--unused", "-y"], stream=True).returncode == 0)
             if not fp_ok:
-                self.outputReceived.emit("Failed to remove unused Flatpak runtimes", "warning")
+                self.outputReceived.emit(tr("Failed to remove unused Flatpak runtimes"), "warning")
 
         return ok
 
     def _clean_cache(self) -> bool:
         if not self.distro: return False
         pm = self.distro.pkg_manager_name()
-        self.outputReceived.emit(f"Cleaning {pm} cache", "info")
+        self.outputReceived.emit(tr("Cleaning {pm} cache", pm=pm), "info")
         ok = (self._exec(self.distro.get_clean_cache_cmd(), stream=True).returncode == 0)
-        self._emit_result(ok, f"{pm} cache successfully cleaned", f"{pm} cache cleaning failed")
+        self._emit_result(ok, tr("{pm} cache successfully cleaned", pm=pm), tr("{pm} cache cleaning failed", pm=pm))
 
         if ok and self.distro.has_aur:
             for _helper in ("paru", "yay"):
                 if self.distro.package_is_installed(_helper) or shutil.which(_helper):
-                    self.outputReceived.emit(f"Cleaning {_helper} cache", "info")
+                    self.outputReceived.emit(tr("Cleaning {_helper} cache", _helper=_helper), "info")
                     helper_ok = (self._exec([_helper, "-Scc", "--noconfirm"], stream=True).returncode == 0)
-                    self._emit_result(helper_ok, f"{_helper} cache successfully cleaned",
-                                      f"{_helper} cache cleaning failed")
+                    self._emit_result(helper_ok, tr("{helper} cache successfully cleaned", helper=_helper),
+                                      tr("{helper} cache cleaning failed", helper=_helper))
                     if not helper_ok:
                         logger.warning("_clean_cache: %s cache cleaning failed (non-critical)", _helper)
         return ok
 
     def _clean_journal_logs(self) -> bool:
         if not shutil.which("journalctl"):
-            self.outputReceived.emit("journalctl not found on this system — skipping", "info")
+            self.outputReceived.emit(tr("journalctl not found on this system — skipping"), "info")
             return True
 
-        self.outputReceived.emit("Cleaning systemd journal logs to max 100M…", "info")
+        self.outputReceived.emit(tr("Cleaning systemd journal logs to max 100M…"), "info")
         ok = (self._exec(["sudo", "journalctl", "--vacuum-size=100M"], stream=True).returncode == 0)
-        self._emit_result(ok, "Systemd journal logs successfully cleaned", "Failed to clean systemd journal logs")
+        self._emit_result(ok, tr("Systemd journal logs successfully cleaned"), tr("Failed to clean systemd journal logs"))
         return ok

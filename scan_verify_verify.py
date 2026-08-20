@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
 from linux_distro_helper import LinuxDistroHelper
 from state import S, apply_replacements
 from themes import current_theme, font_sz
+from translations import tr
 
 from scan_verify_helpers import (
     _clean_title, _ensure_drives_mounted, _make_progress_widget, _Section, _VerifyWorker
@@ -32,7 +33,7 @@ class _VerifyTab(QWidget):
         self._summary.hide()
         lay.addWidget(self._summary)
 
-        self._prog_widget, self._prog_label, self._prog_bar = _make_progress_widget("Preparing…")
+        self._prog_widget, self._prog_label, self._prog_bar = _make_progress_widget(tr("Preparing…"))
         lay.addWidget(self._prog_widget, 1)
 
         self._scroll = QScrollArea()
@@ -41,7 +42,7 @@ class _VerifyTab(QWidget):
         self._scroll.hide()
         lay.addWidget(self._scroll, 1)
 
-        refresh_btn = QPushButton("🔄  Re-run Check")
+        refresh_btn = QPushButton(tr("🔄  Re-run Check"))
         refresh_btn.clicked.connect(self._start)
         row = QHBoxLayout()
         row.addStretch()
@@ -61,12 +62,12 @@ class _VerifyTab(QWidget):
         self._scroll.hide()
         self._summary.hide()
         self._prog_widget.show()
-        self._prog_label.setText("Preparing…")
+        self._prog_label.setText(tr("Preparing…"))
 
         if not _ensure_drives_mounted(self.window()):
             self._prog_widget.hide()
             t = current_theme()
-            self._show_summary("⚠  Verify cancelled: required drive(s) not mounted.", t["warning"])
+            self._show_summary(tr("⚠  Verify cancelled: required drive(s) not mounted."), t["warning"])
             return
 
         worker = _VerifyWorker(self._helper)
@@ -91,16 +92,16 @@ class _VerifyTab(QWidget):
             n_ok = sum(1 for p in pkgs if p["installed"])
             n_bad = len(pkgs) - n_ok
             total_issues += n_bad
-            sec = _Section("📦", "Packages", n_ok, len(pkgs), t["success"], t["error"])
+            sec = _Section("📦", tr("Packages"), n_ok, len(pkgs), t["success"], t["error"])
             for p in pkgs:
                 if p["installed"]:
-                    sec.add_row("✅", p["name"], f"Installed  ({p['kind']})", t["success"])
+                    sec.add_row("✅", p["name"], tr("Installed  ({k})", k=p['kind']), t["success"])
                 else:
-                    sec.add_row("❌", p["name"], f"Missing  ({p['kind']})", t["error"])
+                    sec.add_row("❌", p["name"], tr("Missing  ({k})", k=p['kind']), t["error"])
             cl.addWidget(sec)
         elif not (S.basic_packages or S.aur_packages or S.specific_packages):
-            sec = _Section("📦", "Packages", 0, 0, t["muted"], t["muted"])
-            sec.add_row("—", "No packages in profile", "", t["muted"])
+            sec = _Section("📦", tr("Packages"), 0, 0, t["muted"], t["muted"])
+            sec.add_row("—", tr("No packages in profile"), "", t["muted"])
             cl.addWidget(sec)
 
         sys_files = res.get("sys_files", [])
@@ -108,9 +109,9 @@ class _VerifyTab(QWidget):
             n_ok = sum(1 for f in sys_files if f["status"] == "ok")
             n_bad = len(sys_files) - n_ok
             total_issues += n_bad
-            sec = _Section("📄", "Dotfiles", n_ok, len(sys_files), t["success"], t["warning"])
-            _status_map = {"changed": ("⚠", "Changed", "warning"), "dst_missing": ("❌", "Not backed up", "error"),
-                           "src_missing": ("❓", "Source missing", "muted")}
+            sec = _Section("📄", tr("Dotfiles"), n_ok, len(sys_files), t["success"], t["warning"])
+            _status_map = {"changed": ("⚠", tr("Changed"), "warning"), "dst_missing": ("❌", tr("Not backed up"), "error"),
+                           "src_missing": ("❓", tr("Source missing"), "muted")}
             for f in sys_files:
                 if f["status"] == "ok":
                     sec.add_row("✅", f["name"], f"{apply_replacements(f['src'])} 🢥 {apply_replacements(f['dst'])}", t["success"])
@@ -119,8 +120,8 @@ class _VerifyTab(QWidget):
                     sec.add_row(ic, f["name"], f"{lbl}  —  {apply_replacements(f['src'])} 🢥 {apply_replacements(f['dst'])}", t[ck])
             cl.addWidget(sec)
         else:
-            sec = _Section("📄", "Dotfiles", 0, 0, t["muted"], t["muted"])
-            msg = "No active dotfiles" if S.dotfiles else "No dotfiles in profile"
+            sec = _Section("📄", tr("Dotfiles"), 0, 0, t["muted"], t["muted"])
+            msg = tr("No active dotfiles") if S.dotfiles else tr("No dotfiles in profile")
             sec.add_row("—", msg, "", t["muted"])
             cl.addWidget(sec)
 
@@ -129,18 +130,18 @@ class _VerifyTab(QWidget):
             n_ok = sum(1 for b in backups if b["status"] == "ok")
             n_bad = len(backups) - n_ok
             total_issues += n_bad
-            sec = _Section("💾", "Backup Entries", n_ok, len(backups), t["success"], t["warning"])
+            sec = _Section("💾", tr("Backup Entries"), n_ok, len(backups), t["success"], t["warning"])
             for b in backups:
                 title = _clean_title(b["title"])
                 label = f"[{b['header']}]  {title}"
                 if b["status"] == "ok":
-                    sec.add_row("✅", label, "OK", t["success"])
+                    sec.add_row("✅", label, tr("OK"), t["success"])
                 else:
                     sec.add_entry_group(label, b["issues"], t["warning"])
             cl.addWidget(sec)
         elif not S.entries:
-            sec = _Section("💾", "Backup Entries", 0, 0, t["muted"], t["muted"])
-            sec.add_row("—", "No backup entries in profile", "", t["muted"])
+            sec = _Section("💾", tr("Backup Entries"), 0, 0, t["muted"], t["muted"])
+            sec.add_row("—", tr("No backup entries in profile"), "", t["muted"])
             cl.addWidget(sec)
 
         services = res.get("services", [])
@@ -148,20 +149,20 @@ class _VerifyTab(QWidget):
             n_ok = sum(1 for s in services if s["active"])
             n_bad = len(services) - n_ok
             total_issues += n_bad
-            sec = _Section("⚙️", "Services", n_ok, len(services), t["success"], t["warning"])
+            sec = _Section("⚙️", tr("Services"), n_ok, len(services), t["success"], t["warning"])
             for s in services:
                 if s["active"]:
-                    sec.add_row("✅", f"{s['service']}.service", "Active", t["success"])
+                    sec.add_row("✅", f"{s['service']}.service", tr("Active"), t["success"])
                 else:
-                    sec.add_row("⚠", f"{s['service']}.service", "Inactive", t["warning"])
+                    sec.add_row("⚠", f"{s['service']}.service", tr("Inactive"), t["warning"])
             cl.addWidget(sec)
         elif S.system_manager_ops:
-            sec = _Section("⚙️", "Services", 0, 0, t["muted"], t["muted"])
-            sec.add_row("—", "No trackable services configured in profile", "", t["muted"])
+            sec = _Section("⚙️", tr("Services"), 0, 0, t["muted"], t["muted"])
+            sec.add_row("—", tr("No trackable services configured in profile"), "", t["muted"])
             cl.addWidget(sec)
         else:
-            sec = _Section("⚙️", "Services", 0, 0, t["muted"], t["muted"])
-            sec.add_row("—", "No System Manager operations in profile", "", t["muted"])
+            sec = _Section("⚙️", tr("Services"), 0, 0, t["muted"], t["muted"])
+            sec.add_row("—", tr("No System Manager operations in profile"), "", t["muted"])
             cl.addWidget(sec)
 
         cl.addStretch()
@@ -172,6 +173,6 @@ class _VerifyTab(QWidget):
             win.fit_to_content()
 
         if total_issues == 0:
-            self._show_summary("✅  Everything looks good — system matches profile.", t["success"])
+            self._show_summary(tr("✅  Everything looks good — system matches profile."), t["success"])
         else:
-            self._show_summary(f"⚠  {total_issues} issue(s) found — click section headers to expand details.", t["warning"])
+            self._show_summary(tr("⚠  {n} issue(s) found — click section headers to expand details.", n=total_issues), t["warning"])

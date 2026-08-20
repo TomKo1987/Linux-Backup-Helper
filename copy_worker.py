@@ -12,6 +12,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 from drive_utils import is_smb, is_ssh, build_rsync_cmd, _SSH_HOST_RE
 from pre_post_hooks import run_hooks as _run_hooks
 from state import logger
+from translations import tr
 
 from copy_worker_core import (
     _CHUNK, _IO_BUF, _WORKERS, _FLUSH_THRESH, _FLUSH_INTERVAL, _SCAN_EMIT_SECS,
@@ -37,7 +38,7 @@ _NF_MARK = "\x1f"
 
 
 def _not_found_reason(title: str) -> str:
-    base = "Path does not exist — skipping"
+    base = tr("Path does not exist — skipping")
     return f"{base}{_NF_MARK}{title}" if title else base
 
 
@@ -143,7 +144,7 @@ def _do_copy(entry, cancel: threading.Event, ok_l: list, sk_l: list, er_l: list,
         ok_l.append((src, dst, sz))
         if title: _bump_count(tc, title, 0)
     elif status == "skip":
-        sk_l.append((src, aux or "Up to date", sz))
+        sk_l.append((src, aux or tr("Up to date"), sz))
         if title: _bump_count(tc, title, 1)
     else:
         er_l.append((src, aux, 0))
@@ -168,13 +169,13 @@ def _copy_symlink(src: str, dst: str) -> tuple:
     try:
         target = os.readlink(src)
     except OSError as exc:
-        return "error", f"Symlink unreadable: {exc}", 0
+        return "error", tr("Symlink unreadable: {err}", err=exc), 0
 
     if _is_symlink_up_to_date(dst, target):
-        return "skip", "Up to date", 0
+        return "skip", tr("Up to date"), 0
 
     if not _ensure_dir(os.path.dirname(dst)):
-        return "error", "Directory could not be created", 0
+        return "error", tr("Directory could not be created"), 0
 
     tmp = f"{dst}.{_PID}.{threading.get_ident()}.lnk.part"
     try:
@@ -269,20 +270,20 @@ def _copy_file(src, dst, cancel, cached_st=None):
         success = False
         try:
             if cancel.is_set():
-                return "skip", "Cancelled", 0
+                return "skip", tr("Cancelled"), 0
             if cached_st is not None and _attempt == 0:
                 st = cached_st
             else:
                 try:
                     st = os.stat(src)
                 except OSError:
-                    return "error", "Source unreadable", 0
+                    return "error", tr("Source unreadable"), 0
 
             if _attempt == 0 and _is_up_to_date_local(dst, st):
-                return "skip", "Up to date", st.st_size
+                return "skip", tr("Up to date"), st.st_size
 
             if not _ensure_dir(os.path.dirname(dst)):
-                return "error", "Directory could not be created", 0
+                return "error", tr("Directory could not be created"), 0
 
             _may_use_noatime = _EUID == 0 or st.st_uid == _EUID
             try:
@@ -324,7 +325,7 @@ def _copy_file(src, dst, cancel, cached_st=None):
             return "ok", dst, copied
 
         except InterruptedError:
-            return "skip", "Cancelled", 0
+            return "skip", tr("Cancelled"), 0
         except OSError as exc:
             if "Incomplete copy" in str(exc) and _attempt == 0:
                 logger.debug("copy %s: %s — retrying", src, exc)
@@ -344,7 +345,7 @@ def _copy_file(src, dst, cancel, cached_st=None):
                     pass
             if not success:
                 _silent_unlink(tmp)
-    return "error", "Copy failed after retries", 0
+    return "error", tr("Copy failed after retries"), 0
 
 
 
@@ -612,7 +613,7 @@ class CopyWorker(QThread):
                 if smb_tool_missing:
                     logger.error("smbclient binary not found — SMB task(s) will be reported as errors")
 
-            self.scan_progress.emit("Scanning", 0)
+            self.scan_progress.emit(tr("Scanning"), 0)
 
             if not smb_tasks:
                 flusher = _Flusher(self.batch_update, 0)
@@ -669,7 +670,7 @@ class CopyWorker(QThread):
                     alive_tasks, pre_err = self._filter_dead_tasks(smb_tasks, dead, ur)
                     smb_errors.extend(pre_err)
                 if alive_tasks and not self._cancel.is_set():
-                    scanner = _SmbScanner(user, pw, _guest, self._cancel, lambda n: self.scan_progress.emit("Scanning SMB", n))
+                    scanner = _SmbScanner(user, pw, _guest, self._cancel, lambda n: self.scan_progress.emit(tr("Scanning SMB"), n))
                     exp, err = scanner.resolve(alive_tasks)
                     smb_expanded.extend(exp)
                     smb_errors.extend(err)
@@ -769,7 +770,7 @@ class CopyWorker(QThread):
             logger.error("rsync stdout is None for '%s'", src)
             proc.kill()
             proc.wait()
-            flusher.push(er=[(src, "rsync stdout unavailable", 0)])
+            flusher.push(er=[(src, tr("rsync stdout unavailable"), 0)])
             _track(0, 0, 1)
             return
 
@@ -804,7 +805,7 @@ class CopyWorker(QThread):
                     if dm:
                         rel = dm.group(1).strip()
                         display_path = _ssh_join(dst, rel)
-                        deleted_this_task.append((display_path, "Mirror delete (remote)", 0))
+                        deleted_this_task.append((display_path, tr("Mirror delete (remote)"), 0))
                     elif line:
                         logger.debug("rsync: %s", line)
             except OSError as exc:
@@ -827,7 +828,7 @@ class CopyWorker(QThread):
             _track(1, 0, 0, len(deleted_this_task))
             logger.info("rsync OK: %s → %s", src, dst)
         else:
-            flusher.push(er=[(src, f"rsync exit {proc.returncode}", 0)])
+            flusher.push(er=[(src, tr("rsync exit {code}", code=proc.returncode), 0)])
             _track(0, 0, 1, len(deleted_this_task))
             logger.error("rsync exit %d: %s → %s", proc.returncode, src, dst)
 
@@ -922,7 +923,7 @@ class CopyWorker(QThread):
                             else:
                                 cur = -1
                         if cur >= 0:
-                            self.scan_progress.emit("Scanning", cur)
+                            self.scan_progress.emit(tr("Scanning"), cur)
                     _finish_one()
 
             if local_n:
@@ -936,7 +937,7 @@ class CopyWorker(QThread):
         finally:
             pool.shutdown(wait=True, cancel_futures=True)
 
-        self.scan_progress.emit("Scanning", total_found[0])
+        self.scan_progress.emit(tr("Scanning"), total_found[0])
 
         result: list = []
         try:
@@ -1041,7 +1042,7 @@ class CopyWorker(QThread):
                             last_emit[0] = now
                             emit_cur = found[0]
                     if emit_cur >= 0:
-                        self.scan_progress.emit("Scanning", emit_cur)
+                        self.scan_progress.emit(tr("Scanning"), emit_cur)
                         _, lb_new, ft_new, spb_new, _ = _scale_params(emit_cur + missing[0])
                         with copy_params_lock:
                             copy_params[0] = lb_new
@@ -1109,7 +1110,7 @@ class CopyWorker(QThread):
                     futs = [sp.submit(_scan_worker) for _ in range(_WORKERS)]
                     _run_futures(futs, cancel, "scan worker")
                 total = found[0] + missing[0]
-                self.scan_progress.emit("Scanning", total)
+                self.scan_progress.emit(tr("Scanning"), total)
                 _, lb, ft, spb, _ = _scale_params(total)
                 with copy_params_lock:
                     copy_params[0] = lb
@@ -1184,7 +1185,7 @@ class CopyWorker(QThread):
             excl = rest[0] if rest else frozenset()
             h, sh, _ = _parse_smb(s if is_smb(s) else d)
             if (h, sh) in dead_shares:
-                reason = ("NT_STATUS_HOST_UNREACHABLE" if (h, sh) in unreachable_shares else "Authentication failed")
+                reason = ("NT_STATUS_HOST_UNREACHABLE" if (h, sh) in unreachable_shares else tr("Authentication failed"))
                 errors.append((s if is_smb(s) else d, reason, t))
             else:
                 alive.append((s, d, t, excl))
@@ -1268,7 +1269,7 @@ class CopyWorker(QThread):
                 _err_counts: dict = {}
                 for _job in share_groups[(host, share)]["get"] + share_groups[(host, share)]["put"]:
                     src = (_job.src_url if _job.kind == "smb_put" else f"smb://{host}/{share}/{_job.remote_path}")
-                    er_w.append((src, f"Share processing crashed: {exc}", 0))
+                    er_w.append((src, tr("Share processing crashed: {exc}", exc=exc), 0))
                     if _job.title:
                         _err_counts.setdefault(_job.title, [0, 0, 0, 0])[2] += 1
                 flusher.push(er=er_w)

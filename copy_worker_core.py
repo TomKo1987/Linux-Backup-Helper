@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from drive_utils import is_smb, is_ssh
 from state import logger
 from themes import register_cache_invalidation_hook as _reg_cache_hook
+from translations import tr
 
 _CHUNK           = 32 * 1024 * 1024
 _IO_BUF          =  8 * 1024 * 1024
@@ -132,7 +133,7 @@ def _check_destination_space(tasks: list[tuple]) -> list[str]:
                 if usage.free < _MIN_FREE:
                     free_mb = usage.free // (1024 * 1024)
                     warnings.append(
-                        f"• {dst!r}  —  only {free_mb:,} MB free"
+                        tr("• {dst!r}  —  only {free_mb:,} MB free", dst=dst, free_mb=free_mb)
                     )
             except OSError as exc:
                 logger.debug("_check_destination_space: cannot check %r: %s", dst, exc)

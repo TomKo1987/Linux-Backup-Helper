@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
 from dotfiles_manager import first_path
 from state import S, _HOME, apply_replacements, save_profile
 from themes import font_sz, current_theme, tri_state_legend_html
+from translations import tr
 from ui_utils import browse_field, checkbox_row_frame_style, color_style
 
 from system_manager_helpers import (
@@ -44,8 +45,9 @@ class _DotfilesEditorMixin(_DotfilesMixinBase):
 
         for idx, f in enumerate(files):
             filename = Path(first_path(f["source"])).name or first_path(f["source"])
-            tip = (f"<b>Source:</b><br>{f['source']}<br><br><b>Destination:</b><br>{f['destination']}<br><br>"
-                   f"<i>Left-click to change status. Click + to expand &amp; edit.</i><br><br>{legend}")
+            tip = (tr("<b>Source:</b><br>{src}<br><br><b>Destination:</b><br>{dst}<br><br>"
+                      "<i>Left-click to change status. Click + to expand &amp; edit.</i><br><br>{legend}",
+                      src=f['source'], dst=f['destination'], legend=legend))
             cb = _make_tri_cb(filename, f.get("disabled", False), tip)
             checkboxes.append((cb, f))
 
@@ -76,13 +78,13 @@ class _DotfilesEditorMixin(_DotfilesMixinBase):
             for ed in (src_ed, dst_ed):
                 ed.setMinimumHeight(32)
 
-            for lbl_text, ed in [("Source:", src_ed), ("Destination:", dst_ed)]:
+            for lbl_text, ed in [(tr("Source:"), src_ed), (tr("Destination:"), dst_ed)]:
                 lbl = QLabel(lbl_text)
                 lbl.setStyleSheet(color_style(t['muted'], font_sz(-1)))
                 det_lay.addWidget(lbl)
                 det_lay.addWidget(browse_field(self, ed))
 
-            apply_btn = QPushButton("Apply")
+            apply_btn = QPushButton(tr("Apply"))
             apply_btn.setMaximumWidth(110)
             apply_btn.setMinimumHeight(30)
 
@@ -91,7 +93,7 @@ class _DotfilesEditorMixin(_DotfilesMixinBase):
                     new_src = s_ed.text().strip()
                     new_dst = d_ed.text().strip()
                     if not new_src or not new_dst:
-                        QMessageBox.warning(self, "Error", "Source and destination must not be empty.")
+                        QMessageBox.warning(self, tr("Error"), tr("Source and destination must not be empty."))
                         return
                     entry["source"] = new_src
                     entry["destination"] = new_dst
@@ -129,8 +131,9 @@ class _DotfilesEditorMixin(_DotfilesMixinBase):
             do_delete = True
             if to_del:
                 names = "\n".join(f"  • {apply_replacements(f.get('source', '?'))}" for f in to_del)
-                if QMessageBox.question(_dlg, "Confirm Delete",
-                                        f"The following dotfile(s) will be permanently removed:\n\n{names}\n\nContinue?",
+                if QMessageBox.question(_dlg, tr("Confirm Delete"),
+                                        tr("The following dotfile(s) will be permanently removed:\n\n{names}\n\nContinue?",
+                                           names=names),
                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
                                         ) != QMessageBox.StandardButton.Yes:
                     do_delete = False
@@ -155,7 +158,7 @@ class _DotfilesEditorMixin(_DotfilesMixinBase):
             save_profile()
             _dlg.accept()
 
-        dlg, lay = _scroll_dlg(self, "Dotfiles", body, _save)
+        dlg, lay = _scroll_dlg(self, tr("Dotfiles"), body, _save)
 
         if files:
             fm = QFontMetrics(QFont("monospace"))
@@ -167,7 +170,7 @@ class _DotfilesEditorMixin(_DotfilesMixinBase):
             dlg.resize(max(dlg.width(), min(needed_w, max_w)), dlg.height())
 
         search = QLineEdit()
-        search.setPlaceholderText("Filter files...")
+        search.setPlaceholderText(tr("Filter files..."))
 
         def _apply_search(txt: str) -> None:
             lo = txt.lower()
@@ -183,7 +186,7 @@ class _DotfilesEditorMixin(_DotfilesMixinBase):
             dlg.close()
             QTimer.singleShot(100, self._add_dotfile)
 
-        add_btn = QPushButton("+ Add Dotfile")
+        add_btn = QPushButton(tr("+ Add Dotfile"))
         add_btn.clicked.connect(_on_add_clicked)
         add_row = QHBoxLayout()
         add_row.addWidget(add_btn)
@@ -196,7 +199,7 @@ class _DotfilesEditorMixin(_DotfilesMixinBase):
             DotfilesManagerDialog(self).exec()
             QTimer.singleShot(0, self._edit_dotfiles)
 
-        manager_btn = QPushButton("📄 Open Dotfiles Manager")
+        manager_btn = QPushButton(tr("📄 Open Dotfiles Manager"))
         manager_btn.setMinimumHeight(34)
         manager_btn.clicked.connect(_open_manager)
 
@@ -204,7 +207,7 @@ class _DotfilesEditorMixin(_DotfilesMixinBase):
             dlg.close()
             QTimer.singleShot(0, self._import_dotfiles)
 
-        for lbl, fn in [("Import (.txt/.csv)", _on_import_clicked), ("Export (.txt)", self._export_dotfiles)]:
+        for lbl, fn in [(tr("Import (.txt/.csv)"), _on_import_clicked), (tr("Export (.txt)"), self._export_dotfiles)]:
             b = QPushButton(lbl)
             b.clicked.connect(fn)
             io_row.addWidget(b)
@@ -218,23 +221,23 @@ class _DotfilesEditorMixin(_DotfilesMixinBase):
 
     def _add_dotfile(self) -> None:
         box = QMessageBox(self)
-        box.setWindowTitle("Add Dotfile/Folder")
-        box.setText("Choose the source type:")
-        file_btn = box.addButton("📄 File(s)", QMessageBox.ButtonRole.YesRole)
-        box.addButton("📁 Directory", QMessageBox.ButtonRole.NoRole)
+        box.setWindowTitle(tr("Add Dotfile/Folder"))
+        box.setText(tr("Choose the source type:"))
+        file_btn = box.addButton(tr("📄 File(s)"), QMessageBox.ButtonRole.YesRole)
+        box.addButton(tr("📁 Directory"), QMessageBox.ButtonRole.NoRole)
         cancel_btn = box.addButton(QMessageBox.StandardButton.Cancel)
         box.exec()
         clicked = box.clickedButton()
         if clicked == cancel_btn:
             return
 
-        sources = (QFileDialog.getOpenFileNames(self, "Select file(s)")[0] if clicked == file_btn
-                   else [d] if (d := QFileDialog.getExistingDirectory(self, "Select directory")) else [])
+        sources = (QFileDialog.getOpenFileNames(self, tr("Select file(s)"))[0] if clicked == file_btn
+                   else [d] if (d := QFileDialog.getExistingDirectory(self, tr("Select directory"))) else [])
         sources = [s for s in sources if s]
         if not sources:
             return
 
-        dst_dir = QFileDialog.getExistingDirectory(self, "Select Destination Directory (e.g. /etc/...)")
+        dst_dir = QFileDialog.getExistingDirectory(self, tr("Select Destination Directory (e.g. /etc/...)"))
         if not dst_dir:
             return
 
@@ -252,11 +255,11 @@ class _DotfilesEditorMixin(_DotfilesMixinBase):
             S.dotfiles.sort(
                 key=lambda x: Path(x.get("source", "")).name.lower() if isinstance(x, dict) else str(x).lower())
             save_profile()
-            QMessageBox.information(self, "Success", f"Added {len(added)} item(s).")
+            QMessageBox.information(self, tr("Success"), tr("Added {n} item(s).", n=len(added)))
         QTimer.singleShot(0, self._edit_dotfiles)
 
     def _import_dotfiles(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Import Dotfiles", str(_HOME), "Data (*.txt *.csv)")
+        path, _ = QFileDialog.getOpenFileName(self, tr("Import Dotfiles"), str(_HOME), "Data (*.txt *.csv)")
         if not path:
             self._reopen_dotfiles()
             return
@@ -298,8 +301,8 @@ class _DotfilesEditorMixin(_DotfilesMixinBase):
                 key=lambda x: Path(x.get("source", "")).name.lower() if isinstance(x, dict) else str(x).lower())
             save_profile()
 
-        parts_msg = [f"Imported: {added}"]
-        if skipped_dup: parts_msg.append(f"Skipped (duplicate): {skipped_dup}")
-        if skipped_inv: parts_msg.append(f"Skipped (invalid format): {skipped_inv}")
-        QMessageBox.information(self, "Import Complete", "\n".join(parts_msg))
+        parts_msg = [tr("Imported: {n}", n=added)]
+        if skipped_dup: parts_msg.append(tr("Skipped (duplicate): {n}", n=skipped_dup))
+        if skipped_inv: parts_msg.append(tr("Skipped (invalid format): {n}", n=skipped_inv))
+        QMessageBox.information(self, tr("Import Complete"), "\n".join(parts_msg))
         self._reopen_dotfiles()

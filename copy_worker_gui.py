@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
 
 from state import apply_replacements, logger
 from themes import current_theme, font_sz
+from translations import tr
 from ui_utils import card_frame_style, _StandardKeysMixin, size_to_screen
 
 from backup_lock import acquire_backup_lock, backup_lock_holder_pid, release_backup_lock
@@ -127,10 +128,10 @@ class _SummaryWidget(QWidget):
         for i in range(4):
             stats_lay.setColumnStretch(i, 1)
 
-        self.card_copied  = _make_stat_card(t["success"], "⤵ Copied",  "0")
-        self.card_skipped = _make_stat_card(t["warning"],  "↷ Skipped", "0")
-        self.card_deleted = _make_stat_card(t["deleted"],  "🗑 Deleted", "0")
-        self.card_errors  = _make_stat_card(t["error"],    "✗ Errors",  "0")
+        self.card_copied  = _make_stat_card(t["success"], tr("⤵ Copied"),  "0")
+        self.card_skipped = _make_stat_card(t["warning"],  tr("↷ Skipped"), "0")
+        self.card_deleted = _make_stat_card(t["deleted"],  tr("🗑 Deleted"), "0")
+        self.card_errors  = _make_stat_card(t["error"],    tr("✗ Errors"),  "0")
 
         for col, card in enumerate((self.card_copied, self.card_skipped, self.card_deleted, self.card_errors)):
             stats_lay.addWidget(card.frame, 0, col)
@@ -144,7 +145,7 @@ class _SummaryWidget(QWidget):
         prog_lay.setSpacing(8)
 
         prog_hdr = QHBoxLayout()
-        _w = QLabel("Progress")
+        _w = QLabel(tr("Progress"))
         _w.setStyleSheet(_cached_mono_style(font_sz(2), t["text_dim"], extra="border:none;"))
         prog_hdr.addWidget(_w)
         prog_hdr.addStretch()
@@ -158,7 +159,7 @@ class _SummaryWidget(QWidget):
         self._progress_bar = QProgressBar()
         self._progress_bar.setRange(0, 0)
         self._progress_bar.setTextVisible(True)
-        self._progress_bar.setFormat("0%  —  0 / 0 files")
+        self._progress_bar.setFormat(tr("0%  —  0 / 0 files"))
         self._progress_bar.setMinimumHeight(30)
 
         prog_lay.addLayout(prog_hdr)
@@ -168,9 +169,9 @@ class _SummaryWidget(QWidget):
         metrics_lay.setSpacing(12)
 
         kw = {"size_title": font_sz(2), "size_val": font_sz(10)}
-        self._card_elapsed = _make_stat_card(None, "⏲️ Elapsed", "--:--", **kw)
-        self._card_speed   = _make_stat_card(None, "🚤 Speed",   "---",   **kw)
-        self._card_eta     = _make_stat_card(None, "🏁 ETA",     "--:--", **kw)
+        self._card_elapsed = _make_stat_card(None, tr("⏲️ Elapsed"), "--:--", **kw)
+        self._card_speed   = _make_stat_card(None, tr("🚤 Speed"),   "---",   **kw)
+        self._card_eta     = _make_stat_card(None, tr("🏁 ETA"),     "--:--", **kw)
 
         for card in (self._card_elapsed, self._card_speed, self._card_eta):
             metrics_lay.addWidget(card.frame)
@@ -183,7 +184,7 @@ class _SummaryWidget(QWidget):
         rate_lay.setContentsMargins(20, 14, 20, 14)
         rate_lay.setSpacing(8)
 
-        bd_lbl = self._lbl("File breakdown", _cached_mono_style(font_sz(2), t["text_dim"], extra="border:none;"))
+        bd_lbl = self._lbl(tr("File breakdown"), _cached_mono_style(font_sz(2), t["text_dim"], extra="border:none;"))
         bd_lbl.setMinimumHeight(22)
         rate_lay.addWidget(bd_lbl)
 
@@ -213,7 +214,7 @@ class _SummaryWidget(QWidget):
         legend_row = QHBoxLayout()
         legend_row.setSpacing(20)
         legend_style = _cached_mono_style(font_sz(), t["text"], extra="border:none;")
-        for key, text in (("success", "Copied"), ("warning", "Skipped"), ("deleted", "Deleted"), ("error", "Errors")):
+        for key, text in (("success", tr("Copied")), ("warning", tr("Skipped")), ("deleted", tr("Deleted")), ("error", tr("Errors"))):
             dot = QLabel(f"<span style='color:{t[key]}'>■</span>  {text}")
             dot.setStyleSheet(legend_style)
             dot.setMinimumHeight(22)
@@ -230,7 +231,7 @@ class _SummaryWidget(QWidget):
         entry_lay = QVBoxLayout(self._entry_card)
         entry_lay.setContentsMargins(15, 10, 15, 10)
         entry_lay.setSpacing(5)
-        entry_lay.addWidget(self._lbl("Entries processed", _cached_mono_style(font_sz(2), t["text_dim"], extra="border:none;")))
+        entry_lay.addWidget(self._lbl(tr("Entries processed"), _cached_mono_style(font_sz(2), t["text_dim"], extra="border:none;")))
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -279,7 +280,7 @@ class _SummaryWidget(QWidget):
         self.card_deleted.set_size(_format_unit(size_deleted))
         self.card_errors.set_val(f"{errors:,}")
         size_str = _format_unit(size_copied + size_skipped)
-        self.total_lbl.setText(f"{total:,} files / {size_str}" if total > 0 else "")
+        self.total_lbl.setText(tr("{total:,} files / {size}", total=total, size=size_str) if total > 0 else "")
         self._update_progress(done, total, finished, cancelled)
         self._update_segments(copied, skipped, deleted, errors)
         self._update_timing(elapsed_s, done, total, finished, cancelled, size_copied=size_copied)
@@ -303,7 +304,7 @@ class _SummaryWidget(QWidget):
             self._progress_bar.setRange(0, 1)
             self._progress_bar.setValue(0)
             self._prog_pct.setText("—")
-            self._progress_bar.setFormat("Cancelled")
+            self._progress_bar.setFormat(tr("Cancelled"))
             return
         if total > 0:
             pct = int(done * 100 / total)
@@ -311,18 +312,18 @@ class _SummaryWidget(QWidget):
                 self._progress_bar.setRange(0, total)
             self._progress_bar.setValue(done)
             self._prog_pct.setText(f"{pct}%")
-            self._progress_bar.setFormat(f"{pct}%  —  {done:,} / {total:,} files")
+            self._progress_bar.setFormat(tr("{pct}%  —  {done:,} / {total:,} files", pct=pct, done=done, total=total))
         else:
             if finished:
                 self._progress_bar.setRange(0, 1)
                 self._progress_bar.setValue(1)
                 self._prog_pct.setText("100%")
-                self._progress_bar.setFormat("100%  —  0 / 0 files")
+                self._progress_bar.setFormat(tr("100%  —  0 / 0 files"))
             else:
                 self._progress_bar.setRange(0, 0)
                 self._progress_bar.setValue(0)
                 self._prog_pct.setText("…")
-                self._progress_bar.setFormat("Scanning…")
+                self._progress_bar.setFormat(tr("Scanning…"))
 
     def _update_segments(self, copied: int, skipped: int, deleted: int, errors: int) -> None:
         self._last_seg_counts = (copied, skipped, deleted, errors)
@@ -342,14 +343,14 @@ class _SummaryWidget(QWidget):
         speed_str = "---"
         eta_str = "--:--"
         if finished:
-            eta_str = "Cancelled" if cancelled else "Done"
+            eta_str = tr("Cancelled") if cancelled else tr("Done")
         if elapsed_s > 0 and done > 0:
             rate = done / elapsed_s
             if size_copied > 0:
                 mb_rate = size_copied / elapsed_s / (1024 * 1024)
-                speed_str = f"{mb_rate:.1f} MB/s"
+                speed_str = tr("{rate:.1f} MB/s", rate=mb_rate)
             else:
-                speed_str = (f"{rate:,.1f} files/s" if rate >= 1 else f"1 file/{1 / rate:.1f}s")
+                speed_str = (tr("{rate:,.1f} files/s", rate=rate) if rate >= 1 else tr("1 file/{s:.1f}s", s=1 / rate))
             if not finished and total > done:
                 eta_s = int((total - done) / rate)
                 eta_str = f"{eta_s // 60:02d}:{eta_s % 60:02d}"
@@ -456,7 +457,7 @@ class _LogWidget(QWidget):
                      f"QPushButton:pressed {{ background:{t['bg']}; border-color:{t['accent2']}; color:{t['accent2']}; }}")
 
         self._search = QLineEdit()
-        self._search.setPlaceholderText(" 🔍  Search…")
+        self._search.setPlaceholderText(tr(" 🔍  Search…"))
         self._search.setClearButtonEnabled(True)
         self._search.textChanged.connect(self._on_search)
         self._search.setMinimumHeight(44)
@@ -467,8 +468,8 @@ class _LogWidget(QWidget):
         self._view.setStyleSheet(style_view)
 
         self._first = QPushButton("««")
-        self._prev  = QPushButton("‹ Prev")
-        self._next  = QPushButton("Next ›")
+        self._prev  = QPushButton(tr("‹ Prev"))
+        self._next  = QPushButton(tr("Next ›"))
         self._last  = QPushButton("»»")
 
         for btn, cb in ((self._first, lambda: self._go(0)), (self._prev,  lambda: self._go(self._page - 1)),
@@ -500,7 +501,7 @@ class _LogWidget(QWidget):
 
         pg = QHBoxLayout()
         pg.setSpacing(5)
-        for w in (QLabel("Page"), self._spin, QLabel("of"), self._page_lbl):
+        for w in (QLabel(tr("Page")), self._spin, QLabel(tr("of")), self._page_lbl):
             w.setMinimumHeight(28)
             pg.addWidget(w)
 
@@ -508,16 +509,16 @@ class _LogWidget(QWidget):
         nav.addStretch(1)
         nav.addWidget(self._total_lbl)
 
-        self._copy_vis_btn = QPushButton("📋 Copy Visible")
+        self._copy_vis_btn = QPushButton(tr("📋 Copy Visible"))
         self._copy_vis_btn.setMinimumHeight(28)
         self._copy_vis_btn.setStyleSheet(style_btn)
-        self._copy_vis_btn.setToolTip("Copy visible entries on this page to the clipboard.")
+        self._copy_vis_btn.setToolTip(tr("Copy visible entries on this page to the clipboard."))
         self._copy_vis_btn.clicked.connect(lambda: self._copy_to_clipboard(copy_all=False))
 
-        self._copy_all_btn = QPushButton("📋 Copy All")
+        self._copy_all_btn = QPushButton(tr("📋 Copy All"))
         self._copy_all_btn.setMinimumHeight(28)
         self._copy_all_btn.setStyleSheet(style_btn)
-        self._copy_all_btn.setToolTip("Copy all entries to the clipboard.")
+        self._copy_all_btn.setToolTip(tr("Copy all entries to the clipboard."))
         self._copy_all_btn.clicked.connect(lambda: self._copy_to_clipboard(copy_all=True))
 
         nav.addWidget(self._copy_vis_btn)
@@ -557,7 +558,7 @@ class _LogWidget(QWidget):
             clipboard.setText(text)
 
         original = active_btn.text()
-        active_btn.setText("✓ Copied!")
+        active_btn.setText(tr("✓ Copied!"))
         active_btn.setEnabled(False)
 
         def restore_btn() -> None:
@@ -607,7 +608,7 @@ class _LogWidget(QWidget):
 
         total = len(self._filtered)
         self._page_lbl.setText(f"<b>{pages}</b>")
-        self._total_lbl.setText(f"({total:,} {'entry' if total == 1 else 'entries'})")
+        self._total_lbl.setText(tr("({total:,} {word})", total=total, word=tr("entry") if total == 1 else tr("entries")))
 
         self._spin.blockSignals(True)
         self._spin.setMaximum(pages)
@@ -642,7 +643,7 @@ class _LogWidget(QWidget):
                 self._filtered.extend(entries)
             self._search_cache.clear()
         if self._truncated:
-            cap_msg = f"⚠ Log capped at {self._LOG_MAX:,} entries — use search to find specific files"
+            cap_msg = tr("⚠ Log capped at {max:,} entries — use search to find specific files", max=self._LOG_MAX)
             self._items.append(cap_msg)
             self._items_lower.append(cap_msg.lower())
             if not self._finalized:
@@ -707,12 +708,12 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         self._lock_denied = not acquire_backup_lock()
         if self._lock_denied:
             holder = backup_lock_holder_pid()
-            msg = ("Another backup is already running (either from the main window "
-                   "or a scheduled headless backup)"
-                   + (f" — process PID {holder}." if holder else ".")
-                   + "\n\nPlease wait for it to finish before starting a new one.")
+            msg = (tr("Another backup is already running (either from the main window "
+                      "or a scheduled headless backup)")
+                   + (tr(" — process PID {pid}.", pid=holder) if holder else ".")
+                   + tr("\n\nPlease wait for it to finish before starting a new one."))
             logger.warning("CopyDialog: refused to start, backup lock already held (pid=%s)", holder)
-            QTimer.singleShot(0, lambda: (QMessageBox.warning(self, "Backup Already Running", msg), self.reject()))
+            QTimer.singleShot(0, lambda: (QMessageBox.warning(self, tr("Backup Already Running"), msg), self.reject()))
             self.worker = None
             return
 
@@ -763,18 +764,18 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         sl.addWidget(self._summary)
 
         self.tabs = QTabWidget()
-        self.tabs.addTab(summary_page, "📋 Summary")
-        self.tabs.addTab(self._w_copied, "⤵ Copied (0)")
-        self.tabs.addTab(self._w_skipped, "↷ Skipped (0)")
-        self.tabs.addTab(self._w_deleted, "🗑 Deleted (0)")
-        self.tabs.addTab(self._w_errors, "✗ Errors (0)")
+        self.tabs.addTab(summary_page, tr("📋 Summary"))
+        self.tabs.addTab(self._w_copied, tr("⤵ Copied (0)"))
+        self.tabs.addTab(self._w_skipped, tr("↷ Skipped (0)"))
+        self.tabs.addTab(self._w_deleted, tr("🗑 Deleted (0)"))
+        self.tabs.addTab(self._w_errors, tr("✗ Errors (0)"))
         self.tabs.setStyleSheet(f"QTabWidget::pane {{border: none}} QTabBar::tab {{width: 200px; padding: 10px}}"
                                 f"QTabBar::tab:selected {{background: {t['bg3']}; border-bottom: 2px solid {t['accent']}}}")
 
         self._seed_deleted(pre_deleted)
         self._seed_errors(pre_errors)
 
-        self.cancel_btn = QPushButton("⏹ Cancel")
+        self.cancel_btn = QPushButton(tr("⏹ Cancel"))
         self.cancel_btn.setMinimumHeight(50)
         self.cancel_btn.setStyleSheet(
             f"QPushButton {{background: {t['bg3']}; border: 1px solid {t['header_sep']}; "
@@ -814,10 +815,10 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         if space_warnings:
             QMessageBox.warning(
                 self,
-                "Low Disk Space",
-                "Warning: one or more destinations are running low on space:\n\n"
+                tr("Low Disk Space"),
+                tr("Warning: one or more destinations are running low on space:\n\n")
                 + "\n".join(space_warnings)
-                + "\n\nThe backup will still proceed.",
+                + tr("\n\nThe backup will still proceed."),
             )
 
         self.worker.start()
@@ -860,10 +861,10 @@ class CopyDialog(_StandardKeysMixin, QDialog):
                 f"border-radius:7px;padding:6px 18px;'>{icon}&thinsp;{label}</span>")
 
     def _set_status_running(self) -> None:
-        self._summary.set_status_html(self._status_badge("⏳", f"{self._operation} running…", self._t["cyan"], self._t["accent"]))
+        self._summary.set_status_html(self._status_badge("⏳", tr("{op} running…", op=self._operation), self._t["cyan"], self._t["accent"]))
 
     def _set_status_scanning(self, phase: str, scanned: int) -> None:
-        self._summary.set_status_html(self._status_badge("🔍", f"{phase}… ({scanned:,} found)", self._t["accent2"]))
+        self._summary.set_status_html(self._status_badge("🔍", tr("{phase}… ({n:,} found)", phase=phase, n=scanned), self._t["accent2"]))
 
     def _set_status_finished(self, icon: str, label: str, color: str) -> None: self._summary.set_status_html(self._status_badge(icon, label, color))
 
@@ -973,11 +974,11 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         tstr = f"{elapsed // 60:02d}:{elapsed % 60:02d}"
 
         if cancelled:
-            icon, label, col = "⏹", f"Cancelled after {tstr}", self.c_sk
+            icon, label, col = "⏹", tr("Cancelled after {t}", t=tstr), self.c_sk
         elif self._display_errors > 0:
-            icon, label, col = "⚠", f"Done with errors ✗ — {tstr}", self.c_er
+            icon, label, col = "⚠", tr("Done with errors ✗ — {t}", t=tstr), self.c_er
         else:
-            icon, label, col = "✓", f"Done — {tstr}", self.c_ok
+            icon, label, col = "✓", tr("Done — {t}", t=tstr), self.c_ok
 
         self._set_status_finished(icon, label, col)
         self._summary.update_stats(self._operation, self._done, self._total, self.copied, self.skipped,
@@ -1004,23 +1005,27 @@ class CopyDialog(_StandardKeysMixin, QDialog):
 
         self.cancel_btn.setEnabled(True)
         self.cancel_btn.clicked.connect(self.accept)
-        self.cancel_btn.setText("Close")
+        self.cancel_btn.setText(tr("Close"))
         self._accept_connected = True
 
         if not self.isActiveWindow() and not cancelled:
             disp_err = self._display_errors
             disp_del = self._display_deleted
-            del_part = f", {disp_del} deleted" if disp_del else ""
+            del_part = tr(", {n} deleted", n=disp_del) if disp_del else ""
+            files_word = tr("files") if c != 1 else tr("file")
+            errors_word = tr("errors") if disp_err != 1 else tr("error")
             if disp_err > 0:
                 _notify(
-                    f"{self._operation} completed with errors",
-                    f"{c} file{'s' if c != 1 else ''} copied, {s} skipped{del_part}, {disp_err} error{'s' if disp_err != 1 else ''}",
+                    tr("{op} completed with errors", op=self._operation),
+                    tr("{c} {files} copied, {s} skipped{deleted}, {e} {errors}",
+                       c=c, files=files_word, s=s, deleted=del_part, e=disp_err, errors=errors_word),
                     urgency="critical",
                 )
             else:
                 _notify(
-                    f"{self._operation} successfully completed",
-                    f"{c} file{'s' if c != 1 else ''} copied, {s} skipped{del_part}",
+                    tr("{op} successfully completed", op=self._operation),
+                    tr("{c} {files} copied, {s} skipped{deleted}",
+                       c=c, files=files_word, s=s, deleted=del_part),
                     urgency="normal",
                 )
 
@@ -1030,14 +1035,15 @@ class CopyDialog(_StandardKeysMixin, QDialog):
                 f"  \u2022 {p} ({t})" if t else f"  \u2022 {p}"
                 for p, t in self._not_found_paths
             )
-            msg = (
-                f"{n} configured {'path was' if n == 1 else 'paths were'} not found "
-                f"and skipped:\n\n{paths_text}\n\n"
-                f"Please check these entries in your backup profile."
+            path_word = tr("path was") if n == 1 else tr("paths were")
+            msg = tr(
+                "{n} configured {word} not found and skipped:\n\n{paths}\n\n"
+                "Please check these entries in your backup profile.",
+                n=n, word=path_word, paths=paths_text,
             )
 
             def _show_popup(_msg: str = msg) -> None:
-                QMessageBox.warning(self, "Missing Paths Detected", _msg)
+                QMessageBox.warning(self, tr("Missing Paths Detected"), _msg)
 
             QTimer.singleShot(0, _show_popup)
 
@@ -1047,7 +1053,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
             return
         if self.worker.isRunning():
             self.worker.cancel()
-            self.cancel_btn.setText("⏹ Cancelling…")
+            self.cancel_btn.setText(tr("⏹ Cancelling…"))
             self.cancel_btn.setEnabled(False)
             if a0 is not None:
                 a0.ignore()

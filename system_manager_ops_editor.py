@@ -16,6 +16,7 @@ from themes import (
     apply_tooltip, style_checkbox_muted, style_checkbox_select_all,
     current_theme, font_sz
 )
+from translations import tr
 from ui_utils import sep
 
 from system_manager_helpers import (
@@ -39,7 +40,7 @@ class _OpsEditorMixin(_OpsMixinBase):
 
     def _edit_ops(self):
         bootloader, current_variant, _system_default_variant = _detect_boot_info()
-        bl_label = {"grub": "GRUB", "systemd-boot": "systemd-boot"}.get(bootloader, "unknown bootloader")
+        bl_label = {"grub": "GRUB", "systemd-boot": "systemd-boot"}.get(bootloader, tr("unknown bootloader"))
 
         _saved_default_variant = S.default_kernel or _system_default_variant
 
@@ -65,16 +66,16 @@ class _OpsEditorMixin(_OpsMixinBase):
         op_tips = _raw_to_tips(_raw_op)
         widgets: list[tuple[QCheckBox, str]] = []
 
-        _OP_GROUPS = [("🖥  System", ["copy_dotfiles", "update_mirrors", "update_system", "set_user_shell",
+        _OP_GROUPS = [(tr("🖥  System"), ["copy_dotfiles", "update_mirrors", "update_system", "set_user_shell",
                                      "install_ucode", "install_kernels", "install_kernel_headers",
                                      "set_default_kernel"]),
-                      ("📦  Packages", ["install_basic_packages", "install_aur_helper", "install_aur_packages",
+                      (tr("📦  Packages"), ["install_basic_packages", "install_aur_helper", "install_aur_packages",
                                        "install_specific_packages", "enable_flatpak_integration"]),
-                      ("🔧  Services",
+                      (tr("🔧  Services"),
                        ["enable_printer_support", "enable_ssh_service", "enable_samba_network_filesharing",
                         "enable_bluetooth_service", "enable_atd_service", "enable_cronie_service",
                         "install_snap", "enable_ntp_sync", "enable_firewall"]),
-                      ("🧹  Maintenance",
+                      (tr("🧹  Maintenance"),
                        ["remove_orphaned_packages", "clean_cache", "clean_journal_logs", "enable_fstrim_timer"])]
 
         _KERNEL_VARIANTS = list(ARCH_KERNEL_VARIANTS.keys())
@@ -88,7 +89,7 @@ class _OpsEditorMixin(_OpsMixinBase):
 
         t = current_theme()
 
-        sa = QCheckBox("Check/Uncheck All")
+        sa = QCheckBox(tr("Check/Uncheck All"))
         sa.setTristate(True)
         sa.setStyleSheet(style_checkbox_select_all())
 
@@ -96,12 +97,15 @@ class _OpsEditorMixin(_OpsMixinBase):
         if self._distro.has_aur:
             _eff_helper, _helper_ok = _detect_effective_aur_helper(self._distro)
             _aur_color = t["success"] if _helper_ok else t["warning"]
-            _aur_status = "detected" if _helper_ok else "not detected"
-            _aur_prefix = f"AUR Helper: <b style='color:{_aur_color};'>'{_eff_helper}' {_aur_status}</b>   |   "
+            _aur_status = tr("detected") if _helper_ok else tr("not detected")
+            _aur_prefix = tr("AUR Helper: <b style='color:{color};'>'{helper}' {status}</b>   |   ",
+                              color=_aur_color, helper=_eff_helper, status=_aur_status)
         else:
             _aur_prefix = ""
-        bl_lbl = QLabel(f"{_aur_prefix}Detected bootloader: <b style='color:{bl_color};'>{bl_label}</b>   |   "
-                        f"Running kernel: <b style='color:{t['accent2']};'>{current_variant}</b>")
+        bl_lbl = QLabel(_aur_prefix + tr(
+            "Detected bootloader: <b style='color:{bl_color};'>{bl_label}</b>   |   "
+            "Running kernel: <b style='color:{k_color};'>{current_variant}</b>",
+            bl_color=bl_color, bl_label=bl_label, k_color=t['accent2'], current_variant=current_variant))
         bl_lbl.setTextFormat(Qt.TextFormat.RichText)
         bl_lbl.setStyleSheet(f"font-size:{font_sz(-1)}px; padding:2px 4px;")
         bl_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -167,7 +171,7 @@ class _OpsEditorMixin(_OpsMixinBase):
                         aur_combo.addItems(["yay", "paru"])
                         aur_combo.setCurrentText(_default_combo_helper)
                         aur_combo.setMinimumHeight(30)
-                        aur_combo.setFixedWidth(200)
+                        aur_combo.setMinimumWidth(200)
                         aur_combo.setEnabled(cb.isEnabled() and cb.isChecked())
 
                         grid.addWidget(cb, grid_row, 0)
@@ -196,16 +200,16 @@ class _OpsEditorMixin(_OpsMixinBase):
                                 is_installed = (variant in _installed_kernels)
 
                                 suffixes = []
-                                if is_current: suffixes.append("running")
-                                if variant == _system_default_variant: suffixes.append("default")
-                                if is_installed and not is_current: suffixes.append("installed")
+                                if is_current: suffixes.append(tr("running"))
+                                if variant == _system_default_variant: suffixes.append(tr("default"))
+                                if is_installed and not is_current: suffixes.append(tr("installed"))
 
                                 if is_current:
-                                    tip = "Currently running kernel — already installed, will be skipped."
+                                    tip = tr("Currently running kernel — already installed, will be skipped.")
                                 elif is_installed:
-                                    tip = f"{variant} is already installed — will be skipped."
+                                    tip = tr("{variant} is already installed — will be skipped.", variant=variant)
                                 else:
-                                    tip = f"Include {variant} in the kernel installation."
+                                    tip = tr("Include {variant} in the kernel installation.", variant=variant)
 
                                 icon_sub = "󰔨  " if tip else ""
 
@@ -231,7 +235,7 @@ class _OpsEditorMixin(_OpsMixinBase):
                         grid.addWidget(cb, grid_row, 0)
                         combo = QComboBox()
                         combo.setMinimumHeight(30)
-                        combo.setFixedWidth(200)
+                        combo.setMinimumWidth(200)
                         combo.setEnabled(cb.isEnabled() and cb.isChecked())
                         grid.addWidget(combo, grid_row, 1)
                         _default_kernel_combo = combo
@@ -245,7 +249,7 @@ class _OpsEditorMixin(_OpsMixinBase):
                     if S.user_shell in USER_SHELLS:
                         combo.setCurrentText(S.user_shell)
                     combo.setMinimumHeight(30)
-                    combo.setFixedWidth(200)
+                    combo.setMinimumWidth(200)
                     combo.setEnabled(cb.isEnabled() and cb.isChecked())
                     grid.addWidget(combo, grid_row, 1)
                     _user_shell_combo = combo
@@ -254,10 +258,10 @@ class _OpsEditorMixin(_OpsMixinBase):
                 elif key == "enable_firewall":
                     if not unsupported:
                         grid.addWidget(cb, grid_row, 0)
-                        fw_btn = QPushButton("Firewall Settings")
+                        fw_btn = QPushButton(tr("Firewall Settings"))
                         fw_btn.setEnabled(cb.isEnabled() and cb.isChecked())
                         fw_btn.setMinimumHeight(30)
-                        fw_btn.setFixedWidth(200)
+                        fw_btn.setMinimumWidth(200)
                         cb.stateChanged.connect(
                             lambda state, b=fw_btn: b.setEnabled(state == Qt.CheckState.Checked.value))
                         fw_btn.clicked.connect(lambda: FirewallSettingsDialog(self).exec())
@@ -452,9 +456,9 @@ class _OpsEditorMixin(_OpsMixinBase):
             if _user_shell_combo:
                 S.user_shell = _user_shell_combo.currentText()
             save_profile()
-            QMessageBox.information(self, "Saved", "Operations saved.")
+            QMessageBox.information(self, tr("Saved"), tr("Operations saved."))
             dlg.accept()
 
-        _scroll_dlg_obj, _ = _scroll_dlg(self, "System Manager Operations", body, _save)
+        _scroll_dlg_obj, _ = _scroll_dlg(self, tr("System Manager Operations"), body, _save)
         QTimer.singleShot(0, _sync_sa)
         _scroll_dlg_obj.exec()

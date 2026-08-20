@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
 )
 
 from state import _HOME, _PROFILE_RE
+from translations import tr
 
 if TYPE_CHECKING:
     _MixinBase = QWidget
@@ -47,9 +48,11 @@ def build_dialog_shell(
     *,
     header_extra: list[QWidget] | None = None,
     footer_extra: list[QWidget] | None = None,
-    close_text: str = "\u2715 Close",
+    close_text: str | None = None,
 ) -> tuple[QVBoxLayout, QVBoxLayout, QPushButton]:
 
+    if close_text is None:
+        close_text = f"\u2715 {tr('Close')}"
     t = theme
     lay = QVBoxLayout(dialog)
     lay.setContentsMargins(0, 0, 0, 0)
@@ -150,7 +153,11 @@ def checkbox_row_frame_style(bg: str, radius: int = 4) -> str:
     return f"QFrame{{background-color:{bg};border-radius:{radius}px;}}"
 
 
-def ok_cancel_buttons(dialog: QDialog, ok_fn, ok_label: str = "Save", cancel_label: str = "Cancel", cancel_fn=None) -> QDialogButtonBox:
+def ok_cancel_buttons(dialog: QDialog, ok_fn, ok_label: str | None = None, cancel_label: str | None = None, cancel_fn=None) -> QDialogButtonBox:
+    if ok_label is None:
+        ok_label = tr("Save")
+    if cancel_label is None:
+        cancel_label = tr("Cancel")
     bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel) # type: ignore
     ok_btn     = bb.button(QDialogButtonBox.StandardButton.Ok)
     cancel_btn = bb.button(QDialogButtonBox.StandardButton.Cancel)
@@ -173,8 +180,8 @@ def btn_row(buttons: list[tuple[str, object]]) -> QHBoxLayout:
 
 
 def do_browse(parent: QWidget, editor, mode: str, home: Path = _HOME) -> None:
-    path = (QFileDialog.getExistingDirectory(parent, "Select directory", str(home))
-            if mode == "dir" else QFileDialog.getOpenFileName(parent, "Select file", str(home))[0])
+    path = (QFileDialog.getExistingDirectory(parent, tr("Select directory"), str(home))
+            if mode == "dir" else QFileDialog.getOpenFileName(parent, tr("Select file"), str(home))[0])
     if not path:
         return
     if hasattr(editor, "setPlainText"):
@@ -192,7 +199,7 @@ def browse_field(parent: QWidget, editor: QLineEdit | QPlainTextEdit, btn_height
     hlay.setContentsMargins(0, 0, 0, 0)
     hlay.setSpacing(6)
     hlay.addWidget(editor)
-    for lbl, mode in [("📄 File", "file"), ("📁 Directory", "dir")]:
+    for lbl, mode in [(f"📄 {tr('File')}", "file"), (f"📁 {tr('Directory')}", "dir")]:
         b = QPushButton(lbl)
         b.setMinimumHeight(btn_height)
         b.setMinimumWidth(70)
@@ -223,16 +230,16 @@ def ask_text(parent, title: str, label: str, default: str = "", min_width: int =
 
 def ask_profile_name(title: str, default: str, parent=None) -> str | None:
     while True:
-        name, ok = ask_text(parent, title, "Profile name:", default=default)
+        name, ok = ask_text(parent, title, tr("Profile name:"), default=default)
         if not ok:
             return None
         name = name.strip()
         if not name:
-            QMessageBox.warning(parent, "Invalid Name", "Name must not be empty.")
+            QMessageBox.warning(parent, tr("Invalid Name"), tr("Name must not be empty."))
             continue
         if not _PROFILE_RE.match(name):
-            QMessageBox.warning(parent, "Invalid Name",
-                                "Only letters, digits, spaces, hyphens, underscores and dots are allowed.")
+            QMessageBox.warning(parent, tr("Invalid Name"),
+                                tr("Only letters, digits, spaces, hyphens, underscores and dots are allowed."))
             continue
         return name
 

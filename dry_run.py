@@ -16,6 +16,7 @@ from copy_worker import _is_up_to_date_local, _is_symlink_up_to_date
 from drive_utils import is_smb, is_ssh
 from state import S
 from themes import current_theme, font_sz
+from translations import tr
 from ui_utils import color_style, _StandardKeysMixin, size_to_screen
 
 __all__ = ["DryRunDialog", "DryRunModeDialog", "launch_dry_run"]
@@ -87,8 +88,9 @@ class _DryRunWorker(QThread):
         if len(sources) != len(destinations):
             errors.append((
                 title,
-                f"Source/destination count mismatch ({len(sources)} source(s) vs "
-                f"{len(destinations)} destination(s)) — extra entries were not checked",
+                tr("Source/destination count mismatch ({n_src} source(s) vs "
+                   "{n_dst} destination(s)) — extra entries were not checked",
+                   n_src=len(sources), n_dst=len(destinations)),
             ))
 
         for src_root, dst_root in zip(sources, destinations):
@@ -101,8 +103,8 @@ class _DryRunWorker(QThread):
                 remote = src_root if (is_smb(src_root) or is_ssh(src_root)) else dst_root
                 errors.append((
                     remote,
-                    "Remote (SMB/SSH) path — not simulated in Dry Run (preview is "
-                    "local-filesystem only; this is not a failure).",
+                    tr("Remote (SMB/SSH) path — not simulated in Dry Run (preview is "
+                       "local-filesystem only; this is not a failure)."),
                 ))
                 continue
 
@@ -110,7 +112,7 @@ class _DryRunWorker(QThread):
             dst_p = Path(dst_root).expanduser()
 
             if not src_p.exists():
-                errors.append((src_root, "Source path does not exist"))
+                errors.append((src_root, tr("Source path does not exist")))
                 continue
 
             src_abs = str(src_p.resolve())
@@ -232,7 +234,7 @@ class _SearchableList(QWidget):
         lay.setSpacing(4)
 
         self._search = QLineEdit()
-        self._search.setPlaceholderText("🔍  Filter…")
+        self._search.setPlaceholderText(tr("🔍  Filter…"))
         self._search.setClearButtonEnabled(True)
         self._search.setStyleSheet(
             f"QLineEdit{{background:{t['bg2']};color:{t['text']};"
@@ -255,7 +257,7 @@ class _SearchableList(QWidget):
         lay.addWidget(self._list, 1)
 
         count_style = f"color:{t['text_dim']};font-size:{font_sz(-2)}px;"
-        self._count_lbl = QLabel(f"{len(items):,} items")
+        self._count_lbl = QLabel(tr("{n:,} items", n=len(items)))
         self._count_lbl.setStyleSheet(count_style)
         lay.addWidget(self._count_lbl)
 
@@ -268,14 +270,14 @@ class _SearchableList(QWidget):
         self._list.addItems(hits)
         n_total = len(self._all_items)
         n_shown = len(hits)
-        suffix = f" (showing {n_shown:,} of {n_total:,})" if needle else ""
-        self._count_lbl.setText(f"{n_total:,} items{suffix}")
+        suffix = tr(" (showing {n_shown:,} of {n_total:,})", n_shown=n_shown, n_total=n_total) if needle else ""
+        self._count_lbl.setText(tr("{n_total:,} items{suffix}", n_total=n_total, suffix=suffix))
 
     def update_items(self, items: list[str]) -> None:
         self._all_items = items
         self._list.clear()
         self._list.addItems(items)
-        self._count_lbl.setText(f"{len(items):,} items")
+        self._count_lbl.setText(tr("{n:,} items", n=len(items)))
         current_filter = self._search.text()
         if current_filter:
             self._filter(current_filter)
@@ -305,9 +307,9 @@ class _EntryTabWidget(_ChipStackMixin, QWidget):
         self._chips: list[QPushButton] = []
         self._chip_colors: list[str]   = []
         chip_defs = [
-            (f"📋  To copy  {len(to_copy):,}",    t["info"]    if to_copy else t["text_dim"]),
-            (f"✓  Up-to-date  {len(to_skip):,}",  t["success"]),
-            (f"⚠  Errors  {n_err:,}",              t["error"]   if n_err   else t["text_dim"]),
+            (tr("📋  To copy  {n:,}", n=len(to_copy)),    t["info"]    if to_copy else t["text_dim"]),
+            (tr("✓  Up-to-date  {n:,}", n=len(to_skip)),  t["success"]),
+            (tr("⚠  Errors  {n:,}", n=n_err),              t["error"]   if n_err   else t["text_dim"]),
         ]
         for i, (label, color) in enumerate(chip_defs):
             btn = QPushButton(label)
@@ -324,14 +326,15 @@ class _EntryTabWidget(_ChipStackMixin, QWidget):
 
         chip_row.addStretch()
         if n_new:
-            chip_row.addWidget(self._badge(f"new: {n_new:,}", t["accent"]))
+            chip_row.addWidget(self._badge(tr("new: {n:,}", n=n_new), t["accent"]))
         if n_mod:
-            chip_row.addWidget(self._badge(f"modified: {n_mod:,}", t["warning"]))
+            chip_row.addWidget(self._badge(tr("modified: {n:,}", n=n_mod), t["warning"]))
         lay.addLayout(chip_row)
         lay.addWidget(_hline(t["header_sep"]))
 
         self._stack = QStackedWidget()
-        copy_items = [f"[{reason}]  {rel}" for rel, reason in to_copy]
+        _reason_label = {"new": tr("new"), "modified": tr("modified")}
+        copy_items = [f"[{_reason_label.get(reason, str(reason))}]  {rel}" for rel, reason in to_copy]
         self._stack.addWidget(_SearchableList(copy_items, t["text"]))
         self._stack.addWidget(_SearchableList(to_skip,    t["text_dim"]))
         err_items = [f"{rel}  →  {msg}" for rel, msg in errors]
@@ -360,7 +363,7 @@ class _OverviewTab(QWidget):
         lay.setSpacing(6)
 
         self._model = QStandardItemModel(0, 4)
-        self._model.setHorizontalHeaderLabels(["Entry", "To copy", "Up-to-date", "Errors"])
+        self._model.setHorizontalHeaderLabels([tr("Entry"), tr("To copy"), tr("Up-to-date"), tr("Errors")])
 
         self._proxy = QSortFilterProxyModel()
         self._proxy.setSourceModel(self._model)
@@ -368,7 +371,7 @@ class _OverviewTab(QWidget):
         self._proxy.setFilterKeyColumn(0)
 
         self._search = QLineEdit()
-        self._search.setPlaceholderText("🔍  Filter entries…")
+        self._search.setPlaceholderText(tr("🔍  Filter entries…"))
         self._search.setClearButtonEnabled(True)
         self._search.setStyleSheet(
             f"QLineEdit{{background:{t['bg2']};color:{t['text']};"
@@ -446,7 +449,7 @@ class _OverviewTab(QWidget):
         self._update_count()
 
     def _update_count(self) -> None:
-        self._count_lbl.setText(f"{self._model.rowCount():,} entries total")
+        self._count_lbl.setText(tr("{n:,} entries total", n=self._model.rowCount()))
 
     def clear(self) -> None:
         self._model.removeRows(0, self._model.rowCount())
@@ -467,9 +470,9 @@ class _GlobalViewTab(_ChipStackMixin, QWidget):
         self._chips: list[QPushButton] = []
         self._chip_colors: list[str]   = []
         chip_defs = [
-            ("📋  To copy  0",    t["info"]),
-            ("✓  Up-to-date  0",  t["success"]),
-            ("⚠  Errors  0",      t["text_dim"]),
+            (tr("📋  To copy  {n}", n=0),    t["info"]),
+            (tr("✓  Up-to-date  {n}", n=0),  t["success"]),
+            (tr("⚠  Errors  {n}", n=0),      t["text_dim"]),
         ]
         for i, (label, color) in enumerate(chip_defs):
             btn = QPushButton(label)
@@ -522,9 +525,9 @@ class _GlobalViewTab(_ChipStackMixin, QWidget):
         self._err_list.update_items(all_err)
 
         chip_defs = [
-            (f"📋  To copy  {n_copy:,}",    t["info"]    if n_copy else t["text_dim"]),
-            (f"✓  Up-to-date  {n_skip:,}",  t["success"]),
-            (f"⚠  Errors  {n_err:,}",        t["error"]   if n_err  else t["text_dim"]),
+            (tr("📋  To copy  {n:,}", n=n_copy),    t["info"]    if n_copy else t["text_dim"]),
+            (tr("✓  Up-to-date  {n:,}", n=n_skip),  t["success"]),
+            (tr("⚠  Errors  {n:,}", n=n_err),        t["error"]   if n_err  else t["text_dim"]),
         ]
         for i, (label, color) in enumerate(chip_defs):
             self._chips[i].setText(label)
@@ -545,8 +548,8 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
     def __init__(self, parent=None, mode: str = "backup") -> None:
         super().__init__(parent)
         self._mode = mode
-        title_suffix = "Backup Preview" if mode == "backup" else "Restore Preview"
-        self.setWindowTitle(f"🔎  Dry Run — {title_suffix}")
+        title_suffix = tr("Backup Preview") if mode == "backup" else tr("Restore Preview")
+        self.setWindowTitle(tr("🔎  Dry Run — {suffix}", suffix=title_suffix))
         size_to_screen(self, 1600, 900)
 
         self._worker: _DryRunWorker | None = None
@@ -568,20 +571,20 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
 
         if self._mode == "backup":
             mode_icon  = "💾"
-            mode_label = "Backup"
+            mode_label = tr("Backup")
             mode_color = t["accent"]
-            hdr_text   = "🔎  Backup Dry Run — Preview only, nothing will be changed"
-            info_text  = (
+            hdr_text   = tr("🔎  Backup Dry Run — Preview only, nothing will be changed")
+            info_text  = tr(
                 "Scans your backup source paths and compares them with the destinations. "
                 "Files marked <b>new</b> don't exist at the destination yet. "
                 "Files marked <b>modified</b> are newer or differ in size."
             )
         else:
             mode_icon  = "🔁"
-            mode_label = "Restore"
+            mode_label = tr("Restore")
             mode_color = t.get("warning", t["info"])
-            hdr_text   = "🔁  Restore Dry Run — Preview only, nothing will be changed"
-            info_text  = (
+            hdr_text   = tr("🔁  Restore Dry Run — Preview only, nothing will be changed")
+            info_text  = tr(
                 "Scans your backup destinations and compares them with your local source paths. "
                 "Files marked <b>new</b> would be newly created locally on restore. "
                 "Files marked <b>modified</b> would overwrite a differing local file."
@@ -596,7 +599,7 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         )
         hdr_row.addWidget(hdr, 1)
 
-        mode_pill = QLabel(f"{mode_icon}  {mode_label} Mode")
+        mode_pill = QLabel(tr("{icon}  {label} Mode", icon=mode_icon, label=mode_label))
         mode_pill.setStyleSheet(
             f"color:{mode_color};font-size:{font_sz(-1)}px;font-weight:bold;"
             f"background:{mode_color}22;border:1px solid {mode_color}55;"
@@ -614,7 +617,7 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         lay.addWidget(_hline(t["header_sep"]))
 
         prog_row = QHBoxLayout()
-        self._prog_label = QLabel("Press  ▶ Start Scan  to begin…")
+        self._prog_label = QLabel(tr("Press  ▶ Start Scan  to begin…"))
         self._prog_label.setStyleSheet(color_style(t['text_dim'], font_sz(-1)))
         self._prog_bar = QProgressBar()
         self._prog_bar.setRange(0, 100)
@@ -632,9 +635,9 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
 
         summ_row = QHBoxLayout()
         summ_row.setSpacing(8)
-        self._lbl_copy  = self._stat_btn("—  to copy",     t["info"],    0)
-        self._lbl_skip  = self._stat_btn("—  up-to-date",  t["success"], 1)
-        self._lbl_error = self._stat_btn("—  errors",       t["error"],   2)
+        self._lbl_copy  = self._stat_btn(tr("—  to copy"),     t["info"],    0)
+        self._lbl_skip  = self._stat_btn(tr("—  up-to-date"),  t["success"], 1)
+        self._lbl_error = self._stat_btn(tr("—  errors"),       t["error"],   2)
         for w in (self._lbl_copy, self._lbl_skip, self._lbl_error):
             summ_row.addWidget(w)
         summ_row.addStretch()
@@ -665,29 +668,29 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         lay.addWidget(self._tabs, 1)
 
         self._overview = _OverviewTab()
-        self._tabs.addTab(self._overview, "📊  Overview")
+        self._tabs.addTab(self._overview, tr("📊  Overview"))
 
         self._global_view = _GlobalViewTab()
-        self._tabs.addTab(self._global_view, "🌐  All Files")
+        self._tabs.addTab(self._global_view, tr("🌐  All Files"))
 
         btn_row = QHBoxLayout()
-        self._start_btn = QPushButton("▶  Start Scan")
+        self._start_btn = QPushButton(tr("▶  Start Scan"))
         self._start_btn.setMinimumHeight(34)
         self._start_btn.clicked.connect(self._start)
-        self._cancel_btn = QPushButton("⏹  Cancel")
+        self._cancel_btn = QPushButton(tr("⏹  Cancel"))
         self._cancel_btn.setMinimumHeight(34)
         self._cancel_btn.setEnabled(False)
         self._cancel_btn.clicked.connect(self._cancel)
 
         self._switch_btn = QPushButton(
-            "🔁  Switch to Restore Mode" if self._mode == "backup" else "💾  Switch to Backup Mode"
+            tr("🔁  Switch to Restore Mode") if self._mode == "backup" else tr("💾  Switch to Backup Mode")
         )
         self._switch_btn.setMinimumHeight(34)
-        self._switch_btn.setToolTip("Close this window and open Dry Run in the other mode")
+        self._switch_btn.setToolTip(tr("Close this window and open Dry Run in the other mode"))
         self._switch_btn.clicked.connect(self._switch_mode)
         switch_btn = self._switch_btn
 
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(tr("Close"))
         close_btn.setMinimumHeight(34)
         close_btn.clicked.connect(self.accept)
         btn_row.addWidget(self._start_btn)
@@ -746,8 +749,8 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
                     tasks.append((src, dst, e.get("title", "?"), details.get("exclude_paths", {})))
 
         if not tasks:
-            label = "restore" if is_restore else "backup"
-            QMessageBox.information(self, "Dry Run", f"No {label} entries configured.")
+            label = tr("restore") if is_restore else tr("backup")
+            QMessageBox.information(self, tr("Dry Run"), tr("No {label} entries configured.", label=label))
             return
 
         from drive_utils import check_drives_to_mount, mount_required_drives
@@ -771,9 +774,9 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         self._start_btn.setEnabled(False)
         self._cancel_btn.setEnabled(True)
         self._switch_btn.setEnabled(False)
-        verb = "Scanning (restore direction)" if is_restore else "Scanning"
-        self._prog_label.setText(f"{verb} 0 / {len(tasks)} …")
-        self._lbl_copy.setText("Scanning…")
+        verb = tr("Scanning (restore direction)") if is_restore else tr("Scanning")
+        self._prog_label.setText(tr("{verb} 0 / {total} …", verb=verb, total=len(tasks)))
+        self._lbl_copy.setText(tr("Scanning…"))
         self._lbl_skip.setText("")
         self._lbl_error.setText("")
 
@@ -788,13 +791,13 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
             self._worker.cancel()
         self._cancel_btn.setEnabled(False)
         self._switch_btn.setEnabled(True)
-        self._prog_label.setText("Cancelling…")
+        self._prog_label.setText(tr("Cancelling…"))
 
     def _on_progress(self, done: int, total: int) -> None:
         self._prog_bar.setRange(0, max(total, 1))
         self._prog_bar.setValue(done)
-        verb = "Scanning (restore direction)" if self._mode == "restore" else "Scanning"
-        self._prog_label.setText(f"{verb} {done} / {total} …")
+        verb = tr("Scanning (restore direction)") if self._mode == "restore" else tr("Scanning")
+        self._prog_label.setText(tr("{verb} {done} / {total} …", verb=verb, done=done, total=total))
 
     def _on_entry_done(self, result: dict) -> None:
         self._results.append(result)
@@ -803,7 +806,7 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         self._update_totals()
 
     def _on_finished(self) -> None:
-        self._prog_label.setText(f"Scan complete — {len(self._results):,} entries checked.")
+        self._prog_label.setText(tr("Scan complete — {n:,} entries checked.", n=len(self._results)))
         self._prog_bar.setValue(self._prog_bar.maximum())
         self._start_btn.setEnabled(True)
         self._cancel_btn.setEnabled(False)
@@ -831,7 +834,8 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         else:
             self._tabs.tabBar().setTabTextColor(idx, QColor(t["success"])) # type: ignore[attr-defined]
 
-        tip = f"{n_copy:,} to copy  |  {n_skip:,} up-to-date  |  {n_err:,} errors"
+        tip = tr("{n_copy:,} to copy  |  {n_skip:,} up-to-date  |  {n_err:,} errors",
+                 n_copy=n_copy, n_skip=n_skip, n_err=n_err)
         self._tabs.tabBar().setTabToolTip(idx, tip)
 
     def _update_totals(self) -> None:
@@ -848,9 +852,9 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
                 f"QPushButton:hover{{background:{color}18;border-radius:4px;}}"
             )
 
-        _upd(self._lbl_copy,  f"{total_copy:,}  to copy",     t["info"])
-        _upd(self._lbl_skip,  f"{total_skip:,}  up-to-date",  t["success"])
-        _upd(self._lbl_error, f"{total_error:,}  errors",      t["error"])
+        _upd(self._lbl_copy,  tr("{n:,}  to copy", n=total_copy),     t["info"])
+        _upd(self._lbl_skip,  tr("{n:,}  up-to-date", n=total_skip),  t["success"])
+        _upd(self._lbl_error, tr("{n:,}  errors", n=total_error),      t["error"])
 
         self._global_view.update_data(self._results)
 
@@ -883,6 +887,7 @@ class _ModeCard(QWidget):
 
         title_lbl = QLabel(title)
         title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_lbl.setWordWrap(True)
         title_lbl.setStyleSheet(
             f"font-size:{font_sz(2)}px;font-weight:bold;color:{color};"
             f"background:transparent;border:none;"
@@ -914,10 +919,13 @@ class DryRunModeDialog(_StandardKeysMixin, QDialog):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("🔎  Dry Run — Select Mode")
-        self.setFixedSize(850, 550)
+        self.setWindowTitle(tr("🔎  Dry Run — Select Mode"))
+        self.setMinimumSize(850, 550)
         self._chosen: str | None = None
         self._build()
+        self.adjustSize()
+        hint = self.sizeHint()
+        self.resize(max(850, hint.width()), max(550, hint.height()))
 
     def _build(self) -> None:
         t = current_theme()
@@ -925,14 +933,14 @@ class DryRunModeDialog(_StandardKeysMixin, QDialog):
         lay.setContentsMargins(28, 24, 28, 20)
         lay.setSpacing(16)
 
-        hdr = QLabel("🔎  Dry Run")
+        hdr = QLabel(tr("🔎  Dry Run"))
         hdr.setStyleSheet(
             f"font-size:{font_sz(4)}px;font-weight:bold;color:{t['accent']};"
         )
         hdr.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(hdr)
 
-        sub = QLabel("Select the direction to simulate.\nNothing will be written to disk.")
+        sub = QLabel(tr("Select the direction to simulate.\nNothing will be written to disk."))
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
         sub.setWordWrap(True)
         sub.setStyleSheet(color_style(t['text_dim'], font_sz(0)))
@@ -944,15 +952,15 @@ class DryRunModeDialog(_StandardKeysMixin, QDialog):
 
         self._backup_card = _ModeCard(
             "💾",
-            "Backup Dry Run",
-            "Preview what would be copied\nfrom your sources to the backup.",
+            tr("Backup Dry Run"),
+            tr("Preview what would be copied\nfrom your sources to the backup."),
             t["accent"],
             self,
         )
         self._restore_card = _ModeCard(
             "🔁",
-            "Restore Dry Run",
-            "Preview what would be restored\nfrom the backup to your local paths.",
+            tr("Restore Dry Run"),
+            tr("Preview what would be restored\nfrom the backup to your local paths."),
             t.get("warning", t["info"]),
             self,
         )
@@ -962,7 +970,7 @@ class DryRunModeDialog(_StandardKeysMixin, QDialog):
 
         cancel_row = QHBoxLayout()
         cancel_row.addStretch()
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = QPushButton(tr("Cancel"))
         cancel_btn.setMinimumHeight(30)
         cancel_btn.clicked.connect(self.reject)
         cancel_row.addWidget(cancel_btn)

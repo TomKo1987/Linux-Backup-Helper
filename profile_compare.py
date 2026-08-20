@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
 
 from state import active_pkg_names, list_profiles, snapshot_profile
 from themes import current_theme, font_sz
+from translations import tr
 from ui_utils import color_style, _StandardKeysMixin, hdr_label, sep
 
 __all__ = ["ProfileCompareDialog"]
@@ -21,7 +22,7 @@ def _dotfile_label(d: dict) -> str:
     dst = d.get("destination", "")
     src = src[0] if isinstance(src, list) and src else (src if isinstance(src, str) else "")
     dst = dst[0] if isinstance(dst, list) and dst else (dst if isinstance(dst, str) else "")
-    return f"{src}  →  {dst}" if (src or dst) else "(unnamed dotfile)"
+    return f"{src}  →  {dst}" if (src or dst) else tr("(unnamed dotfile)")
 
 def _active_dotfile_labels(fields: dict) -> set[str]:
     out = set()
@@ -50,10 +51,10 @@ class _DiffListWidget(QWidget):
         row = QHBoxLayout()
         row.setSpacing(8)
 
-        row.addWidget(self._column(f"⬅  Only in '{name_a}'", only_a, t["info"]))
-        row.addWidget(self._column(f"➡  Only in '{name_b}'", only_b, t["accent"]))
+        row.addWidget(self._column(tr("⬅  Only in '{n}'", n=name_a), only_a, t["info"]))
+        row.addWidget(self._column(tr("➡  Only in '{n}'", n=name_b), only_b, t["accent"]))
         if in_both is not None:
-            row.addWidget(self._column("✓  In both", in_both, t["success"]))
+            row.addWidget(self._column(tr("✓  In both"), in_both, t["success"]))
 
         lay.addLayout(row)
 
@@ -78,7 +79,7 @@ class _DiffListWidget(QWidget):
         if items:
             lw.addItems(sorted(items))
         else:
-            placeholder = QListWidgetItem("— none —")
+            placeholder = QListWidgetItem(tr("— none —"))
             placeholder.setForeground(QColor(t["text_dim"]))
             placeholder.setFlags(Qt.ItemFlag.NoItemFlags)
             lw.addItem(placeholder)
@@ -95,13 +96,13 @@ def _simple_value_diff(name_a: str, name_b: str, label_a: str, label_b: str,
     lay.setSpacing(6)
 
     if same:
-        lbl = QLabel(f"✓  Identical in both profiles:  {label_a}")
+        lbl = QLabel(tr("✓  Identical in both profiles:  {l}", l=label_a))
         lbl.setStyleSheet(color_style(t['success'], font_sz(0)))
         lay.addWidget(lbl)
     else:
-        row_a = QLabel(f"'{name_a}':  {label_a or '(none)'}")
+        row_a = QLabel(tr("'{n}':  {l}", n=name_a, l=label_a or tr("(none)")))
         row_a.setStyleSheet(color_style(t['info'], font_sz(0)))
-        row_b = QLabel(f"'{name_b}':  {label_b or '(none)'}")
+        row_b = QLabel(tr("'{n}':  {l}", n=name_b, l=label_b or tr("(none)")))
         row_b.setStyleSheet(color_style(t['accent'], font_sz(0)))
         lay.addWidget(row_a)
         lay.addWidget(row_b)
@@ -114,7 +115,7 @@ class ProfileCompareDialog(_StandardKeysMixin, QDialog):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("⚖  Profile Compare")
+        self.setWindowTitle(tr("⚖  Profile Compare"))
         self.setMinimumSize(900, 650)
         self._build()
 
@@ -124,9 +125,9 @@ class ProfileCompareDialog(_StandardKeysMixin, QDialog):
         lay.setContentsMargins(16, 14, 16, 14)
         lay.setSpacing(10)
 
-        lay.addWidget(hdr_label("⚖  Profile Compare"))
+        lay.addWidget(hdr_label(tr("⚖  Profile Compare")))
 
-        info = QLabel("Compare packages, dotfiles, backup entries and system settings between two profiles.")
+        info = QLabel(tr("Compare packages, dotfiles, backup entries and system settings between two profiles."))
         info.setStyleSheet(color_style(t['text_dim'], font_sz(-1)))
         lay.addWidget(info)
         lay.addWidget(sep())
@@ -136,19 +137,19 @@ class ProfileCompareDialog(_StandardKeysMixin, QDialog):
 
         profiles = list_profiles()
 
-        pick_row.addWidget(QLabel("Profile A:"))
+        pick_row.addWidget(QLabel(tr("Profile A:")))
         self._combo_a = QComboBox()
         self._combo_a.addItems(profiles)
         pick_row.addWidget(self._combo_a, 1)
 
-        pick_row.addWidget(QLabel("Profile B:"))
+        pick_row.addWidget(QLabel(tr("Profile B:")))
         self._combo_b = QComboBox()
         self._combo_b.addItems(profiles)
         if len(profiles) > 1:
             self._combo_b.setCurrentIndex(1)
         pick_row.addWidget(self._combo_b, 1)
 
-        compare_btn = QPushButton("⚖  Compare")
+        compare_btn = QPushButton(tr("⚖  Compare"))
         compare_btn.clicked.connect(self._compare)
         pick_row.addWidget(compare_btn)
 
@@ -156,15 +157,15 @@ class ProfileCompareDialog(_StandardKeysMixin, QDialog):
         lay.addWidget(sep())
 
         self._status_lbl = QLabel(
-            "Select two profiles and press Compare." if profiles
-            else "No saved profiles found.")
+            tr("Select two profiles and press Compare.") if profiles
+            else tr("No saved profiles found."))
         self._status_lbl.setStyleSheet(color_style(t['text_dim'], font_sz(-1)))
         lay.addWidget(self._status_lbl)
 
         self._tabs = QTabWidget()
         lay.addWidget(self._tabs, 1)
 
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(tr("Close"))
         close_btn.setMinimumHeight(32)
         close_btn.clicked.connect(self.accept)
         lay.addWidget(close_btn)
@@ -177,10 +178,10 @@ class ProfileCompareDialog(_StandardKeysMixin, QDialog):
         name_b = self._combo_b.currentText()
 
         if not name_a or not name_b:
-            QMessageBox.information(self, "Profile Compare", "Please select two profiles.")
+            QMessageBox.information(self, tr("Profile Compare"), tr("Please select two profiles."))
             return
         if name_a == name_b:
-            QMessageBox.information(self, "Profile Compare", "Please select two different profiles.")
+            QMessageBox.information(self, tr("Profile Compare"), tr("Please select two different profiles."))
             return
 
         fields_a = snapshot_profile(name_a)
@@ -188,16 +189,16 @@ class ProfileCompareDialog(_StandardKeysMixin, QDialog):
 
         if fields_a is None or fields_b is None:
             failed = name_a if fields_a is None else name_b
-            QMessageBox.critical(self, "Profile Compare", f"Could not read profile '{failed}'.")
+            QMessageBox.critical(self, tr("Profile Compare"), tr("Could not read profile '{p}'.", p=failed))
             return
 
         self._tabs.clear()
-        self._tabs.addTab(self._build_packages_tab(name_a, name_b, fields_a, fields_b), "📦  Packages")
-        self._tabs.addTab(self._build_dotfiles_tab(name_a, name_b, fields_a, fields_b), "🗂  Dotfiles")
-        self._tabs.addTab(self._build_entries_tab(name_a, name_b, fields_a, fields_b), "💾  Backup Entries")
-        self._tabs.addTab(self._build_settings_tab(name_a, name_b, fields_a, fields_b), "⚙  Settings")
+        self._tabs.addTab(self._build_packages_tab(name_a, name_b, fields_a, fields_b), tr("📦  Packages"))
+        self._tabs.addTab(self._build_dotfiles_tab(name_a, name_b, fields_a, fields_b), tr("🗂  Dotfiles"))
+        self._tabs.addTab(self._build_entries_tab(name_a, name_b, fields_a, fields_b), tr("💾  Backup Entries"))
+        self._tabs.addTab(self._build_settings_tab(name_a, name_b, fields_a, fields_b), tr("⚙  Settings"))
 
-        self._status_lbl.setText(f"Comparing '{name_a}'  vs  '{name_b}'")
+        self._status_lbl.setText(tr("Comparing '{a}'  vs  '{b}'", a=name_a, b=name_b))
 
     @staticmethod
     def _build_packages_tab(name_a: str, name_b: str, fa: dict, fb: dict) -> QWidget:
@@ -213,21 +214,21 @@ class ProfileCompareDialog(_StandardKeysMixin, QDialog):
         sub.addTab(_DiffListWidget(name_a, name_b,
                                     sorted(basic_a - basic_b), sorted(basic_b - basic_a),
                                     sorted(basic_a & basic_b)),
-                   f"Official ({len(basic_a)} / {len(basic_b)})")
+                   tr("Official ({a} / {b})", a=len(basic_a), b=len(basic_b)))
 
         aur_a = _pkg_set(fa, "aur_packages")
         aur_b = _pkg_set(fb, "aur_packages")
         sub.addTab(_DiffListWidget(name_a, name_b,
                                     sorted(aur_a - aur_b), sorted(aur_b - aur_a),
                                     sorted(aur_a & aur_b)),
-                   f"AUR ({len(aur_a)} / {len(aur_b)})")
+                   tr("AUR ({a} / {b})", a=len(aur_a), b=len(aur_b)))
 
         spec_a = _pkg_set(fa, "specific_packages", is_specific=True)
         spec_b = _pkg_set(fb, "specific_packages", is_specific=True)
         sub.addTab(_DiffListWidget(name_a, name_b,
                                     sorted(spec_a - spec_b), sorted(spec_b - spec_a),
                                     sorted(spec_a & spec_b)),
-                   f"Session-specific ({len(spec_a)} / {len(spec_b)})")
+                   tr("Session-specific ({a} / {b})", a=len(spec_a), b=len(spec_b)))
 
         lay.addWidget(sub, 1)
         return w
@@ -254,7 +255,7 @@ class ProfileCompareDialog(_StandardKeysMixin, QDialog):
         for n in shared:
             ea, eb = labels_a[n], labels_b[n]
             if (ea.get("source"), ea.get("destination")) != (eb.get("source"), eb.get("destination")):
-                changed.append(f"{n}   [paths differ]")
+                changed.append(tr("{n}   [paths differ]", n=n))
             else:
                 identical.append(n)
 
@@ -265,8 +266,13 @@ class ProfileCompareDialog(_StandardKeysMixin, QDialog):
         lay.addWidget(_DiffListWidget(name_a, name_b, sorted(only_a), sorted(only_b), sorted(identical + changed)))
 
         if changed:
-            note = QLabel(f"⚠  {len(changed)} entr{'y' if len(changed) == 1 else 'ies'} exist in both "
-                          f"profiles but have different source/destination paths (marked above).")
+            if len(changed) == 1:
+                note_text = tr("⚠  {n} entry exists in both "
+                               "profiles but has different source/destination paths (marked above).", n=len(changed))
+            else:
+                note_text = tr("⚠  {n} entries exist in both "
+                               "profiles but have different source/destination paths (marked above).", n=len(changed))
+            note = QLabel(note_text)
             t = current_theme()
             note.setStyleSheet(color_style(t['warning'], font_sz(-1)))
             note.setWordWrap(True)
@@ -288,7 +294,7 @@ class ProfileCompareDialog(_StandardKeysMixin, QDialog):
         sub.addTab(_DiffListWidget(name_a, name_b,
                                     sorted(ops_a - ops_b), sorted(ops_b - ops_a),
                                     sorted(ops_a & ops_b)),
-                   f"System Manager Ops ({len(ops_a)} / {len(ops_b)})")
+                   tr("System Manager Ops ({a} / {b})", a=len(ops_a), b=len(ops_b)))
 
         mounts_a = {m.get("mount_path", "") for m in (fa.get("mount_options", []) or []) if isinstance(m, dict)}
         mounts_b = {m.get("mount_path", "") for m in (fb.get("mount_options", []) or []) if isinstance(m, dict)}
@@ -297,18 +303,18 @@ class ProfileCompareDialog(_StandardKeysMixin, QDialog):
         sub.addTab(_DiffListWidget(name_a, name_b,
                                     sorted(mounts_a - mounts_b), sorted(mounts_b - mounts_a),
                                     sorted(mounts_a & mounts_b)),
-                   f"Mount Paths ({len(mounts_a)} / {len(mounts_b)})")
+                   tr("Mount Paths ({a} / {b})", a=len(mounts_a), b=len(mounts_b)))
 
         shell_same = fa.get("user_shell") == fb.get("user_shell")
         sub.addTab(_simple_value_diff(name_a, name_b, fa.get("user_shell", ""), fb.get("user_shell", ""), shell_same),
-                   "Shell")
+                   tr("Shell"))
 
         kernels_a = set(fa.get("kernels_to_install", []) or [])
         kernels_b = set(fb.get("kernels_to_install", []) or [])
         sub.addTab(_DiffListWidget(name_a, name_b,
                                     sorted(kernels_a - kernels_b), sorted(kernels_b - kernels_a),
                                     sorted(kernels_a & kernels_b)),
-                   f"Kernels ({len(kernels_a)} / {len(kernels_b)})")
+                   tr("Kernels ({a} / {b})", a=len(kernels_a), b=len(kernels_b)))
 
         lay.addWidget(sub, 1)
         return w

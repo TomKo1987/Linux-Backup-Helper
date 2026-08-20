@@ -1,6 +1,7 @@
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from state import S, logger
+from translations import tr
 from ui_utils import footer_bar_style
 
 
@@ -82,7 +83,7 @@ class StatusPanel(QWidget):
                 f"background:transparent;border:none;"
             )
 
-        name = S.profile_name or "(no profile)"
+        name = S.profile_name or tr("(no profile)")
         self._profile_lbl.setText(f"\U0001f464 {name}")
         self._profile_lbl.setStyleSheet(_style(t["accent"]))
 
@@ -96,7 +97,7 @@ class StatusPanel(QWidget):
                     else t["warning"] if n_mounted > 0
                     else dim
                 )
-                self._drives_lbl.setText(f"\U0001f4be {n_mounted}/{total} drives")
+                self._drives_lbl.setText(tr("\U0001f4be {n}/{total} drives", n=n_mounted, total=total))
                 self._drives_lbl.setStyleSheet(_style(color))
             except (OSError, ValueError) as e:
                 logger.debug("Could not load mounts: %s", e)
@@ -112,19 +113,19 @@ class StatusPanel(QWidget):
 
         if active:
             interval  = get_active_interval()
-            sched_txt = f"\u23f0 Scheduler: On — {interval}" if interval else "\u23f0 Scheduler: On"
+            sched_txt = tr("\u23f0 Scheduler: On — {interval}", interval=tr(interval)) if interval else tr("\u23f0 Scheduler: On")
             self._sched_lbl.setText(sched_txt)
             self._sched_lbl.setStyleSheet(_style(t["success"]))
             nxt = get_next_run_time()
             if nxt:
-                self._next_run_lbl.setText(f"\u27a1 Next: {nxt}")
+                self._next_run_lbl.setText(tr("\u27a1 Next: {nxt}", nxt=nxt))
                 self._next_run_lbl.setStyleSheet(_style(t["text_dim"]))
                 self._next_run_lbl.show()
             else:
                 self._next_run_lbl.setText("")
                 self._next_run_lbl.show()
         else:
-            self._sched_lbl.setText("\u23f0 Scheduler: Off")
+            self._sched_lbl.setText(tr("\u23f0 Scheduler: Off"))
             self._sched_lbl.setStyleSheet(_style(dim))
             self._next_run_lbl.hide()
 
@@ -146,8 +147,8 @@ class StatusPanel(QWidget):
                 icon, color = "\u26a0", t["warning"]
             else:
                 icon, color = "\u2713", t["success"]
-            self._last_bak_lbl.setText(f"{icon} Last: {ts}  ({copied:,} copied)")
+            self._last_bak_lbl.setText(tr("{icon} Last: {ts}  ({copied:,} copied)", icon=icon, ts=ts, copied=copied))
             self._last_bak_lbl.setStyleSheet(_style(color))
         else:
-            self._last_bak_lbl.setText("No backup yet")
+            self._last_bak_lbl.setText(tr("No backup yet"))
             self._last_bak_lbl.setStyleSheet(_style(dim))

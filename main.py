@@ -44,6 +44,7 @@ from scan_verify import ScanVerifyDialog
 from state import S, _HOME, _PROFILES_DIR, _PROFILE_RE, RESTART_DIALOG, save_profile, logger, startup_load
 from status_panel import StatusPanel
 from themes import apply_style, register_style_listener, unregister_style_listener
+from translations import register_language_listener, unregister_language_listener, tr
 from ui_utils import _StandardKeysMixin, ask_profile_name
 from windows import base_window
 
@@ -78,36 +79,47 @@ def _build_backup_tasks(headers: list[str] | None = None) -> list[tuple]:
 class MainWindow(_StandardKeysMixin, QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Backup Helper")
+        self.setWindowTitle(tr("Backup Helper"))
         self.setMinimumSize(550, 450)
         self._quitting = False
 
-        self.menu_actions = [
-            ("💾 Create Backup",  lambda: self._open(base_window, "Backup"),  False),
-            ("📤 Restore Backup", lambda: self._open(base_window, "Restore"), False),
-            ("🔎 Dry Run",        self._launch_dry_run,                             False),
-            ("🖥 System Manager",  self._launch_system_manager,                      False),
-            ("🔍 Scan && Verify",  self._launch_scan_verify,                        True),
-            ("💻 System Info",     lambda: self._open(SysInfoDialog),               False),
-            ("📊 Backup Stats",    self._open_stats,                                True),
-            ("🔬 Integrity Check", self._open_integrity,                            False),
-            ("📜 History",         self._open_history,                              True),
-            ("📋 View Logs",       lambda: self._open(LogViewer),                   False),
-            ("📝 Notes",           self._open_notes,                                True),
-            ("⚙️ Settings",        self._open_settings,                             False),
-            ("❌ Quit",             self._exit,                                      False),
-        ]
-
         self._status_panel: StatusPanel | None = None
 
+        self._build_menu_actions()
         self._build_ui()
         self._setup_tray()
         register_style_listener(self._build_ui)
         register_style_listener(self._sync_tray)
+        register_language_listener(self._retranslate)
 
         self._refresh_timer = QTimer(self)
         self._refresh_timer.timeout.connect(self._refresh_status_panel)
         self._refresh_timer.start(60_000)
+
+    def _build_menu_actions(self) -> None:
+        self.menu_actions = [
+            (f"💾 {tr('Create Backup')}",  lambda: self._open(base_window, "Backup"),  False),
+            (f"📤 {tr('Restore Backup')}", lambda: self._open(base_window, "Restore"), False),
+            (f"🔎 {tr('Dry Run')}",        self._launch_dry_run,                             False),
+            (f"🖥 {tr('System Manager')}",  self._launch_system_manager,                      False),
+            (f"🔍 {tr('Scan && Verify')}",  self._launch_scan_verify,                        True),
+            (f"💻 {tr('System Info')}",     lambda: self._open(SysInfoDialog),               False),
+            (f"📊 {tr('Backup Stats')}",    self._open_stats,                                True),
+            (f"🔬 {tr('Integrity Check')}", self._open_integrity,                            False),
+            (f"📜 {tr('History')}",         self._open_history,                              True),
+            (f"📋 {tr('View Logs')}",       lambda: self._open(LogViewer),                   False),
+            (f"📝 {tr('Notes')}",           self._open_notes,                                True),
+            (f"⚙️ {tr('Settings')}",        self._open_settings,                             False),
+            (f"❌ {tr('Quit')}",             self._exit,                                      False),
+        ]
+
+    def _retranslate(self) -> None:
+        self.setWindowTitle(tr("Backup Helper"))
+        self._build_menu_actions()
+        self._build_ui()
+        if hasattr(self, "tray"):
+            self.tray.setToolTip(tr("Backup Helper"))
+            self._build_tray_menu()
 
     def _build_ui(self) -> None:
         central = QWidget()
@@ -206,7 +218,7 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
         _style = QApplication.style()
         icon = _style.standardIcon(QStyle.StandardPixmap.SP_DriveHDIcon) if _style else QIcon()
         self.tray = QSystemTrayIcon(icon, self)
-        self.tray.setToolTip("Backup Helper")
+        self.tray.setToolTip(tr("Backup Helper"))
         self._build_tray_menu()
         self.tray.activated.connect(self._on_tray_activated)
         self.tray.show()
@@ -228,19 +240,19 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
     def _build_tray_menu(self) -> None:
         menu = QMenu()
 
-        show_act = QAction("🏠 Show Backup Helper", self)
+        show_act = QAction(tr("🏠 Show Backup Helper"), self)
         show_act.triggered.connect(self._show_and_raise)
         menu.addAction(show_act)
         menu.addSeparator()
 
         headers = sorted({e.get("header", "") for e in S.entries if e.get("header")})
         if headers:
-            quick_menu = QMenu("⚡ Quick Backup", menu)
+            quick_menu = QMenu(tr("⚡ Quick Backup"), menu)
             for hdr in headers:
                 act = QAction(hdr, self)
                 act.triggered.connect(lambda checked=False, h=hdr: self._quick_backup(h))
                 quick_menu.addAction(act)
-            all_act = QAction("▶ All groups", self)
+            all_act = QAction(tr("▶ All groups"), self)
             all_act.triggered.connect(lambda: self._quick_backup(None))
             quick_menu.addSeparator()
             quick_menu.addAction(all_act)
@@ -262,11 +274,11 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
         from advanced_copy import apply_advanced_options
         tasks = _build_backup_tasks([header] if header is not None else None)
         if not tasks:
-            QMessageBox.information(None, "Quick Backup", "No backup entries found for this group.")
+            QMessageBox.information(None, tr("Quick Backup"), tr("No backup entries found for this group."))
             return
         adv = apply_advanced_options(tasks, interactive=True, parent=self)
-        label = header or "All groups"
-        CopyDialog(None, adv.tasks, f"Quick Backup — {label}",
+        label = header or tr("All groups")
+        CopyDialog(None, adv.tasks, f"{tr('Quick Backup')} — {label}",
                    pre_deleted=adv.deleted, pre_errors=adv.errors).exec()
         self._refresh_status_panel()
 
@@ -300,12 +312,13 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
         if unmountable:
             lines = [f"  • {_name(o)}" for o in unmountable]
             if info_only:
-                lines += ["", "These drives have no unmount command and will be left mounted:"]
+                lines += ["", tr("These drives have no unmount command and will be left mounted:")]
                 lines += [f"  • {_name(o)}" for o in info_only]
 
-            msg = "The following drives are still mounted:\n\n" + "\n".join(lines) + "\n\nUnmount before quitting?\n"
+            msg = tr("The following drives are still mounted:") + "\n\n" + "\n".join(lines) + "\n\n" + \
+                tr("Unmount before quitting?") + "\n"
             ans = QMessageBox.question(
-                self, "Quit — Drives Still Mounted", msg,
+                self, tr("Quit — Drives Still Mounted"), msg,
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
             )
             if ans == QMessageBox.StandardButton.Cancel:
@@ -317,17 +330,18 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
                     if not success:
                         failed.append(f"• {_name(o)}: {err_msg}")
                 if failed:
-                    QMessageBox.warning(self, "Unmount Failed", "Could not unmount:\n\n" + "\n".join(failed))
+                    QMessageBox.warning(self, tr("Unmount Failed"),
+                                        tr("Could not unmount:") + "\n\n" + "\n".join(failed))
                     return
         elif info_only:
-            msg = "The following drives are still mounted but have no unmount command:\n"
-            msg += "\n".join(f"  • {_name(o)}" for o in info_only) + "\n\nQuit anyway?"
-            if (QMessageBox.question(self, "Quit", msg,
+            msg = tr("The following drives are still mounted but have no unmount command:") + "\n"
+            msg += "\n".join(f"  • {_name(o)}" for o in info_only) + "\n\n" + tr("Quit anyway?")
+            if (QMessageBox.question(self, tr("Quit"), msg,
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
                     != QMessageBox.StandardButton.Yes):
                 return
         else:
-            if (QMessageBox.question(self, "Quit", "Really quit Backup Helper?",
+            if (QMessageBox.question(self, tr("Quit"), tr("Really quit Backup Helper?"),
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
                     != QMessageBox.StandardButton.Yes):
                 return
@@ -339,6 +353,7 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
         if self._quitting:
             self._refresh_timer.stop()
             unregister_style_listener(self._build_ui)
+            unregister_language_listener(self._retranslate)
             if a0 is not None:
                 a0.accept()
         else:
@@ -348,25 +363,24 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
 
 def _first_run_wizard(parent) -> bool:
     msg = QMessageBox(parent)
-    msg.setWindowTitle("Welcome to Backup Helper")
+    msg.setWindowTitle(tr("Welcome to Backup Helper"))
     msg.setText(
-        "<b>No profile found.</b><br><br>"
-        "How would you like to set up your profile?<br><br>"
-        "<b>🔍 Scan System:</b> Detect installed packages on this machine and add them "
-        "to a new profile automatically — the recommended way to get started.<br><br>"
-        "<b>📥 Import Profile:</b> Load an existing <code>.json</code> profile from disk.<br><br>"
-        "<b>➕ Start Empty:</b> Create a blank profile you can fill in manually later."
+        f"<b>{tr('No profile found.')}</b><br><br>"
+        f"{tr('How would you like to set up your profile?')}<br><br>"
+        f"<b>🔍 {tr('Scan System:')}</b> {tr('Detect installed packages on this machine and add them to a new profile automatically — the recommended way to get started.')}<br><br>"
+        f"<b>📥 {tr('Import Profile:')}</b> {tr('Load an existing')} <code>.json</code> {tr('profile from disk.')}<br><br>"
+        f"<b>➕ {tr('Start Empty:')}</b> {tr('Create a blank profile you can fill in manually later.')}"
     )
     msg.setTextFormat(Qt.TextFormat.RichText)
-    scan_btn   = msg.addButton("🔍 Scan System",    QMessageBox.ButtonRole.ActionRole)
-    import_btn = msg.addButton("📥 Import Profile", QMessageBox.ButtonRole.ActionRole)
-    _          = msg.addButton("➕ Start Empty",    QMessageBox.ButtonRole.RejectRole)
+    scan_btn   = msg.addButton(f"🔍 {tr('Scan System')}",    QMessageBox.ButtonRole.ActionRole)
+    import_btn = msg.addButton(f"📥 {tr('Import Profile')}", QMessageBox.ButtonRole.ActionRole)
+    _          = msg.addButton(f"➕ {tr('Start Empty')}",    QMessageBox.ButtonRole.RejectRole)
     msg.setDefaultButton(scan_btn)
     msg.exec()
     clicked = msg.clickedButton()
 
     if clicked == scan_btn:
-        name = ask_profile_name("New Profile Name", "Default", parent)
+        name = ask_profile_name(tr("New Profile Name"), "Default", parent)
         if not name:
             S.reset_to_fresh()
             S.profile_name = "Default"
@@ -379,43 +393,38 @@ def _first_run_wizard(parent) -> bool:
         save_profile()
 
         QMessageBox.information(
-            parent, "System Scan — How It Works",
-            "<b>System Capture will now open.</b><br><br>"
-            "The <b>System Capture</b> tab scans your installed packages and active services "
-            "and shows what is not yet tracked in your profile.<br><br>"
-            "<b>Packages:</b> Select new packages and click <b>Add Selected to Profile</b>.<br>"
-            "<b>Specific Packages:</b> Mark packages that should only be installed for a "
-            "certain desktop session (e.g. KDE-only or Hyprland-only packages).<br>"
-            "<b>Services:</b> Active system services (SSH, Samba, Bluetooth …) are listed. "
-            "Check any you want System Manager to handle, then click "
-            "<b>Add Selected Services to Profile</b>.<br><br>"
-            "The <b>Verify Profile</b> tab checks that all paths, services and packages "
-            "defined in your profile actually exist on this system.<br><br>"
-            "<b>Tips:</b><br>"
-            "• Use <i>Select All New</i> to add all packages at once, then deselect "
-            "what you don't need (e.g. temporary build tools).<br>"
-            "• System-critical packages (kernel, base, firmware) are excluded automatically.<br>"
-            "• You can re-open Capture &amp; Verify at any time from the main menu.<br><br>"
-            "Click <b>OK</b> to start the scan."
+            parent, tr("System Scan — How It Works"),
+            f"<b>{tr('System Capture will now open.')}</b><br><br>"
+            f"{tr('The')} <b>{tr('System Capture')}</b> {tr('tab scans your installed packages and active services and shows what is not yet tracked in your profile.')}<br><br>"
+            f"<b>{tr('Packages:')}</b> {tr('Select new packages and click')} <b>{tr('Add Selected to Profile')}</b>.<br>"
+            f"<b>{tr('Specific Packages:')}</b> {tr('Mark packages that should only be installed for a certain desktop session (e.g. KDE-only or Hyprland-only packages).')}<br>"
+            f"<b>{tr('Services:')}</b> {tr('Active system services (SSH, Samba, Bluetooth …) are listed. Check any you want System Manager to handle, then click')} "
+            f"<b>{tr('Add Selected Services to Profile')}</b>.<br><br>"
+            f"{tr('The')} <b>{tr('Verify Profile')}</b> {tr('tab checks that all paths, services and packages defined in your profile actually exist on this system.')}<br><br>"
+            f"<b>{tr('Tips:')}</b><br>"
+            f"• {tr('Use')} <i>{tr('Select All New')}</i> {tr('to add all packages at once, then deselect what you don')}'t {tr('need (e.g. temporary build tools).')}<br>"
+            f"• {tr('System-critical packages (kernel, base, firmware) are excluded automatically.')}<br>"
+            f"• {tr('You can re-open Capture &amp; Verify at any time from the main menu.')}<br><br>"
+            f"{tr('Click')} <b>OK</b> {tr('to start the scan.')}"
         )
         ScanVerifyDialog(parent).exec()
         return True
 
     if clicked == import_btn:
-        path, _ = QFileDialog.getOpenFileName(parent, "Select profile", str(_HOME), "JSON (*.json)")
+        path, _ = QFileDialog.getOpenFileName(parent, tr("Select profile"), str(_HOME), "JSON (*.json)")
         while path:
-            name, ok = QInputDialog.getText(parent, "Profile name", "Name:", text=Path(path).stem)
+            name, ok = QInputDialog.getText(parent, tr("Profile name"), tr("Name:"), text=Path(path).stem)
             if not ok:
                 break
             name = name.strip()
             if not name or not _PROFILE_RE.match(name):
-                QMessageBox.warning(parent, "Invalid profile name",
-                                    "Name may only contain letters, digits, spaces, hyphens, underscores and dots.")
+                QMessageBox.warning(parent, tr("Invalid profile name"),
+                                    tr("Name may only contain letters, digits, spaces, hyphens, underscores and dots."))
                 continue
             dest = _PROFILES_DIR / f"{name}.json"
             if dest.exists():
                 ans = QMessageBox.warning(
-                    parent, "Overwrite", f"Profile '{name}' already exists. Overwrite?",
+                    parent, tr("Overwrite"), tr("Profile '{name}' already exists. Overwrite?", name=name),
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 )
                 if ans == QMessageBox.StandardButton.No:
@@ -428,7 +437,7 @@ def _first_run_wizard(parent) -> bool:
                     apply_style()
                 return ok
             except OSError as e:
-                QMessageBox.critical(parent, "Import Failed", f"Could not copy profile:\n{e}")
+                QMessageBox.critical(parent, tr("Import Failed"), tr("Could not copy profile:") + f"\n{e}")
                 break
 
     S.reset_to_fresh()
@@ -454,7 +463,7 @@ def main():
         logger.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_tb))
         try:
             if QThread.currentThread() is app.thread():
-                QMessageBox.critical(None, "Critical Error", f"Unexpected error:\n{exc_value}")
+                QMessageBox.critical(None, tr("Critical Error"), tr("Unexpected error:") + f"\n{exc_value}")
             else:
                 logger.critical("Critical background error: %s", exc_value)
         except RuntimeError as error:
@@ -497,7 +506,7 @@ def main():
         tasks = _build_backup_tasks(headers)
         if tasks:
             adv = apply_advanced_options(tasks, interactive=False, parent=None)
-            CopyDialog(None, adv.tasks, "Backup (scheduled)",
+            CopyDialog(None, adv.tasks, tr("Backup (scheduled)"),
                        pre_deleted=adv.deleted, pre_errors=adv.errors).exec()
         else:
             logger.warning("Headless backup: no matching tasks found (headers=%s)", headers)

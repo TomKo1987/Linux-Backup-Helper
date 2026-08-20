@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
 
 from state import S
 from themes import current_theme, font_sz
+from translations import tr
 from ui_utils import _StandardKeysMixin, build_dialog_shell, clear_layout, size_to_screen
 from drive_utils import is_smb, is_ssh
 
@@ -68,12 +69,12 @@ def _fmt_bytes(n: int | float) -> str:
 def _age(mtime: float) -> str:
     delta = time.time() - mtime
     if delta < 0:
-        return "future"
+        return tr("future")
     if delta < 3600:
-        return f"{int(delta // 60)}m ago"
+        return tr("{n}m ago", n=int(delta // 60))
     if delta < 86400:
-        return f"{int(delta // 3600)}h ago"
-    return f"{int(delta // 86400)}d ago"
+        return tr("{n}h ago", n=int(delta // 3600))
+    return tr("{n}d ago", n=int(delta // 86400))
 
 
 class _CheckWorker(QThread):
@@ -95,8 +96,9 @@ class _CheckWorker(QThread):
 
             if len(sources) != len(dests):
                 issues.append(
-                    f"Source/destination count mismatch ({len(sources)} source(s) vs "
-                    f"{len(dests)} destination(s)) — extra entries were not checked"
+                    tr("Source/destination count mismatch ({n_src} source(s) vs "
+                       "{n_dst} destination(s)) — extra entries were not checked",
+                       n_src=len(sources), n_dst=len(dests))
                 )
                 ok = False
 
@@ -104,8 +106,8 @@ class _CheckWorker(QThread):
                 if is_smb(src_raw) or is_ssh(src_raw) or is_smb(dst_raw) or is_ssh(dst_raw):
                     remote = src_raw if (is_smb(src_raw) or is_ssh(src_raw)) else dst_raw
                     issues.append(
-                        f"Remote (SMB/SSH) path — not checked by Integrity Checker "
-                        f"(local-filesystem check only; this is not a failure): {remote}"
+                        tr("Remote (SMB/SSH) path — not checked by Integrity Checker "
+                           "(local-filesystem check only; this is not a failure): {remote}", remote=remote)
                     )
                     continue
 
@@ -116,12 +118,12 @@ class _CheckWorker(QThread):
                 dst_path = Path(os.path.expanduser(os.path.expandvars(dst_raw)))
 
                 if not src_path.exists():
-                    issues.append(f"Source missing: {src_raw}")
+                    issues.append(tr("Source missing: {path}", path=src_raw))
                     ok = False
                     continue
 
                 if not dst_path.exists():
-                    issues.append(f"Destination missing: {dst_raw}")
+                    issues.append(tr("Destination missing: {path}", path=dst_raw))
                     ok = False
                     continue
 
@@ -130,9 +132,12 @@ class _CheckWorker(QThread):
                         ratio = dst_info["total_size"] / src_info["total_size"]
                         if ratio < 0.8:
                             issues.append(
-                                f"Destination is only {ratio * 100:.0f}% of source size "
-                                f"({_fmt_bytes(dst_info['total_size'])} vs "
-                                f"{_fmt_bytes(src_info['total_size'])})"
+                                tr("Destination is only {pct:.0f}% of source size "
+                                   "({dst_size} vs "
+                                   "{src_size})",
+                                   pct=ratio * 100,
+                                   dst_size=_fmt_bytes(dst_info['total_size']),
+                                   src_size=_fmt_bytes(src_info['total_size']))
                             )
                             ok = False
 
@@ -140,8 +145,9 @@ class _CheckWorker(QThread):
                         fc_ratio = (dst_info["file_count"] or 0) / src_info["file_count"]
                         if fc_ratio < 0.9:
                             issues.append(
-                                f"Fewer files at destination: "
-                                f"{dst_info['file_count']} vs {src_info['file_count']}"
+                                tr("Fewer files at destination: "
+                                   "{dst_count} vs {src_count}",
+                                   dst_count=dst_info['file_count'], src_count=src_info['file_count'])
                             )
                             ok = False
 
@@ -150,9 +156,11 @@ class _CheckWorker(QThread):
                         age_src = time.time() - src_info["mtime_newest"]
                         if age_dst > 7 * 86400 and age_src < age_dst - 86400:
                             issues.append(
-                                f"Backup may be stale — destination last updated "
-                                f"{_age(dst_info['mtime_newest'])}, "
-                                f"source changed {_age(src_info['mtime_newest'])}"
+                                tr("Backup may be stale — destination last updated "
+                                   "{dst_age}, "
+                                   "source changed {src_age}",
+                                   dst_age=_age(dst_info['mtime_newest']),
+                                   src_age=_age(src_info['mtime_newest']))
                             )
                             ok = False
 
@@ -161,11 +169,11 @@ class _CheckWorker(QThread):
                 missing   = src_names - dst_names
                 if missing and len(missing) <= 5:
                     issues.append(
-                        "Missing in destination: " + ", ".join(sorted(missing)[:5])
+                        tr("Missing in destination: {names}", names=", ".join(sorted(missing)[:5]))
                     )
                     ok = False
                 elif missing:
-                    issues.append(f"{len(missing)} top-level items missing in destination")
+                    issues.append(tr("{n} top-level items missing in destination", n=len(missing)))
                     ok = False
 
             self.result_ready.emit({
@@ -214,7 +222,7 @@ class _ResultRow(QFrame):
         top.addWidget(hdr_lbl)
         top.addStretch()
         if ok:
-            ok_lbl = QLabel("All checks passed")
+            ok_lbl = QLabel(tr("All checks passed"))
             ok_lbl.setStyleSheet(
                 f"color:{t['success']};font-size:{font_sz(-1)}px;"
                 f"background:transparent;border:none;"
@@ -236,7 +244,7 @@ class _ResultRow(QFrame):
 class IntegrityCheckerDialog(_StandardKeysMixin, QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Backup Integrity Check")
+        self.setWindowTitle(tr("Backup Integrity Check"))
         size_to_screen(self, 1500, 1000)
         self._worker: _CheckWorker | None = None
         self._results: list[dict] = []
@@ -251,7 +259,7 @@ class IntegrityCheckerDialog(_StandardKeysMixin, QDialog):
     def _build(self) -> None:
         t = current_theme()
 
-        self._run_btn = QPushButton("▶  Run Check")
+        self._run_btn = QPushButton(f"▶  {tr('Run Check')}")
         self._run_btn.setFixedHeight(34)
         self._run_btn.clicked.connect(self._start)
 
@@ -262,7 +270,7 @@ class IntegrityCheckerDialog(_StandardKeysMixin, QDialog):
         )
 
         lay, self._body_lay, _ = build_dialog_shell(
-            self, t, font_sz, "Backup Integrity Check", "🔬",
+            self, t, font_sz, tr("Backup Integrity Check"), "🔬",
             header_extra=[self._run_btn],
             footer_extra=[self._status_lbl],
         )
@@ -279,12 +287,12 @@ class IntegrityCheckerDialog(_StandardKeysMixin, QDialog):
         lay.insertWidget(1, self._progress)
 
         hint = QLabel(
-            "Checks each backup entry:\n"
-            "  • Source & destination exist\n"
-            "  • Destination is not significantly smaller than source\n"
-            "  • Top-level items are not missing\n"
-            "  • Destination has been updated recently relative to source\n\n"
-            "Click ▶ Run Check to begin."
+            tr("Checks each backup entry:\n"
+               "  • Source & destination exist\n"
+               "  • Destination is not significantly smaller than source\n"
+               "  • Top-level items are not missing\n"
+               "  • Destination has been updated recently relative to source\n\n"
+               "Click ▶ Run Check to begin.")
         )
         hint.setStyleSheet(
             f"color:{t['text_dim']};font-size:{font_sz()}px;"
@@ -296,13 +304,13 @@ class IntegrityCheckerDialog(_StandardKeysMixin, QDialog):
     def _start(self) -> None:
         entries = [e for e in S.entries if not e.get("details", {}).get("no_backup")]
         if not entries:
-            self._status_lbl.setText("No active entries found.")
+            self._status_lbl.setText(tr("No active entries found."))
             return
 
         clear_layout(self._body_lay)
         self._run_btn.setEnabled(False)
         self._progress.show()
-        self._status_lbl.setText(f"Checking {len(entries)} entries…")
+        self._status_lbl.setText(tr("Checking {n} entries…", n=len(entries)))
         self._results: list[dict] = []
 
         self._worker = _CheckWorker(entries)
@@ -328,7 +336,7 @@ class IntegrityCheckerDialog(_StandardKeysMixin, QDialog):
             f"background:transparent;border:none;"
         )
         self._status_lbl.setText(
-            f"Done — {n_ok}/{total} OK"
-            + (f", {n_warn} with warnings" if n_warn else "")
+            tr("Done — {n_ok}/{total} OK", n_ok=n_ok, total=total)
+            + (tr(", {n_warn} with warnings", n_warn=n_warn) if n_warn else "")
         )
         self._body_lay.addStretch()

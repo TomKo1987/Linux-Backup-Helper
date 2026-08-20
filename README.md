@@ -31,6 +31,7 @@ The idea behind this project is to automatically configure a newly installed Lin
 - **Firewall Settings** — configure `ufw`/`firewalld` rules from within System Manager
 - System tray integration for background operation
 - Theming support with multiple built-in themes
+- **Multi-language UI** — English, German, French, and Spanish, switchable at runtime without restarting
 - Extensive error handling and user feedback
 
 ---
@@ -383,6 +384,18 @@ pyinstaller --onefile main.py
 
 **Integrity Check**  
 ![Integrity Check](images/Integrity%20Check.png)
+
+---
+
+## Language / Localization
+
+The UI is available in **English, German (Deutsch), French (Français), and Spanish (Español)**.
+
+- Change the language via **Settings → Theme and Font Settings → Select Language**.
+- The switch takes effect immediately across the whole application — no restart required.
+- The selected language is saved to your profile and used again on the next launch.
+
+Want to add another language or improve an existing translation? All UI strings live in a single file, [`translations.py`](translations.py), as plain dictionaries — no build step or extraction tooling needed. Pull requests adding new languages are welcome.
 
 ---
 

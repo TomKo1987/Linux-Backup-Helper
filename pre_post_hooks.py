@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
 
 from state import S, logger, save_profile
 from themes import current_theme, font_sz
+from translations import tr
 from ui_utils import _StandardKeysMixin, hdr_label, sep, size_to_screen
 
 __all__ = ["HooksDialog", "run_hooks"]
@@ -93,9 +94,9 @@ class _HookList(QWidget):
 
         btn_row = QHBoxLayout()
         for label, slot in [
-            ("➕ Add",    self._add),
-            ("✏ Edit",   self._edit),
-            ("🗑 Remove", self._remove),
+            (tr("➕ Add"),    self._add),
+            (tr("✏ Edit"),   self._edit),
+            (tr("🗑 Remove"), self._remove),
             ("▲",        self._move_up),
             ("▼",        self._move_down),
         ]:
@@ -117,10 +118,10 @@ class _HookList(QWidget):
 
     def _add(self) -> None:
         if len(self._hooks) >= _MAX_HOOKS:
-            QMessageBox.warning(self, "Limit Reached", f"Maximum {_MAX_HOOKS} hooks per phase.")
+            QMessageBox.warning(self, tr("Limit Reached"), tr("Maximum {max} hooks per phase.", max=_MAX_HOOKS))
             return
         cmd, ok = QInputDialog.getText(
-            self, "New Hook", "Shell command:",
+            self, tr("New Hook"), tr("Shell command:"),
             text="",
         )
         if ok and cmd.strip():
@@ -132,7 +133,7 @@ class _HookList(QWidget):
         if row < 0:
             return
         cmd, ok = QInputDialog.getText(
-            self, "Edit Hook", "Shell command:",
+            self, tr("Edit Hook"), tr("Shell command:"),
             text=self._hooks[row],
         )
         if ok and cmd.strip():
@@ -144,8 +145,8 @@ class _HookList(QWidget):
         if row < 0:
             return
         ans = QMessageBox.question(
-            self, "Remove Hook",
-            f"Remove hook:\n{self._hooks[row]}",
+            self, tr("Remove Hook"),
+            tr("Remove hook:\n{cmd}", cmd=self._hooks[row]),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if ans == QMessageBox.StandardButton.Yes:
@@ -180,7 +181,7 @@ class HooksDialog(_StandardKeysMixin, QDialog):
         super().__init__(parent)
         self._entry = entry
         self._persist_target = persist_target
-        self.setWindowTitle(f"Hooks — {entry.get('title', '?')}")
+        self.setWindowTitle(tr("Hooks — {title}", title=entry.get('title', '?')))
         size_to_screen(self, 1500, 1000)
         self._build()
 
@@ -190,13 +191,13 @@ class HooksDialog(_StandardKeysMixin, QDialog):
         lay.setContentsMargins(16, 16, 16, 16)
         lay.setSpacing(14)
 
-        lay.addWidget(hdr_label(f"🪝  Hooks for: {self._entry.get('title', '?')}"))
+        lay.addWidget(hdr_label(tr("🪝  Hooks for: {title}", title=self._entry.get('title', '?'))))
 
         info = QLabel(
-            "Pre-hooks run <b>before</b> the backup/restore copy starts.<br>"
+            tr("Pre-hooks run <b>before</b> the backup/restore copy starts.<br>"
             "Post-hooks run <b>after</b> the copy finishes (even on cancel).<br>"
             "A failing pre-hook will abort the operation for this entry. "
-            "Post-hook failures are logged but do not affect the result."
+            "Post-hook failures are logged but do not affect the result.")
         )
         info.setTextFormat(Qt.TextFormat.RichText)
         info.setWordWrap(True)
@@ -208,9 +209,9 @@ class HooksDialog(_StandardKeysMixin, QDialog):
         lay.addWidget(sep())
 
         details = self._entry.setdefault("details", {})
-        self._pre  = _HookList("⚡ Pre-hooks  (run before copy)",
+        self._pre  = _HookList(tr("⚡ Pre-hooks  (run before copy)"),
                                details.get("pre_hooks", []))
-        self._post = _HookList("🏁 Post-hooks  (run after copy)",
+        self._post = _HookList(tr("🏁 Post-hooks  (run after copy)"),
                                details.get("post_hooks", []))
 
         lay.addWidget(self._pre,  1)
@@ -220,10 +221,10 @@ class HooksDialog(_StandardKeysMixin, QDialog):
 
         bot = QHBoxLayout()
         bot.addStretch()
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = QPushButton(tr("Cancel"))
         cancel_btn.setFixedHeight(34)
         cancel_btn.clicked.connect(self.reject)
-        save_btn = QPushButton("💾 Save")
+        save_btn = QPushButton(tr("💾 Save"))
         save_btn.setFixedHeight(34)
         save_btn.setDefault(True)
         save_btn.clicked.connect(self._save)
@@ -246,8 +247,8 @@ class HooksDialog(_StandardKeysMixin, QDialog):
                 S.entries[idx]["details"] = target_details
                 if not save_profile():
                     QMessageBox.warning(
-                        self, "Save Failed",
-                        "The hooks could not be saved to the profile. "
-                        "Please check the log for details.")
+                        self, tr("Save Failed"),
+                        tr("The hooks could not be saved to the profile. "
+                        "Please check the log for details."))
 
         self.accept()

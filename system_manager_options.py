@@ -20,6 +20,7 @@ from themes import (
     current_theme, font_sz
 )
 from tooltips import sudo_checkbox_tooltip
+from translations import tr
 from ui_utils import ask_text, checkbox_row_frame_style, ok_cancel_buttons
 
 from system_manager_helpers import (
@@ -36,7 +37,7 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
 
     def __init__(self, _parent=None, distro: LinuxDistroHelper | None = None):
         super().__init__(_parent)
-        self.setWindowTitle("System Manager Options")
+        self.setWindowTitle(tr("System Manager Options"))
         self.setMinimumSize(1200, 680)
         self._distro = distro or LinuxDistroHelper()
         self._session: str = self._distro.detect_session() or ""
@@ -48,30 +49,33 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
         lay = QVBoxLayout(self)
         if self._distro.has_aur:
             _helper, _ok = _detect_effective_aur_helper(self._distro)
-            aur_helper_info = f"   |   AUR Helper: '{_helper}' {'detected' if _ok else 'not detected'}"
+            aur_helper_info = "   |   " + tr("AUR Helper: '{h}' {s}", h=_helper,
+                                             s=tr("detected") if _ok else tr("not detected"))
         else:
             aur_helper_info = ""
         info = QLabel(
-            f"Recognized Linux distribution: {str(self._distro.distro_pretty_name)}   |   Session: {str(self._session)}{aur_helper_info}")
+            tr("Recognized Linux distribution: {d}   |   Session: {s}{a}",
+               d=str(self._distro.distro_pretty_name), s=str(self._session), a=aur_helper_info))
         info.setStyleSheet(style_label_info(bold=True) + f"font-size:{font_sz()}px")
         info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(info)
 
-        cmd = self._distro.get_pkg_install_cmd("")
+        cmd = self._distro.get_pkg_install_cmd("...")
         top_text = QLabel(
-            f"First you can select 'Dotfiles' in System Manager. These files will be copied using 'sudo', "
-            f"for root privilege.\nIf you have 'Dotfiles' selected, System Manager will copy these first. "
-            f"This allows you to copy files\nsuch as 'pacman.conf' or 'smb.conf' to '/etc/'.\n\n\n"
-            f"Under 'System Manager Operations' you can specify how you would like to proceed. "
-            f"Each operation is executed\none after the other. Uncheck operations to disable them.\n\n"
-            f"Tips:\n\n"
-            f"'Basic Packages' will be installed using '{cmd}'.\n\n"
-            f"'AUR Packages' provides access to the Arch User Repository. "
-            f"Therefore an AUR helper ({S.aur_helper}) must and will be installed."
-            f"\nThis feature is available only on Arch Linux based distributions.\n\n"
-            f"You can also define 'Specific Packages'. These packages will be installed only (using '{cmd}')\n"
-            f"if the corresponding session has been recognized.\n"
-            f"Both full desktop environments and window managers such as 'Hyprland' and others are supported.")
+            tr("First you can select 'Dotfiles' in System Manager. These files will be copied using 'sudo', "
+               "for root privilege.\nIf you have 'Dotfiles' selected, System Manager will copy these first. "
+               "This allows you to copy files\nsuch as 'pacman.conf' or 'smb.conf' to '/etc/'.\n\n\n"
+               "Under 'System Manager Operations' you can specify how you would like to proceed. "
+               "Each operation is executed\none after the other. Uncheck operations to disable them.\n\n"
+               "Tips:\n\n"
+               "'Basic Packages' will be installed using '{cmd}'.\n\n"
+               "'AUR Packages' provides access to the Arch User Repository. "
+               "Therefore an AUR helper ({aur}) must and will be installed."
+               "\nThis feature is available only on Arch Linux based distributions.\n\n"
+               "You can also define 'Specific Packages'. These packages will be installed only (using '{cmd}')\n"
+               "if the corresponding session has been recognized.\n"
+               "Both full desktop environments and window managers such as 'Hyprland' and others are supported.",
+               cmd=cmd, aur=S.aur_helper))
         top_text.setWordWrap(False)
         top_text.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         top_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -80,10 +84,10 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
         scroll.setWidget(top_text)
         lay.addWidget(scroll)
 
-        for row_specs in [[("System Manager Operations", self._edit_ops), ("Dotfiles", self._edit_dotfiles)],
-                          [("Basic Packages", lambda: self._edit_pkgs("basic_packages")),
-                           ("AUR Packages", lambda: self._edit_pkgs("aur_packages")),
-                           ("Specific Packages", lambda: self._edit_pkgs("specific_packages"))]]:
+        for row_specs in [[(tr("System Manager Operations"), self._edit_ops), (tr("Dotfiles"), self._edit_dotfiles)],
+                          [(tr("Basic Packages"), lambda: self._edit_pkgs("basic_packages")),
+                           (tr("AUR Packages"), lambda: self._edit_pkgs("aur_packages")),
+                           (tr("Specific Packages"), lambda: self._edit_pkgs("specific_packages"))]]:
             row = QHBoxLayout()
             for label, fn in row_specs:
                 b = QPushButton(label)
@@ -91,7 +95,7 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
                 row.addWidget(b)
             lay.addLayout(row)
 
-        close = QPushButton("Close")
+        close = QPushButton(tr("Close"))
         close.clicked.connect(self.close)
         lay.addWidget(close)
 
@@ -126,7 +130,7 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
                 groups[p.get("session", "") if isinstance(p, dict) else ""].append((cb, p))
             row = 0
             for idx, sess in enumerate(sorted(groups)):
-                hdr = QLabel(sess or "Unknown")
+                hdr = QLabel(sess or tr("Unknown"))
                 border = f"border-top:1px solid {t['header_sep']};" if idx > 0 else ""
                 hdr.setStyleSheet(
                     f"font-size:{font_sz(-1)}px;font-weight:bold;color:{t['accent2']};padding:6px 2px 2px;{border}")
@@ -164,7 +168,7 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
                 names = [(f"{pkg.get('package', '')} [{pkg.get('session', '')}]"
                           if is_specific else pkg.get("name", "")) if isinstance(pkg, dict) else str(pkg) for pkg in
                          to_del]
-                if (QMessageBox.question(_dlg, "Confirm Delete", "Delete package(s)?\n\n  • " + "\n  • ".join(names),
+                if (QMessageBox.question(_dlg, tr("Confirm Delete"), tr("Delete package(s)?\n\n  • ") + "\n  • ".join(names),
                                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes):
                     do_delete = False
             updated = []
@@ -178,12 +182,12 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
 
         raw_title = pkg_type.replace('_', ' ').title()
         formatted_title = raw_title.replace("Aur", "AUR")
-        title = f"Edit {formatted_title}"
+        title = tr("Edit {t}", t=formatted_title)
 
         dlg, lay = _scroll_dlg(self, title, body, _save)
 
         search = QLineEdit()
-        search.setPlaceholderText("Filter...")
+        search.setPlaceholderText(tr("Filter..."))
 
         def _apply_search(txt: str) -> None:
             txt_lower = txt.lower()
@@ -210,17 +214,17 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
 
             return slot
 
-        for lbl, fn in [("➕ Add", lambda: self._add_pkg(pkg_type)),
-                        ("➕➕ Batch Add", lambda: self._batch_add(pkg_type))]:
+        for lbl, fn in [(tr("➕ Add"), lambda: self._add_pkg(pkg_type)),
+                        (tr("➕➕ Batch Add"), lambda: self._batch_add(pkg_type))]:
             b = QPushButton(lbl)
             b.clicked.connect(make_add_slot(fn))
             btn_add_row.addWidget(b)
 
         io_row = QHBoxLayout()
 
-        def make_io_slot(func, label):
+        def make_io_slot(func, _is_import):
             def slot(*_):
-                if "Import" in label:
+                if _is_import:
                     dlg.close()
                     QTimer.singleShot(0, func)
                 else:
@@ -228,11 +232,11 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
 
             return slot
 
-        for lbl, fn in [("📥 Import", lambda: self._import_pkgs(pkg_type)),
-                        ("📤 Export", lambda: self._export_pkgs(pkg_type)),
-                        ("🔎 Verify Package(s)", lambda: self._verify_pkgs(pkg_type, dlg))]:
+        for lbl, fn, is_import in [(tr("📥 Import"), lambda: self._import_pkgs(pkg_type), True),
+                                    (tr("📤 Export"), lambda: self._export_pkgs(pkg_type), False),
+                                    (tr("🔎 Verify Package(s)"), lambda: self._verify_pkgs(pkg_type, dlg), False)]:
             b = QPushButton(lbl)
-            b.clicked.connect(make_io_slot(fn, lbl))
+            b.clicked.connect(make_io_slot(fn, is_import))
             io_row.addWidget(b)
 
         lay.insertWidget(1, search)
@@ -255,7 +259,7 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
         current_name = p.get("package" if is_specific else "name", "")
         current_sess = p.get("session", "") if is_specific else None
         result = _pkg_form_dialog(
-            self, "Edit Package", prefill_name=current_name, prefill_sess=current_sess if is_specific else None)
+            self, tr("Edit Package"), prefill_name=current_name, prefill_sess=current_sess if is_specific else None)
         if result is None:
             return
         name = result[0]
@@ -275,7 +279,7 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
     def _add_pkg(self, pkg_type: str) -> None:
         is_specific = _is_specific(pkg_type)
         if is_specific:
-            result = _pkg_form_dialog(self, "Add Specific Package", prefill_sess=SESSIONS[0] if SESSIONS else "")
+            result = _pkg_form_dialog(self, tr("Add Specific Package"), prefill_sess=SESSIONS[0] if SESSIONS else "")
             if result is None:
                 QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
                 return None
@@ -283,34 +287,34 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
             S.specific_packages = S.specific_packages or []
             if any(isinstance(p, dict) and p.get("package") == name and p.get("session") == sess
                    for p in S.specific_packages):
-                QMessageBox.warning(self, "Duplicate", f"'{name}' for '{sess}' already exists.")
+                QMessageBox.warning(self, tr("Duplicate"), tr("'{n}' for '{s}' already exists.", n=name, s=sess))
             else:
                 S.specific_packages.append({"package": name, "session": sess, "disabled": False})
                 sort_specific_pkg_list(S.specific_packages)
                 save_profile()
-                QMessageBox.information(self, "Added", f"Added:\n\n  • {name} [{sess}]")
+                QMessageBox.information(self, tr("Added"), tr("Added:\n\n  • {n} [{s}]", n=name, s=sess))
         else:
             label = pkg_type.replace("_", " ").title().replace("Aur", "AUR").rstrip("s")
-            name, ok = ask_text(self, f"Add {label}", "Package name:")
+            name, ok = ask_text(self, tr("Add {l}", l=label), tr("Package name:"))
             if ok and name.strip():
                 name = name.strip()
                 if not is_valid_pkg_name(name):
                     QMessageBox.warning(
-                        self, "Error",
-                        f"'{name}' is not a valid package name.\n\n"
-                        "Allowed: letters, digits, '.', '_', '+', '-' (must not start with a separator).\n"
-                        "Gentoo category/package atoms (e.g. 'net-misc/openssh') are also allowed."
+                        self, tr("Error"),
+                        tr("'{n}' is not a valid package name.\n\n"
+                           "Allowed: letters, digits, '.', '_', '+', '-' (must not start with a separator).\n"
+                           "Gentoo category/package atoms (e.g. 'net-misc/openssh') are also allowed.", n=name)
                     )
                     QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
                     return None
                 current = getattr(S, pkg_type, []) or []
                 existing = {p.get("name") if isinstance(p, dict) else str(p) for p in current}
                 if name in existing:
-                    QMessageBox.warning(self, "Duplicate", f"'{name}' already exists.")
+                    QMessageBox.warning(self, tr("Duplicate"), tr("'{n}' already exists.", n=name))
                 else:
                     current.append({"name": name, "disabled": False})
                     _commit_pkgs(pkg_type, current)
-                    QMessageBox.information(self, "Added", f"Added {label}:\n\n  • {name}")
+                    QMessageBox.information(self, tr("Added"), tr("Added {l}:\n\n  • {n}", l=label, n=name))
         QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
         return None
 
@@ -318,7 +322,7 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
         is_specific = _is_specific(pkg_type)
         dlg = QDialog(self)
         label = pkg_type.replace("_", " ").title().replace("Aur", "AUR").rstrip("s")
-        dlg.setWindowTitle(f"Batch Add {label}(s)")
+        dlg.setWindowTitle(tr("Batch Add {l}(s)", l=label))
         dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
         dlg.setMinimumSize(700, 500)
         lay = QVBoxLayout(dlg)
@@ -326,7 +330,7 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
         batch_sess_cb = None
         if is_specific:
             row = QHBoxLayout()
-            row.addWidget(QLabel("Session:"))
+            row.addWidget(QLabel(tr("Session:")))
             batch_sess_cb = QComboBox()
             batch_sess_cb.addItems(SESSIONS)
             batch_sess_cb.setMinimumHeight(32)
@@ -335,7 +339,7 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
             lay.addLayout(row)
 
         ed = QTextEdit()
-        ed.setPlaceholderText("One package per line (or comma separated)")
+        ed.setPlaceholderText(tr("One package per line (or comma separated)"))
         lay.addWidget(ed)
 
         def _do_add():
@@ -381,22 +385,22 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
             if added_pkgs:
                 _commit_pkgs(pkg_type, current)
 
-                added_str = "Added package(s):\n\n" + "\n".join(f"  • {n}" for n in added_pkgs)
+                added_str = tr("Added package(s):\n\n") + "\n".join(f"  • {n}" for n in added_pkgs)
 
                 extra = []
                 if dupes:
-                    extra.append("Skipped duplicate(s):\n\n" + "\n".join(f"  • {d}" for d in dupes))
+                    extra.append(tr("Skipped duplicate(s):\n\n") + "\n".join(f"  • {d}" for d in dupes))
                 if invalid:
-                    extra.append("Skipped invalid name(s):\n" + "\n".join(f"  • {i}" for i in invalid))
+                    extra.append(tr("Skipped invalid name(s):\n") + "\n".join(f"  • {i}" for i in invalid))
 
                 final_msg = added_str + ("\n\n" + "\n\n".join(extra) if extra else "")
-                QMessageBox.information(dlg, "Added", final_msg)
+                QMessageBox.information(dlg, tr("Added"), final_msg)
 
             elif dupes or invalid:
                 msg_fail = []
-                if dupes: msg_fail.append("Skipped duplicates:\n" + "\n".join(f"  • {d}" for d in dupes))
-                if invalid: msg_fail.append("Invalid names:\n" + "\n".join(f"  • {i}" for i in invalid))
-                QMessageBox.warning(dlg, "Not Added", "\n\n".join(msg_fail))
+                if dupes: msg_fail.append(tr("Skipped duplicates:\n") + "\n".join(f"  • {d}" for d in dupes))
+                if invalid: msg_fail.append(tr("Invalid names:\n") + "\n".join(f"  • {i}" for i in invalid))
+                QMessageBox.warning(dlg, tr("Not Added"), "\n\n".join(msg_fail))
 
             dlg.accept()
             QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
@@ -406,10 +410,10 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
 
     def _export_data(self, title: str, default_filename: str, items: list, fmt_fn, header: str = "") -> None:
         if not items:
-            QMessageBox.information(self, "Export", f"No {title.lower()} to export.")
+            QMessageBox.information(self, tr("Export"), tr("No {t} to export.", t=title.lower()))
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, f"Export {title}", str(_HOME / default_filename), "Text (*.txt);;CSV (*.csv);;All (*)")
+            self, tr("Export {t}", t=title), str(_HOME / default_filename), tr("Text (*.txt);;CSV (*.csv);;All (*)"))
         if not path:
             return
 
@@ -418,13 +422,13 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
 
         try:
             Path(path).write_text("\n".join(ln for ln in lines if ln) + "\n", encoding="utf-8")
-            QMessageBox.information(self, "Exported", f"Exported {len(items)} entry/entries to:\n{path}")
+            QMessageBox.information(self, tr("Exported"), tr("Exported {n} entry/entries to:\n{p}", n=len(items), p=path))
         except OSError as exc:
-            QMessageBox.critical(self, "Export Error", str(exc))
+            QMessageBox.critical(self, tr("Export Error"), str(exc))
 
     def _export_dotfiles(self) -> None:
         files = [f for f in (S.dotfiles or []) if isinstance(f, dict) and f.get("source") and f.get("destination")]
-        self._export_data("Dotfiles", "dotfiles.txt", files,
+        self._export_data(tr("Dotfiles"), "dotfiles.txt", files,
                           lambda f: f"{f['source']}\t{f['destination']}", header="# source\tdestination")
 
     def _export_pkgs(self, pkg_type: str) -> None:
@@ -446,7 +450,7 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
         self._export_data(label, f"{pkg_type}.txt", packages, _fmt)
 
     def _import_pkgs(self, pkg_type: str) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Import", str(_HOME), "Data (*.txt *.csv)")
+        path, _ = QFileDialog.getOpenFileName(self, tr("Import"), str(_HOME), tr("Data (*.txt *.csv)"))
         if not path:
             QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
             return
@@ -498,18 +502,18 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
 
         if added:
             _commit_pkgs(pkg_type, current)
-            QMessageBox.information(self, "Import Complete", f"Successfully imported {added} packages.")
+            QMessageBox.information(self, tr("Import Complete"), tr("Successfully imported {n} packages.", n=added))
         QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
 
     def _verify_pkgs(self, pkg_type: str, parent_dlg: QDialog) -> None:
         packages = getattr(S, pkg_type, []) or []
         if not packages:
-            QMessageBox.information(parent_dlg, "Verify", "There are no packages available for verification.")
+            QMessageBox.information(parent_dlg, tr("Verify"), tr("There are no packages available for verification."))
             return
 
-        progress = QProgressDialog("Verifying packages...", "Cancel", 0, len(packages), parent_dlg)
+        progress = QProgressDialog(tr("Verifying packages..."), tr("Cancel"), 0, len(packages), parent_dlg)
         progress.setMinimumSize(500, 150)
-        progress.setWindowTitle("Package Verification")
+        progress.setWindowTitle(tr("Package Verification"))
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setAutoClose(True)
         progress.setValue(0)
@@ -528,17 +532,17 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
             progress.setValue(progress.maximum())
 
             if not invalid:
-                QMessageBox.information(parent_dlg, "Verification Complete",
-                                        "All packages are valid and available in the repositories!")
+                QMessageBox.information(parent_dlg, tr("Verification Complete"),
+                                        tr("All packages are valid and available in the repositories!"))
                 return
 
-            msg = f"{len(invalid)} invalid or missing package(s) detected:\n\n" + "\n".join(
+            msg = tr("{n} invalid or missing package(s) detected:\n\n", n=len(invalid)) + "\n".join(
                 f"  • {p}" for p in invalid[:15])
             if len(invalid) > 15:
-                msg += f"\n  ... and {len(invalid) - 15} more."
-            msg += "\n\nWould you like to permanently remove this/these invalid package(s) from your profile?"
+                msg += tr("\n  ... and {n} more.", n=len(invalid) - 15)
+            msg += tr("\n\nWould you like to permanently remove this/these invalid package(s) from your profile?")
 
-            ans = QMessageBox.question(parent_dlg, "Verification Complete", msg,
+            ans = QMessageBox.question(parent_dlg, tr("Verification Complete"), msg,
                                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
 
             if ans == QMessageBox.StandardButton.Yes:
@@ -565,8 +569,6 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
         verifier_thread.start()
 
 
-
-
 class SystemManagerLauncher:
 
     def __init__(self, _parent=None):
@@ -590,9 +592,9 @@ class SystemManagerLauncher:
 
     def launch(self) -> None:
         if not S.system_manager_ops:
-            QMessageBox.information(self.parent, "No Operations Configured",
-                                    "System Manager has no operations selected yet.\n\n"
-                                    "Please configure what should be executed under 'System Manager Operations' first.")
+            QMessageBox.information(self.parent, tr("No Operations Configured"),
+                                    tr("System Manager has no operations selected yet.\n\n"
+                                       "Please configure what should be executed under 'System Manager Operations' first."))
             SystemManagerOptions(self.parent, distro=self._distro).exec()
             return
         if self.parent:
@@ -624,23 +626,25 @@ class SystemManagerLauncher:
         op_text: dict[str, str] = self._op_text
         tips = self._op_tips or {}
         dialog = QDialog(self.parent)
-        dialog.setWindowTitle("System Manager")
+        dialog.setWindowTitle(tr("System Manager"))
         outer = QVBoxLayout(dialog)
         outer.setContentsMargins(0, 0, 0, 0)
         aur_helper_info = ""
         if self._distro.has_aur:
             _lnch_helper, _lnch_ok = _detect_effective_aur_helper(self._distro)
-            aur_helper_info = f"   |   AUR Helper: '{_lnch_helper}' {'detected' if _lnch_ok else 'not detected'}"
+            aur_helper_info = "   |   " + tr("AUR Helper: '{h}' {s}", h=_lnch_helper,
+                                             s=tr("detected") if _lnch_ok else tr("not detected"))
 
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
         distro_lbl = QLabel(
-            f"Recognized Linux distribution: {str(self._distro_name)}   |   Session: {str(self._session)}{aur_helper_info}")
+            tr("Recognized Linux distribution: {d}   |   Session: {s}{a}",
+               d=str(self._distro_name), s=str(self._session), a=aur_helper_info))
         distro_lbl.setStyleSheet(style_label_info(bold=True) + f"font-size:{font_sz()}px")
         distro_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         content_layout.addWidget(distro_lbl)
         ops_lbl = QLabel(f"<span style='font-size:{font_sz(2)}px;font-family:monospace;'>"
-                         "<br>System Manager will perform the following operations:<br></span>")
+                         "<br>" + tr("System Manager will perform the following operations:") + "<br></span>")
         ops_lbl.setTextFormat(Qt.TextFormat.RichText)
         ops_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         content_layout.addWidget(ops_lbl)
@@ -675,15 +679,15 @@ class SystemManagerLauncher:
             row.addStretch(1)
             content_layout.addLayout(row)
 
-        confirm = QLabel(f"<span style='font-size:{font_sz(2)}px;'>Start System Manager?<br>"
-                         "(Check 'Enter sudo password' if privileged commands require a password)<br></span>")
+        confirm = QLabel(f"<span style='font-size:{font_sz(2)}px;'>" + tr("Start System Manager?") + "<br>"
+                         + tr("(Check 'Enter sudo password' if privileged commands require a password)") + "<br></span>")
         confirm.setTextFormat(Qt.TextFormat.RichText)
         confirm.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        sudo_cb = QCheckBox("Enter sudo password 󰔨")
+        sudo_cb = QCheckBox(tr("Enter sudo password 󰔨"))
         sudo_cb.setStyleSheet(style_sudo_checkbox(muted=False))
         if self.failed_attempts:
-            sudo_cb.setText("Sudo password must be entered! 󰔨")
+            sudo_cb.setText(tr("Sudo password must be entered! 󰔨"))
             sudo_cb.setChecked(True)
             sudo_cb.setEnabled(False)
             sudo_cb.setStyleSheet(style_sudo_checkbox(muted=True))
@@ -691,6 +695,12 @@ class SystemManagerLauncher:
         self._sudo_checkbox = sudo_cb
 
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Yes | QDialogButtonBox.StandardButton.No)  # type: ignore
+        yes_btn = bb.button(QDialogButtonBox.StandardButton.Yes)
+        no_btn_lbl = bb.button(QDialogButtonBox.StandardButton.No)
+        if yes_btn:
+            yes_btn.setText(tr("Yes"))
+        if no_btn_lbl:
+            no_btn_lbl.setText(tr("No"))
         bb.accepted.connect(dialog.accept)
         bb.rejected.connect(dialog.reject)
         btn_row = QHBoxLayout()
@@ -749,8 +759,8 @@ class SystemManagerLauncher:
         if self.parent:
             self.parent.sm_failed_attempts = self.failed_attempts
         dialog.on_output(f"<p style='color:{t['error']};font-size:17px;font-weight:bold;'>"
-                         "Authentication failed. Cancelled to prevent account lockout.<br>"
-                         "Possible causes: incorrect password, user not in sudoers.</p>", "info")
+                         + tr("Authentication failed. Cancelled to prevent account lockout.") + "<br>"
+                         + tr("Possible causes: incorrect password, user not in sudoers.") + "</p>", "info")
         dialog.mark_done(failed_count=self.failed_attempts)
         thread.terminated = True
 

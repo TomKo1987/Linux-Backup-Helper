@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from constants import USER_SHELLS, ARCH_KERNEL_VARIANTS, PKG_NAME_RE
 from state import logger
+from translations import tr
 
 __all__ = ["ARCH_KERNEL_VARIANTS", "SESSIONS", "USER_SHELLS", "LinuxDistroHelper", "distro_family", "is_valid_pkg_name"]
 
@@ -348,7 +349,7 @@ class LinuxDistroHelper:
         if last_exc is not None:
             logger.error("os-release: %s", last_exc)
             d_id = "unknown"
-            d_pretty = "Unknown Linux Distribution"
+            d_pretty = tr("Unknown Linux Distribution")
 
         resolved = d_id or "unknown"
         if resolved not in _DISTRO_FAMILY_MAP and d_like:

@@ -12,6 +12,7 @@ from typing import Callable, Protocol, TYPE_CHECKING
 
 from drive_utils import is_smb
 from state import logger
+from translations import tr
 
 if TYPE_CHECKING:
     from copy_worker import _Flusher, _EntryTracker
@@ -403,7 +404,7 @@ class _SmbScanner:
                 except Exception as exc:
                     logger.error("SMB scan error: %s", exc)
                     with self._result_lock:
-                        errors.append(("smb scan error", str(exc), ""))
+                        errors.append((tr("smb scan error"), str(exc), ""))
 
         return ([], []) if self._cancel.is_set() else (expanded, errors)
 
@@ -579,7 +580,7 @@ class _ShareProcessor:
             full_url = self._remote_url(j.remote_path)
             self._url_title[full_url] = (j.title, j.remote_size)
             if j.size_matches_local():
-                sk_immediate.append((full_url, "Up to date"))
+                sk_immediate.append((full_url, tr("Up to date")))
             else:
                 get_transfer.append(j)
 
@@ -617,7 +618,7 @@ class _ShareProcessor:
                 )
                 mtime_unknown = remote_mtime < 0 or local_mt < 0
                 if same_size and (mtime_known_and_matches or mtime_unknown):
-                    sk_immediate.append((j.src_url, "Up to date"))
+                    sk_immediate.append((j.src_url, tr("Up to date")))
                 else:
                     put_transfer.append(j)
             if ri is None:
@@ -672,7 +673,7 @@ class _ShareProcessor:
             if '"' in j.remote_path or (not is_get and '"' in j.src_url):
                 url = f"smb://{j.host}/{j.share}/{j.remote_path}" if is_get else j.src_url
                 self._url_title[url] = (j.title, j.remote_size if is_get else max(j.local_size, 0))
-                errors.append((url, 'Skipped: filename contains a double quote (") which smbclient cannot safely escape'))
+                errors.append((url, tr('Skipped: filename contains a double quote (") which smbclient cannot safely escape')))
             else:
                 safe.append(j)
         return safe, errors

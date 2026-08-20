@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import QColorDialog, QDialog, QListWidget, QListWidgetItem,
 from dialog_base import _UserRoleListMixin
 from state import S, save_profile
 from themes import current_theme
+from translations import tr
 from ui_utils import ask_text, btn_row, hdr_label, ok_cancel_buttons, sep
 
 class HeaderSettingsDialog(_UserRoleListMixin, QDialog):
@@ -17,17 +18,17 @@ class HeaderSettingsDialog(_UserRoleListMixin, QDialog):
         self._headers_backup = copy.deepcopy(S.headers)
         self._entries_backup = copy.deepcopy(S.entries)
         self.was_changed: bool = False
-        self.setWindowTitle("Header Settings")
+        self.setWindowTitle(tr("Header Settings"))
         self.setMinimumSize(750, 500)
         layout = QVBoxLayout(self)
-        layout.addWidget(hdr_label("Headers"))
+        layout.addWidget(hdr_label(tr("Headers")))
         layout.addWidget(sep())
         self.item_list = QListWidget()
         layout.addWidget(self.item_list, 1)
-        layout.addLayout(btn_row([("🆕 New", self._new), ("🎨 Color", self._color), ("⏸ Toggle active", self._toggle),
-                                   ("✕ Delete", self._delete), ("↑ Up", self._move_up), ("↓ Down", self._move_down)]))
+        layout.addLayout(btn_row([(tr("🆕 New"), self._new), (tr("🎨 Color"), self._color), (tr("⏸ Toggle active"), self._toggle),
+                                   (tr("✕ Delete"), self._delete), (tr("↑ Up"), self._move_up), (tr("↓ Down"), self._move_down)]))
         layout.addWidget(sep())
-        layout.addWidget(ok_cancel_buttons(self, self._save_and_close, "Save && Close"))
+        layout.addWidget(ok_cancel_buttons(self, self._save_and_close, tr("Save && Close")))
         self._refresh()
 
     def _save_and_close(self) -> None:
@@ -44,7 +45,7 @@ class HeaderSettingsDialog(_UserRoleListMixin, QDialog):
         row = self.item_list.currentRow()
         self.item_list.clear()
         for name, d in S.headers.items():
-            status = "  [inactive]" if d["inactive"] else ""
+            status = f"  [{tr('inactive')}]" if d["inactive"] else ""
             item = QListWidgetItem(f"  {name}{status}")
             item.setForeground(QColor(t["text_dim"] if d.get("inactive", False) else d.get("color", "#ffffff")))
             item.setData(Qt.ItemDataRole.UserRole, name)
@@ -53,14 +54,14 @@ class HeaderSettingsDialog(_UserRoleListMixin, QDialog):
             self.item_list.setCurrentRow(row)
 
     def _new(self) -> None:
-        name, ok = ask_text(self, "New Header", "Header name:")
+        name, ok = ask_text(self, tr("New Header"), tr("Header name:"))
         if not ok or not name.strip():
             return
         name = name.strip()
         if name in S.headers:
-            QMessageBox.warning(self, "Duplicate", f"Header '{name}' already exists.")
+            QMessageBox.warning(self, tr("Duplicate"), tr("Header '{name}' already exists.", name=name))
             return
-        col = QColorDialog.getColor(QColor(current_theme()["accent"]), self, "Choose header colour")
+        col = QColorDialog.getColor(QColor(current_theme()["accent"]), self, tr("Choose header colour"))
         S.headers[name] = {"inactive": False, "color": col.name() if col.isValid() else "#ffffff"}
         self.was_changed = True
         self._refresh()
@@ -89,7 +90,7 @@ class HeaderSettingsDialog(_UserRoleListMixin, QDialog):
     def _delete(self) -> None:
         name = self._selected_name()
         if not name: return
-        if QMessageBox.question(self, "Delete", f"Delete header '{name}' and all its entries?",
+        if QMessageBox.question(self, tr("Delete"), tr("Delete header '{name}' and all its entries?", name=name),
                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
             del S.headers[name]
             S.entries    = [e for e in S.entries if e["header"] != name]
@@ -104,7 +105,8 @@ class HeaderSettingsDialog(_UserRoleListMixin, QDialog):
         new_idx = idx + direction
         if not (0 <= new_idx < len(keys)): return False
         keys[idx], keys[new_idx] = keys[new_idx], keys[idx]
-        S.headers = {k: S.headers[k] for k in keys}
+        _headers = dict(S.headers.items())
+        S.headers = {k: _headers[k] for k in keys}
         self._refresh()
         self.item_list.setCurrentRow(new_idx)
         return True

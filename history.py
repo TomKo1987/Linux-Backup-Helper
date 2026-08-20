@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
 
 from state import S, _LOG_HIST_DIR, _atomic_write, logger
 from themes import current_theme, font_sz, register_style_listener, unregister_style_listener
+from translations import tr, register_language_listener, unregister_language_listener
 from ui_utils import footer_bar_style, header_bar_style, _StandardKeysMixin, size_to_screen
 
 
@@ -127,7 +128,7 @@ def _entry_detail_html(e: dict, t: dict) -> str:
     can_html  = (f"<span style='color:{sk_col};'>yes  ⏹</span>" if can else f"<span style='color:{ok_col};'>no</span>")
     err_color = er_col if errors > 0 else ok_col
     is_backup, is_restore = _op_classify(op)
-    op_label = "Backup created" if is_backup else ("Restored from backup" if is_restore else op)
+    op_label = tr("Backup created") if is_backup else (tr("Restored from backup") if is_restore else op)
     op_icon  = "⤵" if is_backup else ("⤴" if is_restore else "▶")
 
     return (f"<div style='font-family:monospace;padding:4px;'>"
@@ -135,14 +136,14 @@ def _entry_detail_html(e: dict, t: dict) -> str:
             f"padding:4px 0 14px 0;border-bottom:1px solid {sep};margin-bottom:14px;'>"
             f"{op_icon}  {op_label}</div>"
             f"<table style='border-collapse:collapse;width:100%;'>"
-            f"{row('Timestamp', ts)}"
-            f"{row('Copied',    f'{copied:,}',  ok_col if copied  > 0 else dim)}"
-            f"{row('Skipped',   f'{skipped:,}', sk_col if skipped > 0 else dim)}"
-            f"{row('Deleted',   f'{deleted:,}', de_col if deleted > 0 else dim)}"
-            f"{row('Errors',    f'{errors:,}',  err_color)}"
-            f"{row('Duration',  dur)}"
+            f"{row(tr('Timestamp'), ts)}"
+            f"{row(tr('Copied'),    f'{copied:,}',  ok_col if copied  > 0 else dim)}"
+            f"{row(tr('Skipped'),   f'{skipped:,}', sk_col if skipped > 0 else dim)}"
+            f"{row(tr('Deleted'),   f'{deleted:,}', de_col if deleted > 0 else dim)}"
+            f"{row(tr('Errors'),    f'{errors:,}',  err_color)}"
+            f"{row(tr('Duration'),  dur)}"
             f"<tr>"
-            f"<td style='color:{dim};padding:6px 20px 6px 0;font-size:{fs_sm}px;'>Cancelled</td>"
+            f"<td style='color:{dim};padding:6px 20px 6px 0;font-size:{fs_sm}px;'>{tr('Cancelled')}</td>"
             f"<td style='padding:6px 0;'>{can_html}</td>"
             f"</tr>"
             f"</table>"
@@ -152,7 +153,7 @@ def _entry_detail_html(e: dict, t: dict) -> str:
 class HistoryDialog(_StandardKeysMixin, QDialog):
     def __init__(self, parent) -> None:
         super().__init__(parent)
-        self.setWindowTitle("History")
+        self.setWindowTitle(tr("History"))
         size_to_screen(self, 1250, 850, fallback_w=1000, fallback_h=650)
         t   = current_theme()
         bg  = t["bg"]
@@ -171,7 +172,7 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
         hb_lay = QHBoxLayout(header_bar)
         hb_lay.setContentsMargins(14, 10, 14, 10)
 
-        title_lbl = QLabel("📜  History")
+        title_lbl = QLabel(tr("📜  History"))
         title_lbl.setStyleSheet(f"font-size:{font_sz(5)}px; font-weight:bold; color:{acc}; background:transparent;")
         self._profile_lbl = QLabel()
         self._profile_lbl.setStyleSheet(f"font-size:{font_sz(1)}px; color:{acc2}; background:transparent;")
@@ -189,7 +190,7 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
         lf_lay.setContentsMargins(0, 0, 0, 0)
         lf_lay.setSpacing(0)
 
-        list_hdr = QLabel("  Runs  (newest first)")
+        list_hdr = QLabel(tr("  Runs  (newest first)"))
         list_hdr.setStyleSheet(f"background:{bg2}; color:{dim}; font-size:{font_sz(-1)}px;"
                                f"padding:6px 10px; border-bottom:1px solid {sep}; border-radius:6px 6px 0 0;")
         lf_lay.addWidget(list_hdr)
@@ -211,7 +212,7 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
         df_lay.setContentsMargins(0, 0, 0, 0)
         df_lay.setSpacing(0)
 
-        detail_hdr = QLabel("  Details")
+        detail_hdr = QLabel(tr("  Details"))
         detail_hdr.setStyleSheet(f"background:{bg2}; color:{dim}; font-size:{font_sz(-1)}px;"
                                  f"padding:6px 10px; border-bottom:1px solid {sep}; border-radius:6px 6px 0 0;")
         df_lay.addWidget(detail_hdr)
@@ -233,7 +234,7 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
         bot_lay.addWidget(self._count_lbl)
         bot_lay.addStretch()
 
-        export_btn = QPushButton("📤 Export CSV")
+        export_btn = QPushButton(tr("📤 Export CSV"))
         export_btn.setMinimumHeight(32)
         export_btn.setMinimumWidth(120)
         export_btn.setStyleSheet(
@@ -245,7 +246,7 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
         export_btn.clicked.connect(self._export_history)
         bot_lay.addWidget(export_btn)
 
-        clear_btn = QPushButton("🗑 Clear History")
+        clear_btn = QPushButton(tr("🗑 Clear History"))
         clear_btn.setMinimumHeight(32)
         clear_btn.setMinimumWidth(130)
         clear_btn.setStyleSheet(f"QPushButton {{ background:{bg3}; border:1px solid {sep}; border-radius:4px;"
@@ -256,7 +257,7 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
         clear_btn.clicked.connect(self._clear_history)
         bot_lay.addWidget(clear_btn)
 
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(tr("Close"))
         close_btn.setMinimumHeight(32)
         close_btn.setMinimumWidth(100)
         close_btn.setStyleSheet(f"QPushButton {{ background:{bg3}; border:1px solid {sep}; border-radius:4px;"
@@ -274,14 +275,33 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
         lay.addLayout(content, 1)
         lay.addWidget(bottom)
 
+        self._title_lbl = title_lbl
+        self._list_hdr = list_hdr
+        self._detail_hdr = detail_hdr
+        self._export_btn = export_btn
+        self._clear_btn = clear_btn
+        self._close_btn = close_btn
+
         self._entries: list[dict] = []
         self._load()
         register_style_listener(self._refresh_on_theme)
+        register_language_listener(self._retranslate)
         self.finished.connect(lambda _r: unregister_style_listener(self._refresh_on_theme))
+        self.finished.connect(lambda _r: unregister_language_listener(self._retranslate))
+
+    def _retranslate(self) -> None:
+        self.setWindowTitle(tr("History"))
+        self._title_lbl.setText(tr("📜  History"))
+        self._list_hdr.setText(tr("  Runs  (newest first)"))
+        self._detail_hdr.setText(tr("  Details"))
+        self._export_btn.setText(tr("📤 Export CSV"))
+        self._clear_btn.setText(tr("🗑 Clear History"))
+        self._close_btn.setText(tr("Close"))
+        self._refresh_on_theme()
 
     def _load(self) -> None:
-        name = S.profile_name or "(no profile)"
-        self._profile_lbl.setText(f"Profile:  {name}")
+        name = S.profile_name or tr("(no profile)")
+        self._profile_lbl.setText(tr("Profile:  {name}", name=name))
         self._entries = load_history(S.profile_name or "")
         self._list.clear()
         self._detail.clear()
@@ -289,11 +309,11 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
         dim = t["text_dim"]
 
         if not self._entries:
-            item = QListWidgetItem("  No runs recorded yet.")
+            item = QListWidgetItem(tr("  No runs recorded yet."))
             item.setForeground(QColor(dim))
             item.setFlags(Qt.ItemFlag.NoItemFlags)
             self._list.addItem(item)
-            self._count_lbl.setText("0 runs")
+            self._count_lbl.setText(tr("0 runs"))
             return
 
         ok_col = t["success"]
@@ -313,7 +333,7 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
             can     = e.get("cancelled", False)
 
             is_backup, is_restore = _op_classify(op)
-            op_label = "Backup created" if is_backup else ("Restored from backup" if is_restore else op)
+            op_label = tr("Backup created") if is_backup else (tr("Restored from backup") if is_restore else op)
             can_tag  = "  ⏹" if can else ""
             line1    = f"{op_label}  {ts}{can_tag}"
             del_part = f"   🗑 {deleted:,}" if deleted else ""
@@ -336,13 +356,12 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
         total_deleted = sum(e.get("deleted",    0) for e in self._entries)
         total_errors  = sum(e.get("errors",     0) for e in self._entries)
         total_dur     = sum(e.get("duration_s", 0) for e in self._entries)
-        del_part = f"{total_deleted:,} files deleted  ·  " if total_deleted else ""
+        del_part = tr("{n:,} files deleted  ·  ", n=total_deleted) if total_deleted else ""
+        runs_word = tr("runs") if n != 1 else tr("run")
         self._count_lbl.setText(
-            f"{n} run{'s' if n != 1 else ''}  ·  "
-            f"{total_copied:,} files copied total  ·  "
-            f"{del_part}"
-            f"{total_errors:,} errors  ·  "
-            f"Total runtime: {_fmt_duration(total_dur)}"
+            tr("{n} {runs}  ·  {copied:,} files copied total  ·  {deleted}{errors:,} errors  ·  Total runtime: {dur}",
+               n=n, runs=runs_word, copied=total_copied, deleted=del_part,
+               errors=total_errors, dur=_fmt_duration(total_dur))
         )
         self._list.setCurrentRow(0)
 
@@ -357,8 +376,8 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
         if not name:
             return
         ans = QMessageBox.question(
-            self, "Clear History",
-            f"Delete the entire run history for profile '{name}'?\n\nThis cannot be undone.",
+            self, tr("Clear History"),
+            tr("Delete the entire run history for profile '{name}'?\n\nThis cannot be undone.", name=name),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if ans != QMessageBox.StandardButton.Yes:
@@ -372,13 +391,13 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
 
     def _export_history(self) -> None:
         if not self._entries:
-            QMessageBox.information(self, "Export", "No history entries to export.")
+            QMessageBox.information(self, tr("Export"), tr("No history entries to export."))
             return
         name = S.profile_name or "profile"
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export history as a CSV file",
+            self, tr("Export history as a CSV file"),
             f"{name}_history.csv",
-            "CSV files (*.csv)"
+            tr("CSV files (*.csv)")
         )
         if not path:
             return
@@ -386,11 +405,11 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
             csv_data = export_history_csv(S.profile_name or "")
             Path(path).write_text(csv_data, encoding="utf-8")
             QMessageBox.information(
-                self, "Export complete",
-                f"{len(self._entries)} Entries exported to:\n{path}"
+                self, tr("Export complete"),
+                tr("{n} Entries exported to:\n{path}", n=len(self._entries), path=path)
             )
         except OSError as exc:
-            QMessageBox.critical(self, "Export failed", f"The file could not be written:\n{exc}")
+            QMessageBox.critical(self, tr("Export failed"), tr("The file could not be written:\n{err}", err=exc))
 
 
     def _on_select(self, row: int) -> None:

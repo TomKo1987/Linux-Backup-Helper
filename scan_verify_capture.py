@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
 from linux_distro_helper import LinuxDistroHelper, SESSIONS
 from state import S, _HOME, save_profile, all_profile_pkg_names, sort_pkg_list, sort_specific_pkg_list, apply_replacements
 from themes import current_theme, font_sz
+from translations import tr
 from ui_utils import color_style, sep
 
 from scan_verify_helpers import (
@@ -39,7 +40,7 @@ class _CaptureTab(QWidget):
         lay.setContentsMargins(10, 10, 10, 10)
         lay.setSpacing(8)
 
-        self._prog_widget, self._prog_label, self._prog_bar = _make_progress_widget("Scanning…")
+        self._prog_widget, self._prog_label, self._prog_bar = _make_progress_widget(tr("Scanning…"))
         lay.addWidget(self._prog_widget, 1)
 
         self._scroll = QScrollArea()
@@ -55,9 +56,9 @@ class _CaptureTab(QWidget):
 
         btn_row_w = QHBoxLayout()
         btn_row_w.addStretch()
-        refresh_btn = QPushButton("🔄  Re-run Check")
+        refresh_btn = QPushButton(tr("🔄  Re-run Check"))
         refresh_btn.clicked.connect(self._start)
-        export_btn = QPushButton("💾  Export Report")
+        export_btn = QPushButton(tr("💾  Export Report"))
         export_btn.clicked.connect(self._export_report)
         btn_row_w.addWidget(export_btn)
         btn_row_w.addWidget(refresh_btn)
@@ -65,10 +66,10 @@ class _CaptureTab(QWidget):
 
         self._last_result: dict = {}
 
-        self._sel_all_btn = QPushButton("Select All New")
+        self._sel_all_btn = QPushButton(tr("Select All New"))
         self._sel_all_btn.clicked.connect(self._select_all_new)
 
-        self._add_btn = QPushButton("⬆  Add Selected to Profile")
+        self._add_btn = QPushButton(tr("⬆  Add Selected to Profile"))
         self._add_btn.setStyleSheet(f"font-weight:bold;color:{t['accent']};border-color:{t['accent']};")
         self._add_btn.clicked.connect(self._add_to_profile)
 
@@ -86,7 +87,7 @@ class _CaptureTab(QWidget):
 
         if not _ensure_drives_mounted(self.window()):
             t = current_theme()
-            self._prog_label.setText("⚠  Capture cancelled: required drive(s) not mounted.")
+            self._prog_label.setText(tr("⚠  Capture cancelled: required drive(s) not mounted."))
             self._prog_label.setStyleSheet(f"color:{t['warning']};font-weight:bold;")
             self._prog_bar.hide()
             return
@@ -134,14 +135,16 @@ class _CaptureTab(QWidget):
         cl.setContentsMargins(8, 8, 8, 8)
         cl.setSpacing(12)
 
-        summary = QLabel(f"<b>{total}</b> packages detected  •  "
-                         f"<span style='color:{t['success']};'><b>{already}</b> already in profile</span>  •  "
-                         f"<span style='color:{t['accent']};'><b>{len(new_basic) + len(new_aur)}</b> new</span>")
+        summary = QLabel(tr("<b>{total}</b> packages detected  •  "
+                            "<span style='color:{ok_col};'><b>{already}</b> already in profile</span>  •  "
+                            "<span style='color:{acc};'><b>{new}</b> new</span>",
+                            total=total, ok_col=t['success'], already=already,
+                            acc=t['accent'], new=len(new_basic) + len(new_aur)))
         summary.setTextFormat(Qt.TextFormat.RichText)
         summary.setStyleSheet(f"font-size:{font_sz()}px; padding:4px 2px;")
 
         if not has_new_pkgs:
-            ok_lbl = QLabel("✅  All packages from this system are already in the profile.")
+            ok_lbl = QLabel(tr("✅  All packages from this system are already in the profile."))
             ok_lbl.setStyleSheet(f"color:{t['success']}; font-weight:bold; padding:4px;")
             ok_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             cl.addWidget(ok_lbl)
@@ -150,13 +153,13 @@ class _CaptureTab(QWidget):
 
         if has_new_pkgs:
             cl.addWidget(sep())
-            for title, items, kind in [("New Basic Packages", new_basic, "basic"), ("New AUR Packages", new_aur, "aur")]:
+            for title, items, kind in [(tr("New Basic Packages"), new_basic, "basic"), (tr("New AUR Packages"), new_aur, "aur")]:
                 if not items:
                     continue
                 hdr_lbl = QLabel(f"<b>{title}</b>  "
                                  f"<span style='color:{t['accent']}; background:{t['bg3']}; "
                                  f"padding:1px 8px; border-radius:10px; font-size:{font_sz(-1)}px;'>"
-                                 f"{len(items)} new</span>")
+                                 f"{tr('{n} new', n=len(items))}</span>")
                 hdr_lbl.setTextFormat(Qt.TextFormat.RichText)
                 hdr_lbl.setStyleSheet(f"font-size:{font_sz(1)}px; padding:2px 0;")
                 cl.addWidget(hdr_lbl)
@@ -175,14 +178,14 @@ class _CaptureTab(QWidget):
         active_basic = [
             {"name": p.get("name", ""), "installed": p.get("name", "") in installed_basic_set}
             for p in S.basic_packages if isinstance(p, dict) and not p.get("disabled") and p.get("name")]
-        self._add_profile_pkg_grid(cl, t, "Basic Packages (Profile)", active_basic, t["accent"])
+        self._add_profile_pkg_grid(cl, t, tr("Basic Packages (Profile)"), active_basic, t["accent"])
 
         active_aur = [{"name": p.get("name", ""), "installed": p.get("name", "") in installed_aur_set}
                       for p in S.aur_packages if isinstance(p, dict) and not p.get("disabled") and p.get("name")]
-        self._add_profile_pkg_grid(cl, t, "AUR Packages (Profile)", active_aur, t["accent2"])
+        self._add_profile_pkg_grid(cl, t, tr("AUR Packages (Profile)"), active_aur, t["accent2"])
 
         specific = res.get("specific", [])
-        self._add_profile_pkg_grid(cl, t, "Specific Packages (Profile)", specific, t["accent2"], cols=3,
+        self._add_profile_pkg_grid(cl, t, tr("Specific Packages (Profile)"), specific, t["accent2"], cols=3,
                                    suffix_fn=lambda p: f" [{p['session']}]" if p.get("session") else "")
 
         cl.addWidget(sep())
@@ -194,20 +197,21 @@ class _CaptureTab(QWidget):
             n_ok = sum(1 for f in sys_files if f["status"] == "ok")
             n_bad = len(sys_files) - n_ok
             color = t["error"] if n_bad else t["success"]
-            hdr = QLabel(f"<b>📄  Dotfiles</b>  —  "
-                         f"<span style='color:{color};'>{n_ok}/{len(sys_files)} up to date</span>")
+            hdr = QLabel(tr("<b>📄  Dotfiles</b>  —  "
+                            "<span style='color:{color};'>{ok}/{total} up to date</span>",
+                            color=color, ok=n_ok, total=len(sys_files)))
             hdr.setTextFormat(Qt.TextFormat.RichText)
             hdr.setStyleSheet(f"font-size:{font_sz(1)}px; padding:2px 0;")
             cl.addWidget(hdr)
-            _status_map = {"changed": ("⚠", "Changed", "warning"), "dst_missing": ("❌", "Not backed up", "error"),
-                           "src_missing": ("❓", "Source missing", "muted")}
+            _status_map = {"changed": ("⚠", tr("Changed"), "warning"), "dst_missing": ("❌", tr("Not backed up"), "error"),
+                           "src_missing": ("❓", tr("Source missing"), "muted")}
             sf_frame = QWidget()
             sf_vl = QVBoxLayout(sf_frame)
             sf_vl.setContentsMargins(0, 0, 0, 0)
             sf_vl.setSpacing(0)
             for i, f in enumerate(sys_files):
                 if f["status"] == "ok":
-                    icon, label, ck = "✅", "OK", "success"
+                    icon, label, ck = "✅", tr("OK"), "success"
                 else:
                     icon, label, ck = _status_map.get(f["status"], ("?", f["status"], "text"))
                 row_w = QWidget()
@@ -239,7 +243,7 @@ class _CaptureTab(QWidget):
             cl.addWidget(sf_frame)
         elif S.dotfiles:
             cl.addWidget(sep())
-            info = QLabel("📄  <i>No active dotfiles configured.</i>")
+            info = QLabel(tr("📄  <i>No active dotfiles configured.</i>"))
             info.setTextFormat(Qt.TextFormat.RichText)
             info.setStyleSheet(f"color:{t['muted']};")
             cl.addWidget(info)
@@ -272,7 +276,8 @@ class _CaptureTab(QWidget):
         n_ok = sum(1 for p in pkgs if p["installed"])
         n_bad = len(pkgs) - n_ok
         color = t["error"] if n_bad else t["success"]
-        hdr = QLabel(f"<b>{title}</b>  —  <span style='color:{color};'>{n_ok}/{len(pkgs)} installed</span>")
+        hdr = QLabel(tr("<b>{title}</b>  —  <span style='color:{color};'>{ok}/{total} installed</span>",
+                        title=title, color=color, ok=n_ok, total=len(pkgs)))
         hdr.setTextFormat(Qt.TextFormat.RichText)
         hdr.setStyleSheet(f"font-size:{font_sz(1)}px; color:{accent}; padding:2px 0;")
         cl.addWidget(hdr)
@@ -295,20 +300,20 @@ class _CaptureTab(QWidget):
         vl.setContentsMargins(0, 0, 0, 0)
         vl.setSpacing(4)
 
-        hdr = QLabel("<b>Mark as Specific Package</b> — install only for a certain session")
+        hdr = QLabel(tr("<b>Mark as Specific Package</b> — install only for a certain session"))
         hdr.setTextFormat(Qt.TextFormat.RichText)
         hdr.setStyleSheet(f"font-size:{font_sz(1)}px;color:{t['accent2']};")
         vl.addWidget(hdr)
 
-        hint = QLabel("Select packages below and choose a session. They will be added to <i>Specific Packages</i> and "
-                      "removed from Basic Packages if present.")
+        hint = QLabel(tr("Select packages below and choose a session. They will be added to <i>Specific Packages</i> and "
+                         "removed from Basic Packages if present."))
         hint.setTextFormat(Qt.TextFormat.RichText)
         hint.setWordWrap(True)
         hint.setStyleSheet(color_style(t['muted'], font_sz(-1)))
         vl.addWidget(hint)
 
         sess_row = QHBoxLayout()
-        sess_row.addWidget(QLabel("Target session:"))
+        sess_row.addWidget(QLabel(tr("Target session:")))
         spec_sess_cb = QComboBox()
         spec_sess_cb.addItems(SESSIONS)
         if self._current_session in SESSIONS:
@@ -328,13 +333,13 @@ class _CaptureTab(QWidget):
                     and p not in existing_aur]
 
         if not eligible:
-            no_lbl = QLabel("— No eligible packages found —")
+            no_lbl = QLabel(tr("— No eligible packages found —"))
             no_lbl.setStyleSheet(f"color:{t['muted']};")
             vl.addWidget(no_lbl)
             return wrapper
 
         search = QLineEdit()
-        search.setPlaceholderText("Filter packages…")
+        search.setPlaceholderText(tr("Filter packages…"))
         search.setMaximumWidth(300)
         vl.addWidget(search)
 
@@ -358,7 +363,7 @@ class _CaptureTab(QWidget):
 
         search.textChanged.connect(_filter)
 
-        add_spec_btn = QPushButton("⬆  Add Selected as Specific")
+        add_spec_btn = QPushButton(tr("⬆  Add Selected as Specific"))
         add_spec_btn.clicked.connect(self._add_specific_to_profile)
         btn_row_w = QHBoxLayout()
         btn_row_w.addStretch()
@@ -373,27 +378,27 @@ class _CaptureTab(QWidget):
         vl.setContentsMargins(0, 0, 0, 0)
         vl.setSpacing(4)
 
-        hdr = QLabel("<b>⚙️  System Services</b> — enable via System Manager Operations")
+        hdr = QLabel(tr("<b>⚙️  System Services</b> — enable via System Manager Operations"))
         hdr.setTextFormat(Qt.TextFormat.RichText)
         hdr.setStyleSheet(f"font-size:{font_sz(1)}px;color:{t['accent2']};")
         vl.addWidget(hdr)
 
-        hint = QLabel("Active services are ticked. Check services you want to add to the profile (System Manager Operations)."
-                      "<br>Services already in your profile are shown with a ✓ in profile badge.")
+        hint = QLabel(tr("Active services are ticked. Check services you want to add to the profile (System Manager Operations)."
+                         "<br>Services already in your profile are shown with a ✓ in profile badge."))
         hint.setTextFormat(Qt.TextFormat.RichText)
         hint.setWordWrap(True)
         hint.setStyleSheet(color_style(t['muted'], font_sz(-1)))
         vl.addWidget(hint)
 
-        _OP_LABELS: dict[str, str] = {"enable_bluetooth_service": "Bluetooth",
-                                      "enable_atd_service": "atd (at-daemon)",
-                                      "enable_firewall": "Firewall (ufw)",
-                                      "enable_printer_support": "Printer (CUPS)",
-                                      "enable_ssh_service": "SSH server",
-                                      "enable_samba_network_filesharing": "Samba (file sharing)",
-                                      "enable_cronie_service": "Cron (cronie/cron)",
-                                      "install_snap": "Snapd",
-                                      "enable_flatpak_integration": "Flatpak"}
+        _OP_LABELS: dict[str, str] = {"enable_bluetooth_service": tr("Bluetooth"),
+                                      "enable_atd_service": tr("atd (at-daemon)"),
+                                      "enable_firewall": tr("Firewall (ufw)"),
+                                      "enable_printer_support": tr("Printer (CUPS)"),
+                                      "enable_ssh_service": tr("SSH server"),
+                                      "enable_samba_network_filesharing": tr("Samba (file sharing)"),
+                                      "enable_cronie_service": tr("Cron (cronie/cron)"),
+                                      "install_snap": tr("Snapd"),
+                                      "enable_flatpak_integration": tr("Flatpak")}
 
         svc_frame = QWidget()
         svc_vl = QVBoxLayout(svc_frame)
@@ -454,7 +459,7 @@ class _CaptureTab(QWidget):
 
         vl.addWidget(svc_frame)
 
-        add_svc_btn = QPushButton("⬆  Add Selected Services to Profile")
+        add_svc_btn = QPushButton(tr("⬆  Add Selected Services to Profile"))
         add_svc_btn.clicked.connect(self._add_services_to_profile)
         btn_row_w = QHBoxLayout()
         btn_row_w.addStretch()
@@ -473,18 +478,18 @@ class _CaptureTab(QWidget):
 
         res = self._last_result
         if not res:
-            QMessageBox.information(self.window(), "No Data", "Run a check first.")
+            QMessageBox.information(self.window(), tr("No Data"), tr("Run a check first."))
             return
 
-        lines: list[str] = ["Backup Helper — Capture Report",
-                            f"Profile : {S.profile_name or '—'}",
-                            f"Date    : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        lines: list[str] = [tr("Backup Helper — Capture Report"),
+                            tr("Profile : {p}", p=S.profile_name or '—'),
+                            tr("Date    : {d}", d=datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
                             "=" * 60]
 
         def _section(title: str, rows: list[tuple[str, str]]) -> None:
             lines.append(f"\n[{title}]")
             if not rows:
-                lines.append("  —")
+                lines.append(f"  {tr('—')}")
                 return
             for _status, detail in rows:
                 lines.append(f"  {_status}  {detail}")
@@ -497,20 +502,20 @@ class _CaptureTab(QWidget):
         for name in basic_pkgs:
             if name in _excluded or any(name.startswith(p) for p in _IGNORE_PREFIXES):
                 continue
-            status = "✓" if name in profile_all else "new"
-            pkg_rows.append((status, f"{name} (basic)"))
+            status = "✓" if name in profile_all else tr("new")
+            pkg_rows.append((status, f"{name} ({tr('basic')})"))
         for name in aur_pkgs:
             if name in _excluded or any(name.startswith(p) for p in _IGNORE_PREFIXES):
                 continue
-            status = "✓" if name in profile_all else "new"
-            pkg_rows.append((status, f"{name} (aur)"))
+            status = "✓" if name in profile_all else tr("new")
+            pkg_rows.append((status, f"{name} ({tr('aur')})"))
         for p in res.get("specific", []):
             session = p.get("session") or "—"
-            pkg_rows.append(("✓" if p["installed"] else "✗", f"{p['name']} (specific / {session})"))
-        _section("Packages", pkg_rows)
+            pkg_rows.append(("✓" if p["installed"] else "✗", f"{p['name']} ({tr('specific')} / {session})"))
+        _section(tr("Packages"), pkg_rows)
 
-        _status_labels = {"ok": "OK", "changed": "Changed", "dst_missing": "Not backed up",
-                          "src_missing": "Source missing"}
+        _status_labels = {"ok": tr("OK"), "changed": tr("Changed"), "dst_missing": tr("Not backed up"),
+                          "src_missing": tr("Source missing")}
         _dotfile_rows: list[tuple[str, str]] = []
         for f in res.get("sys_files", []):
             _icon = "✓" if f["status"] == "ok" else "⚠"
@@ -519,28 +524,28 @@ class _CaptureTab(QWidget):
             _src: str = str(f["src"])
             _dst: str = str(f["dst"])
             _dotfile_rows.append((_icon, f"{f['name']}  [{_status_text}]  {_src} 🢥 {_dst}"))
-        _section("Dotfiles", _dotfile_rows)
+        _section(tr("Dotfiles"), _dotfile_rows)
 
         services = res.get("services", [])
-        _section("Services", [("✓" if s["active"] else "⚠", f"{s['service']}.service ({s['op']})") for s in services])
+        _section(tr("Services"), [("✓" if s["active"] else "⚠", f"{s['service']}.service ({s['op']})") for s in services])
 
         text = "\n".join(lines)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        path, _ = QFileDialog.getSaveFileName(self.window(), "Export Capture Report",
-                                              str(_HOME / f"capture_report_{ts}.txt"), "Text (*.txt)")
+        path, _ = QFileDialog.getSaveFileName(self.window(), tr("Export Capture Report"),
+                                              str(_HOME / f"capture_report_{ts}.txt"), tr("Text (*.txt)"))
         if not path:
             return
         try:
             Path(path).write_text(text, encoding="utf-8")
-            QMessageBox.information(self.window(), "Exported", f"Report saved to:\n{path}")
+            QMessageBox.information(self.window(), tr("Exported"), tr("Report saved to:\n{p}", p=path))
         except OSError as exc:
-            QMessageBox.critical(self.window(), "Export Failed", str(exc))
+            QMessageBox.critical(self.window(), tr("Export Failed"), str(exc))
 
     def _add_to_profile(self) -> None:
         new_basic = [n for cb, n, k in self._cbs if cb.isChecked() and cb.isEnabled() and k == "basic"]
         new_aur = [n for cb, n, k in self._cbs if cb.isChecked() and cb.isEnabled() and k == "aur"]
         if not new_basic and not new_aur:
-            QMessageBox.information(self.window(), "Nothing Selected", "No packages selected.")
+            QMessageBox.information(self.window(), tr("Nothing Selected"), tr("No packages selected."))
             return
 
         existing_basic = {p.get("name", "") for p in S.basic_packages if isinstance(p, dict) and p.get("name")}
@@ -564,9 +569,9 @@ class _CaptureTab(QWidget):
                 if cb.isChecked() and cb.isEnabled():
                     cb.setText(cb.text() + "  ✓")
                     cb.setEnabled(False)
-            QMessageBox.information(self.window(), "Done", f"{added} package(s) added to profile and saved.")
+            QMessageBox.information(self.window(), tr("Done"), tr("{n} package(s) added to profile and saved.", n=added))
         else:
-            QMessageBox.warning(self.window(), "Save Failed", "Could not save profile.")
+            QMessageBox.warning(self.window(), tr("Save Failed"), tr("Could not save profile."))
 
     def _add_specific_to_profile(self) -> None:
         spec_sess_cb = self._spec_sess_cb
@@ -577,7 +582,7 @@ class _CaptureTab(QWidget):
         selected = [name for cb, name in self._spec_cbs if cb.isChecked() and cb.isEnabled()]
 
         if not selected:
-            QMessageBox.information(self.window(), "Nothing Selected", "No packages selected for Specific Packages.")
+            QMessageBox.information(self.window(), tr("Nothing Selected"), tr("No packages selected for Specific Packages."))
             return
 
         existing_specific = {p.get("package", "") for p in S.specific_packages if isinstance(p, dict)}
@@ -595,15 +600,15 @@ class _CaptureTab(QWidget):
                 if cb.isChecked() and cb.isEnabled() and name in selected:
                     cb.setText(cb.text() + f"  ✓ [{session}]")
                     cb.setEnabled(False)
-            QMessageBox.information(self.window(), "Done",
-                                    f"{added} package(s) added as Specific for session '{session}'.")
+            QMessageBox.information(self.window(), tr("Done"),
+                                    tr("{n} package(s) added as Specific for session '{s}'.", n=added, s=session))
         else:
-            QMessageBox.warning(self.window(), "Save Failed", "Could not save profile.")
+            QMessageBox.warning(self.window(), tr("Save Failed"), tr("Could not save profile."))
 
     def _add_services_to_profile(self) -> None:
         selected_ops = [op for cb, op, _svc in self._svc_cbs if cb.isChecked() and cb.isEnabled()]
         if not selected_ops:
-            QMessageBox.information(self.window(), "Nothing Selected", "No services selected.")
+            QMessageBox.information(self.window(), tr("Nothing Selected"), tr("No services selected."))
             return
         existing = set(S.system_manager_ops)
         added = 0
@@ -616,7 +621,7 @@ class _CaptureTab(QWidget):
                 if cb.isChecked() and cb.isEnabled() and op in selected_ops:
                     cb.setText(cb.text() + "  ✓")
                     cb.setEnabled(False)
-            QMessageBox.information(self.window(), "Done",
-                                    f"{added} service operation(s) added to System Manager profile.")
+            QMessageBox.information(self.window(), tr("Done"),
+                                    tr("{n} service operation(s) added to System Manager profile.", n=added))
         else:
-            QMessageBox.warning(self.window(), "Save Failed", "Could not save profile.")
+            QMessageBox.warning(self.window(), tr("Save Failed"), tr("Could not save profile."))

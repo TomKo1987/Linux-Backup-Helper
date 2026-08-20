@@ -2,6 +2,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QDialog, QHBoxLayout, QListWidget, QPushButton, QTextEdit, QVBoxLayout, QWidget
 
 from themes import current_theme, font_sz
+from translations import tr
 from ui_utils import btn_row, footer_bar_style, hdr_label, sep
 
 
@@ -16,7 +17,9 @@ class _UserRoleListMixin:
 class _ListDialog(_UserRoleListMixin, QDialog):
 
     def __init__(self, parent, title: str, size: tuple[int, int], hdr_text: str,
-                 btn_specs: list[tuple[str, str]], close_label: str = "✕  Close"):
+                 btn_specs: list[tuple[str, str]], close_label: str | None = None):
+        if close_label is None:
+            close_label = f"✕  {tr('Close')}"
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setMinimumSize(*size)
@@ -62,7 +65,7 @@ class _TextViewDialog(QDialog):
         bl  = QHBoxLayout(bot)
         bl.setContentsMargins(12, 8, 12, 8)
         bl.setSpacing(8)
-        for label, fn in [*(extra_buttons or []), ("✕ Close", self.accept)]:
+        for label, fn in [*(extra_buttons or []), (f"✕ {tr('Close')}", self.accept)]:
             b = QPushButton(label)
             b.setFixedHeight(36)
             b.clicked.connect(fn)

@@ -127,7 +127,8 @@ class State:
     kernels_to_install: list[str]       = field(default_factory=list)
     ui: dict = field(default_factory=lambda: {"theme": "Tokyo Night", "font_family": "", "font_size": 14,
                                               "backup_window_columns": 2, "restore_window_columns": 2,
-                                              "settings_window_columns": 2, "disable_tray_icon": False})
+                                              "settings_window_columns": 2, "disable_tray_icon": False,
+                                              "language": "English"})
     notes: str = ""
     firewall_config: dict = field(default_factory=dict)
 

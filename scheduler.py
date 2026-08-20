@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
 
 from state import S, logger, _HOME
 from themes import current_theme, font_sz
+from translations import tr
 from ui_utils import _StandardKeysMixin
 
 _SYSTEMD_USER_DIR = _HOME / ".config" / "systemd" / "user"
@@ -69,11 +70,11 @@ def _systemd_escape_percent(value: str) -> str:
 
 def install_timer(interval_key: str, backup_headers: list[str], *, on_calendar: str = "", only_on_ac: bool = False) -> tuple[bool, str]:
     if interval_key not in _INTERVALS:
-        return False, "Unknown interval"
+        return False, tr("Unknown interval")
 
     on_cal = on_calendar.strip().replace("\n", "").replace("\r", "")
     if not on_cal:
-        return False, "No OnCalendar expression provided."
+        return False, tr("No OnCalendar expression provided.")
 
     exe = Path(__file__).resolve().parent / "main.py"
     headers_b64 = _b64.b64encode(json.dumps(backup_headers).encode()).decode()
@@ -178,7 +179,7 @@ def get_ac_only() -> bool:
 class SchedulerDialog(_StandardKeysMixin, QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Automatic Backup")
+        self.setWindowTitle(tr("Automatic Backup"))
         self.setMinimumWidth(900)
         self._build_ui()
 
@@ -188,7 +189,7 @@ class SchedulerDialog(_StandardKeysMixin, QDialog):
         lay.setSpacing(12)
         lay.setContentsMargins(18, 18, 18, 18)
 
-        title = QLabel("⏰  Automatic Backup")
+        title = QLabel(tr("⏰  Automatic Backup"))
         title.setStyleSheet(
             f"font-size:{font_sz(3)}px;font-weight:bold;color:{t['accent']};"
         )
@@ -202,35 +203,36 @@ class SchedulerDialog(_StandardKeysMixin, QDialog):
         igrid.setContentsMargins(12, 10, 12, 10)
         igrid.setSpacing(8)
 
-        igrid.addWidget(QLabel("Interval:"), 0, 0)
+        igrid.addWidget(QLabel(tr("Interval:")), 0, 0)
         self._combo = QComboBox()
-        self._combo.addItems(list(_INTERVALS.keys()))
-        self._combo.currentTextChanged.connect(self._on_interval_changed)
+        for _key in _INTERVALS.keys():
+            self._combo.addItem(tr(_key), _key)
+        self._combo.currentIndexChanged.connect(lambda _i: self._on_interval_changed(self._combo.currentData()))
         igrid.addWidget(self._combo, 0, 1)
 
-        self._time_label = QLabel("Start time:")
+        self._time_label = QLabel(tr("Start time:"))
         self._time_edit = QTimeEdit()
         self._time_edit.setDisplayFormat("HH:mm")
         self._time_edit.setTime(QTime(2, 0))
         self._time_edit.setToolTip(
-            "Time of day for daily/weekly backups.\n"
-            "For Hourly this is ignored.\n"
-            "For 'Custom time …' you can pick any hour:minute."
+            tr("Time of day for daily/weekly backups.\n"
+               "For Hourly this is ignored.\n"
+               "For 'Custom time …' you can pick any hour:minute.")
         )
         igrid.addWidget(self._time_label, 0, 2)
         igrid.addWidget(self._time_edit, 0, 3)
 
-        self._ac_cb = QCheckBox("💡 Only run when on AC power (skip on battery)")
+        self._ac_cb = QCheckBox(tr("💡 Only run when on AC power (skip on battery)"))
         self._ac_cb.setToolTip(
-            "Adds ConditionACPower=true to the systemd service unit.\n"
-            "The backup will be silently skipped when the machine runs on battery."
+            tr("Adds ConditionACPower=true to the systemd service unit.\n"
+               "The backup will be silently skipped when the machine runs on battery.")
         )
         self._ac_cb.setChecked(get_ac_only())
         igrid.addWidget(self._ac_cb, 1, 0, 1, 4)
 
         lay.addWidget(interval_frame)
 
-        lay.addWidget(QLabel("Include backup groups:"))
+        lay.addWidget(QLabel(tr("Include backup groups:")))
         self._checks: list[tuple[QCheckBox, str]] = []
         headers = sorted({e.get("header", "") for e in S.entries if e.get("header")})
         for h in headers:
@@ -241,27 +243,27 @@ class SchedulerDialog(_StandardKeysMixin, QDialog):
 
         if not headers:
             lay.addWidget(
-                QLabel("  (no groups defined — all entries will be backed up)")
+                QLabel(tr("  (no groups defined — all entries will be backed up)"))
             )
 
         _status_text = ""
         if is_timer_active():
             _interval = get_active_interval()
-            _status_text = f"✓ Timer active — {_interval}" if _interval else "✓ Timer active"
+            _status_text = tr("✓ Timer active — {i}", i=tr(_interval)) if _interval else tr("✓ Timer active")
             nxt = get_next_run_time()
             if nxt:
-                _status_text += f"\nNext run: {nxt}"
+                _status_text += tr("\nNext run: {n}", n=nxt)
 
         self._status = QLabel(_status_text)
         self._status.setStyleSheet(f"color:{t['success']};white-space:pre;")
         lay.addWidget(self._status)
 
         btn_lay = QHBoxLayout()
-        install_btn = QPushButton("✅ Enable timer")
+        install_btn = QPushButton(tr("✅ Enable timer"))
         install_btn.clicked.connect(self._install)
-        remove_btn = QPushButton("🗑 Remove timer")
+        remove_btn = QPushButton(tr("🗑 Remove timer"))
         remove_btn.clicked.connect(self._remove)
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(tr("Close"))
         close_btn.clicked.connect(self.accept)
         btn_lay.addWidget(install_btn)
         btn_lay.addWidget(remove_btn)
@@ -269,11 +271,13 @@ class SchedulerDialog(_StandardKeysMixin, QDialog):
         btn_lay.addWidget(close_btn)
         lay.addLayout(btn_lay)
 
-        self._on_interval_changed(self._combo.currentText())
+        self._on_interval_changed(self._combo.currentData())
 
         active = get_active_interval()
         if active and active in _INTERVALS:
-            self._combo.setCurrentText(active)
+            idx = self._combo.findData(active)
+            if idx >= 0:
+                self._combo.setCurrentIndex(idx)
 
     def _on_interval_changed(self, text: str) -> None:
         is_custom = (text == "Custom time …")
@@ -282,9 +286,9 @@ class SchedulerDialog(_StandardKeysMixin, QDialog):
         self._time_edit.setVisible(show_time)
 
         if is_custom:
-            self._time_label.setText("Time (HH:MM):")
+            self._time_label.setText(tr("Time (HH:MM):"))
         else:
-            self._time_label.setText("Start time:")
+            self._time_label.setText(tr("Start time:"))
 
     def _build_on_calendar(self, interval_key: str) -> str:
         t = self._time_edit.time()
@@ -303,17 +307,17 @@ class SchedulerDialog(_StandardKeysMixin, QDialog):
         return _INTERVALS[interval_key]
 
     def _install(self) -> None:
-        interval_key = self._combo.currentText()
+        interval_key = self._combo.currentData()
         headers = [h for cb, h in self._checks if cb.isChecked()]
 
         if self._checks and not headers:
             QMessageBox.warning(
                 self,
-                "No backup groups selected",
-                "No backup group is checked, so the scheduled backup would run "
-                "with no scope and back up everything instead of nothing.\n\n"
-                "Please select at least one backup group, or uncheck all groups "
-                "only if you actually intend to back up all entries."
+                tr("No backup groups selected"),
+                tr("No backup group is checked, so the scheduled backup would run "
+                   "with no scope and back up everything instead of nothing.\n\n"
+                   "Please select at least one backup group, or uncheck all groups "
+                   "only if you actually intend to back up all entries.")
             )
             return
 
@@ -330,19 +334,19 @@ class SchedulerDialog(_StandardKeysMixin, QDialog):
         if ok:
             _interval = get_active_interval()
             nxt = get_next_run_time()
-            msg = f"✓ Timer enabled — {_interval}" if _interval else "✓ Timer enabled"
+            msg = tr("✓ Timer enabled — {i}", i=tr(_interval)) if _interval else tr("✓ Timer enabled")
             if nxt:
-                msg += f"\nNext run: {nxt}"
+                msg += tr("\nNext run: {n}", n=nxt)
             self._status.setText(msg)
             self._status.setStyleSheet(f"color:{tc['success']};white-space:pre;")
         else:
-            QMessageBox.critical(self, "Error", f"Timer could not be installed:\n{err}")
+            QMessageBox.critical(self, tr("Error"), tr("Timer could not be installed:\n{e}", e=err))
 
     def _remove(self) -> None:
         ok, err = remove_timer()
         tc = current_theme()
         if ok:
-            self._status.setText("Timer removed")
+            self._status.setText(tr("Timer removed"))
             self._status.setStyleSheet(f"color:{tc['text_dim']};")
         else:
-            QMessageBox.critical(self, "Error", f"Error during removal:\n{err}")
+            QMessageBox.critical(self, tr("Error"), tr("Error during removal:\n{e}", e=err))

@@ -7,6 +7,7 @@ from PyQt6.QtCore import Qt, QEvent, QObject
 from PyQt6.QtWidgets import QApplication, QDialog, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget
 
 from state import S, logger, invalidate_tooltip_cache
+from translations import tr, register_language_listener
 from ui_utils import _StandardKeysMixin
 
 THEMES: dict[str, dict[str, str]] = {
@@ -455,7 +456,7 @@ class _TooltipDialog(_StandardKeysMixin, QDialog):
 
     def __init__(self, parent, html_text: str, max_width: int) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Info")
+        self.setWindowTitle(tr("Info"))
         self.setModal(False)
         self.setMinimumWidth(max_width + 40)
 
@@ -473,7 +474,7 @@ class _TooltipDialog(_StandardKeysMixin, QDialog):
         scroll.setWidget(content)
         layout.addWidget(scroll)
 
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(tr("Close"))
         close_btn.clicked.connect(self.close)
         layout.addWidget(close_btn)
 
@@ -526,7 +527,7 @@ def apply_tooltip(widget, text: str, max_width: int | None = None, *, wrap: bool
 
     hover_text = text
     if is_long and isinstance(widget, QWidget):
-        hover_text += "<br><br><i>(Click for full text in a scrollable window)</i>"
+        hover_text += tr("<br><br><i>(Click for full text in a scrollable window)</i>")
 
     wrapped = f"<div style='width:{max_width}px; white-space:normal;'>{hover_text}</div>"
     widget.setToolTip(wrapped)
@@ -544,14 +545,17 @@ def apply_tooltip(widget, text: str, max_width: int | None = None, *, wrap: bool
 @lru_cache(maxsize=16)
 def _tri_legend_cached(theme_name: str) -> str:
     t = THEMES.get(theme_name, THEMES[DEFAULT_THEME])
-    return (f"<span style='color:{t['green']};'>●</span> Active &nbsp;&nbsp; "
+    return (f"<span style='color:{t['green']};'>●</span> {tr('Active')} &nbsp;&nbsp; "
             f"<span style='color:{t['highlight']};'>○</span> "
-            f"<span style='color:{t['muted']};text-decoration:line-through;'>Disabled</span> &nbsp;&nbsp; "
+            f"<span style='color:{t['muted']};text-decoration:line-through;'>{tr('Disabled')}</span> &nbsp;&nbsp; "
             f"<span style='color:{t['red']};'>○</span> "
-            f"<span style='color:{t['red']};text-decoration:line-through;font-style:italic;'>Delete</span>")
+            f"<span style='color:{t['red']};text-decoration:line-through;font-style:italic;'>{tr('Delete')}</span>")
 
 
 def tri_state_legend_html() -> str: return _tri_legend_cached(_current_theme_name)
+
+
+register_language_listener(_tri_legend_cached.cache_clear)
 
 
 def get_style() -> str:

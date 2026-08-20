@@ -1,12 +1,13 @@
 from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout
 
+from translations import tr
 from ui_utils import _StandardKeysMixin
 
 __all__ = ["SudoPasswordDialog", "SecureString"]
 
-_NOTE_NORMAL  = "Note: Only one authentication attempt will be made."
-_NOTE_WARNING = "⚠  Third attempt!<br>Your password may be temporarily blocked if entered incorrectly again."
+def _note_normal() -> str: return tr("Note: Only one authentication attempt will be made.")
+def _note_warning() -> str: return tr("⚠  Third attempt!<br>Your password may be temporarily blocked if entered incorrectly again.")
 
 
 class SudoPasswordDialog(_StandardKeysMixin, QDialog):
@@ -14,7 +15,7 @@ class SudoPasswordDialog(_StandardKeysMixin, QDialog):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Sudo Authentication")
+        self.setWindowTitle(tr("Sudo Authentication"))
         self.failed_attempts = 0
         self._build_ui()
 
@@ -23,20 +24,20 @@ class SudoPasswordDialog(_StandardKeysMixin, QDialog):
         t      = current_theme()
         layout = QVBoxLayout(self)
 
-        intro = QLabel("Enter your sudo password to run System Manager.\nIt will be used for all privileged commands during this session.")
+        intro = QLabel(tr("Enter your sudo password to run System Manager.\nIt will be used for all privileged commands during this session."))
         intro.setAlignment(Qt.AlignmentFlag.AlignCenter)
         intro.setWordWrap(False)
         layout.addWidget(intro)
 
         pw_row = QHBoxLayout()
-        pw_row.addWidget(QLabel("Password:"))
+        pw_row.addWidget(QLabel(tr("Password:")))
         self._pw_input = QLineEdit()
         self._pw_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self._pw_input.setPlaceholderText("Enter your sudo password")
+        self._pw_input.setPlaceholderText(tr("Enter your sudo password"))
         pw_row.addWidget(self._pw_input)
         layout.addLayout(pw_row)
 
-        self._note = QLabel(_NOTE_NORMAL)
+        self._note = QLabel(_note_normal())
         self._note.setTextFormat(Qt.TextFormat.RichText)
         self._note.setWordWrap(True)
         self._note.setStyleSheet(f"color:{t['muted']};font-style:italic;")
@@ -45,9 +46,9 @@ class SudoPasswordDialog(_StandardKeysMixin, QDialog):
         layout.addSpacing(10)
 
         btn_row   = QHBoxLayout()
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(tr("Close"))
         close_btn.clicked.connect(self.reject)
-        self.auth_btn = QPushButton("Authenticate")
+        self.auth_btn = QPushButton(tr("Authenticate"))
         self.auth_btn.setDefault(True)
         self.auth_btn.clicked.connect(self._on_authenticate)
         btn_row.addWidget(close_btn)
@@ -61,7 +62,7 @@ class SudoPasswordDialog(_StandardKeysMixin, QDialog):
         self._pw_input.clear()
         if not secure_pw:
             secure_pw.clear()
-            QMessageBox.warning(self, "Empty Password", "Please enter your sudo password or click Close.")
+            QMessageBox.warning(self, tr("Empty Password"), tr("Please enter your sudo password or click Close."))
             self._pw_input.setFocus()
             return
         self.sudo_password_entered.emit(secure_pw)
@@ -73,10 +74,10 @@ class SudoPasswordDialog(_StandardKeysMixin, QDialog):
         self.failed_attempts = count
 
         if count >= 2:
-            self._note.setText(_NOTE_WARNING)
+            self._note.setText(_note_warning())
             self._note.setStyleSheet(f"color:{t['error']};font-style:italic;font-weight:bold;")
         else:
-            text = _NOTE_NORMAL + (f"<br>Failed attempts: {count}" if count > 0 else "")
+            text = _note_normal() + (tr("<br>Failed attempts: {count}", count=count) if count > 0 else "")
             self._note.setText(text)
             self._note.setStyleSheet(f"color:{t['muted']};font-style:italic;")
 

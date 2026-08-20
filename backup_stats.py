@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
 from history import load_history as _load_all_history, _fmt_duration as _fmt_dur
 from state import S
 from themes import current_theme, font_sz, register_style_listener, unregister_style_listener
+from translations import tr
 from ui_utils import _StandardKeysMixin, build_dialog_shell, clear_layout, color_style, sep, size_to_screen
 
 
@@ -236,7 +237,7 @@ class BackupStatsDialog(_StandardKeysMixin, QDialog):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Backup Statistics")
+        self.setWindowTitle(tr("Backup Statistics"))
         size_to_screen(self, 1500, 1000)
         self._history: list[dict] = []
         self._build_shell()
@@ -250,14 +251,15 @@ class BackupStatsDialog(_StandardKeysMixin, QDialog):
     def _build_shell(self) -> None:
         t = current_theme()
 
-        range_lbl = QLabel("Range:")
+        range_lbl = QLabel(tr("Range:"))
         self._range_combo = QComboBox()
-        self._range_combo.addItems(list(self._RANGES.keys()))
+        for key in self._RANGES:
+            self._range_combo.addItem(tr(key), userData=key)
         self._range_combo.setCurrentIndex(1)
         self._range_combo.currentIndexChanged.connect(self._reload)
 
         _, self._body_lay, _ = build_dialog_shell(
-            self, t, font_sz, "Backup Statistics", "📊",
+            self, t, font_sz, tr("Backup Statistics"), "📊",
             header_extra=[range_lbl, self._range_combo],
         )
         self._body_lay.setSpacing(20)
@@ -266,7 +268,7 @@ class BackupStatsDialog(_StandardKeysMixin, QDialog):
         self._history = _load_all_history(S.profile_name or "")
         clear_layout(self._body_lay)
 
-        days = self._RANGES[self._range_combo.currentText()]
+        days = self._RANGES[self._range_combo.currentData()]
         now  = datetime.now()
         if days:
             cutoff = now - timedelta(days=days)
@@ -278,7 +280,7 @@ class BackupStatsDialog(_StandardKeysMixin, QDialog):
             entries = list(self._history)
 
         if not entries:
-            lbl = QLabel("No backup history available for the selected range.")
+            lbl = QLabel(tr("No backup history available for the selected range."))
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setStyleSheet(color_style(current_theme()['text_dim'], font_sz(1)))
             self._body_lay.addWidget(lbl)
@@ -303,13 +305,13 @@ class BackupStatsDialog(_StandardKeysMixin, QDialog):
         cards_l.setSpacing(12)
         cards_l.setContentsMargins(0, 0, 0, 0)
         for icon, val, label, col in [
-            ("🗂", str(total),             "Total Runs",       t["accent"]),
-            ("✅", str(successful),         "Successful",       t["success"]),
-            ("⚠️", str(failed + cancelled), "Failed/Cancelled", t["warning"] if failed == 0 else t["error"]),
-            ("📁", f"{total_copied:,}", "Files Copied",    t["info"]),
-            ("⏭", str(total_skip),          "Files Skipped",   t["accent2"]),
-            ("🗑", f"{total_deleted:,}", "Files Deleted",   t["deleted"]),
-            ("⏱",  _fmt_dur(avg_dur),        "Avg Duration",    t["accent2"]),
+            ("🗂", str(total),             tr("Total Runs"),       t["accent"]),
+            ("✅", str(successful),         tr("Successful"),       t["success"]),
+            ("⚠️", str(failed + cancelled), tr("Failed/Cancelled"), t["warning"] if failed == 0 else t["error"]),
+            ("📁", f"{total_copied:,}", tr("Files Copied"),    t["info"]),
+            ("⏭", str(total_skip),          tr("Files Skipped"),   t["accent2"]),
+            ("🗑", f"{total_deleted:,}", tr("Files Deleted"),   t["deleted"]),
+            ("⏱",  _fmt_dur(avg_dur),        tr("Avg Duration"),    t["accent2"]),
         ]:
             cards_l.addWidget(_StatCard(icon, val, label, col))
         self._body_lay.addWidget(cards_w)
@@ -336,7 +338,7 @@ class BackupStatsDialog(_StandardKeysMixin, QDialog):
                 tl_points.append((dt, by_day[d]["copied"]))
 
             spark = _Sparkline(
-                "Files Copied per Day",
+                tr("Files Copied per Day"),
                 tl_points,
                 t["accent"],
                 fmt_fn=lambda v: f"{int(v):,}",
@@ -346,7 +348,7 @@ class BackupStatsDialog(_StandardKeysMixin, QDialog):
 
         op_counts: dict[str, int] = {}
         for e in entries:
-            op = e.get("operation", "Unknown")
+            op = e.get("operation", tr("Unknown"))
             op_counts[op] = op_counts.get(op, 0) + 1
         if op_counts:
             colors = [t["accent"], t["accent2"], t["success"], t["info"]]
@@ -354,7 +356,7 @@ class BackupStatsDialog(_StandardKeysMixin, QDialog):
                 (op, float(cnt), colors[i % len(colors)])
                 for i, (op, cnt) in enumerate(sorted(op_counts.items(), key=lambda x: -x[1]))
             ]
-            chart = _BarChart("Runs by Operation", bars, fmt_fn=lambda v: str(int(v)))
+            chart = _BarChart(tr("Runs by Operation"), bars, fmt_fn=lambda v: str(int(v)))
             self._body_lay.addWidget(chart)
             self._body_lay.addWidget(sep())
 
@@ -366,14 +368,14 @@ class BackupStatsDialog(_StandardKeysMixin, QDialog):
                 for d in sorted(by_day.keys())[-14:]
             ]
             err_chart = _BarChart(
-                "Error Rate % per Day (last 14 days)",
+                tr("Error Rate % per Day (last 14 days)"),
                 err_bars,
                 fmt_fn=lambda v: f"{v:.0f}%",
             )
             self._body_lay.addWidget(err_chart)
             self._body_lay.addWidget(sep())
 
-        tbl_hdr = QLabel("🕑  Recent Runs")
+        tbl_hdr = QLabel(tr("🕑  Recent Runs"))
         tbl_hdr.setStyleSheet(
             f"font-size:{font_sz(2)}px;font-weight:bold;"
             f"color:{t['text']};background:transparent;border:none;"

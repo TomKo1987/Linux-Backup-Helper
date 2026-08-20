@@ -8,6 +8,7 @@ from datetime import datetime
 from drive_utils import is_smb, is_ssh, build_rsync_cmd
 from state import apply_replacements, logger
 from copy_worker_core import _SKIP_RE
+from translations import tr
 
 __all__ = [
     "DeletedItem", "DeleteError", "AdvancedOptionsResult",
@@ -100,9 +101,9 @@ def prune_old_versions(dst_abs: str, keep: int, title: str = "") -> tuple[list[D
         sz = _path_size(path)
         try:
             shutil.rmtree(path)
-            deleted.append(DeletedItem(path=path, title=title, reason="Pruned old version", size=sz))
+            deleted.append(DeletedItem(path=path, title=title, reason=tr("Pruned old version"), size=sz))
         except OSError as exc:
-            errors.append(DeleteError(path=path, title=title, reason=f"Could not delete: {exc}"))
+            errors.append(DeleteError(path=path, title=title, reason=tr("Could not delete: {exc}", exc=exc)))
             logger.warning("Versioned archive: could not remove old version %r: %s", apply_replacements(path), exc)
     return deleted, errors
 
@@ -139,7 +140,9 @@ def find_extraneous_paths(src_abs: str, dst_abs: str, excludes: frozenset) -> li
     return extraneous
 
 
-def delete_paths(paths: list[str], title: str = "", reason: str = "Mirror delete") -> tuple[list[DeletedItem], list[DeleteError]]:
+def delete_paths(paths: list[str], title: str = "", reason: str | None = None) -> tuple[list[DeletedItem], list[DeleteError]]:
+    if reason is None:
+        reason = tr("Mirror delete")
     deleted: list[DeletedItem] = []
     errors: list[DeleteError] = []
     for p in paths:
@@ -153,7 +156,7 @@ def delete_paths(paths: list[str], title: str = "", reason: str = "Mirror delete
                 continue
             deleted.append(DeletedItem(path=p, title=title, reason=reason, size=sz))
         except OSError as exc:
-            errors.append(DeleteError(path=p, title=title, reason=f"Could not delete: {exc}"))
+            errors.append(DeleteError(path=p, title=title, reason=tr("Could not delete: {exc}", exc=exc)))
             logger.warning("Mirror delete: could not remove %r: %s", apply_replacements(p), exc)
     return deleted, errors
 
@@ -197,13 +200,13 @@ def _confirm(parent, title: str, paths: list[str]) -> bool:
     from PyQt6.QtWidgets import QMessageBox
     shown = paths[:25]
     preview = "\n".join(f"  \u2022  {apply_replacements(p)}" for p in shown)
-    more = f"\n  \u2026and {len(paths) - 25} more" if len(paths) > 25 else ""
+    more = tr("\n  \u2026and {n} more", n=len(paths) - 25) if len(paths) > 25 else ""
     clean_title = title.replace("<br>", " ")
-    msg = (f"Mirror mode is about to delete {len(paths)} item(s) from the destination of "
-          f"'{clean_title}' because they no longer exist in the source:\n\n{preview}{more}\n\n"
-          f"Delete these now?")
+    msg = tr("Mirror mode is about to delete {n} item(s) from the destination of "
+             "'{title}' because they no longer exist in the source:\n\n{preview}{more}\n\n"
+             "Delete these now?", n=len(paths), title=clean_title, preview=preview, more=more)
     return QMessageBox.question(
-        parent, "Confirm Mirror Delete", msg,
+        parent, tr("Confirm Mirror Delete"), msg,
         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
     ) == QMessageBox.StandardButton.Yes
 
@@ -345,7 +348,7 @@ def apply_advanced_options(tasks: list[tuple], *, interactive: bool = True, pare
                     if confirm_del and interactive:
                         proceed = _confirm(parent, title, extraneous)
                     if proceed:
-                        items, errs = delete_paths(extraneous, title=title, reason="Mirror delete")
+                        items, errs = delete_paths(extraneous, title=title, reason=tr("Mirror delete"))
                         all_deleted.extend(items)
                         all_errors.extend(errs)
                         logger.info("Mirror delete [%s]: removed %d item(s) from %r",

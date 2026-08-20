@@ -17,6 +17,7 @@ from keyring.errors import PasswordDeleteError, KeyringError
 from state import logger, _USER
 from sudo_password import SecureString
 from themes import current_theme
+from translations import tr
 from ui_utils import _StandardKeysMixin
 
 __all__ = ["SambaPasswordManager", "SambaPasswordDialog"]
@@ -56,22 +57,23 @@ class _VerifyPasswordDialog(QDialog):
 
     def __init__(self, parent, username: str, stored_pw: SecureString) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Samba — Verify Password")
-        self.setMinimumWidth(550)
+        self.setWindowTitle(tr("Samba — Verify Password"))
+        self.setMinimumWidth(620)
         self._stored_pw: SecureString | None = stored_pw
         self._attempts  = 0
 
         t      = current_theme()
         layout = QVBoxLayout(self)
 
-        info = QLabel(f"Samba credentials are stored for <b>{username}</b>.<br>Please enter your current Samba password to continue.")
+        info = QLabel(tr("Samba credentials are stored for <b>{u}</b>.<br>Please enter your current Samba password to continue.", u=username))
         info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        info.setWordWrap(True)
         layout.addWidget(info)
         layout.addSpacing(8)
 
         self._pw_input = QLineEdit()
         self._pw_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self._pw_input.setPlaceholderText("Current Samba password")
+        self._pw_input.setPlaceholderText(tr("Current Samba password"))
         self._pw_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._pw_input)
 
@@ -82,9 +84,9 @@ class _VerifyPasswordDialog(QDialog):
         layout.addSpacing(8)
 
         btn_row    = QHBoxLayout()
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = QPushButton(tr("Cancel"))
         cancel_btn.clicked.connect(self.reject)
-        ok_btn = QPushButton("Verify")
+        ok_btn = QPushButton(tr("Verify"))
         ok_btn.setDefault(True)
         ok_btn.clicked.connect(self._verify)
         btn_row.addWidget(cancel_btn)
@@ -120,12 +122,12 @@ class _VerifyPasswordDialog(QDialog):
         if self._attempts >= self._MAX_ATTEMPTS:
             self._stored_pw.clear()
             self._stored_pw = None
-            QMessageBox.critical(self, "Access Denied", "Too many failed attempts.")
+            QMessageBox.critical(self, tr("Access Denied"), tr("Too many failed attempts."))
             self.reject()
             return
 
         remaining = self._MAX_ATTEMPTS - self._attempts
-        self._err_lbl.setText(f"Incorrect password. Remaining attempts: {remaining}")
+        self._err_lbl.setText(tr("Incorrect password. Remaining attempts: {n}", n=remaining))
         self._pw_input.setFocus()
 
     def closeEvent(self, a0: QCloseEvent | None) -> None:
@@ -190,7 +192,7 @@ class SambaPasswordManager:
         del payload
         if result is None:
             self._cached_kwallet_entry = None
-            raise RuntimeError("Failed to write credentials to KWallet")
+            raise RuntimeError(tr("Failed to write credentials to KWallet"))
         logger.info("Updated Samba credentials in KWallet entry: %s", entry)
 
     def get_credentials(self) -> tuple[str | None, SecureString | None, bool]:
@@ -260,12 +262,12 @@ class SambaPasswordDialog(_StandardKeysMixin, QDialog):
             cls(parent, manager, username or "", from_kw, has_credentials=True).exec()
         else:
             has_kw = _kwallet_available()
-            msg = ("No Samba credentials are stored yet.\nWould you like to set up credentials now? "
-                   "You can choose to store them in KWallet or the system keyring." if has_kw else
-                   "No Samba credentials are stored yet.\n\n"
-                   "Would you like to store credentials in the system keyring?")
+            msg = (tr("No Samba credentials are stored yet.\nWould you like to set up credentials now? "
+                      "You can choose to store them in KWallet or the system keyring.") if has_kw else
+                   tr("No Samba credentials are stored yet.\n\n"
+                      "Would you like to store credentials in the system keyring?"))
             ans = QMessageBox.question(
-                parent, "Samba Credentials", msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                parent, tr("Samba Credentials"), msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
             if ans != QMessageBox.StandardButton.Yes:
                 return
             cls(parent, manager, _USER, False, first_setup=True, kwallet_available=has_kw).exec()
@@ -279,7 +281,7 @@ class SambaPasswordDialog(_StandardKeysMixin, QDialog):
         self._password_field: QLineEdit | None = None
         self._confirm_password_field: QLineEdit | None = None
         self._store_in_kwallet: QCheckBox | None = None
-        self.setWindowTitle("Samba Credentials")
+        self.setWindowTitle(tr("Samba Credentials"))
         self.setMinimumSize(750, 400)
 
         self._manager = manager or SambaPasswordManager()
@@ -295,18 +297,18 @@ class SambaPasswordDialog(_StandardKeysMixin, QDialog):
         t = current_theme()
 
         if self._has_credentials:
-            origin = "KWallet" if from_kwallet else "system keyring"
-            banner = QLabel(f"Samba credentials have already been defined.\nYou can edit your password below.\n"
-                            f"(Stored in {origin})")
+            origin = tr("KWallet") if from_kwallet else tr("system keyring")
+            banner = QLabel(tr("Samba credentials have already been defined.\nYou can edit your password below.\n"
+                               "(Stored in {o})", o=origin))
             banner.setStyleSheet(f"color:{t['success']};font-weight:bold;")
             banner.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(banner)
 
         layout.addStretch()
 
-        for label_text, attr, echo, prefill in (("Username:", "_username_field", QLineEdit.EchoMode.Normal, username),
-                                                ("Password:", "_password_field", QLineEdit.EchoMode.Password, ""),
-                                                ("Confirm Password:", "_confirm_password_field", QLineEdit.EchoMode.Password, "")):
+        for label_text, attr, echo, prefill in ((tr("Username:"), "_username_field", QLineEdit.EchoMode.Normal, username),
+                                                (tr("Password:"), "_password_field", QLineEdit.EchoMode.Password, ""),
+                                                (tr("Confirm Password:"), "_confirm_password_field", QLineEdit.EchoMode.Password, "")):
             lbl = QLabel(label_text)
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(lbl)
@@ -321,7 +323,7 @@ class SambaPasswordDialog(_StandardKeysMixin, QDialog):
         self._password_field.returnPressed.connect(self._save_credentials)
         self._confirm_password_field.returnPressed.connect(self._save_credentials)
 
-        show_pw_cb = QCheckBox("Show password")
+        show_pw_cb = QCheckBox(tr("Show password"))
         show_pw_cb.setStyleSheet(f"color:{t['accent']};")
 
         def _toggle_echo(checked: bool) -> None:
@@ -335,18 +337,18 @@ class SambaPasswordDialog(_StandardKeysMixin, QDialog):
         layout.addStretch()
 
         if self._first_setup and self._kwallet_avail:
-            self._store_in_kwallet = QCheckBox("Store in KWallet (recommended)")
+            self._store_in_kwallet = QCheckBox(tr("Store in KWallet (recommended)"))
             self._store_in_kwallet.setChecked(True)
             self._store_in_kwallet.setStyleSheet(f"color:{t['accent']};")
             layout.addWidget(self._store_in_kwallet)
 
         btn_row = QHBoxLayout()
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(tr("Close"))
         close_btn.clicked.connect(self.reject)
         btn_row.addWidget(close_btn)
 
         if self._has_credentials and not from_kwallet:
-            del_btn = QPushButton("Delete Credentials")
+            del_btn = QPushButton(tr("Delete Credentials"))
             del_btn.setStyleSheet(
                 f"QPushButton{{border:1px solid {t['error']};color:{t['error']};}}"
                 f"QPushButton:hover{{background:{t['bg2']};border-color:{t['error']};color:{t['error']};}}"
@@ -355,7 +357,7 @@ class SambaPasswordDialog(_StandardKeysMixin, QDialog):
             del_btn.clicked.connect(self._delete_credentials)
             btn_row.addWidget(del_btn)
 
-        save_btn = QPushButton("Update Credentials" if self._has_credentials else "Save")
+        save_btn = QPushButton(tr("Update Credentials") if self._has_credentials else tr("Save"))
         save_btn.clicked.connect(self._save_credentials)
         save_btn.setDefault(True)
         btn_row.addWidget(save_btn)
@@ -375,13 +377,13 @@ class SambaPasswordDialog(_StandardKeysMixin, QDialog):
         if not username or not pw_secure:
             pw_secure.clear()
             cf_secure.clear()
-            QMessageBox.warning(self, "Input Error", "Username and password must not be empty.")
+            QMessageBox.warning(self, tr("Input Error"), tr("Username and password must not be empty."))
             return
 
         if not hmac.compare_digest(pw_secure.get_bytes(), cf_secure.get_bytes()):
             cf_secure.clear()
             pw_secure.clear()
-            QMessageBox.warning(self, "Input Error", "Passwords do not match. Please try again.")
+            QMessageBox.warning(self, tr("Input Error"), tr("Passwords do not match. Please try again."))
             self._password_field.setFocus()
             return
 
@@ -398,10 +400,10 @@ class SambaPasswordDialog(_StandardKeysMixin, QDialog):
                     self._manager.save_credentials(username, pw_str)
             finally:
                 del pw_str
-            QMessageBox.information(self, "Success", "Samba credentials successfully saved!")
+            QMessageBox.information(self, tr("Success"), tr("Samba credentials successfully saved!"))
             self.accept()
         except Exception as exc:
-            self._error_dialog.showMessage(f"Failed to save credentials:\n{exc}")
+            self._error_dialog.showMessage(tr("Failed to save credentials:\n{e}", e=exc))
         finally:
             for i in range(len(pw_buf)):
                 pw_buf[i] = 0
@@ -410,12 +412,12 @@ class SambaPasswordDialog(_StandardKeysMixin, QDialog):
         username = self._username_field.text().strip()
         try:
             if self._manager.delete_credentials(username):
-                QMessageBox.information(self, "Success", "Samba credentials successfully deleted!")
+                QMessageBox.information(self, tr("Success"), tr("Samba credentials successfully deleted!"))
                 self.accept()
             else:
-                QMessageBox.warning(self, "Failed", "Could not delete credentials. They might not exist.")
+                QMessageBox.warning(self, tr("Failed"), tr("Could not delete credentials. They might not exist."))
         except Exception as exc:
-            self._error_dialog.showMessage(f"Failed to delete credentials:\n{exc}")
+            self._error_dialog.showMessage(tr("Failed to delete credentials:\n{e}", e=exc))
 
     def _cleanup(self) -> None:
         if self._password_field is not None:
