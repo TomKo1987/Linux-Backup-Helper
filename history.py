@@ -154,7 +154,7 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
     def __init__(self, parent) -> None:
         super().__init__(parent)
         self.setWindowTitle(tr("History"))
-        size_to_screen(self, 1250, 850, fallback_w=1000, fallback_h=650)
+        size_to_screen(self, 1500, 850, fallback_w=1000, fallback_h=650)
         t   = current_theme()
         bg  = t["bg"]
         bg2 = t["bg2"]

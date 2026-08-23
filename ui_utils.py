@@ -5,7 +5,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QTextCursor, QKeyEvent
 from PyQt6.QtWidgets import (
     QAbstractButton, QApplication, QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
-    QHBoxLayout, QLabel, QLayout, QLineEdit, QMessageBox, QPushButton,
+    QGridLayout, QHBoxLayout, QLabel, QLayout, QLineEdit, QMessageBox, QPushButton,
     QScrollArea, QVBoxLayout, QWidget, QPlainTextEdit
 )
 
@@ -31,6 +31,7 @@ def ask_yes_no(
     cancel: bool = False,
     default_yes: bool = True,
     icon: "QMessageBox.Icon" = QMessageBox.Icon.Question,
+    min_width: int = 0,
 ) -> int:
 
     box = QMessageBox(parent)
@@ -57,6 +58,13 @@ def ask_yes_no(
     box.setDefaultButton(
         QMessageBox.StandardButton.Yes if default_yes else QMessageBox.StandardButton.No
     )
+    if min_width > 0:
+        layout = box.layout()
+        if isinstance(layout, QGridLayout):
+            spacer = QWidget(box)
+            spacer.setFixedWidth(min_width)
+            spacer.setFixedHeight(0)
+            layout.addWidget(spacer, layout.rowCount(), 0, 1, layout.columnCount())
     return box.exec()
 
 

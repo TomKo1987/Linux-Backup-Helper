@@ -207,7 +207,7 @@ def _confirm(parent, title: str, paths: list[str]) -> bool:
              "'{title}' because they no longer exist in the source:\n\n{preview}{more}\n\n"
              "Delete these now?", n=len(paths), title=clean_title, preview=preview, more=more)
     return ask_yes_no(
-        parent, tr("Confirm Mirror Delete"), msg,
+        parent, tr("Confirm Mirror Delete"), msg, min_width=560,
     ) == QMessageBox.StandardButton.Yes
 
 
