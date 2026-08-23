@@ -280,8 +280,10 @@ class _SmbClient:
             if m:
                 name, flags, size_s, ts_s = m.groups()
                 name = name.strip()
-                if name not in (".", "..") and "D" not in flags:
-                    index[f"{cur_dir}/{name}".lstrip("/")] = (int(size_s), _parse_smb_mtime(ts_s))
+                if name in (".", ".."):
+                    continue
+                key = f"{cur_dir}/{name}".lstrip("/")
+                index[key] = (-1, _parse_smb_mtime(ts_s)) if "D" in flags else (int(size_s), _parse_smb_mtime(ts_s))
         return index
 
     def stat_path(self, rpath: str) -> "tuple[str, int, int]":
@@ -481,6 +483,9 @@ class _SmbScanner:
                     else:
                         rel = os.path.basename(path)
                     dst_path = str(_Path(dst) / str(rel))
+                    if sz < 0:
+                        _ensure_dir(dst_path)
+                        continue
                     lexp.append(_SmbJob(src_url=src_url, dst_path=dst_path, kind="smb_get", host=host, share=share,
                                         remote_path=path, remote_size=sz, remote_mtime=mt, title=title))
         with self._result_lock:
@@ -726,8 +731,10 @@ class _ShareProcessor:
 
         while stack:
             batch = stack.pop()
-            if not batch or self._cancel.is_set():
+            if self._cancel.is_set():
                 break
+            if not batch:
+                continue
             if self._unreachable.is_set():
                 er_list.extend((self._job_src(j, is_get), "NT_STATUS_HOST_UNREACHABLE") for j in batch)
                 continue

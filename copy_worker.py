@@ -17,7 +17,7 @@ from translations import tr
 from copy_worker_core import (
     _CHUNK, _IO_BUF, _WORKERS, _FLUSH_THRESH, _FLUSH_INTERVAL, _SCAN_EMIT_SECS,
     _SCAN_PIPE_BATCH, _LOCAL_BATCH, _CLAIM_SIZE, _PIPE_MAXSIZE,
-    _SMB_WORKERS, _PID, _EUID, _O_NOATIME, _tls, _seen_dirs_lock, _seen_dirs_global, _TIME_CHECK_EVERY,
+    _SMB_WORKERS, _PID, _EUID, _O_NOATIME, _seen_dirs_lock, _seen_dirs_global, _TIME_CHECK_EVERY,
     _smb_procs, _smb_procs_lock,
     _scale_params, _scan_dir_entries,
     _ensure_dir, _parse_smb, _run_futures, _silent_unlink
@@ -258,6 +258,10 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
     return total - rem
 
 
+class _IncompleteCopyError(OSError):
+    pass
+
+
 def _copy_file(src, dst, cancel, cached_st=None):
     if cached_st is True:
         return _copy_symlink(src, dst)
@@ -307,7 +311,7 @@ def _copy_file(src, dst, cancel, cached_st=None):
 
             copied = _copy_loop(rfd, wfd, st.st_size, cancel)
             if copied < st.st_size:
-                raise OSError(f"Incomplete copy: {copied}/{st.st_size} bytes written")
+                raise _IncompleteCopyError(f"Incomplete copy: {copied}/{st.st_size} bytes written")
 
             try:
                 os.close(wfd)
@@ -326,10 +330,13 @@ def _copy_file(src, dst, cancel, cached_st=None):
 
         except InterruptedError:
             return "skip", tr("Cancelled"), 0
-        except OSError as exc:
-            if "Incomplete copy" in str(exc) and _attempt == 0:
+        except _IncompleteCopyError as exc:
+            if _attempt == 0:
                 logger.debug("copy %s: %s — retrying", src, exc)
                 continue
+            logger.error("copy %s → %s: %s", src, dst, exc)
+            return "error", str(exc), 0
+        except OSError as exc:
             logger.error("copy %s → %s: %s", src, dst, exc)
             return "error", str(exc), 0
         finally:
@@ -586,8 +593,6 @@ class CopyWorker(QThread):
     def run(self) -> None:
         with _seen_dirs_lock:
             _seen_dirs_global.clear()
-        if hasattr(_tls, "seen_dirs"):
-            _tls.seen_dirs.clear()
         try:
             self._run_impl()
         finally:
@@ -622,7 +627,7 @@ class CopyWorker(QThread):
                 active_ssh = [(s, d, t, e) for s, d, t, e in ssh_tasks if t not in skip_titles]
                 if active_local and not self._cancel.is_set():
                     self._scan_copy_local_pipelined(active_local, flusher, tracker)
-                else:
+                elif not active_ssh:
                     self.scan_finished.emit(0)
                 if active_ssh and not self._cancel.is_set():
                     self._copy_ssh_tasks(active_ssh, flusher, tracker)

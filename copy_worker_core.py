@@ -100,8 +100,9 @@ _NOTIFY_SEND: str | None = shutil.which("notify-send")
 def _notify(title: str, body: str, urgency: str = "normal") -> None:
     if not _NOTIFY_SEND:
         return
+    expire_time = "0" if urgency == "critical" else "-1"
     try:
-        subprocess.Popen([_NOTIFY_SEND, f"--urgency={urgency}", "--expire-time=0", "--app-name=Backup Helper",
+        subprocess.Popen([_NOTIFY_SEND, f"--urgency={urgency}", f"--expire-time={expire_time}", "--app-name=Backup Helper",
                           "--icon=drive-harddisk", title, body],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     except OSError:
