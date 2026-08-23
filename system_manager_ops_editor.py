@@ -17,7 +17,7 @@ from themes import (
     current_theme, font_sz
 )
 from translations import tr
-from ui_utils import sep
+from ui_utils import fit_button_width, sep
 
 from system_manager_helpers import (
     _detect_boot_info, _compute_op_status, _build_op_text,
@@ -261,7 +261,7 @@ class _OpsEditorMixin(_OpsMixinBase):
                         fw_btn = QPushButton(tr("Firewall Settings"))
                         fw_btn.setEnabled(cb.isEnabled() and cb.isChecked())
                         fw_btn.setMinimumHeight(30)
-                        fw_btn.setMinimumWidth(200)
+                        fit_button_width(fw_btn, min_floor=200)
                         cb.stateChanged.connect(
                             lambda state, b=fw_btn: b.setEnabled(state == Qt.CheckState.Checked.value))
                         fw_btn.clicked.connect(lambda: FirewallSettingsDialog(self).exec())

@@ -7,7 +7,7 @@ from drive_utils import get_mounts, is_mounted
 from state import S, save_profile
 from themes import apply_tooltip, current_theme
 from translations import tr
-from ui_utils import _StandardKeysMixin, hdr_label, ok_cancel_buttons, sep
+from ui_utils import ask_yes_no, _StandardKeysMixin, hdr_label, ok_cancel_buttons, sep
 
 class MountDialog(_StandardKeysMixin, QDialog):
 
@@ -141,8 +141,7 @@ class MountsDialog(_ListDialog):
         if not isinstance(opt, dict):
             return
         name: str = opt.get("drive_name", "?")
-        if QMessageBox.question(self, tr("Remove Drive"), tr("Really remove '{name}' from mount options?", name=name),
-                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+        if ask_yes_no(self, tr("Remove Drive"), tr("Really remove '{name}' from mount options?", name=name)) != QMessageBox.StandardButton.Yes:
             return
         before = len(S.mount_options)
         S.mount_options = [o for o in S.mount_options if o is not opt]

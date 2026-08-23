@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
 from state import _HOME, logger
 from themes import current_theme, font_sz
 from translations import tr
-from ui_utils import footer_bar_style, header_bar_style, _StandardKeysMixin
+from ui_utils import fit_button_width, footer_bar_style, header_bar_style, _StandardKeysMixin
 
 _PROC_MOUNTS_OCTAL_RE = re.compile(r"\\(\d{3})")
 _SIZE_UNITS = ("B", "KB", "MB", "GB", "TB")
@@ -539,7 +539,7 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
         sr.addStretch()
         close_btn = QPushButton(tr("Close"))
         close_btn.setMinimumHeight(32)
-        close_btn.setMinimumWidth(100)
+        fit_button_width(close_btn, min_floor=100)
         close_btn.setStyleSheet(self._btn_ss(t))
         close_btn.clicked.connect(self.accept)
         sr.addWidget(close_btn)
@@ -879,7 +879,6 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
             ("xterm",          ["xterm", "-e", f"bash -c 'cd {shlex.quote(p)} && exec $SHELL'"]),
         ]
         for term, cmd in candidates:
-            # noinspection deprecation
             if shutil.which(term):
                 try:
                     subprocess.Popen(

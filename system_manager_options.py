@@ -21,7 +21,7 @@ from themes import (
 )
 from tooltips import sudo_checkbox_tooltip
 from translations import tr
-from ui_utils import ask_text, checkbox_row_frame_style, ok_cancel_buttons
+from ui_utils import ask_text, ask_yes_no, checkbox_row_frame_style, fit_button_width, ok_cancel_buttons
 
 from system_manager_helpers import (
     _is_specific, _commit_pkgs, _pkg_checkboxes, _scroll_dlg, _read_import_file, _pkg_form_dialog,
@@ -168,8 +168,7 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
                 names = [(f"{pkg.get('package', '')} [{pkg.get('session', '')}]"
                           if is_specific else pkg.get("name", "")) if isinstance(pkg, dict) else str(pkg) for pkg in
                          to_del]
-                if (QMessageBox.question(_dlg, tr("Confirm Delete"), tr("Delete package(s)?\n\n  • ") + "\n  • ".join(names),
-                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes):
+                if ask_yes_no(_dlg, tr("Confirm Delete"), tr("Delete package(s)?\n\n  • ") + "\n  • ".join(names)) != QMessageBox.StandardButton.Yes:
                     do_delete = False
             updated = []
             for _cb, pkg in zip(checkboxes, packages, strict=True):
@@ -542,8 +541,7 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
                 msg += tr("\n  ... and {n} more.", n=len(invalid) - 15)
             msg += tr("\n\nWould you like to permanently remove this/these invalid package(s) from your profile?")
 
-            ans = QMessageBox.question(parent_dlg, tr("Verification Complete"), msg,
-                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            ans = ask_yes_no(parent_dlg, tr("Verification Complete"), msg)
 
             if ans == QMessageBox.StandardButton.Yes:
                 invalid_set = set(invalid)
@@ -699,8 +697,10 @@ class SystemManagerLauncher:
         no_btn_lbl = bb.button(QDialogButtonBox.StandardButton.No)
         if yes_btn:
             yes_btn.setText(tr("Yes"))
+            fit_button_width(yes_btn)
         if no_btn_lbl:
             no_btn_lbl.setText(tr("No"))
+            fit_button_width(no_btn_lbl)
         bb.accepted.connect(dialog.accept)
         bb.rejected.connect(dialog.reject)
         btn_row = QHBoxLayout()

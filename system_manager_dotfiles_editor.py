@@ -12,7 +12,7 @@ from dotfiles_manager import first_path
 from state import S, _HOME, apply_replacements, save_profile
 from themes import font_sz, current_theme, tri_state_legend_html
 from translations import tr
-from ui_utils import browse_field, checkbox_row_frame_style, color_style
+from ui_utils import ask_yes_no, browse_field, checkbox_row_frame_style, color_style, fit_button_width
 
 from system_manager_helpers import (
     _scroll_dlg, _read_import_file, TriCheckBox, _make_tri_cb, _add_select_all_tri,
@@ -85,7 +85,7 @@ class _DotfilesEditorMixin(_DotfilesMixinBase):
                 det_lay.addWidget(browse_field(self, ed))
 
             apply_btn = QPushButton(tr("Apply"))
-            apply_btn.setMaximumWidth(110)
+            fit_button_width(apply_btn, min_floor=110)
             apply_btn.setMinimumHeight(30)
 
             def _make_apply(entry, s_ed, d_ed, _cb):
@@ -131,11 +131,10 @@ class _DotfilesEditorMixin(_DotfilesMixinBase):
             do_delete = True
             if to_del:
                 names = "\n".join(f"  • {apply_replacements(f.get('source', '?'))}" for f in to_del)
-                if QMessageBox.question(_dlg, tr("Confirm Delete"),
-                                        tr("The following dotfile(s) will be permanently removed:\n\n{names}\n\nContinue?",
-                                           names=names),
-                                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-                                        ) != QMessageBox.StandardButton.Yes:
+                if ask_yes_no(_dlg, tr("Confirm Delete"),
+                              tr("The following dotfile(s) will be permanently removed:\n\n{names}\n\nContinue?",
+                                 names=names),
+                              ) != QMessageBox.StandardButton.Yes:
                     do_delete = False
 
             updated_files = []
@@ -226,6 +225,8 @@ class _DotfilesEditorMixin(_DotfilesMixinBase):
         file_btn = box.addButton(tr("📄 File(s)"), QMessageBox.ButtonRole.YesRole)
         box.addButton(tr("📁 Directory"), QMessageBox.ButtonRole.NoRole)
         cancel_btn = box.addButton(QMessageBox.StandardButton.Cancel)
+        if cancel_btn:
+            cancel_btn.setText(tr("Cancel"))
         box.exec()
         clicked = box.clickedButton()
         if clicked == cancel_btn:

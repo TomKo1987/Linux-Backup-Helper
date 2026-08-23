@@ -13,7 +13,7 @@ from dialog_base import _TextViewDialog
 from state import RESTART_DIALOG, S, _LOG_FILE, apply_replacements, logger, save_profile
 from themes import THEMES, apply_style, current_theme, font_sz
 from translations import LANGUAGES, tr, notify_language_listeners
-from ui_utils import _StandardKeysMixin, footer_bar_style, header_bar_style, hdr_label, ok_cancel_buttons
+from ui_utils import ask_yes_no, _StandardKeysMixin, footer_bar_style, header_bar_style, hdr_label, ok_cancel_buttons
 
 class LogViewer(_TextViewDialog):
 
@@ -66,8 +66,7 @@ class LogViewer(_TextViewDialog):
         except Exception as e: self.view.setPlainText(tr("Error reading log file: {e}", e=e))
 
     def _clear(self) -> None:
-        if QMessageBox.question(self, tr("Clear log"), tr("Permanently delete all log entries?"),
-                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) \
+        if ask_yes_no(self, tr("Clear log"), tr("Permanently delete all log entries?")) \
                 == QMessageBox.StandardButton.Yes:
             try:
                 _LOG_FILE.write_text("", encoding="utf-8")

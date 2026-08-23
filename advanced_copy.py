@@ -198,6 +198,7 @@ def restore_exclude_paths(entry: dict) -> dict:
 
 def _confirm(parent, title: str, paths: list[str]) -> bool:
     from PyQt6.QtWidgets import QMessageBox
+    from ui_utils import ask_yes_no
     shown = paths[:25]
     preview = "\n".join(f"  \u2022  {apply_replacements(p)}" for p in shown)
     more = tr("\n  \u2026and {n} more", n=len(paths) - 25) if len(paths) > 25 else ""
@@ -205,9 +206,8 @@ def _confirm(parent, title: str, paths: list[str]) -> bool:
     msg = tr("Mirror mode is about to delete {n} item(s) from the destination of "
              "'{title}' because they no longer exist in the source:\n\n{preview}{more}\n\n"
              "Delete these now?", n=len(paths), title=clean_title, preview=preview, more=more)
-    return QMessageBox.question(
+    return ask_yes_no(
         parent, tr("Confirm Mirror Delete"), msg,
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
     ) == QMessageBox.StandardButton.Yes
 
 

@@ -18,7 +18,7 @@ from state import logger, _USER
 from sudo_password import SecureString
 from themes import current_theme
 from translations import tr
-from ui_utils import _StandardKeysMixin
+from ui_utils import ask_yes_no, _StandardKeysMixin
 
 __all__ = ["SambaPasswordManager", "SambaPasswordDialog"]
 
@@ -266,8 +266,8 @@ class SambaPasswordDialog(_StandardKeysMixin, QDialog):
                       "You can choose to store them in KWallet or the system keyring.") if has_kw else
                    tr("No Samba credentials are stored yet.\n\n"
                       "Would you like to store credentials in the system keyring?"))
-            ans = QMessageBox.question(
-                parent, tr("Samba Credentials"), msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            ans = ask_yes_no(
+                parent, tr("Samba Credentials"), msg)
             if ans != QMessageBox.StandardButton.Yes:
                 return
             cls(parent, manager, _USER, False, first_setup=True, kwallet_available=has_kw).exec()

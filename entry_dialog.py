@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
 from state import RESTART_DIALOG, S, _HOME, _norm_paths, apply_replacements, logger, save_profile
 from themes import apply_tooltip, current_theme, font_scale
 from translations import tr
-from ui_utils import block_set, browse_field, color_style, hdr_label, ok_cancel_buttons, sep
+from ui_utils import block_set, browse_field, color_style, fit_button_width, hdr_label, ok_cancel_buttons, sep
 
 
 class _HintResizer(QObject):
@@ -51,7 +51,7 @@ class ExcludeDialog(QDialog):
         nav_row = QHBoxLayout()
         self._up_btn = QPushButton(f"↑ {tr('Up')}")
         self._up_btn.setFixedHeight(26)
-        self._up_btn.setMinimumWidth(70)
+        fit_button_width(self._up_btn, min_floor=70)
         self._up_btn.clicked.connect(self._go_up)
         self._path_lbl = QLabel()
         self._path_lbl.setStyleSheet(color_style(t['text_dim'], fs['sm']))
@@ -355,19 +355,17 @@ class EntryDialog(QDialog):
         return self._entry_snapshot
 
     def _toolbar_min_width(self) -> int:
-        """Actual width the toolbar row needs (button sizeHints + spacing +
-        the 'Expand paths' checkbox), so the dialog never shrinks below what
-        the current language's translated button labels require."""
-        btns = getattr(self, "_toolbar_btns", None)
+        btns: list[QPushButton] = getattr(self, "_toolbar_btns", None) or []
         if not btns:
             return 0
         spacing = 6
         total = sum(max(b.sizeHint().width(), b.minimumWidth()) for b in btns)
         total += spacing * (len(btns) - 1)
         cb = getattr(self, "_expand_paths_cb", None)
-        if cb is not None:
+        if isinstance(cb, QCheckBox):
             total += spacing + cb.sizeHint().width()
-        margins = self.layout().contentsMargins() if self.layout() else None
+        lay = self.layout()
+        margins = lay.contentsMargins() if lay is not None else None
         if margins is not None:
             total += margins.left() + margins.right()
         return total

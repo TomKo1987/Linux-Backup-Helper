@@ -1,10 +1,10 @@
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Callable, TYPE_CHECKING
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QTextCursor, QKeyEvent
 from PyQt6.QtWidgets import (
-    QApplication, QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
+    QAbstractButton, QApplication, QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
     QHBoxLayout, QLabel, QLayout, QLineEdit, QMessageBox, QPushButton,
     QScrollArea, QVBoxLayout, QWidget, QPlainTextEdit
 )
@@ -16,6 +16,48 @@ if TYPE_CHECKING:
     _MixinBase = QWidget
 else:
     _MixinBase = object
+
+
+def fit_button_width(btn: QAbstractButton, h_pad: int = 28, min_floor: int = 0) -> None:
+    needed = btn.fontMetrics().horizontalAdvance(btn.text()) + h_pad
+    btn.setMinimumWidth(max(needed, min_floor))
+
+
+def ask_yes_no(
+    parent,
+    title: str,
+    text: str,
+    *,
+    cancel: bool = False,
+    default_yes: bool = True,
+    icon: "QMessageBox.Icon" = QMessageBox.Icon.Question,
+) -> int:
+
+    box = QMessageBox(parent)
+    box.setIcon(icon)
+    box.setWindowTitle(title)
+    box.setText(text)
+    buttons = QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+    if cancel:
+        buttons |= QMessageBox.StandardButton.Cancel
+    box.setStandardButtons(buttons)
+    yes_btn = box.button(QMessageBox.StandardButton.Yes)
+    no_btn = box.button(QMessageBox.StandardButton.No)
+    if yes_btn:
+        yes_btn.setText(tr("Yes"))
+        fit_button_width(yes_btn)
+    if no_btn:
+        no_btn.setText(tr("No"))
+        fit_button_width(no_btn)
+    if cancel:
+        cancel_btn = box.button(QMessageBox.StandardButton.Cancel)
+        if cancel_btn:
+            cancel_btn.setText(tr("Cancel"))
+            fit_button_width(cancel_btn)
+    box.setDefaultButton(
+        QMessageBox.StandardButton.Yes if default_yes else QMessageBox.StandardButton.No
+    )
+    return box.exec()
 
 
 def size_to_screen(
@@ -94,6 +136,7 @@ def build_dialog_shell(
     fl.addStretch()
     close_btn = QPushButton(close_text)
     close_btn.setFixedHeight(34)
+    fit_button_width(close_btn)
     close_btn.clicked.connect(dialog.accept)
     fl.addWidget(close_btn)
     lay.addWidget(ftr)
@@ -163,17 +206,20 @@ def ok_cancel_buttons(dialog: QDialog, ok_fn, ok_label: str | None = None, cance
     cancel_btn = bb.button(QDialogButtonBox.StandardButton.Cancel)
     if ok_btn:
         ok_btn.setText(ok_label)
+        fit_button_width(ok_btn)
     if cancel_btn:
         cancel_btn.setText(cancel_label)
+        fit_button_width(cancel_btn)
     bb.accepted.connect(ok_fn)
     bb.rejected.connect(cancel_fn if cancel_fn else dialog.reject)
     return bb
 
 
-def btn_row(buttons: list[tuple[str, object]]) -> QHBoxLayout:
+def btn_row(buttons: list[tuple[str, Callable]]) -> QHBoxLayout:
     row = QHBoxLayout()
     for label, fn in buttons:
         b = QPushButton(label)
+        fit_button_width(b)
         b.clicked.connect(fn)
         row.addWidget(b)
     return row
@@ -202,7 +248,7 @@ def browse_field(parent: QWidget, editor: QLineEdit | QPlainTextEdit, btn_height
     for lbl, mode in [(f"📄 {tr('File')}", "file"), (f"📁 {tr('Directory')}", "dir")]:
         b = QPushButton(lbl)
         b.setMinimumHeight(btn_height)
-        b.setMinimumWidth(70)
+        fit_button_width(b, min_floor=70)
         b.clicked.connect(lambda _c=False, _e=editor, _m=mode: do_browse(parent, _e, _m))
         hlay.addWidget(b)
     return row
@@ -220,6 +266,14 @@ def ask_text(parent, title: str, label: str, default: str = "", min_width: int =
     edit.selectAll()
     layout.addWidget(edit)
     bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel) # type: ignore
+    ok_btn = bb.button(QDialogButtonBox.StandardButton.Ok)
+    cancel_btn = bb.button(QDialogButtonBox.StandardButton.Cancel)
+    if ok_btn:
+        ok_btn.setText(tr("Save"))
+        fit_button_width(ok_btn)
+    if cancel_btn:
+        cancel_btn.setText(tr("Cancel"))
+        fit_button_width(cancel_btn)
     bb.accepted.connect(dlg.accept)
     bb.rejected.connect(dlg.reject)
     layout.addWidget(bb)

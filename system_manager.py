@@ -28,7 +28,7 @@ from linux_distro_helper import LinuxDistroHelper, ARCH_KERNEL_VARIANTS
 from state import S, _HOME, _USER, logger, apply_replacements, _ANSI_RE, active_pkg_names, active_dotfiles
 from themes import current_theme, font_sz
 from translations import tr
-from ui_utils import _StandardKeysMixin
+from ui_utils import fit_button_width, _StandardKeysMixin
 
 
 def _zero(buf: bytearray) -> None: buf[:] = bytearray(len(buf))
@@ -247,7 +247,7 @@ class SystemManagerDialog(_StandardKeysMixin, QDialog):
         self._input_edit.returnPressed.connect(self._on_input_confirmed)
         self._input_send_btn = QPushButton(f"↵  {tr('Send')}")
         self._input_send_btn.setFixedHeight(36)
-        self._input_send_btn.setMinimumWidth(90)
+        fit_button_width(self._input_send_btn, min_floor=90)
         self._input_send_btn.clicked.connect(self._on_input_confirmed)
         ip_row.addWidget(self._input_edit, 1)
         ip_row.addWidget(self._input_send_btn)

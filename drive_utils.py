@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import QMessageBox
 
 from state import S, logger, _USER
 from translations import tr
+from ui_utils import ask_yes_no
 
 _DRIVE_NAME_RE = re.compile(r"^[\w\- .()@:]+$")
 
@@ -356,7 +357,7 @@ def mount_required_drives(drives: list[dict], parent=None) -> bool:
         else:
             msg = tr("'{drive_name}' is required but not mounted.\n\nRun mount command now?", drive_name=drive_name)
 
-        answer = QMessageBox.question(parent, tr("Drive Required"), msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        answer = ask_yes_no(parent, tr("Drive Required"), msg)
 
         if answer != QMessageBox.StandardButton.Yes:
             if is_managed:

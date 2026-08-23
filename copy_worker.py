@@ -348,7 +348,6 @@ def _copy_file(src, dst, cancel, cached_st=None):
     return "error", tr("Copy failed after retries"), 0
 
 
-
 class _EntryTracker:
     __slots__ = ("_counts", "_lock")
 

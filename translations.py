@@ -4416,6 +4416,35 @@ def tr(text: str, **kwargs) -> str:
     translated = LANGUAGES.get(current_language(), {}).get(text, text)
     return translated.format(**kwargs) if kwargs else translated
 
+_QT_LOCALE_CODES: dict[str, str] = {
+    "Deutsch": "de",
+    "Français": "fr",
+    "Español": "es",
+}
+
+_qt_base_translator = None
+
+def install_qt_base_translator(app) -> None:
+    global _qt_base_translator
+    from PyQt6.QtCore import QLibraryInfo, QLocale, QTranslator
+
+    if _qt_base_translator is not None:
+        app.removeTranslator(_qt_base_translator)
+        _qt_base_translator = None
+
+    code = _QT_LOCALE_CODES.get(current_language())
+    if not code:
+        return
+
+    translator = QTranslator(app)
+    tr_path = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
+    loaded = translator.load(QLocale(code), "qtbase", "_", tr_path)
+    if not loaded:
+        loaded = translator.load(f"qtbase_{code}", tr_path)
+    if loaded:
+        app.installTranslator(translator)
+        _qt_base_translator = translator
+
 
 _language_listeners: list = []
 _language_listeners_lock = _threading.Lock()
@@ -4436,6 +4465,10 @@ def unregister_language_listener(fn) -> None:
 
 
 def notify_language_listeners() -> None:
+    from PyQt6.QtWidgets import QApplication
+    app = QApplication.instance()
+    if app is not None:
+        install_qt_base_translator(app)
     with _language_listeners_lock:
         listeners = list(_language_listeners)
     for fn in listeners:

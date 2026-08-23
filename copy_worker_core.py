@@ -94,7 +94,6 @@ _SMB_DOWN_RE = re.compile(
     re.I,
 )
 
-# noinspection deprecation
 _NOTIFY_SEND: str | None = shutil.which("notify-send")
 
 

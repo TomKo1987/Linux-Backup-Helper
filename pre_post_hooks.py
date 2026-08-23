@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
 from state import S, logger, save_profile
 from themes import current_theme, font_sz
 from translations import tr
-from ui_utils import _StandardKeysMixin, hdr_label, sep, size_to_screen
+from ui_utils import ask_yes_no, _StandardKeysMixin, hdr_label, sep, size_to_screen
 
 __all__ = ["HooksDialog", "run_hooks"]
 
@@ -144,10 +144,9 @@ class _HookList(QWidget):
         row = self._lw.currentRow()
         if row < 0:
             return
-        ans = QMessageBox.question(
+        ans = ask_yes_no(
             self, tr("Remove Hook"),
             tr("Remove hook:\n{cmd}", cmd=self._hooks[row]),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if ans == QMessageBox.StandardButton.Yes:
             self._hooks.pop(row)

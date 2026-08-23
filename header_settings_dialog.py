@@ -8,7 +8,7 @@ from dialog_base import _UserRoleListMixin
 from state import S, save_profile
 from themes import current_theme
 from translations import tr
-from ui_utils import ask_text, btn_row, hdr_label, ok_cancel_buttons, sep
+from ui_utils import ask_text, ask_yes_no, btn_row, hdr_label, ok_cancel_buttons, sep
 
 class HeaderSettingsDialog(_UserRoleListMixin, QDialog):
     _selected_name = _UserRoleListMixin._selected_data
@@ -90,8 +90,7 @@ class HeaderSettingsDialog(_UserRoleListMixin, QDialog):
     def _delete(self) -> None:
         name = self._selected_name()
         if not name: return
-        if QMessageBox.question(self, tr("Delete"), tr("Delete header '{name}' and all its entries?", name=name),
-                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+        if ask_yes_no(self, tr("Delete"), tr("Delete header '{name}' and all its entries?", name=name)) == QMessageBox.StandardButton.Yes:
             del S.headers[name]
             S.entries    = [e for e in S.entries if e["header"] != name]
             self.was_changed = True

@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
 from state import S, _LOG_HIST_DIR, _atomic_write, logger
 from themes import current_theme, font_sz, register_style_listener, unregister_style_listener
 from translations import tr, register_language_listener, unregister_language_listener
-from ui_utils import footer_bar_style, header_bar_style, _StandardKeysMixin, size_to_screen
+from ui_utils import ask_yes_no, fit_button_width, footer_bar_style, header_bar_style, _StandardKeysMixin, size_to_screen
 
 
 def _history_path(profile_name: str) -> Path:
@@ -236,7 +236,7 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
 
         export_btn = QPushButton(tr("📤 Export CSV"))
         export_btn.setMinimumHeight(32)
-        export_btn.setMinimumWidth(120)
+        fit_button_width(export_btn, min_floor=120)
         export_btn.setStyleSheet(
             f"QPushButton {{ background:{bg3}; border:1px solid {sep}; border-radius:4px;"
             f"  color:{fg}; padding:2px 14px; }}"
@@ -248,7 +248,7 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
 
         clear_btn = QPushButton(tr("🗑 Clear History"))
         clear_btn.setMinimumHeight(32)
-        clear_btn.setMinimumWidth(130)
+        fit_button_width(clear_btn, min_floor=130)
         clear_btn.setStyleSheet(f"QPushButton {{ background:{bg3}; border:1px solid {sep}; border-radius:4px;"
                                 f"  color:{t['error']}; padding:2px 14px; }}"
                                 f"QPushButton:hover {{ background:{bg2}; border-color:{t['error']}; }}"
@@ -259,7 +259,7 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
 
         close_btn = QPushButton(tr("Close"))
         close_btn.setMinimumHeight(32)
-        close_btn.setMinimumWidth(100)
+        fit_button_width(close_btn, min_floor=100)
         close_btn.setStyleSheet(f"QPushButton {{ background:{bg3}; border:1px solid {sep}; border-radius:4px;"
                                 f"  color:{fg}; padding:2px 18px; }}"
                                 f"QPushButton:hover {{ background:{bg2}; border-color:{acc}; color:{t['highlight']}; }}"
@@ -295,8 +295,11 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
         self._list_hdr.setText(tr("  Runs  (newest first)"))
         self._detail_hdr.setText(tr("  Details"))
         self._export_btn.setText(tr("📤 Export CSV"))
+        fit_button_width(self._export_btn, min_floor=120)
         self._clear_btn.setText(tr("🗑 Clear History"))
+        fit_button_width(self._clear_btn, min_floor=130)
         self._close_btn.setText(tr("Close"))
+        fit_button_width(self._close_btn, min_floor=100)
         self._refresh_on_theme()
 
     def _load(self) -> None:
@@ -375,10 +378,9 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
         name = S.profile_name or ""
         if not name:
             return
-        ans = QMessageBox.question(
+        ans = ask_yes_no(
             self, tr("Clear History"),
             tr("Delete the entire run history for profile '{name}'?\n\nThis cannot be undone.", name=name),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if ans != QMessageBox.StandardButton.Yes:
             return

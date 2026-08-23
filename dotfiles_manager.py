@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
 from state import active_dotfiles
 from themes import current_theme, font_sz, register_style_listener, unregister_style_listener
 from translations import tr
-from ui_utils import color_style, header_bar_style, _StandardKeysMixin
+from ui_utils import ask_yes_no, color_style, fit_button_width, header_bar_style, _StandardKeysMixin
 
 
 def first_path(v) -> str:
@@ -316,7 +316,7 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
         bl.addStretch()
         self._close_btn = QPushButton(tr("Close"))
         self._close_btn.setMinimumHeight(32)
-        self._close_btn.setMinimumWidth(100)
+        fit_button_width(self._close_btn, min_floor=100)
         self._close_btn.clicked.connect(self.accept)
         bl.addWidget(self._close_btn)
 
@@ -596,12 +596,11 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
             f"  • {f.get('title', _expand(first_path(f.get('source', ''))).name) or f.get('source', '?')}"
             for f in files
         )
-        ans = QMessageBox.question(
+        ans = ask_yes_no(
             self, tr("Confirm Deploy"),
             tr("Deploy {n} file(s) to the live system?\n\n{names}\n\n{backup_note}",
                n=len(files), names=names,
                backup_note=(tr('A .bak backup will be created before overwriting.') if self._backup_cb.isChecked() else tr('No backup will be created.'))),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if ans != QMessageBox.StandardButton.Yes:
             return

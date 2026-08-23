@@ -15,7 +15,7 @@ from state import S, _PROFILES_DIR, RESTART_DIALOG, apply_replacements, save_pro
 from themes import current_theme, font_scale, register_style_listener, unregister_style_listener, apply_tooltip
 from tooltips import backup_tooltips, restore_tooltips, copy_logic_tooltip
 from translations import register_language_listener, unregister_language_listener, tr
-from ui_utils import block_set, btn_row, header_bar_style, _StandardKeysMixin
+from ui_utils import ask_yes_no, block_set, btn_row, header_bar_style, _StandardKeysMixin
 
 _COLS_NARROW, _COLS_WIDE = 2, 4
 
@@ -494,8 +494,7 @@ class SettingsWindow(_BaseCheckboxWindow):
             QMessageBox.information(self, tr("Delete Entry"), tr("Please check one or more entries to delete."))
             return
         names = ", ".join(e["title"].replace("<br>", " ") for e in to_delete)
-        if (QMessageBox.question(self, tr("Delete"), tr("Really delete: {names}?", names=names),
-                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) ==
+        if (ask_yes_no(self, tr("Delete"), tr("Really delete: {names}?", names=names)) ==
                 QMessageBox.StandardButton.Yes):
             ids_to_delete = {id(e) for e in to_delete}
             S.entries = [e for e in S.entries if id(e) not in ids_to_delete]

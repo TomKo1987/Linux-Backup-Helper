@@ -17,7 +17,7 @@ from state import (
 )
 from themes import apply_style, current_theme
 from translations import tr
-from ui_utils import ask_profile_name, btn_row, hdr_label, ok_cancel_buttons, sep
+from ui_utils import ask_profile_name, ask_yes_no, btn_row, hdr_label, ok_cancel_buttons, sep
 
 _ARCHIVE_MAX_PROFILE_BYTES = 1024 * 1024
 
@@ -112,9 +112,8 @@ class ProfilesDialog(QDialog):
         name = ask_profile_name(tr("New Profile"), "", self)
         if not name: return
         dest = _PROFILES_DIR / f"{name}.json"
-        if dest.exists() and QMessageBox.question(
-                self, tr("Overwrite?"), tr("Profile '{name}' already exists. Overwrite it?", name=name),
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+        if dest.exists() and ask_yes_no(
+                self, tr("Overwrite?"), tr("Profile '{name}' already exists. Overwrite it?", name=name)) != QMessageBox.StandardButton.Yes:
             return
         prev_name = S.profile_name
         _clear_default_flag(prev_name, "_new")
@@ -149,8 +148,7 @@ class ProfilesDialog(QDialog):
             QMessageBox.warning(self, tr("Duplicate"), tr("Source file for '{name}' not found.", name=src_name))
             return
         dest = _PROFILES_DIR / f"{name}.json"
-        if dest.exists() and QMessageBox.question(self, tr("Overwrite Profile?"), tr("Profile '{name}' already exists. Overwrite?", name=name),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+        if dest.exists() and ask_yes_no(self, tr("Overwrite Profile?"), tr("Profile '{name}' already exists. Overwrite?", name=name)) != QMessageBox.StandardButton.Yes:
             return
         try:
             shutil.copy2(src_path, dest)
@@ -169,8 +167,7 @@ class ProfilesDialog(QDialog):
         if name == S.profile_name:
             QMessageBox.warning(self, tr("Delete Profile"), tr("Cannot delete the currently active profile."))
             return
-        if QMessageBox.question(self, tr("Delete Profile"), tr("Permanently delete profile '{name}'?", name=name),
-                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) \
+        if ask_yes_no(self, tr("Delete Profile"), tr("Permanently delete profile '{name}'?", name=name)) \
                 == QMessageBox.StandardButton.Yes:
             try:
                 (_PROFILES_DIR / f"{name}.json").unlink(missing_ok=True)
@@ -189,8 +186,7 @@ class ProfilesDialog(QDialog):
         name = ask_profile_name(tr("Import Profile"), Path(path).stem, self)
         if not name: return
         dest = _PROFILES_DIR / f"{name}.json"
-        if dest.exists() and QMessageBox.question(self, tr("Overwrite?"), tr("Profile '{name}' already exists. Overwrite it?", name=name),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+        if dest.exists() and ask_yes_no(self, tr("Overwrite?"), tr("Profile '{name}' already exists. Overwrite it?", name=name)) != QMessageBox.StandardButton.Yes:
             return
         try:
             shutil.copy2(path, dest)
@@ -198,8 +194,7 @@ class ProfilesDialog(QDialog):
             QMessageBox.critical(self, tr("Import Failed"), tr("Could not copy profile:") + f"\n{exc}")
             return
         self._refresh()
-        if QMessageBox.question(self, tr("Import Complete"), tr("'{name}' imported successfully.", name=name) + "\n" + tr("Load it now?"),
-                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+        if ask_yes_no(self, tr("Import Complete"), tr("'{name}' imported successfully.", name=name) + "\n" + tr("Load it now?")) == QMessageBox.StandardButton.Yes:
             _clear_default_flag(S.profile_name, "_import")
             if not self._activate_profile(name):
                 QMessageBox.critical(self, tr("Error"), tr("Could not load profile '{name}'.", name=name))
@@ -227,8 +222,8 @@ class ProfilesDialog(QDialog):
                     dest      = _PROFILES_DIR / f"{stem}.json"
                     overwrite = True
                     if dest.exists():
-                        ans = QMessageBox.question(self, tr("Overwrite?"), tr("Profile '{name}' already exists. Overwrite?", name=stem),
-                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel)
+                        ans = ask_yes_no(self, tr("Overwrite?"), tr("Profile '{name}' already exists. Overwrite?", name=stem),
+                            cancel=True)
                         if ans == QMessageBox.StandardButton.Cancel: break
                         overwrite = ans == QMessageBox.StandardButton.Yes
                     if overwrite:
@@ -257,8 +252,7 @@ class ProfilesDialog(QDialog):
         if imported: parts.append(tr("Imported:") + "\n  " + "\n  ".join(imported))
         if skipped:  parts.append(tr("Skipped:") + "\n  "  + "\n  ".join(skipped))
         QMessageBox.information(self, tr("Import Complete"), "\n\n".join(parts) or tr("Nothing imported."))
-        if len(imported) == 1 and QMessageBox.question(self, tr("Load Profile"), tr("Load '{name}' now?", name=imported[0]),
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+        if len(imported) == 1 and ask_yes_no(self, tr("Load Profile"), tr("Load '{name}' now?", name=imported[0])) == QMessageBox.StandardButton.Yes:
             _clear_default_flag(S.profile_name, "_import_archive")
             if not self._activate_profile(imported[0]):
                 QMessageBox.critical(self, tr("Error"), tr("Could not load profile '{name}'.", name=imported[0]))

@@ -44,8 +44,8 @@ from scan_verify import ScanVerifyDialog
 from state import S, _HOME, _PROFILES_DIR, _PROFILE_RE, RESTART_DIALOG, save_profile, logger, startup_load
 from status_panel import StatusPanel
 from themes import apply_style, register_style_listener, unregister_style_listener
-from translations import register_language_listener, unregister_language_listener, tr
-from ui_utils import _StandardKeysMixin, ask_profile_name
+from translations import install_qt_base_translator, register_language_listener, unregister_language_listener, tr
+from ui_utils import _StandardKeysMixin, ask_profile_name, ask_yes_no
 from windows import base_window
 
 def _make_icon() -> QIcon:
@@ -317,9 +317,8 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
 
             msg = tr("The following drives are still mounted:") + "\n\n" + "\n".join(lines) + "\n\n" + \
                 tr("Unmount before quitting?") + "\n"
-            ans = QMessageBox.question(
-                self, tr("Quit — Drives Still Mounted"), msg,
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+            ans = ask_yes_no(
+                self, tr("Quit — Drives Still Mounted"), msg, cancel=True,
             )
             if ans == QMessageBox.StandardButton.Cancel:
                 return
@@ -336,13 +335,11 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
         elif info_only:
             msg = tr("The following drives are still mounted but have no unmount command:") + "\n"
             msg += "\n".join(f"  • {_name(o)}" for o in info_only) + "\n\n" + tr("Quit anyway?")
-            if (QMessageBox.question(self, tr("Quit"), msg,
-                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if (ask_yes_no(self, tr("Quit"), msg)
                     != QMessageBox.StandardButton.Yes):
                 return
         else:
-            if (QMessageBox.question(self, tr("Quit"), tr("Really quit Backup Helper?"),
-                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if (ask_yes_no(self, tr("Quit"), tr("Really quit Backup Helper?"))
                     != QMessageBox.StandardButton.Yes):
                 return
 
@@ -423,9 +420,9 @@ def _first_run_wizard(parent) -> bool:
                 continue
             dest = _PROFILES_DIR / f"{name}.json"
             if dest.exists():
-                ans = QMessageBox.warning(
+                ans = ask_yes_no(
                     parent, tr("Overwrite"), tr("Profile '{name}' already exists. Overwrite?", name=name),
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    icon=QMessageBox.Icon.Warning,
                 )
                 if ans == QMessageBox.StandardButton.No:
                     continue
@@ -455,6 +452,7 @@ def main():
     app = QApplication(sys.argv)
     app.setWindowIcon(_make_icon())
     app.setApplicationName("Backup Helper")
+    install_qt_base_translator(app)
 
     def _excepthook(exc_type, exc_value, exc_tb):
         if issubclass(exc_type, KeyboardInterrupt):
