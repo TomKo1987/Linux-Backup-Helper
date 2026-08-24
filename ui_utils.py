@@ -68,6 +68,147 @@ def ask_yes_no(
     return box.exec()
 
 
+def _build_scrollable_dialog(
+    parent, title: str, intro: str, body_text: str, *,
+    width_fraction: float, min_width: int, max_width: int,
+    min_height: int, height_fraction: float,
+) -> tuple["QDialog", "QVBoxLayout", "QHBoxLayout"]:
+
+    from themes import current_theme, font_sz
+
+    t = current_theme()
+    dlg = QDialog(parent)
+    dlg.setWindowTitle(title)
+
+    lay, body_lay, _close_unused = build_dialog_shell(
+        dlg, t, font_sz, title, close_text=" ",
+    )
+
+    _shell_footer = _close_unused.parentWidget()
+    if _shell_footer is not None:
+        lay.removeWidget(_shell_footer)
+        _shell_footer.setParent(None)
+        _shell_footer.deleteLater()
+
+    if intro:
+        intro_lbl = QLabel(intro)
+        intro_lbl.setWordWrap(True)
+        intro_lbl.setStyleSheet(f"font-size:{font_sz(2)}px;color:{t['text']};background:transparent;")
+        body_lay.addWidget(intro_lbl)
+
+    if body_text:
+        text_edit = QPlainTextEdit()
+        text_edit.setReadOnly(True)
+        text_edit.setPlainText(body_text)
+        from PyQt6.QtGui import QTextOption
+        text_edit.setWordWrapMode(QTextOption.WrapMode.NoWrap)
+        text_edit.setStyleSheet(
+            f"font-family:monospace;font-size:{font_sz(1)}px;"
+            f"background:{t.get('bg2', t['bg'])};color:{t['text']};"
+            f"border:1px solid {t['header_sep']};border-radius:4px;padding:6px;"
+        )
+        body_lay.addWidget(text_edit, 1)
+
+    footer_frame = QFrame()
+    footer_frame.setStyleSheet(footer_bar_style(t['bg2'], t['header_sep']))
+    footer_row = QHBoxLayout(footer_frame)
+    footer_row.setContentsMargins(12, 8, 12, 8)
+    lay.addWidget(footer_frame)
+
+    screen = QApplication.primaryScreen()
+    if screen:
+        geo = screen.availableGeometry()
+        target_w = max(min_width, min(max_width, int(geo.width() * width_fraction)))
+        target_h = max(min_height, int(geo.height() * height_fraction))
+        dlg.resize(target_w, target_h)
+        dlg.setMinimumSize(min(min_width, target_w), min(min_height, target_h))
+    else:
+        dlg.resize(min_width, min_height)
+
+    return dlg, body_lay, footer_row
+
+
+def ask_yes_no_scrollable(
+    parent,
+    title: str,
+    intro: str,
+    body_text: str,
+    *,
+    default_yes: bool = True,
+    width_fraction: float = 0.62,
+    min_width: int = 620,
+    max_width: int = 1400,
+    min_height: int = 320,
+    height_fraction: float = 0.7,
+) -> int:
+
+    dlg, body_lay, footer_row = _build_scrollable_dialog(
+        parent, title, intro, body_text,
+        width_fraction=width_fraction, min_width=min_width, max_width=max_width,
+        min_height=min_height, height_fraction=height_fraction,
+    )
+
+    yes_btn = QPushButton(tr("Yes"))
+    no_btn = QPushButton(tr("No"))
+    fit_button_width(yes_btn)
+    fit_button_width(no_btn)
+    result = {"code": QMessageBox.StandardButton.No}
+
+    def _accept_yes():
+        result["code"] = QMessageBox.StandardButton.Yes
+        dlg.accept()
+
+    def _accept_no():
+        result["code"] = QMessageBox.StandardButton.No
+        dlg.accept()
+
+    yes_btn.clicked.connect(_accept_yes)
+    no_btn.clicked.connect(_accept_no)
+
+    footer_row.addStretch()
+    footer_row.addWidget(no_btn)
+    footer_row.addWidget(yes_btn)
+    footer_row.addStretch()
+
+    (yes_btn if default_yes else no_btn).setDefault(True)
+    (yes_btn if default_yes else no_btn).setFocus()
+
+    dlg.exec()
+    return result["code"]
+
+
+def show_scrollable_message(
+    parent,
+    title: str,
+    intro: str,
+    body_text: str = "",
+    *,
+    width_fraction: float = 0.62,
+    min_width: int = 620,
+    max_width: int = 1400,
+    min_height: int = 260,
+    height_fraction: float = 0.7,
+) -> None:
+
+    dlg, body_lay, footer_row = _build_scrollable_dialog(
+        parent, title, intro, body_text,
+        width_fraction=width_fraction, min_width=min_width, max_width=max_width,
+        min_height=min_height, height_fraction=height_fraction,
+    )
+
+    close_btn = QPushButton(tr("Close"))
+    fit_button_width(close_btn)
+    close_btn.setDefault(True)
+    close_btn.clicked.connect(dlg.accept)
+
+    footer_row.addStretch()
+    footer_row.addWidget(close_btn)
+    footer_row.addStretch()
+
+    close_btn.setFocus()
+    dlg.exec()
+
+
 def size_to_screen(
     widget: QWidget,
     max_w: int,

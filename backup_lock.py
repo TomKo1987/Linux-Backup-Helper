@@ -71,11 +71,14 @@ def release_backup_lock() -> None:
     except OSError:
         pass
     try:
-        os.close(_lock_fd)
+        st_fd = os.fstat(_lock_fd)
+        st_path = os.stat(_LOCK_PATH)
+        if (st_fd.st_dev, st_fd.st_ino) == (st_path.st_dev, st_path.st_ino):
+            _LOCK_PATH.unlink(missing_ok=True)
     except OSError:
         pass
     try:
-        _LOCK_PATH.unlink(missing_ok=True)
+        os.close(_lock_fd)
     except OSError:
         pass
     _lock_fd = None

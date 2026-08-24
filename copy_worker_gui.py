@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
 from state import apply_replacements, logger
 from themes import current_theme, font_sz
 from translations import tr
-from ui_utils import card_frame_style, _StandardKeysMixin, size_to_screen
+from ui_utils import card_frame_style, _StandardKeysMixin, size_to_screen, show_scrollable_message
 
 from backup_lock import acquire_backup_lock, backup_lock_holder_pid, release_backup_lock
 from copy_worker_core import _check_destination_space, _format_unit, _cached_mono_style, _notify
@@ -813,12 +813,11 @@ class CopyDialog(_StandardKeysMixin, QDialog):
 
         space_warnings = _check_destination_space(tasks)
         if space_warnings:
-            QMessageBox.warning(
+            show_scrollable_message(
                 self,
                 tr("Low Disk Space"),
-                tr("Warning: one or more destinations are running low on space:\n\n")
-                + "\n".join(space_warnings)
-                + tr("\n\nThe backup will still proceed."),
+                tr("Warning: one or more destinations are running low on space:"),
+                "\n".join(space_warnings) + "\n\n" + tr("The backup will still proceed."),
             )
 
         self.worker.start()
@@ -1036,14 +1035,14 @@ class CopyDialog(_StandardKeysMixin, QDialog):
                 for p, t in self._not_found_paths
             )
             path_word = tr("path was") if n == 1 else tr("paths were")
-            msg = tr(
-                "{n} configured {word} not found and skipped:\n\n{paths}\n\n"
-                "Please check these entries in your backup profile.",
-                n=n, word=path_word, paths=paths_text,
-            )
+            intro = tr("{n} configured {word} not found and skipped. "
+                       "Please check these entries in your backup profile:",
+                       n=n, word=path_word)
 
-            def _show_popup(_msg: str = msg) -> None:
-                QMessageBox.warning(self, tr("Missing Paths Detected"), _msg)
+            def _show_popup(_intro: str = intro, _paths: str = paths_text) -> None:
+                show_scrollable_message(
+                    self, tr("Missing Paths Detected"), _intro, _paths,
+                )
 
             QTimer.singleShot(0, _show_popup)
 
