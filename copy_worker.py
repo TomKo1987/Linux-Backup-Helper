@@ -182,6 +182,7 @@ def _copy_symlink(src: str, dst: str) -> tuple:
         _silent_unlink(tmp)
         os.symlink(target, tmp)
         os.replace(tmp, dst)
+        _fsync_parent_dir(dst)
         return "ok", dst, 0
     except OSError as exc:
         _silent_unlink(tmp)
@@ -262,6 +263,26 @@ class _IncompleteCopyError(OSError):
     pass
 
 
+_fsynced_dirs_lock = threading.Lock()
+_fsynced_dirs: set[str] = set()
+
+
+def _fsync_parent_dir(path: str) -> None:
+    d = os.path.dirname(path) or "."
+    with _fsynced_dirs_lock:
+        if d in _fsynced_dirs:
+            return
+        _fsynced_dirs.add(d)
+    try:
+        dfd = os.open(d, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+    except OSError as e:
+        logger.debug("fsync parent dir %s failed: %s", d, e)
+
+
 def _copy_file(src, dst, cancel, cached_st=None):
     if cached_st is True:
         return _copy_symlink(src, dst)
@@ -306,12 +327,18 @@ def _copy_file(src, dst, cancel, cached_st=None):
                 try:
                     os.ftruncate(wfd, st.st_size)
                     os.posix_fadvise(rfd, 0, st.st_size, os.POSIX_FADV_SEQUENTIAL)
+                    os.posix_fadvise(wfd, 0, st.st_size, os.POSIX_FADV_SEQUENTIAL)
                 except OSError:
                     pass
 
             copied = _copy_loop(rfd, wfd, st.st_size, cancel)
             if copied < st.st_size:
                 raise _IncompleteCopyError(f"Incomplete copy: {copied}/{st.st_size} bytes written")
+
+            try:
+                os.fsync(wfd)
+            except OSError as e:
+                logger.debug("fsync failed for %s: %s", tmp, e)
 
             try:
                 os.close(wfd)
@@ -326,6 +353,7 @@ def _copy_file(src, dst, cancel, cached_st=None):
 
             os.replace(tmp, dst)
             success = True
+            _fsync_parent_dir(dst)
             return "ok", dst, copied
 
         except InterruptedError:
@@ -593,6 +621,8 @@ class CopyWorker(QThread):
     def run(self) -> None:
         with _seen_dirs_lock:
             _seen_dirs_global.clear()
+        with _fsynced_dirs_lock:
+            _fsynced_dirs.clear()
         try:
             self._run_impl()
         finally:

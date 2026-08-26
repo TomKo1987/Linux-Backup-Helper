@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from copy_worker import _Flusher, _EntryTracker
 
 from copy_worker_core import (
-    _SMB_WORKERS, _SMB_TIMEOUT, _SMB_FILE_SECS, _SMB_CHUNK, _SMB_MIN_BYTES_PER_SEC,
+    _SMB_WORKERS, _SMB_TIMEOUT, _SMB_LS_INDEX_TIMEOUT, _SMB_FILE_SECS, _SMB_CHUNK, _SMB_MIN_BYTES_PER_SEC,
     _SHM_DIR, _smb_procs, _smb_procs_lock, _SMB_LINE_RE, _SKIP_RE, _CACHE_MISS,
     _is_unreachable, _parse_smb, _q, _run_futures, _ensure_dir, _silent_unlink,
     _parse_smb_mtime, _SMB_MTIME_TOLERANCE
@@ -183,12 +183,16 @@ def _build_smb_put_cmds(jobs: list[_SmbJob]) -> str:
 
 class _SmbClient:
 
+    _relaxed_shares: set = set()
+    _relaxed_shares_lock = threading.Lock()
+
     def __init__(self, host: str, share: str, user: str, pw: "_SecurePw | None", guest: bool = False) -> None:
         self.host   = host
         self.share  = share
         self._user  = user
         self._pw    = pw
         self._guest = guest
+
         _proto = ["-m", "SMB3"]
         base = ["smbclient", f"//{host}/{share}"]
         self._argv = ([*base, "-N", *_proto]) if guest else (base + _proto)
@@ -224,33 +228,56 @@ class _SmbClient:
             if wipe_fn is not None:
                 wipe_fn()
 
-    def _argv_with_creds(self) -> "tuple[list[str], str | None, str | None]":
+    def _argv_with_creds(self, relaxed_protocol: bool = False) -> "tuple[list[str], str | None, str | None]":
+        base_argv = [a for a in self._argv if a not in ("-m", "SMB3")] if relaxed_protocol else self._argv
         if self._guest:
-            return self._argv[:], None, None
+            return base_argv[:], None, None
         if not self._pw:
             if self._user:
                 logger.warning("SMB //%s/%s: user '%s' set but no password available, falling back to guest.",
                                self.host, self.share, self._user)
-            return [*self._argv, "-N"], None, None
+            return [*base_argv, "-N"], None, None
         if _SHM_DIR is not None:
             try:
                 tmp_dir, cred_path = _smb_cred_file(self._user, self._pw)
-                return [*self._argv, "-A", cred_path], tmp_dir, cred_path
+                return [*base_argv, "-A", cred_path], tmp_dir, cred_path
             except (OSError, RuntimeError) as exc:
                 logger.warning("SMB //%s/%s: Secure pw failed (%s). Falling back to guest.", self.host, self.share, exc)
         else:
             logger.warning("SMB //%s/%s: /dev/shm not available. Falling back to guest.", self.host, self.share)
-        return [*self._argv, "-N"], None, None
+        return [*base_argv, "-N"], None, None
 
     def _run_with_creds(self, input_data: str, timeout: int,
                         cancel: "threading.Event | None" = None) -> "tuple[subprocess.Popen | None, str, str]":
-        argv, tmp_dir, cred_path = self._argv_with_creds()
+        share_key = (self.host, self.share)
+        with self._relaxed_shares_lock:
+            force_relaxed = share_key in self._relaxed_shares
+
+        argv, tmp_dir, cred_path = self._argv_with_creds(relaxed_protocol=force_relaxed)
         wipe_fn = None
         if tmp_dir and cred_path:
             _tmp_dir, _cred_path = tmp_dir, cred_path
             wipe_fn = lambda: _wipe_smb_cred(_tmp_dir, _cred_path)
 
-        return self._spawn(argv, input_data, timeout, wipe_fn=wipe_fn, cancel=cancel)
+        proc, out, err = self._spawn(argv, input_data, timeout, wipe_fn=wipe_fn, cancel=cancel)
+
+        failed = proc is None or proc.returncode != 0
+        if failed and not force_relaxed and (cancel is None or not cancel.is_set()) and _is_unreachable(err):
+
+            argv2, tmp_dir2, cred_path2 = self._argv_with_creds(relaxed_protocol=True)
+            wipe_fn2 = None
+            if tmp_dir2 and cred_path2:
+                _tmp_dir2, _cred_path2 = tmp_dir2, cred_path2
+                wipe_fn2 = lambda: _wipe_smb_cred(_tmp_dir2, _cred_path2)
+            proc2, out2, err2 = self._spawn(argv2, input_data, timeout, wipe_fn=wipe_fn2, cancel=cancel)
+            if proc2 is not None and proc2.returncode == 0:
+                logger.info("SMB //%s/%s: SMB3 negotiation failed, succeeded via protocol auto-negotiation",
+                            self.host, self.share)
+                with self._relaxed_shares_lock:
+                    self._relaxed_shares.add(share_key)
+                proc, out, err = proc2, out2, err2
+
+        return proc, out, err
 
     def run(self, cmds: str, timeout: int, cancel: "threading.Event | None" = None) -> tuple[bool, str]:
         proc, _, err = self._run_with_creds(cmds, timeout, cancel=cancel)
@@ -262,7 +289,7 @@ class _SmbClient:
     def ls_index(self, base: str) -> "dict | None":
         base = base.replace("\\", "/").rstrip("/")
         cmd = (f'recurse on\nprompt off\ncd "{_q(base)}"\nls\n' if base else "recurse on\nprompt off\nls\n")
-        proc, stdout, stderr = self._run_with_creds(cmd, _SMB_TIMEOUT)
+        proc, stdout, stderr = self._run_with_creds(cmd, _SMB_LS_INDEX_TIMEOUT)
         if proc is None:
             return None
         if proc.returncode != 0:

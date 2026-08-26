@@ -17,6 +17,7 @@ _IO_BUF          =  8 * 1024 * 1024
 _WORKERS         = min(12, max(4, os.cpu_count() or 4))
 _SMB_WORKERS     = 10
 _SMB_TIMEOUT     = 10
+_SMB_LS_INDEX_TIMEOUT = 120
 _SMB_FILE_SECS   = 3
 _SMB_MIN_BYTES_PER_SEC = 512 * 1024
 _SMB_CHUNK       = 1_000
@@ -189,6 +190,17 @@ def _scan_dir_entries(src: str, dst: str, excl: frozenset, cancel: threading.Eve
                     yield False, e.path, dst_path, st
 
 
+def _fsync_dir(path: str) -> None:
+    try:
+        dfd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+    except OSError as exc:
+        logger.debug("fsync dir %s failed: %s", path, exc)
+
+
 def _ensure_dir(path: str) -> bool:
     if not path:
         return True
@@ -200,10 +212,16 @@ def _ensure_dir(path: str) -> bool:
             seen.add(path)
             return True
     try:
+        created_any = not os.path.isdir(path)
         os.makedirs(path, exist_ok=True)
     except OSError as exc:
         logger.error("mkdir %s: %s", path, exc)
         return False
+    if created_any:
+        _fsync_dir(path)
+        parent = os.path.dirname(path.rstrip("/"))
+        if parent and parent != path:
+            _fsync_dir(parent)
     with _seen_dirs_lock:
         _seen_dirs_global.add(path)
     seen.add(path)
@@ -254,13 +272,16 @@ def _q(s: str) -> str:
 
 
 def _run_futures(futs: list, cancel: threading.Event, tag: str = "worker") -> None:
+    cancelled = False
     for fut in concurrent.futures.as_completed(futs):
-        if cancel.is_set():
+        if not cancelled and cancel.is_set():
+            cancelled = True
             for f in futs:
                 f.cancel()
-            return
         try:
             fut.result()
+        except concurrent.futures.CancelledError:
+            pass
         except Exception as exc:
             logger.error("%s: %s", tag, exc)
 

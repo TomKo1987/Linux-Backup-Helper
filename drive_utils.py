@@ -301,10 +301,28 @@ def _clean_subprocess_env() -> dict:
     return env
 
 
+_RSYNC_SSH_OPTS = (
+    "ssh -o StrictHostKeyChecking=accept-new "
+    "-o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 "
+    "-o BatchMode=yes -o Compression=no"
+)
+
+_RSYNC_SKIP_COMPRESS = (
+    "7z/avi/bz2/deb/flac/gz/heic/heif/iso/jpeg/jpg/lz/lz4/lzma/lzo/"
+    "m4a/m4v/mkv/mov/mp3/mp4/ogg/opus/png/rar/rpm/tbz/tbz2/tgz/tlz/"
+    "txz/webm/webp/xz/z/zip/zst"
+)
+
+
 def build_rsync_cmd(src: str, dst: str, *, delete: bool = False, exclude: list[str] | None = None,
                     dry_run: bool = False) -> list[str]:
     info = "progress2,del" if delete else "progress2"
-    cmd = ["rsync", "-az", f"--info={info}", "-e", "ssh -o StrictHostKeyChecking=accept-new"]
+    cmd = [
+        "rsync", "-azH", "--numeric-ids",
+        f"--skip-compress={_RSYNC_SKIP_COMPRESS}",
+        "--partial", "--partial-dir=.rsync-partial",
+        f"--info={info}", "-e", _RSYNC_SSH_OPTS,
+    ]
     if delete:
         cmd.append("--delete")
     if dry_run:

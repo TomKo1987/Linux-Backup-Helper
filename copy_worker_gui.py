@@ -904,10 +904,10 @@ class CopyDialog(_StandardKeysMixin, QDialog):
                                    self._size_copied, self._size_skipped, self._display_size_deleted, finished=False)
 
     def _update_tab_labels(self) -> None:
-        self.tabs.setTabText(1, f"⤵ Copied ({self.copied:,})")
-        self.tabs.setTabText(2, f"↷ Skipped ({self.skipped:,})")
-        self.tabs.setTabText(3, f"🗑 Deleted ({self._display_deleted:,})")
-        self.tabs.setTabText(4, f"✗ Errors ({self._display_errors:,})")
+        self.tabs.setTabText(1, tr("⤵ Copied ({n:,})", n=self.copied))
+        self.tabs.setTabText(2, tr("↷ Skipped ({n:,})", n=self.skipped))
+        self.tabs.setTabText(3, tr("🗑 Deleted ({n:,})", n=self._display_deleted))
+        self.tabs.setTabText(4, tr("✗ Errors ({n:,})", n=self._display_errors))
 
     @staticmethod
     def _fmt_ok(s, d) -> str: return f"{apply_replacements(s)}\nCopied to ⤵\n{apply_replacements(d)}"
