@@ -28,6 +28,22 @@ def source_family(source: str) -> str:
         return "ipv4"
 
 
+def is_valid_source(source: str) -> bool:
+    if not source:
+        return True
+    candidate = source.split("/", 1)[0].strip()
+    try:
+        ipaddress.ip_address(candidate)
+        return True
+    except ValueError:
+        pass
+    try:
+        ipaddress.ip_network(source, strict=False)
+        return True
+    except ValueError:
+        return False
+
+
 def normalize_rule(rule: dict) -> dict:
     action = str(rule.get("action", "allow")).strip().lower()
     if action not in VALID_ACTIONS and action not in VALID_DEFAULT_ACTIONS:
@@ -138,7 +154,8 @@ def build_firewalld_rich_rule(rule: dict) -> str | None:
     else:
         action = "reject"
 
-    src = f' source address="{rule["source"]}"' if rule["source"] else ""
+    src_val = rule["source"] if is_valid_source(rule["source"]) else ""
+    src = f' source address="{src_val}"' if src_val else ""
 
     port = ""
     proto = ""
@@ -149,7 +166,7 @@ def build_firewalld_rich_rule(rule: dict) -> str | None:
     elif rule["proto"] != "both":
         proto = f' protocol="{rule["proto"]}"'
 
-    return f'rule family="{source_family(rule["source"])}"{src}{port}{proto} {action}{limit_clause}'
+    return f'rule family="{source_family(src_val)}"{src}{port}{proto} {action}{limit_clause}'
 
 
 def build_firewalld_commands(rules: list[dict], *, ensure_ssh_allowed: bool = True) -> list[list[str]]:
@@ -179,7 +196,8 @@ import shlex
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QComboBox,
-    QPushButton, QLabel, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView
+    QPushButton, QLabel, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
+    QMessageBox
 )
 
 from linux_distro_helper import LinuxDistroHelper
@@ -225,7 +243,17 @@ class RuleDialog(QDialog):
         lay.addRow(tr("Port:"), self.port_ed)
         lay.addRow(tr("Comment:"), self.comment_ed)
 
-        lay.addWidget(ok_cancel_buttons(self, self.accept))
+        lay.addWidget(ok_cancel_buttons(self, self._on_accept))
+
+    def _on_accept(self) -> None:
+        source = self.src_ed.text().strip()
+        if source.lower() != "any" and not is_valid_source(source):
+            QMessageBox.warning(
+                self, tr("Invalid Source"),
+                tr("'{source}' is not a valid IP address or network (e.g. 192.168.0.0/24).\n"
+                   "It will be ignored for the firewalld backend.", source=source)
+            )
+        self.accept()
 
     def get_rule(self):
         return normalize_rule({

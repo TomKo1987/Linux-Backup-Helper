@@ -481,7 +481,7 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
             err_col = t["error"]
             self._diff_view.setHtml(
                 f"<p style='color:{err_col};font-family:monospace;font-size:{font_sz()}px;'>"
-                f"✗  {tr('Source not found:')}<br>{src}</p>")
+                f"✗  {tr('Source not found:')}<br>{_html.escape(str(src))}</p>")
             self._set_status(f"⚠ {tr('Source missing')}", err_col)
             return
 
@@ -492,7 +492,7 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
             err_col = t["error"]
             self._diff_view.setHtml(
                 f"<p style='color:{err_col};font-family:monospace;font-size:{font_sz()}px;'>"
-                f"✗  {tr('Source file not found:')}<br>{src}</p>")
+                f"✗  {tr('Source file not found:')}<br>{_html.escape(str(src))}</p>")
             self._set_status(f"⚠ {tr('Source missing')}", err_col)
             return
 
@@ -534,7 +534,7 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
             err_col = t["error"]
             self._diff_view.setHtml(
                 f"<p style='color:{err_col};font-family:monospace;font-size:{font_sz()}px;'>"
-                f"✗  {tr('Source directory not readable:')}<br>{src}</p>")
+                f"✗  {tr('Source directory not readable:')}<br>{_html.escape(str(src))}</p>")
             self._set_status(f"⚠ {tr('Source unreadable')}", err_col)
             return
 
@@ -612,7 +612,7 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
         def _on_progress(msg: str, is_err: bool) -> None:
             color = t["error"] if is_err else t["success"]
             self._diff_view.append(
-                f"<p style='color:{color};font-family:monospace;font-size:{font_sz(-1)}px;'>{msg}</p>")
+                f"<p style='color:{color};font-family:monospace;font-size:{font_sz(-1)}px;'>{_html.escape(msg)}</p>")
 
         def _on_done(ok: int, err: int) -> None:
             col = t["error"] if err else t["success"]

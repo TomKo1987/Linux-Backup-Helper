@@ -769,8 +769,11 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         self.tabs.addTab(self._w_skipped, tr("↷ Skipped (0)"))
         self.tabs.addTab(self._w_deleted, tr("🗑 Deleted (0)"))
         self.tabs.addTab(self._w_errors, tr("✗ Errors (0)"))
-        self.tabs.setStyleSheet(f"QTabWidget::pane {{border: none}} QTabBar::tab {{width: 200px; padding: 10px}}"
+        self.tabs.setStyleSheet(f"QTabWidget::pane {{border: none}} QTabBar::tab {{min-width: 100px; padding: 10px 16px}}"
                                 f"QTabBar::tab:selected {{background: {t['bg3']}; border-bottom: 2px solid {t['accent']}}}")
+        self.tabs.setElideMode(Qt.TextElideMode.ElideNone)
+        self.tabs.setUsesScrollButtons(True)
+        self.tabs.setSizePolicy(QSizePolicy.Policy.Expanding, self.tabs.sizePolicy().verticalPolicy())
 
         self._seed_deleted(pre_deleted)
         self._seed_errors(pre_errors)

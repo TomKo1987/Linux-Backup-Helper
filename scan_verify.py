@@ -30,8 +30,21 @@ class ScanVerifyDialog(_StandardKeysMixin, QDialog):
                 worker = getattr(tab, "_worker", None)
                 if isinstance(worker, QThread) and worker.isRunning():
                     if not worker.wait(5000):
-                        logger.warning("ScanVerifyDialog: worker did not finish within timeout on close")
+                        logger.warning("ScanVerifyDialog: worker did not finish within timeout on close "
+                                      "— detaching its signals so a late result cannot reach destroyed widgets")
+                        self._detach_worker_signals(worker)
         super().closeEvent(a0)
+
+    @staticmethod
+    def _detach_worker_signals(worker: QThread) -> None:
+        for sig_name in ("progress", "done", "result_ready", "all_done", "finished"):
+            sig = getattr(worker, sig_name, None)
+            if sig is None:
+                continue
+            try:
+                sig.disconnect()  # type: ignore[union-attr]
+            except TypeError:
+                pass
 
     _MIN_W, _MIN_H = 1250, 850
 

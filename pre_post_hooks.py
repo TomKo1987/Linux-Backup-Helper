@@ -116,7 +116,16 @@ class _HookList(QWidget):
             it.setFlags(it.flags() | Qt.ItemFlag.ItemIsEditable)
             self._lw.addItem(it)
 
+    def _sync_from_widget(self) -> None:
+        hooks: list[str] = []
+        for i in range(self._lw.count()):
+            it = self._lw.item(i)
+            if it is not None:
+                hooks.append(it.text())
+        self._hooks = hooks
+
     def _add(self) -> None:
+        self._sync_from_widget()
         if len(self._hooks) >= _MAX_HOOKS:
             QMessageBox.warning(self, tr("Limit Reached"), tr("Maximum {max} hooks per phase.", max=_MAX_HOOKS))
             return
@@ -129,6 +138,7 @@ class _HookList(QWidget):
             self._populate()
 
     def _edit(self) -> None:
+        self._sync_from_widget()
         row = self._lw.currentRow()
         if row < 0:
             return
@@ -141,6 +151,7 @@ class _HookList(QWidget):
             self._populate()
 
     def _remove(self) -> None:
+        self._sync_from_widget()
         row = self._lw.currentRow()
         if row < 0:
             return
@@ -153,6 +164,7 @@ class _HookList(QWidget):
             self._populate()
 
     def _move_up(self) -> None:
+        self._sync_from_widget()
         row = self._lw.currentRow()
         if row > 0:
             self._hooks[row - 1], self._hooks[row] = self._hooks[row], self._hooks[row - 1]
@@ -160,6 +172,7 @@ class _HookList(QWidget):
             self._lw.setCurrentRow(row - 1)
 
     def _move_down(self) -> None:
+        self._sync_from_widget()
         row = self._lw.currentRow()
         if 0 <= row < len(self._hooks) - 1:
             self._hooks[row], self._hooks[row + 1] = self._hooks[row + 1], self._hooks[row]

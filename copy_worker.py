@@ -690,8 +690,8 @@ class CopyWorker(QThread):
                 if smb_tool_missing:
                     smb_errors.extend(
                         (s_ if is_smb(s_) else d_,
-                         "'smbclient' not found — install the Samba client tools (e.g. package "
-                         "'smbclient' / 'samba-client') to enable SMB backups",
+                         tr("'smbclient' not found — install the Samba client tools (e.g. package "
+                            "'smbclient' / 'samba-client') to enable SMB backups"),
                          t_)
                         for s_, d_, t_, *_ in smb_tasks
                     )

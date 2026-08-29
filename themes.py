@@ -310,7 +310,7 @@ QCheckBox:hover {{ color: {t['highlight']}; border: 1px solid {t['highlight']}; 
 QCheckBox:focus {{ border: 1px solid {t['highlight']}; outline: none; }}
 QCheckBox::indicator {{ width: 8px; height: 8px; border-radius: 4px; }}
 QCheckBox::indicator:checked {{ background-color: {t['green']}; border: 1px solid {t['green']}; image: none; }}
-QCheckBox::indicator:unchecked {{ background-color: {t['bg3']}; border: 1px solid {t['red']}; image: none; }}
+QCheckBox::indicator:unchecked {{ background-color: {t['bg3']}; border: 1px solid {t['text_dim']}; image: none; }}
 QCheckBox::indicator:indeterminate {{
     background-color: {t['bg3']};
     border: 1px solid {t['highlight']};

@@ -1,4 +1,5 @@
 import csv
+import html
 import io
 import json
 from datetime import datetime
@@ -97,8 +98,8 @@ def _op_classify(op: str) -> tuple[bool, bool]:
 
 
 def _entry_detail_html(e: dict, t: dict) -> str:
-    ts      = e.get("timestamp", "?")
-    op      = e.get("operation", "?")
+    ts      = html.escape(str(e.get("timestamp", "?")))
+    op      = str(e.get("operation", "?"))
     copied  = e.get("copied",    0)
     skipped = e.get("skipped",   0)
     deleted = e.get("deleted",   0)
@@ -128,7 +129,7 @@ def _entry_detail_html(e: dict, t: dict) -> str:
     can_html  = (f"<span style='color:{sk_col};'>yes  ⏹</span>" if can else f"<span style='color:{ok_col};'>no</span>")
     err_color = er_col if errors > 0 else ok_col
     is_backup, is_restore = _op_classify(op)
-    op_label = tr("Backup created") if is_backup else (tr("Restored from backup") if is_restore else op)
+    op_label = tr("Backup created") if is_backup else (tr("Restored from backup") if is_restore else html.escape(op))
     op_icon  = "⤵" if is_backup else ("⤴" if is_restore else "▶")
 
     return (f"<div style='font-family:monospace;padding:4px;'>"

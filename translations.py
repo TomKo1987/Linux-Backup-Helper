@@ -78,11 +78,20 @@ LANGUAGES: dict[str, dict[str, str]] = {
         '🔄 Check Now': '🔄 Jetzt prüfen',
         '⚠  Installed, not in profile (0)': '⚠  Installiert, nicht im Profil (0)',
         'smb scan error': 'SMB-Scanfehler',
+        "'smbclient' not found — install the Samba client tools (e.g. package "
+        "'smbclient' / 'samba-client') to enable SMB backups":
+            "'smbclient' nicht gefunden — installieren Sie die Samba-Client-Werkzeuge (z. B. Paket "
+            "'smbclient' / 'samba-client'), um SMB-Backups zu aktivieren",
         'Up to date': 'Aktuell',
         'Skipped: filename contains a double quote (") which smbclient cannot safely escape':
             'Übersprungen: Dateiname enthält ein Anführungszeichen ("), das smbclient nicht sicher maskieren kann',
         'Add Rule': 'Regel hinzufügen',
         'Edit Rule': 'Regel bearbeiten',
+        'Invalid Source': 'Ungültige Quelle',
+        "'{source}' is not a valid IP address or network (e.g. 192.168.0.0/24).\n"
+        "It will be ignored for the firewalld backend.":
+            "'{source}' ist keine gültige IP-Adresse oder kein gültiges Netzwerk (z. B. 192.168.0.0/24).\n"
+            "Sie wird für das firewalld-Backend ignoriert.",
         'e.g. 192.168.0.0/24 or any': 'z. B. 192.168.0.0/24 oder any',
         'e.g. 1982': 'z. B. 1982',
         'e.g. Yeelight Discovery': 'z. B. Yeelight Discovery',
@@ -1547,11 +1556,20 @@ LANGUAGES: dict[str, dict[str, str]] = {
         '🔄 Check Now': '🔄 Vérifier maintenant',
         '⚠  Installed, not in profile (0)': '⚠  Installé, absent du profil (0)',
         'smb scan error': "erreur d'analyse SMB",
+        "'smbclient' not found — install the Samba client tools (e.g. package "
+        "'smbclient' / 'samba-client') to enable SMB backups":
+            "« smbclient » introuvable — installez les outils client Samba (p. ex. le paquet "
+            "« smbclient » / « samba-client ») pour activer les sauvegardes SMB",
         'Up to date': 'À jour',
         'Skipped: filename contains a double quote (") which smbclient cannot safely escape':
             'Omis : le nom de fichier contient un guillemet double (") que smbclient ne peut pas échapper en toute sécurité',
         'Add Rule': 'Ajouter une règle',
         'Edit Rule': 'Modifier la règle',
+        'Invalid Source': 'Source invalide',
+        "'{source}' is not a valid IP address or network (e.g. 192.168.0.0/24).\n"
+        "It will be ignored for the firewalld backend.":
+            "« {source} » n'est pas une adresse IP ou un réseau valide (p. ex. 192.168.0.0/24).\n"
+            "Elle sera ignorée pour le moteur firewalld.",
         'e.g. 192.168.0.0/24 or any': 'p. ex. 192.168.0.0/24 ou any',
         'e.g. 1982': 'p. ex. 1982',
         'e.g. Yeelight Discovery': 'p. ex. Yeelight Discovery',
@@ -3018,11 +3036,20 @@ LANGUAGES: dict[str, dict[str, str]] = {
         '🔄 Check Now': '🔄 Comprobar ahora',
         '⚠  Installed, not in profile (0)': '⚠  Instalado, no está en el perfil (0)',
         'smb scan error': 'error de escaneo SMB',
+        "'smbclient' not found — install the Samba client tools (e.g. package "
+        "'smbclient' / 'samba-client') to enable SMB backups":
+            "No se encontró «smbclient» — instale las herramientas de cliente Samba (p. ej. el paquete "
+            "«smbclient» / «samba-client») para habilitar las copias de seguridad SMB",
         'Up to date': 'Actualizado',
         'Skipped: filename contains a double quote (") which smbclient cannot safely escape':
             'Omitido: el nombre de archivo contiene una comilla doble (") que smbclient no puede escapar de forma segura',
         'Add Rule': 'Añadir regla',
         'Edit Rule': 'Editar regla',
+        'Invalid Source': 'Origen no válido',
+        "'{source}' is not a valid IP address or network (e.g. 192.168.0.0/24).\n"
+        "It will be ignored for the firewalld backend.":
+            "'{source}' no es una dirección IP o red válida (p. ej. 192.168.0.0/24).\n"
+            "Se ignorará para el backend de firewalld.",
         'e.g. 192.168.0.0/24 or any': 'p. ej. 192.168.0.0/24 o any',
         'e.g. 1982': 'p. ej. 1982',
         'e.g. Yeelight Discovery': 'p. ej. Yeelight Discovery',

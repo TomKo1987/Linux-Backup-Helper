@@ -550,8 +550,8 @@ class _SmbScanner:
         while stack:
             if self._cancel.is_set():
                 break
+            current_dir = stack.pop()
             try:
-                current_dir = stack.pop()
                 with os.scandir(current_dir) as it:
                     for e in it:
                         if _SKIP_RE.search(e.name) or e.path in excludes:
@@ -573,6 +573,8 @@ class _SmbScanner:
                                                 local_size=e_st.st_size, local_mtime=int(e_st.st_mtime)))
             except (PermissionError, FileNotFoundError, NotADirectoryError):
                 pass
+            except OSError as exc:
+                logger.warning("SMB put scan %s: %s", current_dir, exc)
         with self._result_lock:
             expanded.extend(lexp)
         self._report(len(lexp))
