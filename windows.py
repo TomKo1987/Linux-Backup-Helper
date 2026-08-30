@@ -315,7 +315,8 @@ class _CopyMixin:
         adv = apply_advanced_options(selected, interactive=True, parent=self, is_restore=self._is_restore)  # type: ignore[attr-defined]
 
         dlg_copy = CopyDialog(self, adv.tasks, self._op_label,  # type: ignore[attr-defined]
-                              pre_deleted=adv.deleted, pre_errors=adv.errors)
+                              pre_deleted=adv.deleted, pre_errors=adv.errors,
+                              op_kind="restore" if self._is_restore else "backup")  # type: ignore[attr-defined]
         dlg_copy.exec()
 
     def _add_action_buttons(self: "_BaseCheckboxWindow", grid: QGridLayout, row: int) -> None:

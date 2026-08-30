@@ -94,7 +94,7 @@ class _PackageDiffTab(QWidget):
         cols.addLayout(col_u, 1)
 
         col_m = QVBoxLayout()
-        self._list_missing_lbl = QLabel("✗  In profile, not installed (0)")
+        self._list_missing_lbl = QLabel(tr("✗  In profile, not installed (0)"))
         self._list_missing_lbl.setStyleSheet(
             f"font-weight:bold;color:{t['error']};font-size:{font_sz(1)}px;")
         self._list_missing = QListWidget()
@@ -105,7 +105,7 @@ class _PackageDiffTab(QWidget):
 
         lay.addLayout(cols, 1)
 
-        self._status = QLabel("Click ‘Check Now’ to compare System vs. Profile.")
+        self._status = QLabel(tr("Click ‘Check Now’ to compare System vs. Profile."))
         self._status.setStyleSheet(color_style(dim, font_sz(-1)))
         lay.addWidget(self._status)
 
@@ -113,7 +113,7 @@ class _PackageDiffTab(QWidget):
         if self._worker is not None and self._worker.isRunning():
             return
         self._run_btn.setEnabled(False)
-        self._status.setText("Analyzing…")
+        self._status.setText(tr("Analyzing…"))
         worker = _PackageDiffWorker(self._helper, self)
         self._worker = worker
         worker.done.connect(self._on_done)
@@ -126,25 +126,26 @@ class _PackageDiffTab(QWidget):
         for p in not_tracked:
             self._list_untracked.addItem(p)
         self._list_untracked_lbl.setText(
-            f"⚠  Installed, not in profile ({len(not_tracked)})")
+            tr("⚠  Installed, not in profile ({n})", n=len(not_tracked)))
 
         self._list_missing.clear()
         for p in missing:
             self._list_missing.addItem(p)
         self._list_missing_lbl.setText(
-            f"✗  In profile, not installed ({len(missing)})")
+            tr("✗  In profile, not installed ({n})", n=len(missing)))
 
         if error:
             t = current_theme()
             self._status.setStyleSheet(f"color:{t['warning']};font-size:{font_sz(-1)}px;font-weight:bold;")
             self._status.setText(
-                f"⚠  Installed-package detection unavailable ({error}) — "
-                f"only 'in profile, not installed' could be checked.")
+                tr("⚠  Installed-package detection unavailable ({error}) — "
+                   "only 'in profile, not installed' could be checked.", error=error))
         else:
             t = current_theme()
             self._status.setStyleSheet(color_style(t['text_dim'], font_sz(-1)))
             self._status.setText(
-                f"{len(not_tracked)} not tracked  ·  {len(missing)} missing from the system")
+                tr("{tracked} not tracked  ·  {missing} missing from the system",
+                   tracked=len(not_tracked), missing=len(missing)))
         self._run_btn.setEnabled(True)
         win = self.window()
         if hasattr(win, "fit_to_content"):

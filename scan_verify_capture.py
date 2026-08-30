@@ -433,7 +433,7 @@ class _CaptureTab(QWidget):
                 svc_lbl.setStyleSheet(f"color:{t['muted']};font-size:{font_sz(-2)}px;"
                                       f"font-family:monospace;background:transparent;")
                 svc_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-                badge = QLabel("✓ in profile")
+                badge = QLabel(tr("✓ in profile"))
                 badge.setStyleSheet(f"color:{t['success']};font-size:{font_sz(-2)}px;"
                                     f"background:{t['bg2']};padding:1px 6px;border-radius:3px;")
                 row_lay.addWidget(ic_lbl)
@@ -445,7 +445,8 @@ class _CaptureTab(QWidget):
                 cb.setChecked(active)
                 cb.setMinimumWidth(250)
                 cb.setStyleSheet(f"color:{t['success'] if active else t['muted']};background:transparent;")
-                cb.setToolTip(f"{svc}.service is currently {'active' if active else 'inactive'}")
+                cb.setToolTip(tr("{svc}.service is currently {state}", svc=svc,
+                                 state=tr("active") if active else tr("inactive")))
                 svc_lbl = QLabel(f"({svc}.service)")
                 svc_lbl.setStyleSheet(f"color:{t['muted']};font-size:{font_sz(-2)}px;"
                                       f"font-family:monospace;background:transparent;")

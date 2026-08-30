@@ -77,6 +77,17 @@ LANGUAGES: dict[str, dict[str, str]] = {
         '📦  Package Diff: System vs. Profile': '📦  Paketvergleich: System vs. Profil',
         '🔄 Check Now': '🔄 Jetzt prüfen',
         '⚠  Installed, not in profile (0)': '⚠  Installiert, nicht im Profil (0)',
+        '✗  In profile, not installed (0)': '✗  Im Profil, nicht installiert (0)',
+        'Click ‘Check Now’ to compare System vs. Profile.': 'Auf „Jetzt prüfen“ klicken, um System und Profil zu vergleichen.',
+        'Analyzing…': 'Analysiere…',
+        '⚠  Installed, not in profile ({n})': '⚠  Installiert, nicht im Profil ({n})',
+        '✗  In profile, not installed ({n})': '✗  Im Profil, nicht installiert ({n})',
+        '⚠  Installed-package detection unavailable ({error}) — only \'in profile, not installed\' could be checked.':
+            '⚠  Erkennung installierter Pakete nicht verfügbar ({error}) — es konnte nur „im Profil, nicht installiert“ geprüft werden.',
+        '{tracked} not tracked  ·  {missing} missing from the system': '{tracked} nicht erfasst  ·  {missing} auf dem System fehlend',
+        '✓ in profile': '✓ im Profil',
+        '{svc}.service is currently {state}': '{svc}.service ist derzeit {state}',
+        'active': 'aktiv',
         'smb scan error': 'SMB-Scanfehler',
         "'smbclient' not found — install the Samba client tools (e.g. package "
         "'smbclient' / 'samba-client') to enable SMB backups":
@@ -781,6 +792,7 @@ LANGUAGES: dict[str, dict[str, str]] = {
         '{op} successfully completed': '{op} erfolgreich abgeschlossen',
         '{pct}%  —  {done:,} / {total:,} files': '{pct}%  —  {done:,} / {total:,} Dateien',
         '{phase}… ({n:,} found)': '{phase}… ({n:,} gefunden)',
+        'Scan complete — {total:,} {suffix} found': 'Scan abgeschlossen — {total:,} {suffix} gefunden',
         '{rate:,.1f} files/s': '{rate:,.1f} Dateien/s',
         '{rate:.1f} MB/s': '{rate:.1f} MB/s',
         '{total:,} files / {size}': '{total:,} Dateien / {size}',
@@ -1555,6 +1567,17 @@ LANGUAGES: dict[str, dict[str, str]] = {
         '📦  Package Diff: System vs. Profile': '📦  Comparaison des paquets : système vs. profil',
         '🔄 Check Now': '🔄 Vérifier maintenant',
         '⚠  Installed, not in profile (0)': '⚠  Installé, absent du profil (0)',
+        '✗  In profile, not installed (0)': '✗  Dans le profil, non installé (0)',
+        'Click ‘Check Now’ to compare System vs. Profile.': 'Cliquez sur « Vérifier maintenant » pour comparer le système et le profil.',
+        'Analyzing…': 'Analyse en cours…',
+        '⚠  Installed, not in profile ({n})': '⚠  Installé, absent du profil ({n})',
+        '✗  In profile, not installed ({n})': '✗  Dans le profil, non installé ({n})',
+        '⚠  Installed-package detection unavailable ({error}) — only \'in profile, not installed\' could be checked.':
+            '⚠  Détection des paquets installés indisponible ({error}) — seul « dans le profil, non installé » a pu être vérifié.',
+        '{tracked} not tracked  ·  {missing} missing from the system': '{tracked} non suivi(s)  ·  {missing} manquant(s) sur le système',
+        '✓ in profile': '✓ dans le profil',
+        '{svc}.service is currently {state}': '{svc}.service est actuellement {state}',
+        'active': 'actif',
         'smb scan error': "erreur d'analyse SMB",
         "'smbclient' not found — install the Samba client tools (e.g. package "
         "'smbclient' / 'samba-client') to enable SMB backups":
@@ -2259,6 +2282,7 @@ LANGUAGES: dict[str, dict[str, str]] = {
         '{op} successfully completed': '{op} terminé avec succès',
         '{pct}%  —  {done:,} / {total:,} files': '{pct}%  —  {done:,} / {total:,} fichiers',
         '{phase}… ({n:,} found)': '{phase}… ({n:,} trouvé(s))',
+        'Scan complete — {total:,} {suffix} found': 'Analyse terminée — {total:,} {suffix} trouvé(s)',
         '{rate:,.1f} files/s': '{rate:,.1f} fichiers/s',
         '{rate:.1f} MB/s': '{rate:.1f} Mo/s',
         '{total:,} files / {size}': '{total:,} fichiers / {size}',
@@ -3035,6 +3059,17 @@ LANGUAGES: dict[str, dict[str, str]] = {
         '📦  Package Diff: System vs. Profile': '📦  Comparación de paquetes: sistema vs. perfil',
         '🔄 Check Now': '🔄 Comprobar ahora',
         '⚠  Installed, not in profile (0)': '⚠  Instalado, no está en el perfil (0)',
+        '✗  In profile, not installed (0)': '✗  En el perfil, no instalado (0)',
+        'Click ‘Check Now’ to compare System vs. Profile.': 'Haga clic en «Comprobar ahora» para comparar el sistema y el perfil.',
+        'Analyzing…': 'Analizando…',
+        '⚠  Installed, not in profile ({n})': '⚠  Instalado, no está en el perfil ({n})',
+        '✗  In profile, not installed ({n})': '✗  En el perfil, no instalado ({n})',
+        '⚠  Installed-package detection unavailable ({error}) — only \'in profile, not installed\' could be checked.':
+            '⚠  Detección de paquetes instalados no disponible ({error}) — solo se pudo comprobar "en el perfil, no instalado".',
+        '{tracked} not tracked  ·  {missing} missing from the system': '{tracked} no seguido(s)  ·  {missing} faltante(s) en el sistema',
+        '✓ in profile': '✓ en el perfil',
+        '{svc}.service is currently {state}': '{svc}.service está actualmente {state}',
+        'active': 'activo',
         'smb scan error': 'error de escaneo SMB',
         "'smbclient' not found — install the Samba client tools (e.g. package "
         "'smbclient' / 'samba-client') to enable SMB backups":
@@ -3742,6 +3777,7 @@ LANGUAGES: dict[str, dict[str, str]] = {
         '{op} successfully completed': '{op} completado con éxito',
         '{pct}%  —  {done:,} / {total:,} files': '{pct}%  —  {done:,} / {total:,} archivos',
         '{phase}… ({n:,} found)': '{phase}… ({n:,} encontrado(s))',
+        'Scan complete — {total:,} {suffix} found': 'Análisis completo — {total:,} {suffix} encontrado(s)',
         '{rate:,.1f} files/s': '{rate:,.1f} archivos/s',
         '{rate:.1f} MB/s': '{rate:.1f} MB/s',
         '{total:,} files / {size}': '{total:,} archivos / {size}',

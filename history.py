@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
 
 from state import S, _LOG_HIST_DIR, _atomic_write, logger
 from themes import current_theme, font_sz, register_style_listener, unregister_style_listener
-from translations import tr, register_language_listener, unregister_language_listener
+from translations import tr, LANGUAGES, register_language_listener, unregister_language_listener
 from ui_utils import ask_yes_no, fit_button_width, footer_bar_style, header_bar_style, _StandardKeysMixin, size_to_screen
 
 
@@ -26,7 +26,7 @@ _MAX_HISTORY_ENTRIES = 500
 
 
 def append_history(operation: str, copied: int, skipped: int, errors: int, duration_s: int, cancelled: bool,
-                   deleted: int = 0) -> None:
+                   deleted: int = 0, op_kind: "str | None" = None) -> None:
     name = S.profile_name
     if not name:
         return
@@ -43,6 +43,7 @@ def append_history(operation: str, copied: int, skipped: int, errors: int, durat
                 existing = []
         entry = {"timestamp":  datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                  "operation":  operation,
+                 "op_kind":    op_kind,
                  "copied":     copied,
                  "skipped":    skipped,
                  "deleted":    deleted,
@@ -93,8 +94,27 @@ def _fmt_duration(s: int) -> str:
 
 def _op_classify(op: str) -> tuple[bool, bool]:
     lo = op.lower()
-    is_restore = "restore" in lo
-    return "backup" in lo and not is_restore, is_restore
+    restore_words = {"restore"}
+    backup_words = {"backup"}
+    for lang_map in LANGUAGES.values():
+        r = lang_map.get("Restore")
+        if r:
+            restore_words.add(r.lower())
+        b = lang_map.get("Backup")
+        if b:
+            backup_words.add(b.lower())
+    is_restore = any(w in lo for w in restore_words)
+    is_backup = any(w in lo for w in backup_words)
+    return is_backup and not is_restore, is_restore
+
+
+def _classify_entry(e: dict) -> tuple[bool, bool]:
+    op_kind = e.get("op_kind")
+    if op_kind == "backup":
+        return True, False
+    if op_kind == "restore":
+        return False, True
+    return _op_classify(str(e.get("operation", "?")))
 
 
 def _entry_detail_html(e: dict, t: dict) -> str:
@@ -128,8 +148,8 @@ def _entry_detail_html(e: dict, t: dict) -> str:
 
     can_html  = (f"<span style='color:{sk_col};'>yes  ⏹</span>" if can else f"<span style='color:{ok_col};'>no</span>")
     err_color = er_col if errors > 0 else ok_col
-    is_backup, is_restore = _op_classify(op)
-    op_label = tr("Backup created") if is_backup else (tr("Restored from backup") if is_restore else html.escape(op))
+    is_backup, is_restore = _classify_entry(e)
+    op_label = tr("Backup created") if is_backup else (tr("Restored from backup") if is_restore else html.escape(tr(op)))
     op_icon  = "⤵" if is_backup else ("⤴" if is_restore else "▶")
 
     return (f"<div style='font-family:monospace;padding:4px;'>"
@@ -336,8 +356,8 @@ class HistoryDialog(_StandardKeysMixin, QDialog):
             dur     = _fmt_duration(e.get("duration_s", 0))
             can     = e.get("cancelled", False)
 
-            is_backup, is_restore = _op_classify(op)
-            op_label = tr("Backup created") if is_backup else (tr("Restored from backup") if is_restore else op)
+            is_backup, is_restore = _classify_entry(e)
+            op_label = tr("Backup created") if is_backup else (tr("Restored from backup") if is_restore else tr(op))
             can_tag  = "  ⏹" if can else ""
             line1    = f"{op_label}  {ts}{can_tag}"
             del_part = f"   🗑 {deleted:,}" if deleted else ""

@@ -701,9 +701,11 @@ class _LogWidget(QWidget):
 class CopyDialog(_StandardKeysMixin, QDialog):
 
     def __init__(self, parent, tasks, operation: str, *,
-                pre_deleted: "list | None" = None, pre_errors: "list | None" = None) -> None:
+                pre_deleted: "list | None" = None, pre_errors: "list | None" = None,
+                op_kind: "str | None" = None) -> None:
         super().__init__(parent)
         self.setWindowTitle(operation)
+        self._op_kind = op_kind
 
         self._lock_denied = not acquire_backup_lock()
         if self._lock_denied:
@@ -874,8 +876,8 @@ class CopyDialog(_StandardKeysMixin, QDialog):
 
     def _on_scan_finished(self, total: int) -> None:
         self._total = total
-        suffix = "file" if total == 1 else "files"
-        self._summary.set_status_html(self._status_badge("📂", f"Scan complete — {total:,} {suffix} found", self._t["accent"]))
+        suffix = tr("file") if total == 1 else tr("files")
+        self._summary.set_status_html(self._status_badge("📂", tr("Scan complete — {total:,} {suffix} found", total=total, suffix=suffix), self._t["accent"]))
         if total > 0:
             self._summary.update_progress_bar(self._done, total)
 
@@ -960,7 +962,8 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         try:
             from history import append_history
             append_history(operation=self._operation, copied=c, skipped=s, errors=self._display_errors,
-                           deleted=self._display_deleted, duration_s=elapsed, cancelled=cancelled)
+                           deleted=self._display_deleted, duration_s=elapsed, cancelled=cancelled,
+                           op_kind=self._op_kind)
         except Exception as exc:
             logger.debug("append_history failed: %s", exc)
 
