@@ -204,7 +204,7 @@ def _confirm(parent, title: str, paths: list[str]) -> bool:
     more = tr("\n  \u2026and {n} more", n=len(paths) - 200) if len(paths) > 200 else ""
     clean_title = title.replace("<br>", " ")
     intro = tr("Mirror mode is about to delete {n} item(s) from the destination of "
-               "'{title}' because they no longer exist in the source:",
+               "'{title}' because they no longer exist in the source:\n\nDelete these now?",
                n=len(paths), title=clean_title)
     body = f"{preview}{more}"
     return ask_yes_no_scrollable(

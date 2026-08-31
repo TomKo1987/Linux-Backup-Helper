@@ -27,6 +27,12 @@ LANGUAGES: dict[str, dict[str, str]] = {
         '⏰ Scheduler: On — {interval}': '⏰ Zeitplan: Ein — {interval}',
         '➡ Next: {nxt}': '➡ Nächster Lauf: {nxt}',
         '⏰ Scheduler: Off': '⏰ Zeitplan: Aus',
+        'Hourly': 'Stündlich',
+        'Daily': 'Täglich',
+        'Every 2 days': 'Alle 2 Tage',
+        'Weekly': 'Wöchentlich',
+        'Monthly': 'Monatlich',
+        'Custom time …': 'Benutzerdefinierte Zeit …',
         '{icon} Last: {ts}  ({copied:,} copied)': '{icon} Letzter Lauf: {ts}  ({copied:,} kopiert)',
         'No backup yet': 'Noch kein Backup',
         'Save': 'Speichern',
@@ -71,8 +77,8 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'Could not delete: {exc}': 'Konnte nicht gelöscht werden: {exc}',
         'Mirror delete': 'Spiegel-Löschung',
         '\n  …and {n} more': '\n  …und {n} weitere',
-        "Mirror mode is about to delete {n} item(s) from the destination of '{title}' because they no longer exist in the source:\n\n{preview}{more}\n\nDelete these now?":
-            "Der Spiegel-Modus ist dabei, {n} Element(e) am Ziel von '{title}' zu löschen, da sie in der Quelle nicht mehr vorhanden sind:\n\n{preview}{more}\n\nJetzt löschen?",
+        "Mirror mode is about to delete {n} item(s) from the destination of '{title}' because they no longer exist in the source:\n\nDelete these now?":
+            "Der Spiegel-Modus ist dabei, {n} Element(e) am Ziel von '{title}' zu löschen, da sie in der Quelle nicht mehr vorhanden sind:\n\nJetzt löschen?",
         'Confirm Mirror Delete': 'Spiegel-Löschung bestätigen',
         '📦  Package Diff: System vs. Profile': '📦  Paketvergleich: System vs. Profil',
         '🔄 Check Now': '🔄 Jetzt prüfen',
@@ -192,6 +198,10 @@ LANGUAGES: dict[str, dict[str, str]] = {
             'Die Hooks konnten nicht im Profil gespeichert werden. Details siehe Protokoll.',
         'Avg Duration': 'Durchschn. Dauer',
         'Backup Statistics': 'Backup-Statistiken',
+        'Last 7 days': 'Letzte 7 Tage',
+        'Last 30 days': 'Letzte 30 Tage',
+        'Last 90 days': 'Letzte 90 Tage',
+        'All time': 'Gesamter Zeitraum',
         'Error Rate % per Day (last 14 days)': 'Fehlerrate % pro Tag (letzte 14 Tage)',
         'Failed/Cancelled': 'Fehlgeschlagen/Abgebrochen',
         'Files Copied': 'Kopierte Dateien',
@@ -747,7 +757,7 @@ LANGUAGES: dict[str, dict[str, str]] = {
         '🖥  Open Terminal here': '🖥  Terminal hier öffnen',
         '\n\nPlease wait for it to finish before starting a new one.':
             '\n\nBitte warten Sie, bis dieser abgeschlossen ist, bevor Sie einen neuen starten.',
-        '\n\nThe backup will still proceed.': '\n\nDas Backup wird trotzdem fortgesetzt.',
+        'The backup will still proceed.': 'Das Backup wird trotzdem fortgesetzt.',
         ' — process PID {pid}.': ' — Prozess-PID {pid}.',
         ' 🔍  Search…': ' 🔍  Suchen…',
         '({total:,} {word})': '({total:,} {word})',
@@ -772,8 +782,8 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'Next ›': 'Weiter ›',
         'Page': 'Seite',
         'Progress': 'Fortschritt',
-        'Warning: one or more destinations are running low on space:\n\n':
-            'Warnung: Ein oder mehrere Ziele haben wenig Speicherplatz:\n\n',
+        'Warning: one or more destinations are running low on space:':
+            'Warnung: Ein oder mehrere Ziele haben wenig Speicherplatz:',
         'entries': 'Einträge',
         'entry': 'Eintrag',
         'error': 'Fehler',
@@ -785,8 +795,8 @@ LANGUAGES: dict[str, dict[str, str]] = {
         '{c} {files} copied, {s} skipped{deleted}': '{c} {files} kopiert, {s} übersprungen{deleted}',
         '{c} {files} copied, {s} skipped{deleted}, {e} {errors}':
             '{c} {files} kopiert, {s} übersprungen{deleted}, {e} {errors}',
-        '{n} configured {word} not found and skipped:\n\n{paths}\n\nPlease check these entries in your backup profile.':
-            '{n} konfigurierte(r) {word} nicht gefunden und übersprungen:\n\n{paths}\n\nBitte überprüfen Sie diese Einträge in Ihrem Backup-Profil.',
+        '{n} configured {word} not found and skipped. Please check these entries in your backup profile:':
+            '{n} konfigurierte(r) {word} nicht gefunden und übersprungen. Bitte überprüfen Sie diese Einträge in Ihrem Backup-Profil:',
         '{op} completed with errors': '{op} mit Fehlern abgeschlossen',
         '{op} running…': '{op} läuft…',
         '{op} successfully completed': '{op} erfolgreich abgeschlossen',
@@ -1517,6 +1527,12 @@ LANGUAGES: dict[str, dict[str, str]] = {
         '⏰ Scheduler: On — {interval}': '⏰ Planificateur : activé — {interval}',
         '➡ Next: {nxt}': '➡ Prochain : {nxt}',
         '⏰ Scheduler: Off': '⏰ Planificateur : désactivé',
+        'Hourly': 'Toutes les heures',
+        'Daily': 'Quotidien',
+        'Every 2 days': 'Tous les 2 jours',
+        'Weekly': 'Hebdomadaire',
+        'Monthly': 'Mensuel',
+        'Custom time …': 'Heure personnalisée …',
         '{icon} Last: {ts}  ({copied:,} copied)': '{icon} Dernier : {ts}  ({copied:,} copiés)',
         'No backup yet': "Aucune sauvegarde pour l'instant",
         'Save': 'Enregistrer',
@@ -1561,8 +1577,8 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'Could not delete: {exc}': 'Impossible de supprimer : {exc}',
         'Mirror delete': 'Suppression miroir',
         '\n  …and {n} more': '\n  …et {n} de plus',
-        "Mirror mode is about to delete {n} item(s) from the destination of '{title}' because they no longer exist in the source:\n\n{preview}{more}\n\nDelete these now?":
-            "Le mode miroir est sur le point de supprimer {n} élément(s) de la destination de '{title}' car ils n'existent plus dans la source :\n\n{preview}{more}\n\nSupprimer maintenant ?",
+        "Mirror mode is about to delete {n} item(s) from the destination of '{title}' because they no longer exist in the source:\n\nDelete these now?":
+            "Le mode miroir est sur le point de supprimer {n} élément(s) de la destination de '{title}' car ils n'existent plus dans la source :\n\nSupprimer maintenant ?",
         'Confirm Mirror Delete': 'Confirmer la suppression miroir',
         '📦  Package Diff: System vs. Profile': '📦  Comparaison des paquets : système vs. profil',
         '🔄 Check Now': '🔄 Vérifier maintenant',
@@ -1682,6 +1698,10 @@ LANGUAGES: dict[str, dict[str, str]] = {
             "Les hooks n'ont pas pu être enregistrés dans le profil. Consultez le journal pour plus de détails.",
         'Avg Duration': 'Durée moyenne',
         'Backup Statistics': 'Statistiques de sauvegarde',
+        'Last 7 days': '7 derniers jours',
+        'Last 30 days': '30 derniers jours',
+        'Last 90 days': '90 derniers jours',
+        'All time': 'Depuis toujours',
         'Error Rate % per Day (last 14 days)': "Taux d'erreur % par jour (14 derniers jours)",
         'Failed/Cancelled': 'Échoué/Annulé',
         'Files Copied': 'Fichiers copiés',
@@ -2237,7 +2257,7 @@ LANGUAGES: dict[str, dict[str, str]] = {
         '🖥  Open Terminal here': '🖥  Ouvrir un terminal ici',
         '\n\nPlease wait for it to finish before starting a new one.':
             "\n\nVeuillez attendre qu'elle se termine avant d'en démarrer une nouvelle.",
-        '\n\nThe backup will still proceed.': '\n\nLa sauvegarde se poursuivra malgré tout.',
+        'The backup will still proceed.': 'La sauvegarde se poursuivra malgré tout.',
         ' — process PID {pid}.': ' — processus PID {pid}.',
         ' 🔍  Search…': ' 🔍  Rechercher…',
         '({total:,} {word})': '({total:,} {word})',
@@ -2262,8 +2282,8 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'Next ›': 'Suivant ›',
         'Page': 'Page',
         'Progress': 'Progression',
-        'Warning: one or more destinations are running low on space:\n\n':
-            "Avertissement : une ou plusieurs destinations manquent d'espace :\n\n",
+        'Warning: one or more destinations are running low on space:':
+            "Avertissement : une ou plusieurs destinations manquent d'espace :",
         'entries': 'entrées',
         'entry': 'entrée',
         'error': 'erreur',
@@ -2275,8 +2295,8 @@ LANGUAGES: dict[str, dict[str, str]] = {
         '{c} {files} copied, {s} skipped{deleted}': '{c} {files} copié(s), {s} ignoré(s){deleted}',
         '{c} {files} copied, {s} skipped{deleted}, {e} {errors}':
             '{c} {files} copié(s), {s} ignoré(s){deleted}, {e} {errors}',
-        '{n} configured {word} not found and skipped:\n\n{paths}\n\nPlease check these entries in your backup profile.':
-            '{n} {word} configuré(s) introuvable(s) et ignoré(s) :\n\n{paths}\n\nVeuillez vérifier ces entrées dans votre profil de sauvegarde.',
+        '{n} configured {word} not found and skipped. Please check these entries in your backup profile:':
+            '{n} {word} configuré(s) introuvable(s) et ignoré(s). Veuillez vérifier ces entrées dans votre profil de sauvegarde :',
         '{op} completed with errors': '{op} terminé avec des erreurs',
         '{op} running…': '{op} en cours…',
         '{op} successfully completed': '{op} terminé avec succès',
@@ -3011,6 +3031,12 @@ LANGUAGES: dict[str, dict[str, str]] = {
         '⏰ Scheduler: On — {interval}': '⏰ Programador: activado — {interval}',
         '➡ Next: {nxt}': '➡ Siguiente: {nxt}',
         '⏰ Scheduler: Off': '⏰ Programador: desactivado',
+        'Hourly': 'Cada hora',
+        'Daily': 'Diario',
+        'Every 2 days': 'Cada 2 días',
+        'Weekly': 'Semanal',
+        'Monthly': 'Mensual',
+        'Custom time …': 'Hora personalizada …',
         '{icon} Last: {ts}  ({copied:,} copied)': '{icon} Último: {ts}  ({copied:,} copiados)',
         'No backup yet': 'Aún no hay copias de seguridad',
         'Save': 'Guardar',
@@ -3053,8 +3079,8 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'Could not delete: {exc}': 'No se pudo eliminar: {exc}',
         'Mirror delete': 'Eliminación de espejo',
         '\n  …and {n} more': '\n  …y {n} más',
-        "Mirror mode is about to delete {n} item(s) from the destination of '{title}' because they no longer exist in the source:\n\n{preview}{more}\n\nDelete these now?":
-            "El modo espejo va a eliminar {n} elemento(s) del destino de '{title}' porque ya no existen en el origen:\n\n{preview}{more}\n\n¿Eliminar ahora?",
+        "Mirror mode is about to delete {n} item(s) from the destination of '{title}' because they no longer exist in the source:\n\nDelete these now?":
+            "El modo espejo va a eliminar {n} elemento(s) del destino de '{title}' porque ya no existen en el origen:\n\n¿Eliminar ahora?",
         'Confirm Mirror Delete': 'Confirmar eliminación de espejo',
         '📦  Package Diff: System vs. Profile': '📦  Comparación de paquetes: sistema vs. perfil',
         '🔄 Check Now': '🔄 Comprobar ahora',
@@ -3174,6 +3200,10 @@ LANGUAGES: dict[str, dict[str, str]] = {
             'No se pudieron guardar los hooks en el perfil. Consulte el registro para más detalles.',
         'Avg Duration': 'Duración media',
         'Backup Statistics': 'Estadísticas de copia de seguridad',
+        'Last 7 days': 'Últimos 7 días',
+        'Last 30 days': 'Últimos 30 días',
+        'Last 90 days': 'Últimos 90 días',
+        'All time': 'Todo el tiempo',
         'Error Rate % per Day (last 14 days)': 'Tasa de error % por día (últimos 14 días)',
         'Failed/Cancelled': 'Fallido/Cancelado',
         'Files Copied': 'Archivos copiados',
@@ -3732,7 +3762,7 @@ LANGUAGES: dict[str, dict[str, str]] = {
         '🖥  Open Terminal here': '🖥  Abrir terminal aquí',
         '\n\nPlease wait for it to finish before starting a new one.':
             '\n\nEspere a que finalice antes de iniciar uno nuevo.',
-        '\n\nThe backup will still proceed.': '\n\nLa copia de seguridad continuará de todos modos.',
+        'The backup will still proceed.': 'La copia de seguridad continuará de todos modos.',
         ' — process PID {pid}.': ' — proceso PID {pid}.',
         ' 🔍  Search…': ' 🔍  Buscar…',
         '({total:,} {word})': '({total:,} {word})',
@@ -3757,8 +3787,8 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'Next ›': 'Siguiente ›',
         'Page': 'Página',
         'Progress': 'Progreso',
-        'Warning: one or more destinations are running low on space:\n\n':
-            'Advertencia: uno o más destinos se están quedando sin espacio:\n\n',
+        'Warning: one or more destinations are running low on space:':
+            'Advertencia: uno o más destinos se están quedando sin espacio:',
         'entries': 'entradas',
         'entry': 'entrada',
         'error': 'error',
@@ -3770,8 +3800,8 @@ LANGUAGES: dict[str, dict[str, str]] = {
         '{c} {files} copied, {s} skipped{deleted}': '{c} {files} copiado(s), {s} omitido(s){deleted}',
         '{c} {files} copied, {s} skipped{deleted}, {e} {errors}':
             '{c} {files} copiado(s), {s} omitido(s){deleted}, {e} {errors}',
-        '{n} configured {word} not found and skipped:\n\n{paths}\n\nPlease check these entries in your backup profile.':
-            '{n} {word} configurado(s) no encontrado(s) y omitido(s):\n\n{paths}\n\nRevise estas entradas en su perfil de copia de seguridad.',
+        '{n} configured {word} not found and skipped. Please check these entries in your backup profile:':
+            '{n} {word} configurado(s) no encontrado(s) y omitido(s). Revise estas entradas en su perfil de copia de seguridad:',
         '{op} completed with errors': '{op} completado con errores',
         '{op} running…': '{op} en curso…',
         '{op} successfully completed': '{op} completado con éxito',

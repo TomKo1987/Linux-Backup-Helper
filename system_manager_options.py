@@ -38,7 +38,7 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
     def __init__(self, _parent=None, distro: LinuxDistroHelper | None = None):
         super().__init__(_parent)
         self.setWindowTitle(tr("System Manager Options"))
-        self.setMinimumSize(1200, 680)
+        self.setMinimumSize(1400, 700)
         self._distro = distro or LinuxDistroHelper()
         self._session: str = self._distro.detect_session() or ""
         self._aur_helper_installed: bool | None = None

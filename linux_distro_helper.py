@@ -28,7 +28,8 @@ _VER_PKG = re.compile(r"[-_]\d[\w.+~:-]*$")
 _DISTROS_FEDORA = {"fedora", "rhel", "centos", "rocky", "almalinux", "nobara", "ultramarine", "mageia",
                    "openmandriva", "amzn", "ol"}
 
-_DISTROS_SUSE = {"opensuse", "opensuse-leap", "opensuse-tumbleweed", "opensuse-slowroot", "suse", "sled", "sles"}
+_DISTROS_SUSE = {"opensuse", "opensuse-leap", "opensuse-tumbleweed", "opensuse-slowroll", "opensuse-microos",
+                 "opensuse-aeon", "opensuse-kalpa", "opensuse-leap-micro", "suse", "sled", "sles"}
 
 _DISTROS_GENTOO = {"gentoo", "funtoo", "calculate", "sabayon"}
 
@@ -73,7 +74,7 @@ _SESSION_LOWER: dict[str, str] = {s.lower(): s for s in SESSIONS}
 
 _PKG_MGR_NAME: dict[str, str] = {"arch": "pacman", "debian": "apt", "fedora": "dnf", "suse": "zypper", "solus": "eopkg",
                                  "void": "xbps", "gentoo": "emerge", "nixos": "nix-env", "alpine": "apk",
-                                 "slackware": "pkgtool", "unknown": "unknown"}
+                                 "slackware": "slackpkg", "unknown": "unknown"}
 
 
 def _nixos_check(p: str) -> list[str]:
@@ -86,7 +87,8 @@ def _slackware_check(p: str) -> list[str]:
 
 
 def _solus_check(p: str) -> list[str]:
-    return ["sh", "-c", "eopkg list-installed -N 2>/dev/null | grep -qxF -- " + shlex.quote(p)]
+    pattern = f"^{re.escape(p)}[[:space:]]*-[[:space:]]"
+    return ["sh", "-c", "eopkg list-installed -N 2>/dev/null | grep -qE -- " + shlex.quote(pattern)]
 
 
 _PKG: dict[str, dict[str, Any]] = {
@@ -116,7 +118,7 @@ _PKG: dict[str, dict[str, Any]] = {
         "update": "sudo dnf upgrade -y",
         "remove": "sudo dnf remove -y {p}",
         "clean": "sudo dnf clean all && sudo dnf autoremove -y",
-        "orphans": "sudo dnf repoquery --extras",
+        "orphans": "dnf repoquery --unneeded",
         "has_aur": False,
         "kernel": "kernel-devel",
     },
@@ -126,7 +128,7 @@ _PKG: dict[str, dict[str, Any]] = {
         "update": "sudo zypper --non-interactive update -y",
         "remove": "sudo zypper --non-interactive remove -y {p}",
         "clean": "sudo zypper clean --all",
-        "orphans": "zypper --no-refresh packages --orphaned",
+        "orphans": "zypper --no-refresh packages --unneeded",
         "has_aur": False,
         "kernel": "kernel-default-devel",
     },
@@ -155,7 +157,7 @@ _PKG: dict[str, dict[str, Any]] = {
         "install": "nix-env -iA nixpkgs.{p}",
         "update": "sudo nixos-rebuild switch --upgrade",
         "remove": "nix-env -e {p}",
-        "clean": "nix-collect-garbage -d",
+        "clean": "sudo nix-collect-garbage -d",
         "orphans": "",
         "has_aur": False,
         "kernel": "linuxPackages.kernel",
@@ -166,27 +168,27 @@ _PKG: dict[str, dict[str, Any]] = {
         "update": "sudo apk update && sudo apk upgrade",
         "remove": "sudo apk del {p}",
         "clean": "sudo apk cache clean",
-        "orphans": "",
+        "orphans": "apk info --orphaned",
         "has_aur": False,
         "kernel": "linux-headers",
     },
     "slackware": {
         "check": _slackware_check,
-        "install": "sudo installpkg {p}",
-        "update": "sudo slackpkg update && sudo slackpkg upgrade-all",
+        "install": "sudo slackpkg -batch=on -default_answer=y install {p}",
+        "update": "sudo slackpkg update && sudo slackpkg install-new && sudo slackpkg upgrade-all",
         "remove": "sudo removepkg {p}",
-        "clean": "sudo slackpkg clean-system",
+        "clean": "sudo mkdir -p /var/cache/packages && sudo find /var/cache/packages -mindepth 1 -delete",
         "orphans": "",
         "has_aur": False,
         "kernel": "kernel-headers",
     },
     "solus": {
         "check": _solus_check,
-        "install": "sudo eopkg install {p}",
-        "update": "sudo eopkg upgrade",
-        "remove": "sudo eopkg remove {p}",
+        "install": "sudo eopkg install -y {p}",
+        "update": "sudo eopkg upgrade -y",
+        "remove": "sudo eopkg remove -y {p}",
         "clean": "sudo eopkg delete-cache",
-        "orphans": "eopkg list-orphans",
+        "orphans": "",
         "has_aur": False,
         "kernel": "linux-headers",
     },
@@ -363,10 +365,14 @@ class LinuxDistroHelper:
         return resolved or "unknown", d_pretty
 
     def _init_pkg(self) -> None:
-        self._family: str = distro_family(self.distro_id)
-        cfg = _PKG.get(self._family) or _PKG["unknown"]
-        if self._family == "unknown":
+        raw_family = distro_family(self.distro_id)
+        cfg = _PKG.get(raw_family)
+        if cfg is None:
+            self._family: str = "unknown"
+            cfg = _PKG["unknown"]
             logger.warning("Unknown distro '%s', using generic commands.", self.distro_id)
+        else:
+            self._family = raw_family
 
         self._check_fn: Callable[[str], list[str]] = cfg["check"]
         self._install: str = cfg["install"]
@@ -461,15 +467,19 @@ class LinuxDistroHelper:
     def get_clean_cache_cmd(self)               -> str: return self._clean
     def get_find_orphans_cmd(self)              -> str: return self._orphans
 
+    _DIRECT_ORPHAN_REMOVAL: dict[str, str] = {
+        "solus": "sudo eopkg remove-orphans -y",
+    }
+
+    def get_direct_orphan_removal_cmd(self) -> str:
+        return self._DIRECT_ORPHAN_REMOVAL.get(self.family(), "")
+
     def get_batch_install_cmd(self, packages: list[str]) -> str:
         if not packages:
             return ""
         safe_pkgs = " ".join(shlex.quote(p) for p in packages)
-        fam = self.family()
-        if fam == "nixos":
+        if self.family() == "nixos":
             return "nix-env -iA " + " ".join("nixpkgs." + shlex.quote(p) for p in packages)
-        if fam == "slackware":
-            return "sudo slackpkg install " + safe_pkgs
         return self._install.format(p=safe_pkgs)
 
     def get_batch_remove_cmd(self, packages: list[str]) -> str:
@@ -490,8 +500,8 @@ class LinuxDistroHelper:
                 line = line.strip()
                 if line.startswith(("i ", "i+")):
                     parts = [p.strip() for p in line.split("|")]
-                    if len(parts) >= 2:
-                        name = parts[1].strip()
+                    if len(parts) >= 3:
+                        name = parts[2].strip()
                         if name and self.valid(name):
                             pkgs.append(name)
             return pkgs
@@ -509,6 +519,14 @@ class LinuxDistroHelper:
                     continue
                 name = re.sub(r"^\d+:", "", line)
                 name = re.sub(r"-\d.*$", "", name)
+                if name and self.valid(name):
+                    pkgs.append(name)
+            return pkgs
+
+        if fam == "void":
+            pkgs = []
+            for line in lines:
+                name = _VER_PKG.sub("", line.strip()).strip()
                 if name and self.valid(name):
                     pkgs.append(name)
             return pkgs
@@ -578,7 +596,9 @@ class LinuxDistroHelper:
             return sorted(_VER_PKG.sub("", l).strip() for l in raw if l), []
 
         if fam == "solus":
-            return sorted(_run_capture(["eopkg", "li", "-N"])), []
+            raw = _run_capture(["eopkg", "list-installed", "-N"])
+            names = [line.split(" - ", 1)[0].strip() for line in raw]
+            return sorted(n for n in names if n), []
 
         raise RuntimeError(f"Package detection not supported for distro family '{fam}'.")
 

@@ -242,7 +242,7 @@ def copy_logic_tooltip() -> str:
         "For SSH/rsync the same list is applied using each item's canonical casing, since rsync itself has no "
         "case-insensitive exclude option.</i><br><br>"
         "<b>Status Colors:</b><br>"
-        "- <span style='color:{success};'>Green</span> = Success, "
+        "- <span style='color:{success};'>Green</span> = Copied, "
         "<span style='color:{warning};'>Yellow</span> = Skipped, "
         "<span style='color:{error};'>Red</span> = Error.<br><br><br>"
         "<b>Samba Credentials &amp; Keyring</b><br><br>"

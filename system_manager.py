@@ -1922,8 +1922,14 @@ class SystemManagerThread(QThread):
     def _remove_orphans(self) -> bool:
         if not self.distro: return False
         ok = True
+        direct_cmd = self.distro.get_direct_orphan_removal_cmd()
         cmd = self.distro.get_find_orphans_cmd()
-        if cmd:
+        if direct_cmd:
+            self.outputReceived.emit(tr("Removing orphaned packages…"), "info")
+            ok = (self._exec(direct_cmd, stream=True).returncode == 0)
+            self._emit_result(ok, tr("Orphaned system packages successfully removed"),
+                              tr("Could not remove orphaned system packages"))
+        elif cmd:
             raw = self._exec(cmd, stream=False, timeout=60).stdout.strip()
             pkgs = self.distro.parse_orphan_output(raw) if raw else []
             if not pkgs:
