@@ -7,6 +7,8 @@ import shutil
 import subprocess
 import threading
 import time
+from typing import TYPE_CHECKING
+
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from drive_utils import is_smb, is_ssh, build_rsync_cmd, _SSH_HOST_RE
@@ -23,9 +25,12 @@ from copy_worker_core import (
     _ensure_dir, _parse_smb, _run_futures, _silent_unlink
 )
 from copy_worker_smb import (
-    _SecurePw, _get_smb_credentials,
+    _get_smb_credentials,
     _SmbJob, _SmbClient, _SmbScanner, _ShareProcessor
 )
+
+if TYPE_CHECKING:
+    from copy_worker_smb import _SecurePw
 
 
 def _ssh_join(dst_spec: str, rel_path: str) -> str:
@@ -794,7 +799,7 @@ class CopyWorker(QThread):
                 text=True,
                 bufsize=1,
             )
-        except (OSError, FileNotFoundError) as exc:
+        except OSError as exc:
             logger.error("rsync launch failed for '%s': %s", src, exc)
             flusher.push(er=[(src, str(exc), 0)])
             _track(0, 0, 1)
