@@ -60,7 +60,8 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
         info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(info)
 
-        cmd = self._distro.get_pkg_install_cmd("...")
+        cmd = (self._distro.get_pkg_install_cmd("...") if self._distro.pkg_mgmt_supported()
+              else tr("not supported for {pm}", pm=self._distro.pkg_manager_name()))
         top_text = QLabel(
             tr("First you can select 'Dotfiles' in System Manager. These files will be copied using 'sudo', "
                "for root privilege.\nIf you have 'Dotfiles' selected, System Manager will copy these first. "

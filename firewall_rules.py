@@ -1,3 +1,4 @@
+import html
 import ipaddress
 
 VALID_ACTIONS = ("allow", "deny", "reject", "limit")
@@ -479,12 +480,12 @@ def firewall_rules_tooltip() -> str:
     rows = []
     for i, r in enumerate(rules):
         norm = normalize_rule(r)
-        action = norm["action"]
-        direction = norm["direction"]
-        proto = norm["proto"] if norm["proto"] != "both" else ""
-        source = norm["source"] or tr("any")
-        port = norm["port"]
-        comment = norm["comment"]
+        action = html.escape(norm["action"])
+        direction = html.escape(norm["direction"])
+        proto = html.escape(norm["proto"]) if norm["proto"] != "both" else ""
+        source = html.escape(norm["source"]) if norm["source"] else tr("any")
+        port = html.escape(norm["port"])
+        comment = html.escape(norm["comment"])
         row_bg = f"background:{t['bg2']};" if i % 2 else ""
         num_cell = (f"<td style='padding:3px 14px 3px 4px;text-align:right;"
                     f"color:{t['muted']};border-bottom:1px solid {t['header_sep']};'>{i + 1}</td>")

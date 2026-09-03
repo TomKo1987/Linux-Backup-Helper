@@ -28,8 +28,9 @@ _VER_PKG = re.compile(r"[-_]\d[\w.+~:-]*$")
 _DISTROS_FEDORA = {"fedora", "rhel", "centos", "rocky", "almalinux", "nobara", "ultramarine", "mageia",
                    "openmandriva", "amzn", "ol"}
 
-_DISTROS_SUSE = {"opensuse", "opensuse-leap", "opensuse-tumbleweed", "opensuse-slowroll", "opensuse-microos",
-                 "opensuse-aeon", "opensuse-kalpa", "opensuse-leap-micro", "suse", "sled", "sles"}
+_DISTROS_SUSE = {"opensuse", "opensuse-leap", "opensuse-tumbleweed", "opensuse-slowroll", "suse", "sled", "sles"}
+
+_DISTROS_SUSE_IMMUTABLE = {"opensuse-microos", "opensuse-aeon", "opensuse-kalpa", "opensuse-leap-micro"}
 
 _DISTROS_GENTOO = {"gentoo", "funtoo", "calculate", "sabayon"}
 
@@ -55,11 +56,12 @@ def is_valid_pkg_name(name: str) -> bool:
 _DISTRO_FAMILY_MAP: dict[str, str] = {
     distro_id: family
     for family, distro_set in [("arch", _DISTROS_ARCH), ("debian", _DISTROS_DEBIAN), ("fedora", _DISTROS_FEDORA),
-                               ("suse", _DISTROS_SUSE), ("gentoo", _DISTROS_GENTOO), ("slackware", _DISTROS_SLACKWARE),
+                               ("suse", _DISTROS_SUSE), ("suse-immutable", _DISTROS_SUSE_IMMUTABLE),
+                               ("gentoo", _DISTROS_GENTOO), ("slackware", _DISTROS_SLACKWARE),
                                ("void", {"void"}), ("nixos", {"nixos"}), ("alpine", {"alpine", "postmarketos"}),
                                ("solus", {"solus"})] for distro_id in distro_set}
 
-del _DISTROS_ARCH, _DISTROS_DEBIAN, _DISTROS_FEDORA, _DISTROS_SUSE, _DISTROS_GENTOO, _DISTROS_SLACKWARE
+del _DISTROS_ARCH, _DISTROS_DEBIAN, _DISTROS_FEDORA, _DISTROS_SUSE, _DISTROS_SUSE_IMMUTABLE, _DISTROS_GENTOO, _DISTROS_SLACKWARE
 
 
 _SHELL_BINARIES: dict[str, str] = {"nushell": "nu", "powershell": "pwsh", "powershell-bin": "pwsh"}
@@ -72,9 +74,10 @@ SESSIONS = ["KDE", "GNOME", "XFCE", "Cinnamon", "MATE", "LXDE", "LXQt", "Budgie"
 
 _SESSION_LOWER: dict[str, str] = {s.lower(): s for s in SESSIONS}
 
-_PKG_MGR_NAME: dict[str, str] = {"arch": "pacman", "debian": "apt", "fedora": "dnf", "suse": "zypper", "solus": "eopkg",
-                                 "void": "xbps", "gentoo": "emerge", "nixos": "nix-env", "alpine": "apk",
-                                 "slackware": "slackpkg", "unknown": "unknown"}
+_PKG_MGR_NAME: dict[str, str] = {"arch": "pacman", "debian": "apt", "fedora": "dnf", "amazon2": "yum", "suse": "zypper",
+                                 "solus": "eopkg", "void": "xbps", "gentoo": "emerge", "nixos": "nix-env",
+                                 "alpine": "apk", "slackware": "slackpkg", "suse-immutable": "transactional-update",
+                                 "unknown": "unknown"}
 
 
 def _nixos_check(p: str) -> list[str]:
@@ -119,6 +122,16 @@ _PKG: dict[str, dict[str, Any]] = {
         "remove": "sudo dnf remove -y {p}",
         "clean": "sudo dnf clean all && sudo dnf autoremove -y",
         "orphans": "dnf repoquery --unneeded",
+        "has_aur": False,
+        "kernel": "kernel-devel",
+    },
+    "amazon2": {
+        "check": lambda p: ["rpm", "-q", p],
+        "install": "sudo yum install -y {p}",
+        "update": "sudo yum update -y",
+        "remove": "sudo yum remove -y {p}",
+        "clean": "sudo yum clean all",
+        "orphans": "",
         "has_aur": False,
         "kernel": "kernel-devel",
     },
@@ -192,6 +205,22 @@ _PKG: dict[str, dict[str, Any]] = {
         "has_aur": False,
         "kernel": "linux-headers",
     },
+    "suse-immutable": {
+        "check": lambda p: ["rpm", "-q", p],
+        "install": "echo 'This is a transactional (read-only) openSUSE system. "
+                   "Install packages with: sudo transactional-update pkg install {p} (a reboot is required "
+                   "afterwards). System Manager package installation is not supported here.'",
+        "update": "echo 'This is a transactional (read-only) openSUSE system. "
+                  "Update with: sudo transactional-update up / dup (a reboot is required afterwards). "
+                  "System Manager updates are not supported here.'",
+        "remove": "echo 'This is a transactional (read-only) openSUSE system. "
+                  "Remove packages with: sudo transactional-update pkg remove {p} (a reboot is required "
+                  "afterwards). System Manager package removal is not supported here.'",
+        "clean": "echo 'Cache cleaning is not applicable on a transactional (read-only) openSUSE system.'",
+        "orphans": "",
+        "has_aur": False,
+        "kernel": "kernel-default-devel",
+    },
     "unknown": {
         "check": lambda p: ["which", p],
         "install": "echo 'No package manager detected: {p}'",
@@ -209,6 +238,7 @@ _SSH_PKGS: dict = {
     "debian":    ["openssh-server"],
     "fedora":    ["openssh-server"],
     "suse":      ["openssh"],
+    "suse-immutable": ["openssh"],
     "void":      ["openssh"],
     "alpine":    ["openssh"],
     "arch":      ["openssh"],
@@ -224,6 +254,7 @@ _SAMBA_PKGS: dict = {
     "debian":    ["samba", "samba-common-bin"],
     "fedora":    ["samba", "samba-common"],
     "suse":      ["samba"],
+    "suse-immutable": ["samba"],
     "arch":      ["samba"],
     "void":      ["samba"],
     "alpine":    ["samba"],
@@ -233,11 +264,13 @@ _SAMBA_PKGS: dict = {
     "solus":     ["samba"],
     None:        ["samba"],
 }
-_CRON_SVC = {"debian": "cron", "fedora": "crond", "suse": "cron", "alpine": "crond", None: "cronie"}
+_CRON_SVC = {"debian": "cron", "fedora": "crond", "suse": "cron", "suse-immutable": "cron", "alpine": "crond",
+            None: "cronie"}
 _CRON_PKGS: dict = {
     "debian": ["cron"],
     "fedora": ["cronie", "cronie-anacron"],
     "suse":   ["cron"],
+    "suse-immutable": ["cron"],
     "arch":   ["cronie"],
     "void":   ["cronie"],
     "alpine": ["cronie"],
@@ -251,6 +284,7 @@ _BT_PKGS: dict = {
     "debian": ["bluez", "bluez-tools"],
     "fedora": ["bluez", "bluez-tools"],
     "suse":   ["bluez"],
+    "suse-immutable": ["bluez"],
     "void":   ["bluez"],
     "alpine": ["bluez"],
     "gentoo": ["net-wireless/bluez"],
@@ -264,6 +298,7 @@ _UCODE_PKGS: dict[str, dict[str, str]] = {
         "arch":     "intel-ucode",
         "debian":   "intel-microcode",
         "fedora":   "microcode_ctl",
+        "amazon2":  "microcode_ctl",
         "suse":     "ucode-intel",
         "void":     "intel-ucode",
         "alpine":   "intel-ucode",
@@ -275,6 +310,7 @@ _UCODE_PKGS: dict[str, dict[str, str]] = {
         "arch":     "amd-ucode",
         "debian":   "amd64-microcode",
         "fedora":   "microcode_ctl",
+        "amazon2":  "microcode_ctl",
         "suse":     "ucode-amd",
         "void":     "linux-firmware-amd",
         "alpine":   "linux-firmware-amd",
@@ -324,12 +360,12 @@ def _lookup(table: dict, family: str) -> list[Any] | None | Any:
 class LinuxDistroHelper:
 
     def __init__(self) -> None:
-        self.distro_id, self.distro_pretty_name = self._read_os_release()
+        self.distro_id, self.distro_pretty_name, self.distro_version_id = self._read_os_release()
         self._init_pkg()
 
     @staticmethod
-    def _read_os_release() -> tuple[str, str]:
-        d_id = d_pretty = d_like = ""
+    def _read_os_release() -> tuple[str, str, str]:
+        d_id = d_pretty = d_like = d_version_id = ""
         for path in ("/etc/os-release", "/usr/lib/os-release"):
             try:
                 with open(path, encoding="utf-8") as fh:
@@ -342,6 +378,8 @@ class LinuxDistroHelper:
                             d_pretty = v
                         elif k == "ID_LIKE":
                             d_like = v.lower()
+                        elif k == "VERSION_ID":
+                            d_version_id = v
                 last_exc = None
                 break
             except Exception as exc:
@@ -362,10 +400,16 @@ class LinuxDistroHelper:
                     resolved = candidate
                     break
 
-        return resolved or "unknown", d_pretty
+        return resolved or "unknown", d_pretty, d_version_id
 
     def _init_pkg(self) -> None:
         raw_family = distro_family(self.distro_id)
+
+        if self.distro_id == "amzn" and raw_family == "fedora":
+            major = self.distro_version_id.split(".", 1)[0]
+            if major.isdigit() and int(major) < 2023:
+                raw_family = "amazon2"
+
         cfg = _PKG.get(raw_family)
         if cfg is None:
             self._family: str = "unknown"
@@ -386,6 +430,11 @@ class LinuxDistroHelper:
     def family(self) -> str: return self._family
 
     def pkg_manager_name(self) -> str: return _PKG_MGR_NAME.get(self.family(), "unknown")
+
+    _UNSUPPORTED_FAMILIES = frozenset({"unknown", "suse-immutable"})
+
+    def pkg_mgmt_supported(self) -> bool:
+        return self.family() not in self._UNSUPPORTED_FAMILIES
 
     @staticmethod
     def valid(name: str) -> bool:
@@ -544,6 +593,7 @@ class LinuxDistroHelper:
                 return "linux-headers"
             if fam == "debian": return f"linux-headers-{kv}"
             if fam == "fedora": return f"kernel-devel-{kv}"
+            if fam == "amazon2": return f"kernel-devel-{kv}"
             if fam == "suse":   return "kernel-default-devel"
             if fam == "void":   return "linux-headers"
             if fam == "alpine": return "linux-headers"
@@ -570,6 +620,19 @@ class LinuxDistroHelper:
             raw = _run_capture(["sh", "-c",
                                 "dnf repoquery --userinstalled -q --qf '%{name}' 2>/dev/null"])
             return sorted(set(raw)), []
+
+        if fam == "amazon2":
+            raw = _run_capture(["sh", "-c", "yumdb search reason user 2>/dev/null"])
+            names = []
+            for l in raw:
+                l = l.strip()
+                if not l or ":" not in l and "-" not in l:
+                    continue
+                l = l.split(":", 1)[1] if re.match(r"^\d+:", l) else l
+                name = _VER_PKG.sub("", l).strip()
+                if name:
+                    names.append(name)
+            return sorted({n for n in names if self.valid(n)}), []
 
         if fam == "suse":
             raw = _run_capture(["sh", "-c",
@@ -606,7 +669,10 @@ class LinuxDistroHelper:
     def detect_session() -> str | None:
         for var in ("XDG_CURRENT_DESKTOP", "XDG_SESSION_DESKTOP", "DESKTOP_SESSION"):
             for part in os.getenv(var, "").split(":"):
-                match = _SESSION_LOWER.get(part.strip().lower())
+                token = part.strip().lower()
+                if token.startswith("x-"):
+                    token = token[2:]
+                match = _SESSION_LOWER.get(token)
                 if match:
                     return match
         try:
@@ -649,25 +715,26 @@ class LinuxDistroHelper:
 
     _FIREWALL_PKGS: dict = {
         "debian": ["ufw"], "arch": ["ufw"], "void": ["ufw"], "gentoo": ["net-firewall/ufw"],
-        "fedora": ["firewalld"], "suse": ["firewalld"], "alpine": ["ufw"],
-        "solus": ["ufw"], "nixos": ["ufw"], "slackware": [], None: ["ufw"],
+        "fedora": ["firewalld"], "amazon2": ["firewalld"], "suse": ["firewalld"], "suse-immutable": ["firewalld"],
+        "alpine": ["ufw"], "solus": ["ufw"], "nixos": ["ufw"], "slackware": [], None: ["ufw"],
     }
-    _FIREWALL_SVC: dict = {"fedora": "firewalld", "suse": "firewalld", None: "ufw"}
+    _FIREWALL_SVC: dict = {"fedora": "firewalld", "amazon2": "firewalld", "suse": "firewalld",
+                           "suse-immutable": "firewalld", None: "ufw"}
 
     def get_firewall_packages(self) -> list[Any] | None | Any: return _lookup(self._FIREWALL_PKGS, self.family())
     def get_firewall_service_name(self) -> str: return self._FIREWALL_SVC.get(self.family()) or self._FIREWALL_SVC[None]
     def firewall_supported(self) -> bool: return bool(self.get_firewall_packages())
 
     _NTP_PKGS: dict = {
-        "debian": ["systemd-timesyncd"], "arch": [], "fedora": ["chrony"], "suse": ["chrony"],
-        "void": ["chrony"], "alpine": ["chrony"], "gentoo": ["net-misc/chrony"], "solus": ["chrony"],
-        "nixos": [], "slackware": [], None: [],
+        "debian": ["systemd-timesyncd"], "arch": [], "fedora": ["chrony"], "amazon2": ["chrony"], "suse": ["chrony"],
+        "suse-immutable": ["chrony"], "void": ["chrony"], "alpine": ["chrony"], "gentoo": ["net-misc/chrony"],
+        "solus": ["chrony"], "nixos": [], "slackware": [], None: [],
     }
 
     _NTP_SVC: dict[str, str] = {
         "debian": "systemd-timesyncd", "arch": "systemd-timesyncd", "nixos": "systemd-timesyncd",
-        "fedora": "chronyd", "suse": "chronyd", "solus": "chronyd", "gentoo": "chronyd",
-        "void": "chronyd", "alpine": "chronyd",
+        "fedora": "chronyd", "amazon2": "chronyd", "suse": "chronyd", "suse-immutable": "chronyd", "solus": "chronyd",
+        "gentoo": "chronyd", "void": "chronyd", "alpine": "chronyd",
     }
 
     def get_ntp_packages(self) -> list[Any] | None | Any: return _lookup(self._NTP_PKGS, self.family())

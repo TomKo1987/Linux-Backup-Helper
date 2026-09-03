@@ -49,7 +49,7 @@ _INFO_RE = re.compile(
 )
 
 
-_PACMAN_PROGRESS_RE = re.compile(r'\[[-Co# ]+]\s*\d+%')
+_PACMAN_PROGRESS_RE = re.compile(r'\[[-Cof ]+]\s*\d+%')
 
 
 _PKG_LOCK_INFO: tuple[tuple[str, str, str], ...] = (
@@ -1026,11 +1026,11 @@ class SystemManagerThread(QThread):
             t1 = threading.Thread(target=_read_out, daemon=True); t2 = threading.Thread(target=_kill_on_retry, daemon=True)
             t1.start(); t2.start()
             try:
-                proc.wait(timeout=2)
+                proc.wait(timeout=15)
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
-            t1.join(2); t2.join(2)
+            t1.join(5); t2.join(5)
             output = b"".join(chunks)
             ok = proc.returncode == 0 and output.strip() == token.encode()
         except Exception as exc: logger.error("_verify_sudo: %s", exc)
@@ -1056,6 +1056,12 @@ class SystemManagerThread(QThread):
         if self._pkg_cache.is_installed(name):
             self.outputReceived.emit(tr("{name} already installed", name=name), "success")
             return True
+        if not self.distro.pkg_mgmt_supported():
+            self._exec(self.distro.get_pkg_install_cmd(name), stream=True)
+            self.outputReceived.emit(
+                tr("Cannot install {name}: package management is not supported for {pm} — see message above.",
+                   name=name, pm=self.distro.pkg_manager_name()), "error")
+            return False
         ok = (self._exec(self.distro.get_pkg_install_cmd(name), stream=True).returncode == 0)
         if ok: self._pkg_cache.mark_installed(name)
         self._emit_result(ok, tr("{name} successfully installed", name=name), tr("failed to install {name}", name=name))
@@ -1099,6 +1105,13 @@ class SystemManagerThread(QThread):
         if not items:
             self.outputReceived.emit(tr("No active {label}s configured", label=label), "info")
             return _Status.SUCCESS
+
+        if not use_aur and not self.distro.pkg_mgmt_supported():
+            self._exec(self.distro.get_pkg_install_cmd(items[0]), stream=True)
+            self.outputReceived.emit(
+                tr("Cannot install {label}s: package management is not supported for {pm} — see message above.",
+                   label=label, pm=self.distro.pkg_manager_name()), "error")
+            return False
 
         to_install = self.distro.filter_not_installed(items)
         if not to_install:
@@ -1227,6 +1240,12 @@ class SystemManagerThread(QThread):
 
     def _update_system(self) -> bool:
         if not self.distro: return False
+        if not self.distro.pkg_mgmt_supported():
+            self._exec(self.distro.get_update_system_cmd(), stream=True, timeout=None)
+            self.outputReceived.emit(
+                tr("Cannot update system: package management is not supported for {pm} — see message above.",
+                   pm=self.distro.pkg_manager_name()), "error")
+            return False
         if self.distro.has_aur:
             eff_helper = self._effective_aur_helper()
             if eff_helper:
@@ -1468,38 +1487,41 @@ class SystemManagerThread(QThread):
         _title_re = re.compile(r"""menuentry\s+['"]([^'"]+)['"]""")
         _sub_re = re.compile(r"""submenu\s+['"]([^'"]+)['"]""")
 
-        _exact_re = re.compile(r"(?:^|[^\w-])" + re.escape(kernel_pkg) + r"(?:[^\w-]|$)", re.IGNORECASE)
+        _exact_re = re.compile(r"\bLinux\s+" + re.escape(kernel_pkg) + r"(?![\w-])", re.IGNORECASE)
 
         top_idx = 0
-        current_sub = None
-        depth = 0
+
+        block_stack: list[str] = []
+        sub_stack: list[str] = []
 
         for line in lines:
             stripped = line.strip()
 
             m_sub = _sub_re.match(stripped)
-            if m_sub and depth == 0:
-                current_sub = m_sub.group(1)
-                depth = 1
-                top_idx += 1
+            if m_sub:
+                if not block_stack:
+                    top_idx += 1
+                block_stack.append("submenu")
+                sub_stack.append(m_sub.group(1))
                 continue
 
             m_entry = _title_re.match(stripped)
             if m_entry:
                 title = m_entry.group(1)
+                current_sub = sub_stack[-1] if sub_stack else None
                 if _exact_re.search(title):
                     if current_sub:
                         return f"{current_sub}>{title}"
                     return str(top_idx)
-                if depth == 0:
+                if not block_stack:
                     top_idx += 1
+                block_stack.append("menuentry")
                 continue
 
             if stripped == "}":
-                if depth > 0:
-                    depth -= 1
-                    if depth == 0:
-                        current_sub = None
+                if block_stack:
+                    if block_stack.pop() == "submenu" and sub_stack:
+                        sub_stack.pop()
 
         return None
 
@@ -1572,6 +1594,38 @@ class SystemManagerThread(QThread):
                 paths = [entries_dir / n.strip() for n in r.stdout.splitlines() if n.strip().endswith(".conf")]
         return paths
 
+    @staticmethod
+    def _retarget_boot_entry(template_content: str, running_kern_pkg: str, kernel_pkg: str) -> str:
+        _title_kernel_re = re.compile(r"(?<![\w-])" + re.escape(running_kern_pkg) + r"(?![\w.-])")
+
+        out_lines = []
+        for line in template_content.splitlines():
+            stripped = line.strip()
+            lower = stripped.lower()
+
+            if lower.startswith("linux ") or lower.startswith("linux\t"):
+                new_line = re.sub(
+                    r"(vmlinuz-)" + re.escape(running_kern_pkg) + r"(?![\w-])",
+                    r"\g<1>" + kernel_pkg, line)
+                out_lines.append(new_line)
+                continue
+
+            if lower.startswith("initrd ") or lower.startswith("initrd\t"):
+                new_line = re.sub(
+                    r"(initramfs-)" + re.escape(running_kern_pkg) + r"((?:-fallback)?\.img\b)",
+                    r"\g<1>" + kernel_pkg + r"\g<2>", line)
+                out_lines.append(new_line)
+                continue
+
+            if lower.startswith("title "):
+                new_line = _title_kernel_re.sub(kernel_pkg, line)
+                out_lines.append(new_line)
+                continue
+
+            out_lines.append(line)
+
+        return "\n".join(out_lines) + ("\n" if template_content.endswith("\n") else "")
+
     def _create_systemd_boot_entry(self, kernel_pkg: str, entries_dir: Path, esp: Path) -> str | None:
         vmlinuz = Path(f"/boot/vmlinuz-{kernel_pkg}")
         initramfs = Path(f"/boot/initramfs-{kernel_pkg}.img")
@@ -1586,7 +1640,7 @@ class SystemManagerThread(QThread):
         _running_exact_re = re.compile(r"vmlinuz-" + re.escape(running_kern_pkg) + r"(?:[^\w-]|$)")
 
         template_content: str | None = None
-        entry_files = sorted(entries_dir.glob("*.conf")) if entries_dir.exists() else []
+        entry_files = self._list_entry_files(entries_dir)
 
         for fpath in entry_files:
             content = self._read_file_sudo(fpath)
@@ -1601,8 +1655,7 @@ class SystemManagerThread(QThread):
             self.outputReceived.emit(tr("No template found in {entries_dir}", entries_dir=entries_dir), "error")
             return None
 
-        _token_re = re.compile(r"(?<![\w-])" + re.escape(running_kern_pkg) + r"(?![\w-])")
-        new_content = _token_re.sub(kernel_pkg, template_content)
+        new_content = self._retarget_boot_entry(template_content, running_kern_pkg, kernel_pkg)
         dest_path = entries_dir / f"{kernel_pkg}.conf"
 
         escaped_content = shlex.quote(new_content)
@@ -1955,6 +2008,11 @@ class SystemManagerThread(QThread):
     def _clean_cache(self) -> bool:
         if not self.distro: return False
         pm = self.distro.pkg_manager_name()
+        if not self.distro.pkg_mgmt_supported():
+            self._exec(self.distro.get_clean_cache_cmd(), stream=True)
+            self.outputReceived.emit(
+                tr("Cache cleaning is not applicable for {pm} — see message above.", pm=pm), "info")
+            return True
         self.outputReceived.emit(tr("Cleaning {pm} cache", pm=pm), "info")
         ok = (self._exec(self.distro.get_clean_cache_cmd(), stream=True).returncode == 0)
         self._emit_result(ok, tr("{pm} cache successfully cleaned", pm=pm), tr("{pm} cache cleaning failed", pm=pm))

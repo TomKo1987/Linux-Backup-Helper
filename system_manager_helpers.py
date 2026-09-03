@@ -258,7 +258,10 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, aur_he
         if aur_helper_override and aur_helper_override not in _installed_helpers_for_cache:
             _installed_helpers_for_cache.append(aur_helper_override)
 
-    install_cmd = distro.get_pkg_install_cmd("...")
+    if distro.pkg_mgmt_supported():
+        install_cmd = distro.get_pkg_install_cmd("...")
+    else:
+        install_cmd = tr("not supported for {pm}", pm=distro.pkg_manager_name())
     if session is None:
         session = distro.detect_session() or tr("current session")
 
@@ -319,6 +322,8 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, aur_he
             "update_system": (
                 tr("System update (Using '{cmd} -Syu --noconfirm')", cmd=_installed_helper_for_update)
                 if _installed_helper_for_update else
+                tr("System update: not supported for {pm}", pm=distro.pkg_manager_name())
+                if not distro.pkg_mgmt_supported() else
                 tr("System update (Using '{cmd}')", cmd=distro.get_update_system_cmd()),
                 _tip("update_system")),
             "install_ucode": (
@@ -542,6 +547,8 @@ class PackageVerifierThread(QThread):
                     cmd = ["apt-cache", "show", _pkg]
                 elif fam == "fedora":
                     cmd = ["dnf", "info", _pkg]
+                elif fam == "amazon2":
+                    cmd = ["yum", "info", _pkg]
                 elif fam == "suse":
                     cmd = ["zypper", "info", _pkg]
                 elif fam == "void":
