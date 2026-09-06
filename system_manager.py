@@ -578,7 +578,7 @@ class SystemManagerThread(QThread):
                 "enable_flatpak_integration": (tr("Enabling Flatpak integration…"), self._install_flatpak)}
 
     _OPTIONAL_SVC_PKGS: dict[str, tuple[str, ...]] = {
-        "cups": ("system-config-printer",),
+        "cups": ("system-config-printer", "app-admin/system-config-printer"),
     }
 
     def _service_tasks(self) -> dict:
@@ -592,10 +592,11 @@ class SystemManagerThread(QThread):
                  "enable_atd_service": (tr("Initialising atd…"), "atd", d.get_at_packages),
                  "enable_cronie_service": (tr("Initialising {svc}…", svc=d.get_cron_service_name()), d.get_cron_service_name(),
                                            d.get_cron_packages),
-                 "install_snap": (tr("Installing Snap…"), "snapd", d.get_snap_packages),
                  "enable_ntp_sync": (tr("Initialising {svc}…", svc=d.get_ntp_service_name()), d.get_ntp_service_name(),
                                      d.get_ntp_packages),
                  "enable_fstrim_timer": (tr("Enabling SSD TRIM (fstrim.timer)…"), "fstrim.timer", lambda: [])}
+        if d.get_snap_packages():
+            specs["install_snap"] = (tr("Installing Snap…"), "snapd", d.get_snap_packages)
         if d.firewall_supported() or S.firewall_config.get("backend"):
             fw_backend = S.firewall_config.get("backend") or d.get_firewall_service_name()
             fw_pkgs = ["ufw"] if fw_backend == "ufw" else ["firewalld"]
@@ -1875,7 +1876,7 @@ class SystemManagerThread(QThread):
             self.outputReceived.emit(tr("Flathub setup error: {exc}", exc=exc), "error")
             return False
 
-    def _setup_service(self, service: str, packages: list, *, optional: tuple[str, ...] = ()) -> bool:
+    def _setup_service(self, service: str, packages: list, *, optional: tuple[str, ...] = ()) -> bool | str:
         if packages:
             for p in packages:
                 ok = self._install_pkg(p, tr("Service Package"))
@@ -1883,6 +1884,11 @@ class SystemManagerThread(QThread):
                     return False
                 if not ok:
                     self.outputReceived.emit(tr("Optional package '{p}' could not be installed — continuing", p=p), "warning")
+        elif service not in ("fstrim.timer",) and self.distro and not shutil.which(service.split(".", 1)[0]):
+            self.outputReceived.emit(
+                tr("No package known for '{service}' on {pm} — skipping",
+                   service=service, pm=self.distro.pkg_manager_name()), "warning")
+            return _Status.WARNING
         return self._enable_service(service)
 
     def _enable_service(self, service: str) -> bool:

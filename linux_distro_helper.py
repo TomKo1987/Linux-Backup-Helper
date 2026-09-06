@@ -293,6 +293,27 @@ _BT_PKGS: dict = {
 }
 
 
+_PRINTER_PKGS: dict = {
+    "gentoo": ["net-print/cups", "app-text/ghostscript-gpl", "app-admin/system-config-printer", "net-print/gutenprint"],
+    "nixos":  ["cups", "ghostscript", "system-config-printer", "gutenprint"],
+    None:     ["cups", "ghostscript", "system-config-printer", "gutenprint"],
+}
+_AT_PKGS: dict = {
+    "gentoo": ["sys-process/at"],
+    None:     ["at"],
+}
+_FLATPAK_PKGS: dict = {
+    "gentoo": ["sys-apps/flatpak"],
+    None:     ["flatpak"],
+}
+_SNAP_PKGS: dict = {
+    "gentoo": ["app-containers/snapd"],
+    "nixos":  [],
+    "slackware": [],
+    None:     ["snapd"],
+}
+
+
 _UCODE_PKGS: dict[str, dict[str, str]] = {
     "intel": {
         "arch":     "intel-ucode",
@@ -300,6 +321,7 @@ _UCODE_PKGS: dict[str, dict[str, str]] = {
         "fedora":   "microcode_ctl",
         "amazon2":  "microcode_ctl",
         "suse":     "ucode-intel",
+        "suse-immutable": "ucode-intel",
         "void":     "intel-ucode",
         "alpine":   "intel-ucode",
         "gentoo":   "sys-firmware/intel-microcode",
@@ -312,6 +334,7 @@ _UCODE_PKGS: dict[str, dict[str, str]] = {
         "fedora":   "microcode_ctl",
         "amazon2":  "microcode_ctl",
         "suse":     "ucode-amd",
+        "suse-immutable": "ucode-amd",
         "void":     "linux-firmware-amd",
         "alpine":   "linux-firmware-amd",
         "gentoo":   "sys-firmware/linux-firmware",
@@ -350,8 +373,8 @@ _WM_PROCS: dict[str, str] = {
 def distro_family(distro_id: str) -> str: return _DISTRO_FAMILY_MAP.get(distro_id, distro_id)
 
 
-def _lookup(table: dict, family: str) -> list[Any] | None | Any:
-    result = table.get(family)
+def _lookup(table: dict[Any, list[Any]], family: str) -> list[Any]:
+    result: list[Any] | None = table.get(family)
     if result is not None:
         return result
     return table.get(None) or []
@@ -704,10 +727,10 @@ class LinuxDistroHelper:
         pkg = self.get_shell_package_name(shell_name)
         return _SHELL_BINARIES.get(pkg, pkg)
 
-    def get_ssh_packages(self)       -> list[Any] | None | Any: return _lookup(_SSH_PKGS, self.family())
-    def get_samba_packages(self)     -> list[Any] | None | Any: return _lookup(_SAMBA_PKGS, self.family())
-    def get_bluetooth_packages(self) -> list[Any] | None | Any: return _lookup(_BT_PKGS, self.family())
-    def get_cron_packages(self)      -> list[Any] | None | Any: return _lookup(_CRON_PKGS, self.family())
+    def get_ssh_packages(self)       -> list[Any]: return _lookup(_SSH_PKGS, self.family())
+    def get_samba_packages(self)     -> list[Any]: return _lookup(_SAMBA_PKGS, self.family())
+    def get_bluetooth_packages(self) -> list[Any]: return _lookup(_BT_PKGS, self.family())
+    def get_cron_packages(self)      -> list[Any]: return _lookup(_CRON_PKGS, self.family())
 
     def get_ssh_service_name(self)   -> str: return _SSH_SVC.get(self.family())   or _SSH_SVC[None]
     def get_samba_service_name(self) -> str: return _SAMBA_SVC.get(self.family()) or _SAMBA_SVC[None]
@@ -721,7 +744,7 @@ class LinuxDistroHelper:
     _FIREWALL_SVC: dict = {"fedora": "firewalld", "amazon2": "firewalld", "suse": "firewalld",
                            "suse-immutable": "firewalld", None: "ufw"}
 
-    def get_firewall_packages(self) -> list[Any] | None | Any: return _lookup(self._FIREWALL_PKGS, self.family())
+    def get_firewall_packages(self) -> list[Any]: return _lookup(self._FIREWALL_PKGS, self.family())
     def get_firewall_service_name(self) -> str: return self._FIREWALL_SVC.get(self.family()) or self._FIREWALL_SVC[None]
     def firewall_supported(self) -> bool: return bool(self.get_firewall_packages())
 
@@ -737,7 +760,7 @@ class LinuxDistroHelper:
         "gentoo": "chronyd", "void": "chronyd", "alpine": "chronyd",
     }
 
-    def get_ntp_packages(self) -> list[Any] | None | Any: return _lookup(self._NTP_PKGS, self.family())
+    def get_ntp_packages(self) -> list[Any]: return _lookup(self._NTP_PKGS, self.family())
 
     def get_ntp_service_name(self) -> str:
         svc = self._NTP_SVC.get(self.family())
@@ -752,14 +775,11 @@ class LinuxDistroHelper:
             return True
         return bool(shutil.which("timedatectl") or shutil.which("chronyd") or shutil.which("chronyc"))
 
-    @staticmethod
-    def get_printer_packages()  -> list: return ["cups", "ghostscript", "system-config-printer", "gutenprint"]
-    @staticmethod
-    def get_at_packages()       -> list: return ["at"]
-    @staticmethod
-    def get_flatpak_packages()  -> list: return ["flatpak"]
-    @staticmethod
-    def get_snap_packages()     -> list: return ["snapd"]
+    def get_printer_packages(self) -> list[Any]: return _lookup(_PRINTER_PKGS, self.family())
+    def get_at_packages(self)      -> list[Any]: return _lookup(_AT_PKGS, self.family())
+    def get_flatpak_packages(self) -> list[Any]: return _lookup(_FLATPAK_PKGS, self.family())
+    def get_snap_packages(self)    -> list[Any]: return _lookup(_SNAP_PKGS, self.family())
+
     @staticmethod
     def flatpak_add_flathub() -> str:
         return "sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo"
