@@ -25,10 +25,8 @@ import shutil
 import threading
 from pathlib import Path
 
-from PyQt6.QtCore import QByteArray, QThread
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QAction
-from PyQt6.QtGui import QIcon, QPixmap, QCloseEvent
+from PyQt6.QtCore import QByteArray, QThread, Qt, QTimer
+from PyQt6.QtGui import QIcon, QPixmap, QCloseEvent, QAction
 from PyQt6.QtWidgets import (
     QInputDialog, QMainWindow, QGridLayout, QFileDialog, QVBoxLayout,
     QMenu, QMessageBox, QPushButton, QSystemTrayIcon, QWidget, QApplication

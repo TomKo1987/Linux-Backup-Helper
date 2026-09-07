@@ -1,9 +1,11 @@
+import collections
 import concurrent.futures
 import errno
 import os
 import queue
 import re
 import shutil
+import stat
 import subprocess
 import threading
 import time
@@ -39,6 +41,7 @@ def _ssh_join(dst_spec: str, rel_path: str) -> str:
     return f"{base}/{rel}" if rel else base
 
 
+_RSYNC_ERROR_TAIL = 5
 _NF_MARK = "\x1f"
 
 
@@ -157,8 +160,10 @@ def _do_copy(entry, cancel: threading.Event, ok_l: list, sk_l: list, er_l: list,
 
 def _is_up_to_date_local(dst: str, src_st: "os.stat_result") -> bool:
     try:
-        d = os.stat(dst)
-        return d.st_size == src_st.st_size and abs(d.st_mtime_ns - src_st.st_mtime_ns) <= 2_000_000_000
+        d = os.lstat(dst)
+        return (stat.S_ISREG(d.st_mode)
+                and d.st_size == src_st.st_size
+                and abs(d.st_mtime_ns - src_st.st_mtime_ns) <= 2_000_000_000)
     except OSError:
         return False
 
@@ -168,6 +173,21 @@ def _is_symlink_up_to_date(dst: str, target: str) -> bool:
         return os.path.islink(dst) and os.readlink(dst) == target
     except OSError:
         return False
+
+
+def _clear_conflicting_dir(dst: str) -> bool:
+    try:
+        if not os.path.isdir(dst) or os.path.islink(dst):
+            return True
+        shutil.rmtree(dst)
+        return True
+    except FileNotFoundError:
+        return True
+    except OSError as exc:
+        if os.path.isdir(dst) and not os.path.islink(dst):
+            logger.error("could not remove conflicting directory %s: %s", dst, exc)
+            return False
+        return True
 
 
 def _copy_symlink(src: str, dst: str) -> tuple:
@@ -182,6 +202,9 @@ def _copy_symlink(src: str, dst: str) -> tuple:
     if not _ensure_dir(os.path.dirname(dst)):
         return "error", tr("Directory could not be created"), 0
 
+    if not _clear_conflicting_dir(dst):
+        return "error", tr("Destination is a non-empty directory and could not be replaced"), 0
+
     tmp = f"{dst}.{_PID}.{threading.get_ident()}.lnk.part"
     try:
         _silent_unlink(tmp)
@@ -195,8 +218,9 @@ def _copy_symlink(src: str, dst: str) -> tuple:
         return "error", str(exc), 0
 
 
-def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
+def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> "tuple[int, OSError | None]":
     rem = total
+    last_err: OSError | None = None
     try:
         while rem > 0:
             if cancel.is_set():
@@ -239,6 +263,9 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
             raise
         except OSError as exc:
             logger.debug("sendfile fallback failed or not supported: %s", exc)
+            last_err = exc
+            if exc.errno in _FATAL_IO_ERRNOS:
+                return total - rem, last_err
     if rem > 0:
         try:
             seek_to = total - rem
@@ -261,7 +288,11 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> int:
             raise
         except OSError as exc:
             logger.warning("read/write fallback failed after %d/%d bytes: %s", total - rem, total, exc)
-    return total - rem
+            last_err = exc
+    return total - rem, last_err
+
+
+_FATAL_IO_ERRNOS = frozenset({errno.ENOSPC, errno.EDQUOT, errno.EIO, errno.EROFS})
 
 
 class _IncompleteCopyError(OSError):
@@ -315,6 +346,9 @@ def _copy_file(src, dst, cancel, cached_st=None):
             if not _ensure_dir(os.path.dirname(dst)):
                 return "error", tr("Directory could not be created"), 0
 
+            if not _clear_conflicting_dir(dst):
+                return "error", tr("Destination is a non-empty directory and could not be replaced"), 0
+
             _may_use_noatime = _EUID == 0 or st.st_uid == _EUID
             try:
                 rfd = os.open(src, os.O_RDONLY | (_O_NOATIME if _may_use_noatime else 0))
@@ -336,9 +370,14 @@ def _copy_file(src, dst, cancel, cached_st=None):
                 except OSError:
                     pass
 
-            copied = _copy_loop(rfd, wfd, st.st_size, cancel)
+            copied, copy_err = _copy_loop(rfd, wfd, st.st_size, cancel)
             if copied < st.st_size:
-                raise _IncompleteCopyError(f"Incomplete copy: {copied}/{st.st_size} bytes written")
+                if copy_err is not None and copy_err.errno in _FATAL_IO_ERRNOS:
+                    raise copy_err
+                reason = f": {copy_err}" if copy_err is not None else ""
+                raise _IncompleteCopyError(
+                    f"Incomplete copy: {copied}/{st.st_size} bytes written{reason}"
+                )
 
             try:
                 os.fsync(wfd)
@@ -370,6 +409,18 @@ def _copy_file(src, dst, cancel, cached_st=None):
             logger.error("copy %s → %s: %s", src, dst, exc)
             return "error", str(exc), 0
         except OSError as exc:
+            if exc.errno == errno.ENOSPC:
+                logger.error("copy %s → %s: destination out of space", src, dst)
+                return "error", tr("No space left on destination device"), 0
+            if exc.errno == errno.EDQUOT:
+                logger.error("copy %s → %s: disk quota exceeded", src, dst)
+                return "error", tr("Disk quota exceeded on destination device"), 0
+            if exc.errno == errno.EROFS:
+                logger.error("copy %s → %s: destination is read-only", src, dst)
+                return "error", tr("Destination filesystem is read-only"), 0
+            if exc.errno == errno.EIO:
+                logger.error("copy %s → %s: I/O error", src, dst)
+                return "error", tr("I/O error — check the source or destination device"), 0
             logger.error("copy %s → %s: %s", src, dst, exc)
             return "error", str(exc), 0
         finally:
@@ -719,7 +770,32 @@ class CopyWorker(QThread):
                 _run_futures(futs, self._cancel, "Phase-1")
 
             if self._cancel.is_set():
-                self.finished_work.emit(0, 0, 0, 0, True)
+                cancel_flusher = _Flusher(self.batch_update, 0)
+                cancel_tracker = _EntryTracker()
+                if smb_errors:
+                    cancel_flusher.push(er=[(src, err, 0) for src, err, _title in smb_errors], force=True)
+                    err_counts: dict = {}
+                    for _src, _err, _title in smb_errors:
+                        if _title:
+                            err_counts.setdefault(_title, [0, 0, 0, 0])[2] += 1
+                    if err_counts:
+                        cancel_tracker.batch_update(err_counts)
+                if local_not_found:
+                    cancel_flusher.push(
+                        sk=[(p, _not_found_reason(t_), 0) for p, t_ in local_not_found],
+                        force=True,
+                    )
+                    nf_counts: dict = {}
+                    for _, nf_title in local_not_found:
+                        if nf_title:
+                            nf_counts.setdefault(nf_title, [0, 0, 0, 0])[1] += 1
+                    if nf_counts:
+                        cancel_tracker.batch_update(nf_counts)
+                cancel_tracker.emit_all(self.entry_status)
+                self.finished_work.emit(
+                    cancel_flusher.copied, cancel_flusher.skipped,
+                    cancel_flusher.errors, cancel_flusher.deleted, True,
+                )
                 return
 
             guest = _guest_box[0]
@@ -739,12 +815,12 @@ class CopyWorker(QThread):
                             for p, t_ in local_not_found],
                         force=True,
                     )
-                    nf_counts: dict = {}
-                    for _, nf_title in local_not_found:
-                        if nf_title:
-                            nf_counts.setdefault(nf_title, [0, 0, 0, 0])[1] += 1
-                    if nf_counts:
-                        tracker.batch_update(nf_counts)
+                    _nf_counts: dict = {}
+                    for _, _nf_title in local_not_found:
+                        if _nf_title:
+                            _nf_counts.setdefault(_nf_title, [0, 0, 0, 0])[1] += 1
+                    if _nf_counts:
+                        tracker.batch_update(_nf_counts)
 
             def _phase2_smb() -> None:
                 if (smb_expanded or smb_errors) and not self._cancel.is_set():
@@ -815,6 +891,7 @@ class CopyWorker(QThread):
 
         last_pct = 0
         deleted_this_task: list = []
+        error_lines: "collections.deque[str]" = collections.deque(maxlen=_RSYNC_ERROR_TAIL)
         _tid = threading.get_ident()
         with _smb_procs_lock:
             _smb_procs[_tid] = proc
@@ -847,6 +924,8 @@ class CopyWorker(QThread):
                         deleted_this_task.append((display_path, tr("Mirror delete (remote)"), 0))
                     elif line:
                         logger.debug("rsync: %s", line)
+                        if line.strip():
+                            error_lines.append(line.strip())
             except OSError as exc:
                 logger.warning("rsync read error for '%s': %s", src, exc)
 
@@ -867,9 +946,12 @@ class CopyWorker(QThread):
             _track(1, 0, 0, len(deleted_this_task))
             logger.info("rsync OK: %s → %s", src, dst)
         else:
-            flusher.push(er=[(src, tr("rsync exit {code}", code=proc.returncode), 0)])
+            detail = "; ".join(error_lines) if error_lines else None
+            msg = (tr("rsync exit {code}: {detail}", code=proc.returncode, detail=detail)
+                   if detail else tr("rsync exit {code}", code=proc.returncode))
+            flusher.push(er=[(src, msg, 0)])
             _track(0, 0, 1, len(deleted_this_task))
-            logger.error("rsync exit %d: %s → %s", proc.returncode, src, dst)
+            logger.error("rsync exit %d: %s → %s (%s)", proc.returncode, src, dst, detail or "no output captured")
 
     def _copy_ssh_tasks(
             self,

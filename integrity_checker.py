@@ -14,6 +14,7 @@ from themes import current_theme, font_sz
 from translations import tr
 from ui_utils import _StandardKeysMixin, build_dialog_shell, clear_layout, size_to_screen
 from drive_utils import is_smb, is_ssh
+from copy_worker_core import _SKIP_RE
 
 __all__ = ["IntegrityCheckerDialog"]
 
@@ -35,6 +36,8 @@ def _quick_scan(path_str: str) -> dict | None:
     newest = 0.0
     try:
         for entry in os.scandir(root):
+            if _SKIP_RE.search(entry.name):
+                continue
             try:
                 st = entry.stat(follow_symlinks=False)
                 if entry.is_dir(follow_symlinks=False):
@@ -53,7 +56,7 @@ def _quick_scan(path_str: str) -> dict | None:
 def _top_level_names(path_str: str) -> set[str]:
     root = Path(os.path.expanduser(os.path.expandvars(path_str)))
     try:
-        return {e.name for e in os.scandir(root)}
+        return {e.name for e in os.scandir(root) if not _SKIP_RE.search(e.name)}
     except OSError:
         return set()
 
@@ -92,6 +95,7 @@ class _CheckWorker(QThread):
             dests   = entry.get("destination", [])
 
             issues: list[str] = []
+            infos: list[str] = []
             ok = True
 
             if len(sources) != len(dests):
@@ -105,7 +109,7 @@ class _CheckWorker(QThread):
             for src_raw, dst_raw in zip(sources, dests):
                 if is_smb(src_raw) or is_ssh(src_raw) or is_smb(dst_raw) or is_ssh(dst_raw):
                     remote = src_raw if (is_smb(src_raw) or is_ssh(src_raw)) else dst_raw
-                    issues.append(
+                    infos.append(
                         tr("Remote (SMB/SSH) path — not checked by Integrity Checker "
                            "(local-filesystem check only; this is not a failure): {remote}", remote=remote)
                     )
@@ -151,7 +155,7 @@ class _CheckWorker(QThread):
                             )
                             ok = False
 
-                    if dst_info["mtime_newest"] > 0:
+                    if dst_info["mtime_newest"] > 0 and src_info["mtime_newest"] > 0:
                         age_dst = time.time() - dst_info["mtime_newest"]
                         age_src = time.time() - src_info["mtime_newest"]
                         if age_dst > 7 * 86400 and age_src < age_dst - 86400:
@@ -179,8 +183,9 @@ class _CheckWorker(QThread):
             self.result_ready.emit({
                 "title":  title,
                 "header": entry.get("header", ""),
-                "ok":     ok and not issues,
+                "ok":     ok,
                 "issues": issues,
+                "infos":  infos,
                 "src":    sources[0] if sources else "",
                 "dst":    dests[0]   if dests   else "",
             })
@@ -238,6 +243,15 @@ class _ResultRow(QFrame):
                 f"background:transparent;border:none;"
             )
             lay.addWidget(issue_lbl)
+
+        for info in result.get("infos", []):
+            info_lbl = QLabel(f"  • {info}")
+            info_lbl.setWordWrap(True)
+            info_lbl.setStyleSheet(
+                f"color:{t['text_dim']};font-size:{font_sz(-1)}px;"
+                f"background:transparent;border:none;"
+            )
+            lay.addWidget(info_lbl)
 
 
 # noinspection PyUnresolvedReferences

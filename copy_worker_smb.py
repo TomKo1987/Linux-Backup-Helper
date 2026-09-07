@@ -37,6 +37,17 @@ def _get_smb_credentials() -> tuple[str, "_SecurePw | None"]:
     return (u or ""), pw
 
 
+def _write_all(fd: int, data: bytes) -> None:
+    view = memoryview(data)
+    total = len(view)
+    written = 0
+    while written < total:
+        n = os.write(fd, view[written:])
+        if n == 0:
+            raise OSError("os.write returned 0")
+        written += n
+
+
 def _smb_cred_file(user: str, pw: "_SecurePw") -> "tuple[str, str]":
     if _SHM_DIR is None:
         raise RuntimeError("/dev/shm unavailable — caller must check before calling")
@@ -46,34 +57,31 @@ def _smb_cred_file(user: str, pw: "_SecurePw") -> "tuple[str, str]":
         cred_path = os.path.join(tmp_dir, "cred")
         fd = os.open(cred_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
-            f_obj = os.fdopen(fd, 'wb')
-            fd = -1
-        except BaseException:
-            os.close(fd)
-            raise
-        with f_obj as f:
             user = user.replace("\r", "").replace("\n", "")
             if "\\" in user:
                 domain, plain_user = user.split("\\", 1)
-                f.write(f"username = {plain_user}\n".encode("utf-8"))
-                f.write(f"domain = {domain}\n".encode("utf-8"))
+                _write_all(fd, f"username = {plain_user}\n".encode("utf-8"))
+                _write_all(fd, f"domain = {domain}\n".encode("utf-8"))
             else:
-                f.write(f"username = {user}\n".encode("utf-8"))
+                _write_all(fd, f"username = {user}\n".encode("utf-8"))
 
             pwd_bytes = pw.get_bytes()
             try:
                 write_start = 0
-                f.write(b"password = ")
+                _write_all(fd, b"password = ")
                 for idx, byte_val in enumerate(pwd_bytes):
                     if byte_val in (0x0D, 0x0A):
-                        f.write(pwd_bytes[write_start:idx])
+                        _write_all(fd, bytes(pwd_bytes[write_start:idx]))
                         write_start = idx + 1
-                f.write(pwd_bytes[write_start:])
-                f.write(b"\n")
+                _write_all(fd, bytes(pwd_bytes[write_start:]))
+                _write_all(fd, b"\n")
             finally:
                 for i in range(len(pwd_bytes)):
                     pwd_bytes[i] = 0
+            os.fsync(fd)
             return tmp_dir, cred_path
+        finally:
+            os.close(fd)
     except Exception as exc:
         logger.error("Error creating the SMB credential file: %s", exc)
         if tmp_dir and os.path.isdir(tmp_dir):

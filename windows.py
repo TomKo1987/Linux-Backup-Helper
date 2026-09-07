@@ -307,7 +307,10 @@ class _CopyMixin:
             QMessageBox.information(self, tr("Note"), tr("Nothing selected."))
             return
 
-        paths = [p for src, dst, _title, *_ in selected for p in src + dst]
+        def _as_list(v) -> list:
+            return [v] if isinstance(v, str) else list(v)
+
+        paths = [p for src, dst, _title, *_ in selected for p in _as_list(src) + _as_list(dst)]
         drives_to_mount = check_drives_to_mount(paths)
         if not mount_required_drives(drives_to_mount, self):
             return
