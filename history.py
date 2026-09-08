@@ -92,17 +92,32 @@ def _fmt_duration(s: int) -> str:
     m = (s % 3600) // 60
     return f"{h}h {m:02d}m {s % 60:02d}s"
 
+_RESTORE_WORDS: frozenset[str] | None = None
+_BACKUP_WORDS: frozenset[str] | None = None
+
+
+def _classification_words() -> tuple[frozenset[str], frozenset[str]]:
+    global _RESTORE_WORDS, _BACKUP_WORDS
+    restore_cache, backup_cache = _RESTORE_WORDS, _BACKUP_WORDS
+    if restore_cache is None or backup_cache is None:
+        restore_words = {"restore"}
+        backup_words = {"backup"}
+        for lang_map in LANGUAGES.values():
+            r = lang_map.get("Restore")
+            if r:
+                restore_words.add(r.lower())
+            b = lang_map.get("Backup")
+            if b:
+                backup_words.add(b.lower())
+        restore_cache = frozenset(restore_words)
+        backup_cache = frozenset(backup_words)
+        _RESTORE_WORDS, _BACKUP_WORDS = restore_cache, backup_cache
+    return restore_cache, backup_cache
+
+
 def _op_classify(op: str) -> tuple[bool, bool]:
     lo = op.lower()
-    restore_words = {"restore"}
-    backup_words = {"backup"}
-    for lang_map in LANGUAGES.values():
-        r = lang_map.get("Restore")
-        if r:
-            restore_words.add(r.lower())
-        b = lang_map.get("Backup")
-        if b:
-            backup_words.add(b.lower())
+    restore_words, backup_words = _classification_words()
     is_restore = any(w in lo for w in restore_words)
     is_backup = any(w in lo for w in backup_words)
     return is_backup and not is_restore, is_restore

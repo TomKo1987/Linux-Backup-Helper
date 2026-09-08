@@ -40,6 +40,8 @@ def _scale_params(total: int) -> tuple[int, int, int, int, int]:
     return _CLAIM_SIZE, _LOCAL_BATCH, _FLUSH_THRESH, _SCAN_PIPE_BATCH, min(w, 4)
 
 
+_RSYNC_DELETE_RE = re.compile(r"^deleting\s+(.+)$")
+
 _SKIP_RE = re.compile(
     r"^(?:"
     r"\.?lock|lockfile|\.lck|\.parentlock|Singleton\w*|"

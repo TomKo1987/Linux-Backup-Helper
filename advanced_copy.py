@@ -1,13 +1,12 @@
 import os
 import re
-import shutil
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
 
 from drive_utils import is_smb, is_ssh, build_rsync_cmd
 from state import apply_replacements, logger
-from copy_worker_core import _SKIP_RE
+from copy_worker_core import _SKIP_RE, _RSYNC_DELETE_RE
 from translations import tr
 
 __all__ = [
@@ -17,7 +16,6 @@ __all__ = [
 ]
 
 _VERSION_RE = re.compile(r"^(\d+)\s*[-_]\s*")
-_RSYNC_DELETE_RE = re.compile(r"^deleting\s+(.+)$")
 _SSH_PREVIEW_TIMEOUT_S = 30
 
 
@@ -47,22 +45,34 @@ def _is_local(path: str) -> bool:
     return not is_smb(path) and not is_ssh(path)
 
 
-def _path_size(p: str) -> int:
-    try:
-        if os.path.islink(p) or os.path.isfile(p):
-            return os.path.getsize(p)
-        if os.path.isdir(p):
-            total = 0
-            for root, _dirs, files in os.walk(p, followlinks=False):
-                for fname in files:
-                    try:
-                        total += os.path.getsize(os.path.join(root, fname))
-                    except OSError:
-                        pass
-            return total
-    except OSError:
-        pass
-    return 0
+def _rmtree_with_size(p: str) -> int:
+    if os.path.islink(p):
+        os.remove(p)
+        return 0
+    if not os.path.isdir(p):
+        try:
+            sz = os.path.getsize(p)
+        except OSError:
+            sz = 0
+        os.remove(p)
+        return sz
+
+    total = 0
+    with os.scandir(p) as it:
+        entries = list(it)
+    for e in entries:
+        if e.is_symlink():
+            os.remove(e.path)
+        elif e.is_dir(follow_symlinks=False):
+            total += _rmtree_with_size(e.path)
+        else:
+            try:
+                total += e.stat(follow_symlinks=False).st_size
+            except OSError:
+                pass
+            os.remove(e.path)
+    os.rmdir(p)
+    return total
 
 
 def _existing_versions(dst_abs: str) -> list[tuple[int, str]]:
@@ -98,9 +108,8 @@ def prune_old_versions(dst_abs: str, keep: int, title: str = "") -> tuple[list[D
     deleted: list[DeletedItem] = []
     errors: list[DeleteError] = []
     for _, path in versions[:overflow]:
-        sz = _path_size(path)
         try:
-            shutil.rmtree(path)
+            sz = _rmtree_with_size(path)
             deleted.append(DeletedItem(path=path, title=title, reason=tr("Pruned old version"), size=sz))
         except OSError as exc:
             errors.append(DeleteError(path=path, title=title, reason=tr("Could not delete: {exc}", exc=exc)))
@@ -146,12 +155,12 @@ def delete_paths(paths: list[str], title: str = "", reason: str | None = None) -
     deleted: list[DeletedItem] = []
     errors: list[DeleteError] = []
     for p in paths:
-        sz = _path_size(p)
         try:
             if os.path.islink(p) or os.path.isfile(p):
+                sz = 0 if os.path.islink(p) else os.path.getsize(p)
                 os.remove(p)
             elif os.path.isdir(p):
-                shutil.rmtree(p)
+                sz = _rmtree_with_size(p)
             else:
                 continue
             deleted.append(DeletedItem(path=p, title=title, reason=reason, size=sz))

@@ -22,7 +22,7 @@ from copy_worker_core import (
     _CHUNK, _IO_BUF, _WORKERS, _FLUSH_THRESH, _FLUSH_INTERVAL, _SCAN_EMIT_SECS,
     _SCAN_PIPE_BATCH, _LOCAL_BATCH, _CLAIM_SIZE, _PIPE_MAXSIZE,
     _SMB_WORKERS, _PID, _EUID, _O_NOATIME, _seen_dirs_lock, _seen_dirs_global, _TIME_CHECK_EVERY,
-    _smb_procs, _smb_procs_lock,
+    _smb_procs, _smb_procs_lock, _RSYNC_DELETE_RE,
     _scale_params, _scan_dir_entries,
     _ensure_dir, _parse_smb, _run_futures, _silent_unlink
 )
@@ -558,7 +558,6 @@ class CopyWorker(QThread):
     _RSYNC_PROGRESS_RE = re.compile(
         r"^\s*([\d,]+)\s+(\d+)%\s+([\d.]+\w+/s)\s+([\d:]+)"
     )
-    _RSYNC_DELETE_RE = re.compile(r"^deleting\s+(.+)$")
 
     def __init__(self, tasks) -> None:
         super().__init__()
@@ -917,8 +916,7 @@ class CopyWorker(QThread):
                                 pct,
                             )
                         continue
-                    dm = self._RSYNC_DELETE_RE.match(line) if mirror else None
-                    if dm:
+                    if mirror and (dm := _RSYNC_DELETE_RE.match(line)):
                         rel = dm.group(1).strip()
                         display_path = _ssh_join(dst, rel)
                         deleted_this_task.append((display_path, tr("Mirror delete (remote)"), 0))
@@ -926,6 +924,7 @@ class CopyWorker(QThread):
                         logger.debug("rsync: %s", line)
                         if line.strip():
                             error_lines.append(line.strip())
+
             except OSError as exc:
                 logger.warning("rsync read error for '%s': %s", src, exc)
 
