@@ -128,7 +128,7 @@ class _SummaryWidget(QWidget):
         for i in range(4):
             stats_lay.setColumnStretch(i, 1)
 
-        self.card_copied  = _make_stat_card(t["success"], tr("⤵ Copied"),  "0")
+        self.card_copied  = _make_stat_card(t["success"], tr("  Copied"),  "0")
         self.card_skipped = _make_stat_card(t["warning"],  tr("↷ Skipped"), "0")
         self.card_deleted = _make_stat_card(t["deleted"],  tr("🗑 Deleted"), "0")
         self.card_errors  = _make_stat_card(t["error"],    tr("✗ Errors"),  "0")
@@ -378,7 +378,7 @@ class _SummaryWidget(QWidget):
 
         for title, (ok, skip, err, deleted) in results.items():
             parts = []
-            if ok:      parts.append(f"<span style='{self._s_ok}'>⤵ {ok:,}</span>")
+            if ok:      parts.append(f"<span style='{self._s_ok}'>  {ok:,}</span>")
             if skip:    parts.append(f"<span style='{self._s_skip}'>↷ {skip:,}</span>")
             if deleted: parts.append(f"<span style='{self._s_del}'>🗑 {deleted:,}</span>")
             if err:     parts.append(f"<span style='{self._s_err}'>✗ {err:,}</span>")
@@ -767,7 +767,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
 
         self.tabs = QTabWidget()
         self.tabs.addTab(summary_page, tr("📋 Summary"))
-        self.tabs.addTab(self._w_copied, tr("⤵ Copied (0)"))
+        self.tabs.addTab(self._w_copied, tr("  Copied (0)"))
         self.tabs.addTab(self._w_skipped, tr("↷ Skipped (0)"))
         self.tabs.addTab(self._w_deleted, tr("🗑 Deleted (0)"))
         self.tabs.addTab(self._w_errors, tr("✗ Errors (0)"))
@@ -909,13 +909,13 @@ class CopyDialog(_StandardKeysMixin, QDialog):
                                    self._size_copied, self._size_skipped, self._display_size_deleted, finished=False)
 
     def _update_tab_labels(self) -> None:
-        self.tabs.setTabText(1, tr("⤵ Copied ({n:,})", n=self.copied))
+        self.tabs.setTabText(1, tr("  Copied ({n:,})", n=self.copied))
         self.tabs.setTabText(2, tr("↷ Skipped ({n:,})", n=self.skipped))
         self.tabs.setTabText(3, tr("🗑 Deleted ({n:,})", n=self._display_deleted))
         self.tabs.setTabText(4, tr("✗ Errors ({n:,})", n=self._display_errors))
 
     @staticmethod
-    def _fmt_ok(s, d) -> str: return f"{apply_replacements(s)}\nCopied to ⤵\n{apply_replacements(d)}"
+    def _fmt_ok(s, d) -> str: return f"{apply_replacements(s)}\nCopied to  \n{apply_replacements(d)}"
 
     @staticmethod
     def _fmt_sk(p, r) -> str: return f"{apply_replacements(p)} ↷ {r}"

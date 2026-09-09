@@ -710,12 +710,46 @@ class CopyWorker(QThread):
                 skip_titles = self._run_pre_hooks(local_tasks + ssh_tasks) if not self._cancel.is_set() else set()
                 active_local = [(s, d, t, e) for s, d, t, e in local_tasks if t not in skip_titles]
                 active_ssh = [(s, d, t, e) for s, d, t, e in ssh_tasks if t not in skip_titles]
-                if active_local and not self._cancel.is_set():
-                    self._scan_copy_local_pipelined(active_local, flusher, tracker)
-                elif not active_ssh:
+
+                if not active_local and not active_ssh:
                     self.scan_finished.emit(0)
-                if active_ssh and not self._cancel.is_set():
-                    self._copy_ssh_tasks(active_ssh, flusher, tracker)
+                else:
+                    ssh_units = len(active_ssh)
+                    local_count = [0]
+                    total_lock = threading.Lock()
+
+                    def _update_total() -> None:
+                        with total_lock:
+                            _total = local_count[0] + ssh_units
+                        flusher.set_total(_total)
+                        _, ft_new, _ = _scale_params(_total)
+                        flusher.set_flush_thresh(ft_new)
+
+                    def _on_local_count(n: int) -> None:
+                        with total_lock:
+                            local_count[0] = n
+                        _update_total()
+
+                    _update_total()
+
+                    def _local_pipeline() -> None:
+                        if active_local and not self._cancel.is_set():
+                            self._scan_copy_local_pipelined(
+                                active_local, flusher, tracker,
+                                emit_scan_finished=False, on_count_change=_on_local_count,
+                            )
+
+                    def _ssh_pipeline() -> None:
+                        if active_ssh and not self._cancel.is_set():
+                            self._copy_ssh_tasks(active_ssh, flusher, tracker)
+
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                        futs = [pool.submit(_local_pipeline), pool.submit(_ssh_pipeline)]
+                        _run_futures(futs, self._cancel, "backend pipeline")
+
+                    if not self._cancel.is_set():
+                        self.scan_finished.emit(local_count[0] + ssh_units)
+
                 self._run_post_hooks(active_local + active_ssh)
                 flusher.flush()
                 tracker.emit_all(self.entry_status)
@@ -726,7 +760,6 @@ class CopyWorker(QThread):
             smb_expanded: list[_SmbJob] = []
             smb_errors: list[tuple[str, str, str]] = []
             local_found: list[int] = [0]
-            _guest_box: list[bool] = [False]
 
             skip_titles = self._run_pre_hooks(local_tasks + ssh_tasks + smb_tasks) if not self._cancel.is_set() else set()
             local_tasks = [(s, d, t, e) for s, d, t, e in local_tasks if t not in skip_titles]
@@ -738,11 +771,12 @@ class CopyWorker(QThread):
 
             local_count = [0]
             smb_count = [0]
+            ssh_total_units = len(ssh_tasks)
             total_lock = threading.Lock()
 
             def _update_total() -> None:
                 with total_lock:
-                    _total = local_count[0] + smb_count[0]
+                    _total = local_count[0] + smb_count[0] + ssh_total_units
                 flusher.set_total(_total)
                 _, ft_new, _ = _scale_params(_total)
                 flusher.set_flush_thresh(ft_new)
@@ -758,14 +792,16 @@ class CopyWorker(QThread):
                     smb_count[0] = n
                 _update_total()
 
-            def _local_scan_and_copy() -> None:
+            _update_total()
+
+            def _local_pipeline() -> None:
                 if local_tasks and not self._cancel.is_set():
                     local_found[0] = self._scan_copy_local_pipelined(
                         local_tasks, flusher, tracker,
                         emit_scan_finished=False, on_count_change=_on_local_count,
                     )
 
-            def _phase1_smb() -> None:
+            def _smb_pipeline() -> None:
                 if not smb_tasks or self._cancel.is_set():
                     return
                 if smb_tool_missing:
@@ -776,36 +812,65 @@ class CopyWorker(QThread):
                          t_)
                         for s_, d_, t_, *_ in smb_tasks
                     )
-                    return
-                ur, af, _guest = self._probe_shares(smb_tasks, user, pw)
-                _guest_box[0] = _guest
-                dead = ur | af
-                alive_tasks = smb_tasks
-                if dead:
-                    alive_tasks, pre_err = self._filter_dead_tasks(smb_tasks, dead, ur)
-                    smb_errors.extend(pre_err)
-                if alive_tasks and not self._cancel.is_set():
-                    scanner = _SmbScanner(user, pw, _guest, self._cancel, _on_smb_progress)
-                    exp, err = scanner.resolve(alive_tasks)
-                    smb_expanded.extend(exp)
-                    smb_errors.extend(err)
-                    with total_lock:
-                        smb_count[0] = len(smb_expanded) + len(smb_errors)
-                    _update_total()
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-                futs = [pool.submit(_local_scan_and_copy), pool.submit(_phase1_smb)]
-                _run_futures(futs, self._cancel, "Phase-1")
-
-            if self._cancel.is_set():
-                if smb_errors:
-                    flusher.push(er=[(src, err, 0) for src, err, _title in smb_errors], force=True)
+                    flusher.push(er=[(s_, e_, 0) for s_, e_, t_ in smb_errors], force=True)
                     err_counts: dict = {}
-                    for _src, _err, _title in smb_errors:
-                        if _title:
-                            err_counts.setdefault(_title, [0, 0, 0, 0])[2] += 1
+                    for _s, _e, _t in smb_errors:
+                        if _t:
+                            err_counts.setdefault(_t, [0, 0, 0, 0])[2] += 1
                     if err_counts:
                         tracker.batch_update(err_counts)
+                    return
+
+                ur, af, guest = self._probe_shares(smb_tasks, user, pw)
+                dead = ur | af
+                alive_tasks = smb_tasks
+                local_smb_errors: list[tuple[str, str, str]] = []
+                if dead:
+                    alive_tasks, pre_err = self._filter_dead_tasks(smb_tasks, dead, ur)
+                    local_smb_errors.extend(pre_err)
+
+                exp: list = []
+                err: list = []
+                if alive_tasks and not self._cancel.is_set():
+                    scanner = _SmbScanner(user, pw, guest, self._cancel, _on_smb_progress)
+                    exp, err = scanner.resolve(alive_tasks)
+
+                smb_expanded.extend(exp)
+                smb_errors.extend(local_smb_errors)
+                smb_errors.extend(err)
+                with total_lock:
+                    smb_count[0] = len(smb_expanded) + len(smb_errors)
+                _update_total()
+
+                if self._cancel.is_set():
+                    return
+
+                if local_smb_errors:
+                    flusher.push(er=[(src, err_, 0) for src, err_, _title in local_smb_errors], force=True)
+                    ec: dict = {}
+                    for _src, _err, _title in local_smb_errors:
+                        if _title:
+                            ec.setdefault(_title, [0, 0, 0, 0])[2] += 1
+                    if ec:
+                        tracker.batch_update(ec)
+
+                if (smb_expanded or err) and not self._cancel.is_set():
+                    self._copy_smb_all(smb_expanded, err, user, pw, guest, flusher, tracker)
+
+            def _ssh_pipeline() -> None:
+                if not ssh_tasks or self._cancel.is_set():
+                    return
+                self._copy_ssh_tasks(ssh_tasks, flusher, tracker)
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+                futs = [
+                    pool.submit(_local_pipeline),
+                    pool.submit(_smb_pipeline),
+                    pool.submit(_ssh_pipeline),
+                ]
+                _run_futures(futs, self._cancel, "backend pipeline")
+
+            if self._cancel.is_set():
                 flusher.flush()
                 tracker.emit_all(self.entry_status)
                 self.finished_work.emit(
@@ -813,18 +878,11 @@ class CopyWorker(QThread):
                 )
                 return
 
-            guest = _guest_box[0]
-            total = local_found[0] + len(smb_expanded) + len(smb_errors)
+            total = local_found[0] + len(smb_expanded) + len(smb_errors) + ssh_total_units
             flusher.set_total(total)
             _, ft, _ = _scale_params(total)
             flusher.set_flush_thresh(ft)
             self.scan_finished.emit(total)
-
-            if (smb_expanded or smb_errors) and not self._cancel.is_set():
-                self._copy_smb_all(smb_expanded, smb_errors, user, pw, guest, flusher, tracker)
-
-            if ssh_tasks and not self._cancel.is_set():
-                self._copy_ssh_tasks(ssh_tasks, flusher, tracker)
 
             self._run_post_hooks(local_tasks + ssh_tasks + smb_tasks)
             flusher.flush()
