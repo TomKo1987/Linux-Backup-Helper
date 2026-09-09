@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import threading
 from dataclasses import dataclass
+from functools import partial
 from itertools import groupby
 from pathlib import Path as _Path
 from typing import Callable, Protocol, TYPE_CHECKING
@@ -398,14 +399,6 @@ class _SmbScanner:
         seen_get: set = set()
         tasks: list[Callable[[], None]] = []
 
-        def create_get_task(_h, _sh, _rp, _d, _ti, _ex):
-            return lambda: self._do_get(_h, _sh, _rp, _d, _ti, expanded, errors, _ex)
-
-        def create_put_task(_s, _h, _sh, _rp, _ti, _is_file, _ex):
-            if _is_file:
-                return lambda: self._do_put_file(_s, _h, _sh, _rp, _ti, expanded, _ex)
-            return lambda: self._do_put_dir(_s, _h, _sh, _rp, _ti, expanded, _ex)
-
         for src, dst, *rest in jobs:
             if self._cancel.is_set():
                 break
@@ -419,12 +412,12 @@ class _SmbScanner:
                 if key in seen_get:
                     continue
                 seen_get.add(key)
-                tasks.append(create_get_task(host, share, rpath, dst, title, excludes))
+                tasks.append(partial(self._do_get, host, share, rpath, dst, title, expanded, errors, excludes))
             else:
                 if src in excludes:
                     continue
-                is_file = os.path.isfile(src)
-                tasks.append(create_put_task(src, host, share, rpath, title, is_file, excludes))
+                fn = self._do_put_file if os.path.isfile(src) else self._do_put_dir
+                tasks.append(partial(fn, src, host, share, rpath, title, expanded, excludes))
 
         if self._cancel.is_set():
             return [], []

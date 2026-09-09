@@ -26,18 +26,16 @@ _FLUSH_INTERVAL  = 0.3
 _SCAN_EMIT_SECS  = 0.5
 _SCAN_PIPE_BATCH = 128
 _LOCAL_BATCH     = 256
-_CLAIM_SIZE      = 32
 _PIPE_MAXSIZE    = 1024
 _MIN_FREE        = 500 * 1024 * 1024
 
 
-def _scale_params(total: int) -> tuple[int, int, int, int, int]:
-    w = _WORKERS
-    if total >= 100_000: return 256, 2048, 20_000, 1024, w
-    if total >=  50_000: return 128, 1024, 10_000,  512, w
-    if total >=  10_000: return  64,  512,  5_000,  256, min(w, 8)
-    if total >=   2_000: return  32,  256,  2_500,  128, min(w, 6)
-    return _CLAIM_SIZE, _LOCAL_BATCH, _FLUSH_THRESH, _SCAN_PIPE_BATCH, min(w, 4)
+def _scale_params(total: int) -> tuple[int, int, int]:
+    if total >= 100_000: return 2048, 20_000, 1024
+    if total >=  50_000: return 1024, 10_000,  512
+    if total >=  10_000: return  512,  5_000,  256
+    if total >=   2_000: return  256,  2_500,  128
+    return _LOCAL_BATCH, _FLUSH_THRESH, _SCAN_PIPE_BATCH
 
 
 _RSYNC_DELETE_RE = re.compile(r"^deleting\s+(.+)$")
