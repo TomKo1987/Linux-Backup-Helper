@@ -158,9 +158,11 @@ def _do_copy(entry, cancel: threading.Event, ok_l: list, sk_l: list, er_l: list,
         er_l.append((src, aux, 0))
         if title: _bump_count(tc, title, 2)
 
-def _is_up_to_date_local(dst: str, src_st: "os.stat_result") -> bool:
+def _is_up_to_date_local(dst: str, src_st: "os.stat_result",
+                          dst_st: "os.stat_result | None" = None) -> bool:
+
     try:
-        d = os.lstat(dst)
+        d = dst_st if dst_st is not None else os.lstat(dst)
         return (stat.S_ISREG(d.st_mode)
                 and d.st_size == src_st.st_size
                 and abs(d.st_mtime_ns - src_st.st_mtime_ns) <= 2_000_000_000)

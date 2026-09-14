@@ -31,12 +31,6 @@ def _hline(color: str) -> QFrame:
 
 
 class _ChipStackMixin:
-    """Shared chip-tab/stacked-widget switching behavior for tab widgets that
-    show a row of colored chip buttons above a QStackedWidget.
-
-    Classes using this mixin must set: self._active_idx (int), self._stack
-    (QStackedWidget), self._chips (list[QPushButton]), self._chip_colors (list[str]).
-    """
 
     _active_idx: int
     _stack: QStackedWidget
@@ -128,28 +122,7 @@ class _DryRunWorker(QThread):
                 self._classify_file(src_p, src_p.name, dst_p, to_copy, to_skip, errors)
                 continue
 
-            for dirpath, dirs, files in os.walk(src_p, followlinks=False):
-                if self._cancel.is_set():
-                    break
-                dirpath_abs = str(Path(dirpath).resolve())
-                dirs[:] = [
-                    d for d in dirs
-                    if not _SKIP_RE.search(d)
-                    and os.path.join(dirpath_abs, d) not in excl_set
-                ]
-                for fname in files:
-                    if _SKIP_RE.search(fname):
-                        continue
-                    src_file = Path(dirpath) / fname
-                    src_file_str = str(src_file)
-                    if src_file_str in excl_set or str(src_file.resolve()) in excl_set:
-                        continue
-                    try:
-                        rel = src_file.relative_to(src_p)
-                    except ValueError:
-                        continue
-                    dst_file = dst_p / rel
-                    self._classify_file(src_file, str(rel), dst_file, to_copy, to_skip, errors)
+            self._walk_dir(src_abs, str(dst_p), excl_set, to_copy, to_skip, errors)
 
         return dict(
             title=title,
@@ -158,6 +131,90 @@ class _DryRunWorker(QThread):
             errors=errors,
             src_total=len(to_copy) + len(to_skip),
         )
+
+    def _walk_dir(self, src_abs: str, dst_abs: str, excl_set: set,
+                  to_copy: list, to_skip: list, errors: list) -> None:
+
+        stack = [(src_abs, dst_abs)]
+        while stack:
+            if self._cancel.is_set():
+                return
+            cur_src, cur_dst = stack.pop()
+            try:
+                with os.scandir(cur_src) as it:
+                    entries = list(it)
+            except OSError as e:
+                errors.append((cur_src, str(e)))
+                continue
+
+            for entry in entries:
+                if self._cancel.is_set():
+                    return
+                if entry.path in excl_set or _SKIP_RE.search(entry.name):
+                    continue
+                dst_path = os.path.join(cur_dst, entry.name)
+                try:
+                    is_symlink = entry.is_symlink()
+                    is_dir_eff = (not is_symlink) and entry.is_dir(follow_symlinks=False)
+                except OSError as e:
+                    errors.append((entry.path, str(e)))
+                    continue
+
+                if is_dir_eff:
+                    stack.append((entry.path, dst_path))
+                    continue
+
+                rel = os.path.relpath(entry.path, src_abs)
+                if is_symlink:
+                    self._classify_symlink(entry.path, rel, dst_path, to_copy, to_skip, errors)
+                    continue
+                try:
+                    src_stat = entry.stat(follow_symlinks=False)
+                except OSError as e:
+                    errors.append((rel, str(e)))
+                    continue
+                self._classify_stat(rel, dst_path, src_stat, to_copy, to_skip)
+
+    @staticmethod
+    def _classify_symlink(
+            src_file_str: str,
+        rel_name: str,
+        dst_file_str: str,
+        to_copy: list[tuple[str, str]],
+        to_skip: list[str],
+        errors: list[tuple[str, str]],
+    ) -> None:
+        try:
+            target = os.readlink(src_file_str)
+        except OSError as e:
+            errors.append((rel_name, str(e)))
+            return
+
+        if not os.path.lexists(dst_file_str):
+            to_copy.append((rel_name, "new"))
+        elif _is_symlink_up_to_date(dst_file_str, target):
+            to_skip.append(rel_name)
+        else:
+            to_copy.append((rel_name, "modified"))
+
+    @staticmethod
+    def _classify_stat(
+            rel_name: str,
+        dst_file_str: str,
+        src_stat: "os.stat_result",
+        to_copy: list[tuple[str, str]],
+        to_skip: list[str],
+    ) -> None:
+        try:
+            dst_st = os.lstat(dst_file_str)
+        except OSError:
+            to_copy.append((rel_name, "new"))
+            return
+
+        if _is_up_to_date_local(dst_file_str, src_stat, dst_st=dst_st):
+            to_skip.append(rel_name)
+        else:
+            to_copy.append((rel_name, "modified"))
 
     @staticmethod
     def _classify_file(
@@ -192,16 +249,16 @@ class _DryRunWorker(QThread):
             errors.append((rel_name, str(e)))
             return
 
-        if not dst_file.exists():
+        try:
+            dst_st = os.lstat(dst_file)
+        except OSError:
             to_copy.append((rel_name, "new"))
+            return
+
+        if _is_up_to_date_local(str(dst_file), src_stat, dst_st=dst_st):
+            to_skip.append(rel_name)
         else:
-            try:
-                if _is_up_to_date_local(str(dst_file), src_stat):
-                    to_skip.append(rel_name)
-                else:
-                    to_copy.append((rel_name, "modified"))
-            except OSError as e:
-                errors.append((rel_name, str(e)))
+            to_copy.append((rel_name, "modified"))
 
 
 def _style_chip_tabs(chips: list[QPushButton], colors: list[str], active_idx: int) -> None:
@@ -253,6 +310,7 @@ class _SearchableList(QWidget):
             f"QListWidget::item:hover{{background:{t['bg2']};}}"
         )
         self._all_items = items
+        self._all_items_lower = [s.lower() for s in items]
         self._list.addItems(items)
         lay.addWidget(self._list, 1)
 
@@ -266,7 +324,11 @@ class _SearchableList(QWidget):
     def _filter(self, text: str) -> None:
         needle = text.strip().lower()
         self._list.clear()
-        hits = [s for s in self._all_items if needle in s.lower()] if needle else self._all_items
+        if needle:
+            hits = [s for s, s_lower in zip(self._all_items, self._all_items_lower)
+                     if needle in s_lower]
+        else:
+            hits = self._all_items
         self._list.addItems(hits)
         n_total = len(self._all_items)
         n_shown = len(hits)
@@ -275,12 +337,31 @@ class _SearchableList(QWidget):
 
     def update_items(self, items: list[str]) -> None:
         self._all_items = items
+        self._all_items_lower = [s.lower() for s in items]
         self._list.clear()
         self._list.addItems(items)
         self._count_lbl.setText(tr("{n:,} items", n=len(items)))
         current_filter = self._search.text()
         if current_filter:
             self._filter(current_filter)
+
+    def append_items(self, items: list[str]) -> None:
+        if not items:
+            return
+        self._all_items.extend(items)
+        self._all_items_lower.extend(s.lower() for s in items)
+        current_filter = self._search.text().strip().lower()
+        if not current_filter:
+            self._list.addItems(items)
+        else:
+            hits = [s for s in items if current_filter in s.lower()]
+            if hits:
+                self._list.addItems(hits)
+        n_total = len(self._all_items)
+        n_shown = self._list.count()
+        suffix = (tr(" (showing {n_shown:,} of {n_total:,})", n_shown=n_shown, n_total=n_total)
+                  if current_filter else "")
+        self._count_lbl.setText(tr("{n_total:,} items{suffix}", n_total=n_total, suffix=suffix))
 
 
 class _EntryTabWidget(_ChipStackMixin, QWidget):
@@ -292,8 +373,12 @@ class _EntryTabWidget(_ChipStackMixin, QWidget):
         to_skip = result["to_skip"]
         errors  = result["errors"]
 
-        n_new = sum(1 for _, r in to_copy if r == "new")
-        n_mod = sum(1 for _, r in to_copy if r == "modified")
+        n_new = n_mod = 0
+        for _, reason in to_copy:
+            if reason == "new":
+                n_new += 1
+            elif reason == "modified":
+                n_mod += 1
         n_err = len(errors)
 
         lay = QVBoxLayout(self)
@@ -501,37 +586,56 @@ class _GlobalViewTab(_ChipStackMixin, QWidget):
 
         self._active_idx = -1
         self._switch(0)
+        self._n_copy = self._n_skip = self._n_err = 0
+
+    @staticmethod
+    def _format_result(r: dict) -> "tuple[list[str], list[str], list[str]]":
+        entry_title = r["title"].replace("<br>", " · ")
+        copy_items = [f"[{reason}]  {rel}  ←  {entry_title}" for rel, reason in r["to_copy"]]
+        skip_items = [f"{rel}  ←  {entry_title}" for rel in r["to_skip"]]
+        err_items  = [f"{rel}  →  {msg}  ←  {entry_title}" for rel, msg in r["errors"]]
+        return copy_items, skip_items, err_items
+
+    def _refresh_chips(self) -> None:
+        t = current_theme()
+        chip_defs = [
+            (tr("📋  To copy  {n:,}", n=self._n_copy), t["info"]    if self._n_copy else t["text_dim"]),
+            (tr("✓  Up-to-date  {n:,}", n=self._n_skip), t["success"]),
+            (tr("⚠  Errors  {n:,}", n=self._n_err),      t["error"]   if self._n_err  else t["text_dim"]),
+        ]
+        for i, (label, color) in enumerate(chip_defs):
+            self._chips[i].setText(label)
+            self._chip_colors[i] = color
+
+    def add_result(self, result: dict) -> None:
+        copy_items, skip_items, err_items = self._format_result(result)
+        self._n_copy += len(copy_items)
+        self._n_skip += len(skip_items)
+        self._n_err  += len(err_items)
+        self._copy_list.append_items(copy_items)
+        self._skip_list.append_items(skip_items)
+        self._err_list.append_items(err_items)
+        self._refresh_chips()
 
     def update_data(self, results: list[dict]) -> None:
-        t = current_theme()
         all_copy: list[str] = []
         all_skip: list[str] = []
         all_err:  list[str] = []
         for r in results:
-            entry_title = r["title"].replace("<br>", " · ")
-            for rel, reason in r["to_copy"]:
-                all_copy.append(f"[{reason}]  {rel}  ←  {entry_title}")
-            for rel in r["to_skip"]:
-                all_skip.append(f"{rel}  ←  {entry_title}")
-            for rel, msg in r["errors"]:
-                all_err.append(f"{rel}  →  {msg}  ←  {entry_title}")
+            copy_items, skip_items, err_items = self._format_result(r)
+            all_copy.extend(copy_items)
+            all_skip.extend(skip_items)
+            all_err.extend(err_items)
 
-        n_copy = len(all_copy)
-        n_skip = len(all_skip)
-        n_err  = len(all_err)
+        self._n_copy = len(all_copy)
+        self._n_skip = len(all_skip)
+        self._n_err  = len(all_err)
 
         self._copy_list.update_items(all_copy)
         self._skip_list.update_items(all_skip)
         self._err_list.update_items(all_err)
 
-        chip_defs = [
-            (tr("📋  To copy  {n:,}", n=n_copy),    t["info"]    if n_copy else t["text_dim"]),
-            (tr("✓  Up-to-date  {n:,}", n=n_skip),  t["success"]),
-            (tr("⚠  Errors  {n:,}", n=n_err),        t["error"]   if n_err  else t["text_dim"]),
-        ]
-        for i, (label, color) in enumerate(chip_defs):
-            self._chips[i].setText(label)
-            self._chip_colors[i] = color
+        self._refresh_chips()
 
         active = self._active_idx
         self._active_idx = -1
@@ -554,6 +658,7 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
 
         self._worker: _DryRunWorker | None = None
         self._results: list[dict] = []
+        self._total_copy = self._total_skip = self._total_error = 0
         self._build()
 
     def closeEvent(self, a0: QCloseEvent | None) -> None:
@@ -763,6 +868,7 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
             return
 
         self._results.clear()
+        self._total_copy = self._total_skip = self._total_error = 0
         while self._tabs.count() > 2:
             self._tabs.removeTab(2)
         self._overview.clear()
@@ -801,8 +907,12 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
 
     def _on_entry_done(self, result: dict) -> None:
         self._results.append(result)
+        self._total_copy  += len(result["to_copy"])
+        self._total_skip  += len(result["to_skip"])
+        self._total_error += len(result["errors"])
         self._add_entry_tab(result)
         self._overview.add_result(result)
+        self._global_view.add_result(result)
         self._update_totals()
 
     def _on_finished(self) -> None:
@@ -839,10 +949,7 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         self._tabs.tabBar().setTabToolTip(idx, tip)
 
     def _update_totals(self) -> None:
-        t           = current_theme()
-        total_copy  = sum(len(r["to_copy"]) for r in self._results)
-        total_skip  = sum(len(r["to_skip"]) for r in self._results)
-        total_error = sum(len(r["errors"])  for r in self._results)
+        t = current_theme()
 
         def _upd(btn: QPushButton, text: str, color: str) -> None:
             btn.setText(text)
@@ -852,11 +959,9 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
                 f"QPushButton:hover{{background:{color}18;border-radius:4px;}}"
             )
 
-        _upd(self._lbl_copy,  tr("{n:,}  to copy", n=total_copy),     t["info"])
-        _upd(self._lbl_skip,  tr("{n:,}  up-to-date", n=total_skip),  t["success"])
-        _upd(self._lbl_error, tr("{n:,}  errors", n=total_error),      t["error"])
-
-        self._global_view.update_data(self._results)
+        _upd(self._lbl_copy,  tr("{n:,}  to copy", n=self._total_copy),     t["info"])
+        _upd(self._lbl_skip,  tr("{n:,}  up-to-date", n=self._total_skip),  t["success"])
+        _upd(self._lbl_error, tr("{n:,}  errors", n=self._total_error),      t["error"])
 
 
 class _ModeCard(QWidget):

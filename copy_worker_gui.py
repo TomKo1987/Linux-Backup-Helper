@@ -323,7 +323,7 @@ class _SummaryWidget(QWidget):
                 self._progress_bar.setRange(0, 0)
                 self._progress_bar.setValue(0)
                 self._prog_pct.setText("…")
-                self._progress_bar.setFormat(tr("Scanning…"))
+                self._progress_bar.setFormat(tr("Copying… ({done:,} done)", done=done) if done > 0 else tr("Scanning…"))
 
     def _update_segments(self, copied: int, skipped: int, deleted: int, errors: int) -> None:
         self._last_seg_counts = (copied, skipped, deleted, errors)
@@ -870,9 +870,19 @@ class CopyDialog(_StandardKeysMixin, QDialog):
     def _set_status_scanning(self, phase: str, scanned: int) -> None:
         self._summary.set_status_html(self._status_badge("🔍", tr("{phase}… ({n:,} found)", phase=phase, n=scanned), self._t["accent2"]))
 
+    def _set_status_copying(self) -> None:
+        self._summary.set_status_html(self._status_badge(
+            "📦", tr("{op}… ({done:,} / {total:,} files)", op=self._operation, done=self._done, total=self._total)
+            if self._total > 0 else tr("{op}…", op=self._operation),
+            self._t["accent"],
+        ))
+
     def _set_status_finished(self, icon: str, label: str, color: str) -> None: self._summary.set_status_html(self._status_badge(icon, label, color))
 
-    def _on_scan_progress(self, phase: str, scanned: int) -> None: self._set_status_scanning(phase, scanned)
+    def _on_scan_progress(self, phase: str, scanned: int) -> None:
+        if self._done > 0:
+            return
+        self._set_status_scanning(phase, scanned)
 
     def _on_scan_finished(self, total: int) -> None:
         self._total = total
@@ -904,6 +914,8 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         processed = self._drain_pending()
         if processed:
             self._update_tab_labels()
+        if self._done > 0:
+            self._set_status_copying()
         self._summary.update_stats(self._operation, self._done, self._total, self.copied, self.skipped,
                                    self._display_errors, self._display_deleted, elapsed,
                                    self._size_copied, self._size_skipped, self._display_size_deleted, finished=False)
@@ -948,7 +960,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
             self._pending_de.append((p, r))
         self._pending_er.extend((s, m) for s, m, _ in er)
 
-        if total > 0:
+        if total > 0 or done > 0:
             self._summary.update_progress_bar(done, total)
 
     def _on_done(self, c, s, e, d, cancelled) -> None:

@@ -1,6 +1,7 @@
 import hashlib
 import os
 import re
+import stat
 import subprocess
 from functools import lru_cache as _lru_cache
 from pathlib import Path
@@ -34,6 +35,13 @@ def _mtime(path: Path) -> float:
         return 0.0
 
 
+def _stat_or_none(path: Path) -> "os.stat_result | None":
+    try:
+        return path.stat()
+    except OSError:
+        return None
+
+
 def _sha256(path: Path, size: "int | None" = None, limit: int = 8 * 1024 * 1024) -> str | None:
     try:
         if size is None:
@@ -54,23 +62,30 @@ def _sha256_cached(path_str: str, _mtime_ns: int, size: int) -> str | None:
     return _sha256(Path(path_str), size=size)
 
 
-def _hash_v(p: Path) -> str | None:
+def _hash_v(p: Path, st: "os.stat_result | None" = None) -> str | None:
     try:
-        st = p.stat()
+        if st is None:
+            st = p.stat()
         return _sha256_cached(str(p), st.st_mtime_ns, st.st_size)
     except OSError:
         return None
 
 
-def _surface_mtime(path: Path) -> float:
-    best = _mtime(path)
-    try:
-        if path.is_dir():
-            for child in path.iterdir():
-                t = _mtime(child)
-                best = max(best, t)
-    except OSError:
-        pass
+def _surface_mtime(path: Path, root_st: "os.stat_result | None" = None) -> float:
+    st = root_st if root_st is not None else _stat_or_none(path)
+    if st is None:
+        return 0.0
+    best = st.st_mtime
+    if stat.S_ISDIR(st.st_mode):
+        try:
+            with os.scandir(path) as it:
+                for entry in it:
+                    try:
+                        best = max(best, entry.stat().st_mtime)
+                    except OSError:
+                        pass
+        except OSError:
+            pass
     return best
 
 
@@ -239,17 +254,7 @@ def _service_is_active(name: str) -> bool:
         return False
 
 
-def _safe_exists(path: Path) -> bool:
-    try:
-        return path.exists()
-    except OSError:
-        return False
-
-
 def _ensure_drives_mounted(parent) -> bool:
-    """Check whether any drives referenced by verify paths need mounting and,
-    if so, prompt to mount them. Returns True if it's safe to proceed
-    (nothing needed, or mounting succeeded), False if the caller should abort."""
     needed = check_drives_to_mount(_collect_verify_paths())
     if not needed:
         return True
@@ -291,16 +296,18 @@ def _check_dotfile_status(sf: dict) -> "dict | None":
     except OSError:
         return {"name": src_raw, "status": "src_missing", "src": src_raw, "dst": dst_raw}
     name = src.name or str(src)
-    if not _safe_exists(src):
+    src_st = _stat_or_none(src)
+    dst_st = _stat_or_none(dst)
+    if src_st is None:
         status = "src_missing"
-    elif not _safe_exists(dst):
+    elif dst_st is None:
         status = "dst_missing"
     else:
-        h_src, h_dst = _hash_v(src), _hash_v(dst)
+        h_src, h_dst = _hash_v(src, src_st), _hash_v(dst, dst_st)
         if h_src and h_dst:
             status = "ok" if h_src == h_dst else "changed"
         else:
-            status = "ok" if _mtime(dst) >= _mtime(src) - 2 else "changed"
+            status = "ok" if dst_st.st_mtime >= src_st.st_mtime - 2 else "changed"
     return {"name": name, "status": status, "src": str(src), "dst": str(dst)}
 
 
@@ -414,20 +421,40 @@ class _VerifyWorker(QThread):
                 continue
             try:
                 issues: list[str] = []
-
-                for s in entry.get("source", []):
-                    if not is_smb(s) and not is_ssh(s) and not _safe_exists(_ep(s)):
+                srcs, dsts = entry.get("source", []), entry.get("destination", [])
+                src_stats: list["os.stat_result | None"] = []
+                for s in srcs:
+                    if is_smb(s) or is_ssh(s):
+                        src_stats.append(None)
+                        continue
+                    st = _stat_or_none(_ep(s))
+                    if st is None:
                         issues.append(tr("Source missing: {p}", p=s))
-                for d in entry.get("destination", []):
-                    if not is_smb(d) and not is_ssh(d) and not _safe_exists(_ep(d)):
+                    src_stats.append(st)
+
+                dst_stats: list["os.stat_result | None"] = []
+                for d in dsts:
+                    if is_smb(d) or is_ssh(d):
+                        dst_stats.append(None)
+                        continue
+                    st = _stat_or_none(_ep(d))
+                    if st is None:
                         issues.append(tr("Destination missing: {p}", p=d))
-                if not issues:
-                    srcs, dsts = entry.get("source", []), entry.get("destination", [])
-                    if srcs and dsts:
-                        src_t = max((_surface_mtime(_ep(s)) for s in srcs), default=0.0)
-                        dst_t = max((_surface_mtime(_ep(d)) for d in dsts), default=0.0)
-                        if src_t > dst_t + 2:
-                            issues.append(tr("Backup may be outdated (source newer than destination)"))
+                    dst_stats.append(st)
+
+                if not issues and srcs and dsts:
+                    src_t = max(
+                        (_surface_mtime(_ep(s), st) for s, st in zip(srcs, src_stats)
+                         if not is_smb(s) and not is_ssh(s)),
+                        default=0.0,
+                    )
+                    dst_t = max(
+                        (_surface_mtime(_ep(d), st) for d, st in zip(dsts, dst_stats)
+                         if not is_smb(d) and not is_ssh(d)),
+                        default=0.0,
+                    )
+                    if src_t > dst_t + 2:
+                        issues.append(tr("Backup may be outdated (source newer than destination)"))
                 res["backups"].append({"header": entry.get("header", ""), "title": entry.get("title", ""),
                                        "status": "issues" if issues else "ok", "issues": issues})
             except Exception as exc:

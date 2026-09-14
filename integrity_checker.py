@@ -1,4 +1,5 @@
 import os
+import stat
 import time
 from pathlib import Path
 
@@ -21,23 +22,23 @@ __all__ = ["IntegrityCheckerDialog"]
 
 def _quick_scan(path_str: str) -> dict | None:
     root = Path(os.path.expanduser(os.path.expandvars(path_str)))
-    if not root.exists():
+    try:
+        root_st = root.stat()
+    except OSError:
         return None
-    if root.is_file():
-        try:
-            st = root.stat()
-            return {"file_count": 1, "dir_count": 0,
-                    "total_size": st.st_size, "mtime_newest": st.st_mtime}
-        except OSError:
-            return None
+    if not stat.S_ISDIR(root_st.st_mode):
+        return {"file_count": 1, "dir_count": 0, "total_size": root_st.st_size,
+                "mtime_newest": root_st.st_mtime, "names": {root.name}}
 
     fc = dc = 0
     total = 0
     newest = 0.0
+    names: set[str] = set()
     try:
         for entry in os.scandir(root):
             if _SKIP_RE.search(entry.name):
                 continue
+            names.add(entry.name)
             try:
                 st = entry.stat(follow_symlinks=False)
                 if entry.is_dir(follow_symlinks=False):
@@ -50,15 +51,8 @@ def _quick_scan(path_str: str) -> dict | None:
                 pass
     except OSError:
         return None
-    return {"file_count": fc, "dir_count": dc, "total_size": total, "mtime_newest": newest}
-
-
-def _top_level_names(path_str: str) -> set[str]:
-    root = Path(os.path.expanduser(os.path.expandvars(path_str)))
-    try:
-        return {e.name for e in os.scandir(root) if not _SKIP_RE.search(e.name)}
-    except OSError:
-        return set()
+    return {"file_count": fc, "dir_count": dc, "total_size": total,
+            "mtime_newest": newest, "names": names}
 
 
 def _fmt_bytes(n: int | float) -> str:
@@ -118,15 +112,12 @@ class _CheckWorker(QThread):
                 src_info = _quick_scan(src_raw)
                 dst_info = _quick_scan(dst_raw)
 
-                src_path = Path(os.path.expanduser(os.path.expandvars(src_raw)))
-                dst_path = Path(os.path.expanduser(os.path.expandvars(dst_raw)))
-
-                if not src_path.exists():
+                if src_info is None:
                     issues.append(tr("Source missing: {path}", path=src_raw))
                     ok = False
                     continue
 
-                if not dst_path.exists():
+                if dst_info is None:
                     issues.append(tr("Destination missing: {path}", path=dst_raw))
                     ok = False
                     continue
@@ -168,8 +159,8 @@ class _CheckWorker(QThread):
                             )
                             ok = False
 
-                src_names = _top_level_names(src_raw)
-                dst_names = _top_level_names(dst_raw)
+                src_names = src_info["names"] if src_info else set()
+                dst_names = dst_info["names"] if dst_info else set()
                 missing   = src_names - dst_names
                 if missing and len(missing) <= 5:
                     issues.append(
