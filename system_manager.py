@@ -52,6 +52,9 @@ _INFO_RE = re.compile(
 _PACMAN_PROGRESS_RE = re.compile(r'\[[-Cof ]+]\s*\d+%')
 
 
+_PKG_LOCK_HINT_RE = re.compile(r"db\.lck|dpkg/lock|archives/lock|metadata_lock|\.rpm\.lock|zypp\.lock|"
+                               r"xbps-lock|apk/db/lock|\.update_lock", re.IGNORECASE)
+
 _PKG_LOCK_INFO: tuple[tuple[str, str, str], ...] = (
     ("/var/lib/pacman/db.lck",           "pacman",   "sudo rm /var/lib/pacman/db.lck"),
     ("/var/lib/dpkg/lock-frontend",      "dpkg/apt", "sudo rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock"),
@@ -87,7 +90,8 @@ class _Style:
         cfg = cls.KIND_CFG.get(kind)
         if not cfg: return ""
         font, size, lh, ck = cfg
-        color = current_theme().get(ck, current_theme()["text"])
+        theme = current_theme()
+        color = theme.get(ck, theme["text"])
         return f"font-family:{font};font-size:{size}px;color:{color};padding:5px;line-height:{lh};word-break:break-word;"
 
     @staticmethod
@@ -277,10 +281,11 @@ class SystemManagerDialog(_StandardKeysMixin, QDialog):
         self._ticker.start(1000)
 
     def on_output(self, text: str, kind: str) -> None:
-        for needle, pm_name, hint in _PKG_LOCK_INFO:
-            if needle in text:
-                self._show_db_lock_error(pm_name, hint)
-                return
+        if _PKG_LOCK_HINT_RE.search(text):
+            for needle, pm_name, hint in _PKG_LOCK_INFO:
+                if needle in text:
+                    self._show_db_lock_error(pm_name, hint)
+                    return
         if kind == "finish": self._show_completion(); return
         if kind in _Style.KIND_CFG:
             self._append_html(text if ("<span " in text or "<p " in text) else _fmt_html(text, kind))
@@ -599,7 +604,7 @@ class SystemManagerThread(QThread):
             specs["install_snap"] = (tr("Installing Snap…"), "snapd", d.get_snap_packages)
         if d.firewall_supported() or S.firewall_config.get("backend"):
             fw_backend = S.firewall_config.get("backend") or d.get_firewall_service_name()
-            fw_pkgs = ["ufw"] if fw_backend == "ufw" else ["firewalld"]
+            fw_pkgs = d.get_firewall_packages_for(fw_backend)
             specs["enable_firewall"] = (tr("Initialising firewall…"), fw_backend, lambda: fw_pkgs)
 
         return {
@@ -669,6 +674,7 @@ class SystemManagerThread(QThread):
                 r = subprocess.run(
                     cmd,
                     input=input_data,
+                    stdin=None if input_data else subprocess.DEVNULL,
                     capture_output=True,
                     env=self._env_snapshot,
                     timeout=timeout,
@@ -691,72 +697,44 @@ class SystemManagerThread(QThread):
                 if input_data:
                     _zero(input_data)
 
-        proc = None
+        proc: subprocess.Popen | None = None
+        master_fd = -1
 
         try:
             import pty as _pty_mod
-
+            master_fd, slave_fd = _pty_mod.openpty()
             try:
-                _pty_master, _pty_slave = _pty_mod.openpty()
-
-                try:
-                    try:
-                        proc = subprocess.Popen(
-                            cmd,
-                            stdout=_pty_slave,
-                            stderr=subprocess.PIPE,
-                            stdin=subprocess.PIPE,
-                            cwd=cwd,
-                            env=self._env_snapshot
-                        )
-                    finally:
-                        os.close(_pty_slave)
-                        _pty_slave = -1
-
-                    proc.stdout = os.fdopen(_pty_master, 'rb', buffering=0)
-
-                except (OSError, subprocess.SubprocessError) as exc:
-                    logger.exception("Failed to launch subprocess with PTY")
-
-                    if _pty_slave != -1:
-                        try:
-                            os.close(_pty_slave)
-                        except OSError:
-                            pass
-
-                    if proc is not None and proc.stdout is not None:
-                        try:
-                            proc.stdout.close()
-                        except OSError:
-                            pass
-                    else:
-                        try:
-                            os.close(_pty_master)
-                        except OSError:
-                            pass
-
-                    if proc is not None:
-                        try:
-                            proc.kill()
-                            proc.wait()
-                        except (OSError, subprocess.SubprocessError):
-                            pass
-
-                    raise exc
-
-            except OSError:
                 proc = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    stdin=subprocess.PIPE,
-                    cwd=cwd,
-                    env=self._env_snapshot
-                )
+                    cmd, stdout=slave_fd, stderr=subprocess.PIPE, stdin=subprocess.PIPE,
+                    cwd=cwd, env=self._env_snapshot)
+            finally:
+                os.close(slave_fd)
+            proc.stdout = os.fdopen(master_fd, "rb", buffering=0)
+            master_fd = -1
+        except (ImportError, OSError, subprocess.SubprocessError) as exc:
+            logger.debug("PTY launch failed (%s) — falling back to pipes", exc)
+            if master_fd != -1:
+                try:
+                    os.close(master_fd)
+                except OSError:
+                    pass
+            if proc is not None:
+                try:
+                    proc.kill()
+                    proc.wait(timeout=5)
+                except (OSError, subprocess.SubprocessError):
+                    pass
+            try:
+                proc = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE,
+                    cwd=cwd, env=self._env_snapshot)
+            except (OSError, subprocess.SubprocessError) as exc2:
+                self.outputReceived.emit(tr("Command launch error: {exc}", exc=exc2), "error")
+                return SimpleNamespace(returncode=1, stdout="", stderr=str(exc2))
 
-        except (OSError, subprocess.SubprocessError) as exc:
-            self.outputReceived.emit(tr("Command launch error: {exc}", exc=exc), "error")
-            return SimpleNamespace(returncode=1, stdout="", stderr=str(exc))
+        if proc is None:
+            self.outputReceived.emit(tr("Command launch error: {exc}", exc="no process"), "error")
+            return SimpleNamespace(returncode=1, stdout="", stderr="")
 
         out_q: queue.Queue = queue.Queue()
 
@@ -845,7 +823,7 @@ class SystemManagerThread(QThread):
             try:
                 item = out_q.get(timeout=0.25)
             except queue.Empty:
-                if self.terminated and proc:
+                if self.terminated:
                     proc.terminate()
                     break
                 continue
@@ -942,15 +920,12 @@ class SystemManagerThread(QThread):
         _wait_timeout = timeout if (not self.terminated) else 30
 
         try:
-            rc = proc.wait(timeout=_wait_timeout) if proc and proc.poll() is None else (proc.returncode if proc else 1)
+            rc = proc.wait(timeout=_wait_timeout) if proc.poll() is None else proc.returncode
         except subprocess.TimeoutExpired:
-            if proc:
-                try:
-                    proc.kill()
-                    rc = proc.wait()
-                except OSError:
-                    rc = 1
-            else:
+            try:
+                proc.kill()
+                rc = proc.wait()
+            except OSError:
                 rc = 1
         except (OSError, subprocess.SubprocessError):
             rc = 1
@@ -1064,9 +1039,15 @@ class SystemManagerThread(QThread):
                    name=name, pm=self.distro.pkg_manager_name()), "error")
             return False
         ok = (self._exec(self.distro.get_pkg_install_cmd(name), stream=True).returncode == 0)
-        if ok: self._pkg_cache.mark_installed(name)
+        if ok:
+            self._pkg_cache.mark_installed(name)
+            self._invalidate_pkg_cache()
         self._emit_result(ok, tr("{name} successfully installed", name=name), tr("failed to install {name}", name=name))
         return ok
+
+    def _invalidate_pkg_cache(self) -> None:
+        if self.distro is not None:
+            self.distro.invalidate_installed_cache()
 
     def _install_with_retry(self, pkgs: list[str], bulk_fn, single_fn) -> list[str]:
         if not self.distro:
@@ -1074,7 +1055,7 @@ class SystemManagerThread(QThread):
         bulk_fn(pkgs)
         if self.terminated:
             return pkgs
-        still_missing = self.distro.filter_not_installed(pkgs)
+        still_missing = self.distro.filter_not_installed(pkgs, refresh=True)
         for p in pkgs:
             if p not in still_missing and self._pkg_cache: self._pkg_cache.mark_installed(p)
         failed = []
@@ -1085,10 +1066,11 @@ class SystemManagerThread(QThread):
                     failed.extend(still_missing[i:])
                     break
                 single_fn(pkg)
-                if self.distro.package_is_installed(pkg):
+                if self.distro.package_is_installed(pkg, allow_bulk=False):
                     if self._pkg_cache: self._pkg_cache.mark_installed(pkg)
                 else:
                     failed.append(pkg)
+            self._invalidate_pkg_cache()
         return failed
 
     def _batch_install(self, pkg_list, label: str, *, use_aur: bool = False) -> str | bool:
@@ -1251,12 +1233,14 @@ class SystemManagerThread(QThread):
             eff_helper = self._effective_aur_helper()
             if eff_helper:
                 sys_ok = (self._exec([eff_helper, "-Syu", "--noconfirm"], stream=True, timeout=None).returncode == 0)
+                self._invalidate_pkg_cache()
                 self._update_flatpak_apps()
                 self._emit_result(sys_ok, tr("System successfully updated"), tr("System update failed"))
                 return sys_ok
 
         cmd_str = self.distro.get_update_system_cmd()
         sys_ok = (self._exec(cmd_str, stream=True, timeout=None).returncode == 0)
+        self._invalidate_pkg_cache()
         self._update_flatpak_apps()
         self._emit_result(sys_ok, tr("System successfully updated"), tr("System update failed"))
         return sys_ok
@@ -1563,7 +1547,10 @@ class SystemManagerThread(QThread):
                 if created:
                     target_conf = created
 
-        assert target_conf is not None
+        if target_conf is None:
+            self.outputReceived.emit(tr("No systemd-boot entry could be determined for '{kernel_pkg}'",
+                                        kernel_pkg=kernel_pkg), "warning")
+            return _Status.WARNING
         return self._apply_systemd_boot_default(target_conf, esp)
 
     def _find_uki_entry(self, kernel_pkg: str, esp: Path) -> str | None:
@@ -1780,19 +1767,17 @@ class SystemManagerThread(QThread):
             self.outputReceived.emit(tr("{helper} already installed", helper=helper), "success")
             return True
 
-        build_deps = ["base-devel", "git"]
-        if helper == "paru":
-            build_deps.append("rust")
-            repo_url = "https://aur.archlinux.org/paru.git"
-        else:
-            build_deps.append("go")
-            repo_url = "https://aur.archlinux.org/yay.git"
+        lang_dep = "rust" if helper == "paru" else "go"
+        repo_url = f"https://aur.archlinux.org/{helper}.git"
 
-        missing_deps = [p for p in build_deps if not self.distro.package_is_installed(p)]
+        probed_deps = ["git", lang_dep]
+        missing_deps = [p for p in probed_deps if not self.distro.package_is_installed(p, allow_bulk=False)]
         freshly_added = set(missing_deps)
 
-        if missing_deps and self._exec(self.distro.get_batch_install_cmd(missing_deps), stream=True).returncode != 0:
+        install_deps = ["base-devel", *missing_deps]
+        if self._exec(self.distro.get_batch_install_cmd(install_deps), stream=True).returncode != 0:
             return False
+        self._invalidate_pkg_cache()
 
         target_dir = _HOME / helper
         shutil.rmtree(target_dir, ignore_errors=True)
@@ -1825,7 +1810,12 @@ class SystemManagerThread(QThread):
                 mtime = 0
             return 0 if "-debug-" not in f.name else 1, mtime
 
-        pkgs = sorted((f for f in target_dir.iterdir() if f.name.endswith((".pkg.tar.zst", ".pkg.tar.xz", ".pkg.tar.gz", ".pkg.tar.lz4", ".pkg.tar"))), key=_pkg_key)
+        _SUFFIXES = (".pkg.tar.zst", ".pkg.tar.xz", ".pkg.tar.gz", ".pkg.tar.lz4", ".pkg.tar")
+        try:
+            pkgs = sorted((f for f in target_dir.iterdir() if f.name.endswith(_SUFFIXES)), key=_pkg_key)
+        except OSError as exc:
+            self.outputReceived.emit(tr("Cannot read build directory {dir}: {exc}", dir=target_dir, exc=exc), "error")
+            return False
 
         if not pkgs:
             self.outputReceived.emit(tr("No {helper} package file found after build", helper=helper), "error")
@@ -1833,6 +1823,7 @@ class SystemManagerThread(QThread):
 
         ok = (self._exec(["sudo", "pacman", "-U", "--noconfirm", str(pkgs[0])], stream=True).returncode == 0)
         shutil.rmtree(target_dir, ignore_errors=True)
+        self._invalidate_pkg_cache()
         if ok and self._pkg_cache: self._pkg_cache.mark_installed(helper)
         self._emit_result(ok, tr("{helper} successfully installed", helper=helper), tr("{helper} installation failed", helper=helper))
         return ok
@@ -1876,6 +1867,18 @@ class SystemManagerThread(QThread):
             self.outputReceived.emit(tr("Flathub setup error: {exc}", exc=exc), "error")
             return False
 
+    @staticmethod
+    def _service_available(service: str) -> bool:
+        base = service.split(".", 1)[0]
+        if shutil.which(base):
+            return True
+        unit = service if service.endswith((".service", ".timer")) else f"{service}.service"
+        if LinuxDistroHelper.systemd_unit_exists(unit):
+            return True
+        if os.path.isfile(f"/etc/init.d/{base}") or os.path.isdir(f"/etc/sv/{base}"):
+            return True
+        return os.path.isfile(f"/etc/rc.d/rc.{base}")
+
     def _setup_service(self, service: str, packages: list, *, optional: tuple[str, ...] = ()) -> bool | str:
         if packages:
             for p in packages:
@@ -1884,10 +1887,11 @@ class SystemManagerThread(QThread):
                     return False
                 if not ok:
                     self.outputReceived.emit(tr("Optional package '{p}' could not be installed — continuing", p=p), "warning")
-        elif service not in ("fstrim.timer",) and self.distro and not shutil.which(service.split(".", 1)[0]):
+        elif service != "fstrim.timer" and not self._service_available(service):
             self.outputReceived.emit(
                 tr("No package known for '{service}' on {pm} — skipping",
-                   service=service, pm=self.distro.pkg_manager_name()), "warning")
+                   service=service,
+                   pm=self.distro.pkg_manager_name() if self.distro else "unknown"), "warning")
             return _Status.WARNING
         return self._enable_service(service)
 
@@ -1939,6 +1943,9 @@ class SystemManagerThread(QThread):
                                  stream=True).returncode == 0)
                 if ok:
                     ok = (self._exec(["sudo", "sv", "up", service], stream=True).returncode == 0)
+            else:
+                self.outputReceived.emit(
+                    tr("No runit service definition found at /etc/sv/{service}", service=service), "error")
 
         elif os.path.isfile(f"/etc/rc.d/rc.{service}"):
             self.outputReceived.emit(tr("Enabling {service} (BSD-style rc.d)", service=service), "info")
@@ -1986,6 +1993,7 @@ class SystemManagerThread(QThread):
         if direct_cmd:
             self.outputReceived.emit(tr("Removing orphaned packages…"), "info")
             ok = (self._exec(direct_cmd, stream=True).returncode == 0)
+            self._invalidate_pkg_cache()
             self._emit_result(ok, tr("Orphaned system packages successfully removed"),
                               tr("Could not remove orphaned system packages"))
         elif cmd:
@@ -1998,6 +2006,7 @@ class SystemManagerThread(QThread):
                 rem_cmd = self.distro.get_batch_remove_cmd(pkgs)
                 if rem_cmd:
                     ok = (self._exec(rem_cmd, stream=True).returncode == 0)
+                    self._invalidate_pkg_cache()
                     self._emit_result(ok, tr("Orphaned system packages successfully removed"),
                                       tr("Could not remove orphaned system packages"))
         else:
@@ -2025,7 +2034,7 @@ class SystemManagerThread(QThread):
 
         if ok and self.distro.has_aur:
             for _helper in ("paru", "yay"):
-                if self.distro.package_is_installed(_helper) or shutil.which(_helper):
+                if shutil.which(_helper) or self.distro.package_is_installed(_helper):
                     self.outputReceived.emit(tr("Cleaning {_helper} cache", _helper=_helper), "info")
                     helper_ok = (self._exec([_helper, "-Scc", "--noconfirm"], stream=True).returncode == 0)
                     self._emit_result(helper_ok, tr("{helper} cache successfully cleaned", helper=_helper),
