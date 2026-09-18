@@ -4,6 +4,7 @@ import re
 import shutil
 import subprocess
 import threading
+import time
 from functools import lru_cache
 from urllib.parse import urlparse
 
@@ -23,6 +24,7 @@ _SMB_MIN_BYTES_PER_SEC = 512 * 1024
 _SMB_CHUNK       = 1_000
 _FLUSH_THRESH    = 2_500
 _FLUSH_INTERVAL  = 0.3
+_ENTRY_EMIT_SECS = 0.5
 _SCAN_EMIT_SECS  = 0.5
 _SCAN_PIPE_BATCH = 128
 _LOCAL_BATCH     = 256
@@ -40,17 +42,34 @@ def _scale_params(total: int) -> tuple[int, int, int]:
 
 _RSYNC_DELETE_RE = re.compile(r"^deleting\s+(.+)$")
 
+_SKIP_GLOBS: tuple[str, ...] = (
+    "lock", ".lock", "lockfile", ".lck", ".parentlock", "Singleton*",
+    "cache", "Network Cache", "startupCache", "jumpListCache",
+    "*.sqlite-wal", "*.sqlite-shm", "*.journal", "*-journal", "*_journal",
+    "*.db-wal", "*.db-shm",
+    "idb", "WebStorage", "Session Storage", "Local Storage", "leveldb", "*.ldb",
+    "temp", "tmp", "*.tmp", "*.bak", "*.baklz4",
+    "recovery.jsonlz4", "recovery.baklz4", "sessionstore-backups",
+    "Thumbs.db", ".DS_Store", ".quota", ".user64", ".healthcheck", ".active-update",
+    "GPUCache", "ShaderCache", "blob_storage", "prefs.js",
+)
+
+
+def _glob_to_regex(pattern: str) -> str:
+    out: list[str] = []
+    for ch in pattern:
+        if ch == "*":
+            out.append(".*")
+        elif ch == "?":
+            out.append(".")
+        else:
+            out.append(re.escape(ch))
+    return "".join(out)
+
+
 _SKIP_RE = re.compile(
-    r"^(?:"
-    r"\.?lock|lockfile|\.lck|\.parentlock|Singleton\w*|"
-    r"cache|Network\sCache|startupCache|jumpListCache|"
-    r".*\.sqlite-wal|.*\.sqlite-shm|.*\.journal|.*[-_]journal|.*\.db-wal|.*\.db-shm|"
-    r"idb|WebStorage|Session\sStorage|Local\sStorage|leveldb|.*\.ldb|"
-    r"temp|tmp|.*\.tmp|.*\.bak|.*\.baklz4|recovery\.jsonlz4|recovery\.baklz4|sessionstore-backups|"
-    r"Thumbs\.db|\.DS_Store|\.quota|\.user64|\.healthcheck|\.active-update|"
-    r"GPUCache|ShaderCache|blob_storage|prefs\.js"
-    r")$",
-    re.I
+    "|".join(f"^{_glob_to_regex(p)}$" for p in _SKIP_GLOBS),
+    re.I,
 )
 
 _SMB_LINE_RE = re.compile(
@@ -78,13 +97,13 @@ def _parse_smb_mtime(raw: str) -> int:
     if month is None:
         return -1
     try:
-        import time as _time
-        return int(_time.mktime((
+        return int(time.mktime((
             int(year_s), month, int(day_s),
             int(hh), int(mm), int(ss), 0, 0, -1,
         )))
     except (ValueError, OverflowError):
         return -1
+
 
 _SMB_DOWN_RE = re.compile(
     r"HOST IS DOWN|NT_STATUS_HOST_UNREACHABLE|NT_STATUS_IO_TIMEOUT|"
@@ -114,7 +133,7 @@ def _check_destination_space(tasks: list[tuple]) -> list[str]:
     checked: set[str] = set()
     warnings: list[str] = []
     for _src, dst_raw, _title, *_ in tasks:
-        dsts = dst_raw if isinstance(dst_raw, list) else (dst_raw,)
+        dsts = dst_raw if isinstance(dst_raw, (list, tuple)) else (dst_raw,)
         for dst in dsts:
             dst = str(dst).strip()
             if not dst or is_smb(dst) or is_ssh(dst):
@@ -155,39 +174,37 @@ _smb_procs: dict[int, subprocess.Popen] = {}
 _smb_procs_lock = threading.Lock()
 
 
-def _classify_entry(e: "os.DirEntry") -> "tuple[bool, bool, bool] | None":
-    try:
-        is_symlink = e.is_symlink()
-        is_dir_eff = (not is_symlink) and e.is_dir(follow_symlinks=False)
-        is_file_eff = is_symlink or e.is_file(follow_symlinks=False)
-        return is_dir_eff, is_file_eff, is_symlink
-    except OSError:
-        return None
-
-
 def _scan_dir_entries(src: str, dst: str, excl: frozenset, cancel: threading.Event):
+    join     = os.path.join
+    skip     = _SKIP_RE.match
+    is_set   = cancel.is_set
+    has_excl = bool(excl)
     with os.scandir(src) as it:
         for e in it:
-            if cancel.is_set():
+            if is_set():
                 break
-            if e.path in excl or _SKIP_RE.search(e.name):
+            name = e.name
+            if skip(name):
                 continue
-            cls = _classify_entry(e)
-            if cls is None:
+            path = e.path
+            if has_excl and path in excl:
                 continue
-            is_dir_eff, is_file_eff, is_symlink = cls
-            dst_path = os.path.join(dst, e.name)
-            if is_dir_eff:
-                yield True, e.path, dst_path, None
-            elif is_file_eff:
-                if is_symlink:
-                    yield False, e.path, dst_path, True
-                else:
-                    try:
-                        st = e.stat(follow_symlinks=False)
-                    except OSError:
-                        st = None
-                    yield False, e.path, dst_path, st
+            try:
+                if e.is_symlink():
+                    yield False, path, join(dst, name), True
+                    continue
+                if e.is_dir(follow_symlinks=False):
+                    yield True, path, join(dst, name), None
+                    continue
+                if not e.is_file(follow_symlinks=False):
+                    continue
+                try:
+                    st = e.stat(follow_symlinks=False)
+                except OSError:
+                    st = None
+            except OSError:
+                continue
+            yield False, path, join(dst, name), st
 
 
 def _fsync_dir(path: str) -> None:
@@ -204,7 +221,10 @@ def _fsync_dir(path: str) -> None:
 def _ensure_dir(path: str) -> bool:
     if not path:
         return True
-    seen: set = _tls.__dict__.setdefault("seen_dirs", set())
+    try:
+        seen: set = _tls.seen_dirs
+    except AttributeError:
+        seen = _tls.seen_dirs = set()
     if path in seen:
         return True
     with _seen_dirs_lock:

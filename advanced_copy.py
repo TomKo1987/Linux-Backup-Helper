@@ -1,12 +1,15 @@
+import concurrent.futures
 import os
 import re
+import stat as _stat_mod
 import subprocess
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 
 from drive_utils import is_smb, is_ssh, build_rsync_cmd
 from state import apply_replacements, logger
-from copy_worker_core import _SKIP_RE, _RSYNC_DELETE_RE
+from copy_worker_core import _SKIP_RE, _RSYNC_DELETE_RE, _SMB_WORKERS, _run_futures
 from translations import tr
 
 __all__ = [
@@ -85,7 +88,7 @@ def _existing_versions(dst_abs: str) -> list[tuple[int, str]]:
                 m = _VERSION_RE.match(e.name)
                 if m is not None:
                     versions.append((int(m.group(1)), e.path))
-    except (FileNotFoundError, PermissionError, OSError):
+    except OSError:
         return []
     versions.sort(key=lambda v: v[0])
     return versions
@@ -122,30 +125,42 @@ def find_extraneous_paths(src_abs: str, dst_abs: str, excludes: frozenset) -> li
     if not os.path.isdir(src_abs) or not os.path.isdir(dst_abs):
         return extraneous
 
-    def _walk(rel: str) -> None:
-        d_dir = os.path.join(dst_abs, rel) if rel else dst_abs
+    join = os.path.join
+    stack: list[str] = [""]
+    while stack:
+        rel = stack.pop()
+        d_dir = join(dst_abs, rel) if rel else dst_abs
         try:
-            entries = list(os.scandir(d_dir))
-        except (PermissionError, FileNotFoundError, OSError):
-            return
+            with os.scandir(d_dir) as it:
+                entries = list(it)
+        except OSError:
+            continue
         for e in entries:
             if _SKIP_RE.search(e.name):
                 continue
-            rel_path = os.path.join(rel, e.name) if rel else e.name
-            s_path = os.path.join(src_abs, rel_path)
+            rel_path = join(rel, e.name) if rel else e.name
+            s_path = join(src_abs, rel_path)
             if s_path in excludes:
                 continue
-            if not os.path.lexists(s_path):
+            try:
+                s_st = os.lstat(s_path)
+            except (FileNotFoundError, NotADirectoryError):
                 extraneous.append(e.path)
                 continue
-            dst_is_dir = e.is_dir(follow_symlinks=False)
-            src_is_dir = os.path.isdir(s_path) and not os.path.islink(s_path)
+            except OSError as exc:
+                logger.warning("Mirror delete: cannot inspect source %r (%s) — keeping %r",
+                               apply_replacements(s_path), exc, apply_replacements(e.path))
+                continue
+            try:
+                dst_is_dir = e.is_dir(follow_symlinks=False)
+            except OSError:
+                continue
+            src_is_dir = _stat_mod.S_ISDIR(s_st.st_mode)
             if dst_is_dir and src_is_dir:
-                _walk(rel_path)
+                stack.append(rel_path)
             elif dst_is_dir != src_is_dir:
                 extraneous.append(e.path)
 
-    _walk("")
     return extraneous
 
 
@@ -256,8 +271,8 @@ def _resolve_ssh_mirror_delete(ssh_pairs: list[tuple[str, str]], excl, title: st
     if not confirm_del or not interactive:
         return True
 
-    all_deleted: list[str] = []
-    for s_str, d_str in ssh_pairs:
+    if len(ssh_pairs) == 1:
+        s_str, d_str = ssh_pairs[0]
         preview = _preview_ssh_mirror_delete(s_str, d_str, excl)
         if preview is None:
             logger.warning(
@@ -265,7 +280,34 @@ def _resolve_ssh_mirror_delete(ssh_pairs: list[tuple[str, str]], excl, title: st
                 "\u2014 skipping remote --delete for this backup entry for safety",
                 title, apply_replacements(s_str), apply_replacements(d_str))
             return False
-        all_deleted.extend(preview)
+        all_deleted = preview
+    else:
+        results: dict[int, "list[str] | None"] = {}
+        results_lock = threading.Lock()
+        cancel_event = threading.Event()
+
+        def _run_one(idx: int, _s_str: str, _d_str: str) -> None:
+            _preview = _preview_ssh_mirror_delete(_s_str, _d_str, excl)
+            with results_lock:
+                results[idx] = _preview
+            if _preview is None:
+                cancel_event.set()
+
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(_SMB_WORKERS, len(ssh_pairs))) as pool:
+            futs = [pool.submit(_run_one, i, s, d) for i, (s, d) in enumerate(ssh_pairs)]
+            _run_futures(futs, cancel_event, "ssh mirror preview")
+
+        all_deleted: list[str] = []
+        for i, (s_str, d_str) in enumerate(ssh_pairs):
+            preview = results.get(i)
+            if preview is None:
+                logger.warning(
+                    "Mirror delete [%s]: could not preview remote deletions for %r \u2192 %r "
+                    "\u2014 skipping remote --delete for this backup entry for safety",
+                    title, apply_replacements(s_str), apply_replacements(d_str))
+                return False
+            all_deleted.extend(preview)
 
     if not all_deleted:
         return True
@@ -285,6 +327,8 @@ def apply_advanced_options(tasks: list[tuple], *, interactive: bool = True, pare
 
     for src_list, dst_list, title, excl, pre_hooks, post_hooks, details in tasks:
         details = details or {}
+        src_list = [src_list] if isinstance(src_list, str) else list(src_list)
+        dst_list = [dst_list] if isinstance(dst_list, str) else list(dst_list)
         versioned = bool(details.get("versioned_archive")) and not is_restore
         mirror = bool(details.get("mirror_delete")) and not versioned and not is_restore
         if is_restore and details.get("versioned_archive"):

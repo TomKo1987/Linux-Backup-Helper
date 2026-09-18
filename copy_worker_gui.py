@@ -15,11 +15,13 @@ from PyQt6.QtWidgets import (
 from state import apply_replacements, logger
 from themes import current_theme, font_sz
 from translations import tr
-from ui_utils import card_frame_style, _StandardKeysMixin, size_to_screen, show_scrollable_message
+from ui_utils import card_frame_style, _StandardKeysMixin, show_scrollable_message
 
 from backup_lock import acquire_backup_lock, backup_lock_holder_pid, release_backup_lock
 from copy_worker_core import _check_destination_space, _format_unit, _cached_mono_style, _notify
 from copy_worker import CopyWorker, _NF_MARK
+
+_SEARCH_CACHE_MAX = 24
 
 
 @dataclass
@@ -38,7 +40,7 @@ def _make_stat_card(color: "str | None", title: str, val: str = "0", size_title:
     s_val   = size_val   or font_sz(16)
 
     frame = QFrame()
-    frame.setMinimumWidth(240)
+    frame.setMinimumWidth(150)
     border = f"border-left:4px solid {color};" if color else ""
     frame.setStyleSheet(f"QFrame {{background:{t['bg3']}; border-radius:8px; {border}}}")
 
@@ -50,7 +52,7 @@ def _make_stat_card(color: "str | None", title: str, val: str = "0", size_title:
 
     val_lbl = QLabel(val)
     val_lbl.setStyleSheet(_cached_mono_style(s_val, color or t["text"], bold=bold_val, extra="border:none;"))
-    val_lbl.setMinimumWidth(225 if color else 250)
+    val_lbl.setMinimumWidth(90 if color else 110)
     val_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom)
 
     inner.addWidget(title_lbl)
@@ -64,7 +66,7 @@ def _make_stat_card(color: "str | None", title: str, val: str = "0", size_title:
     if color:
         size_lbl.setText("0 B")
         size_lbl.setStyleSheet(_cached_mono_style(font_sz(14), color, extra="border:none;"))
-        size_lbl.setMinimumWidth(200)
+        size_lbl.setMinimumWidth(110)
         size_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom)
         val_row.addWidget(size_lbl, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom)
 
@@ -93,6 +95,7 @@ class _SummaryWidget(QWidget):
         self._entry_row_labels: dict[str, QLabel]    = {}
         self._entry_grid_cols = 1
         self._last_seg_counts: tuple[int, int, int, int] = (0, 0, 0, 0)
+        self._last_seg_avail = -1
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(20, 20, 20, 20)
@@ -116,7 +119,9 @@ class _SummaryWidget(QWidget):
         self._status_center_lbl.setStyleSheet("border:none; background:transparent;")
 
         self.total_lbl = QLabel("")
-        self.total_lbl.setStyleSheet("font-size: 20px; border:none; background:transparent; padding:0px 0px")
+        self.total_lbl.setStyleSheet(
+            f"font-size:{font_sz(6)}px; color:{t['text']}; "
+            f"border:none; background:transparent; padding:0px;")
         self.total_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         hdr.addWidget(self.op_lbl, 0, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -326,15 +331,19 @@ class _SummaryWidget(QWidget):
                 self._progress_bar.setFormat(tr("Copying… ({done:,} done)", done=done) if done > 0 else tr("Scanning…"))
 
     def _update_segments(self, copied: int, skipped: int, deleted: int, errors: int) -> None:
-        self._last_seg_counts = (copied, skipped, deleted, errors)
+        counts = (copied, skipped, deleted, errors)
+        avail  = max(1, self._rate_card.width() - 40)
+        if counts == self._last_seg_counts and avail == self._last_seg_avail:
+            return
+        self._last_seg_counts = counts
+        self._last_seg_avail  = avail
         segs  = (self._seg_copied, self._seg_skipped, self._seg_deleted, self._seg_errors)
         total = copied + skipped + deleted + errors
         if total == 0:
-            for s in segs:
-                s.setFixedWidth(0)
+            for seg in segs:
+                seg.setFixedWidth(0)
             return
-        avail = max(1, self._rate_card.width() - 40)
-        for seg, count in zip(segs, (copied, skipped, deleted, errors), strict=True):
+        for seg, count in zip(segs, counts, strict=True):
             seg.setFixedWidth(max(0, int(avail * count / total)))
 
     def _update_timing(self, elapsed_s: int, done: int, total: int, finished: bool, cancelled: bool,
@@ -487,6 +496,7 @@ class _LogWidget(QWidget):
         self._spin.editingFinished.connect(self._spin_changed)
 
         self._page_lbl  = QLabel("")
+        self._page_lbl.setStyleSheet(f"color:{t['text']};")
         self._page_lbl.setMinimumHeight(28)
         self._total_lbl = QLabel("")
         self._total_lbl.setStyleSheet(style_muted)
@@ -665,7 +675,7 @@ class _LogWidget(QWidget):
             else:
                 sorted_items, sorted_lower = [], []
             try:
-                self._sorted_ready.emit(list(sorted_items), list(sorted_lower))
+                self._sorted_ready.emit(sorted_items, sorted_lower)
             except RuntimeError:
                 pass
 
@@ -686,7 +696,7 @@ class _LogWidget(QWidget):
         else:
             self._filtered = ([i for i, il in zip(self._items, self._items_lower, strict=True) if needle in il]
                               if needle else (self._items if self._finalized else self._items[:]))
-            if len(self._search_cache) > 50:
+            if len(self._search_cache) > _SEARCH_CACHE_MAX:
                 self._search_cache.pop(next(iter(self._search_cache)))
             self._search_cache[needle] = self._filtered[:]
         self._page = 0
@@ -729,7 +739,16 @@ class CopyDialog(_StandardKeysMixin, QDialog):
 
         self._status_fs = font_sz(8)
 
-        size_to_screen(self, 1900, 925, fraction=0.9)
+        _screen = QApplication.primaryScreen()
+        _geo = _screen.availableGeometry() if _screen else None
+        if _geo is not None:
+            self.setMinimumSize(min(1000, int(_geo.width() * 0.5)),
+                                min(600, int(_geo.height() * 0.5)))
+            self.resize(min(1900, int(_geo.width() * 0.9)),
+                        min(925, int(_geo.height() * 0.9)))
+        else:
+            self.setMinimumSize(1000, 600)
+            self.resize(1400, 800)
 
         self._operation = operation
         self.worker     = CopyWorker(tasks)
