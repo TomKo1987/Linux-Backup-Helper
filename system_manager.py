@@ -506,6 +506,8 @@ class SystemManagerThread(QThread):
             if self.terminated: return
             if not self._verify_sudo(): self.passwordFailed.emit(); return
             self.passwordSuccess.emit()
+            LinuxDistroHelper.set_privileged_reader(self._read_file_sudo)
+            LinuxDistroHelper.invalidate_boot_caches()
             self._stop_keepalive.clear()
             _keepalive = _SudoKeepalive(self._stop_keepalive, self._pw)
             self._keepalive = _keepalive
@@ -546,6 +548,7 @@ class SystemManagerThread(QThread):
         self._input_event.set()
 
     def _cleanup(self) -> None:
+        LinuxDistroHelper.set_privileged_reader(None)
         self._stop_keepalive.set()
         if self._keepalive: self._keepalive.join(timeout=5); self._keepalive = None
         self._pw.clear()
@@ -1357,11 +1360,7 @@ class SystemManagerThread(QThread):
                         self.outputReceived.emit(tr("systemd-boot entry created for {variant}", variant=variant), "success")
 
         if newly_installed and bootloader == "grub":
-            self.outputReceived.emit(tr("Regenerating /boot/grub/grub.cfg for newly installed kernel(s)…"), "info")
-            if self._exec(["sudo", "grub-mkconfig", "-o", "/boot/grub/grub.cfg"], stream=True, timeout=120).returncode != 0:
-                self.outputReceived.emit(
-                    tr("grub-mkconfig failed — new kernel(s) may not appear in the GRUB menu until it is regenerated manually."),
-                    "warning")
+            if not self._regenerate_grub_cfg():
                 overall = False
 
         self._emit_result(overall, tr("Kernel(s) successfully installed"), tr("One or more kernels failed to install"))
@@ -1408,32 +1407,59 @@ class SystemManagerThread(QThread):
         kernel_pkg = pkgs[0]
         self.outputReceived.emit(tr("Setting default kernel to: {kernel_pkg}", kernel_pkg=kernel_pkg), "info")
 
+        LinuxDistroHelper.invalidate_boot_caches()
         bootloader = LinuxDistroHelper.detect_bootloader()
         current_default_variant = LinuxDistroHelper.detect_system_default_kernel(bootloader)
-        if current_default_variant and current_default_variant == target:
+        if current_default_variant is None:
+            self.outputReceived.emit(tr("Current boot default could not be determined — applying the "
+                                        "selection anyway."), "info")
+        elif current_default_variant == target:
             self.outputReceived.emit(tr("{kernel_pkg} is already default", kernel_pkg=kernel_pkg), "success")
             return True
 
         if bootloader == "grub":
-            return self._set_grub_default(kernel_pkg)
-        if bootloader == "systemd-boot":
-            esp = LinuxDistroHelper.detect_esp()
-            return self._set_systemd_boot_default(kernel_pkg, esp)
+            result = self._set_grub_default(kernel_pkg)
+        elif bootloader == "systemd-boot":
+            result = self._set_systemd_boot_default(kernel_pkg, LinuxDistroHelper.detect_esp())
+        else:
+            self.outputReceived.emit(tr("No supported bootloader found (grub.cfg or loader.conf). "
+                                        "Please set the default kernel manually."), "warning")
+            return _Status.WARNING
 
-        self.outputReceived.emit(tr("No supported bootloader found (grub.cfg or loader.conf). "
-                                 "Please set the default kernel manually."), "warning")
-        return _Status.WARNING
+        LinuxDistroHelper.invalidate_boot_caches()
+        return result
+
+    @staticmethod
+    def _grub_cfg_path() -> Path:
+        return LinuxDistroHelper.detect_grub_cfg() or Path("/boot/grub/grub.cfg")
+
+    def _regenerate_grub_cfg(self) -> bool:
+        mkconfig = LinuxDistroHelper.grub_tool("grub-mkconfig")
+        cfg = self._grub_cfg_path()
+        if not mkconfig:
+            self.outputReceived.emit(tr("Neither 'grub-mkconfig' nor 'grub2-mkconfig' was found — "
+                                        "please regenerate {cfg} manually.", cfg=cfg), "warning")
+            return False
+        self.outputReceived.emit(tr("Regenerating {cfg}…", cfg=cfg), "info")
+        if self._exec(["sudo", mkconfig, "-o", str(cfg)], stream=True, timeout=300).returncode == 0:
+            return True
+        self.outputReceived.emit(tr("{tool} failed — the GRUB menu may be outdated.", tool=mkconfig), "warning")
+        return False
 
     def _set_grub_default(self, kernel_pkg: str) -> bool | str:
         grub_env = Path("/etc/default/grub")
+        set_default = LinuxDistroHelper.grub_tool("grub-set-default")
+        if not set_default:
+            self.outputReceived.emit(tr("Neither 'grub-set-default' nor 'grub2-set-default' was found — "
+                                        "please set the default entry manually."), "warning")
+            return _Status.WARNING
 
-        try:
-            text = grub_env.read_text(encoding="utf-8")
-        except OSError as exc:
-            self.outputReceived.emit(tr("Cannot read {grub_env}: {exc}", grub_env=grub_env, exc=exc), "error")
+        text = LinuxDistroHelper.read_text_priv(grub_env)
+        if text is None:
+            self.outputReceived.emit(tr("Cannot read {grub_env}", grub_env=grub_env), "error")
             return False
 
-        if "GRUB_DEFAULT=saved" not in text:
+        if not re.search(r"^GRUB_DEFAULT=saved\s*$", text, re.MULTILINE):
             self.outputReceived.emit(tr("Patching /etc/default/grub: setting GRUB_DEFAULT=saved…"), "info")
             new_text = re.sub(r"^GRUB_DEFAULT=.*$", "GRUB_DEFAULT=saved", text, flags=re.MULTILINE)
             if "GRUB_DEFAULT=" not in text:
@@ -1444,10 +1470,8 @@ class SystemManagerThread(QThread):
                 self.outputReceived.emit(tr("Failed to patch /etc/default/grub"), "error")
                 return False
 
-        self.outputReceived.emit(tr("Regenerating /boot/grub/grub.cfg…"), "info")
-        rc = self._exec(["sudo", "grub-mkconfig", "-o", "/boot/grub/grub.cfg"], stream=True, timeout=120).returncode
-        if rc != 0:
-            self.outputReceived.emit(tr("grub-mkconfig failed — aborting default-kernel set"), "error")
+        if not self._regenerate_grub_cfg():
+            self.outputReceived.emit(tr("Aborting default-kernel set"), "error")
             return False
 
         entry_id = self._find_grub_entry(kernel_pkg)
@@ -1457,17 +1481,16 @@ class SystemManagerThread(QThread):
             return _Status.WARNING
 
         self.outputReceived.emit(tr("Found GRUB entry: {entry_id!r}", entry_id=entry_id), "info")
-        ok = self._exec(["sudo", "grub-set-default", entry_id], stream=True).returncode == 0
-        self._emit_result(ok, tr("GRUB default set to '{pkg}'", pkg=kernel_pkg), tr("grub-set-default failed"))
+        ok = self._exec(["sudo", set_default, entry_id], stream=True).returncode == 0
+        self._emit_result(ok, tr("GRUB default set to '{pkg}'", pkg=kernel_pkg),
+                          tr("{tool} failed", tool=set_default))
         return ok
 
-    @staticmethod
-    def _find_grub_entry(kernel_pkg: str) -> str | None:
-        grub_cfg = Path("/boot/grub/grub.cfg")
-        try:
-            lines = grub_cfg.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
+    def _find_grub_entry(self, kernel_pkg: str) -> str | None:
+        text = LinuxDistroHelper.read_text_priv(self._grub_cfg_path())
+        if not text:
             return None
+        lines = text.splitlines()
 
         _title_re = re.compile(r"""menuentry\s+['"]([^'"]+)['"]""")
         _sub_re = re.compile(r"""submenu\s+['"]([^'"]+)['"]""")
@@ -1553,34 +1576,24 @@ class SystemManagerThread(QThread):
             return _Status.WARNING
         return self._apply_systemd_boot_default(target_conf, esp)
 
+    def _list_dir(self, directory: Path, suffix: str) -> list[str]:
+        names = LinuxDistroHelper.list_dir_priv(directory, suffix)
+        if names:
+            return names
+        r = self._exec(["sudo", "ls", "-1", str(directory)], stream=False)
+        if r.returncode != 0:
+            return []
+        return sorted(n.strip() for n in r.stdout.splitlines() if n.strip().lower().endswith(suffix.lower()))
+
     def _find_uki_entry(self, kernel_pkg: str, esp: Path) -> str | None:
-        efi_linux = esp / "EFI" / "Linux"
-        try:
-            efi_files = sorted(efi_linux.glob("*.efi"))
-        except OSError:
-            r = self._exec(["sudo", "ls", "-1", str(efi_linux)], stream=False)
-            if r.returncode != 0:
-                return None
-            efi_files = [efi_linux / n.strip() for n in r.stdout.splitlines() if n.strip().endswith(".efi")]
-        for f in efi_files:
-            name = f.name.lower().removesuffix(".efi")
-            if name == kernel_pkg or name.endswith((f"-{kernel_pkg}", f"_{kernel_pkg}")):
-                return f.name
+        for name in self._list_dir(esp / "EFI" / "Linux", ".efi"):
+            stem = name.lower().removesuffix(".efi")
+            if stem == kernel_pkg or stem.endswith((f"-{kernel_pkg}", f"_{kernel_pkg}")):
+                return name
         return None
 
     def _list_entry_files(self, entries_dir: Path) -> list[Path]:
-        paths = []
-        try:
-            if entries_dir.is_dir():
-                paths = sorted(entries_dir.glob("*.conf"))
-        except OSError:
-            pass
-
-        if not paths:
-            r = self._exec(["sudo", "ls", "-1", str(entries_dir)], stream=False)
-            if r.returncode == 0:
-                paths = [entries_dir / n.strip() for n in r.stdout.splitlines() if n.strip().endswith(".conf")]
-        return paths
+        return [entries_dir / n for n in self._list_dir(entries_dir, ".conf")]
 
     @staticmethod
     def _retarget_boot_entry(template_content: str, running_kern_pkg: str, kernel_pkg: str) -> str:
@@ -1614,13 +1627,17 @@ class SystemManagerThread(QThread):
 
         return "\n".join(out_lines) + ("\n" if template_content.endswith("\n") else "")
 
-    def _create_systemd_boot_entry(self, kernel_pkg: str, entries_dir: Path, esp: Path) -> str | None:
-        vmlinuz = Path(f"/boot/vmlinuz-{kernel_pkg}")
-        initramfs = Path(f"/boot/initramfs-{kernel_pkg}.img")
+    def _locate_boot_image(self, filename: str, esp: Path) -> Path | None:
+        for base in (Path("/boot"), esp, esp / "EFI" / "Linux"):
+            candidate = base / filename
+            if self._exec(["sudo", "test", "-f", str(candidate)], stream=False).returncode == 0:
+                return candidate
+        return None
 
-        for img in (vmlinuz, initramfs):
-            if self._exec(["sudo", "test", "-f", str(img)], stream=False).returncode != 0:
-                self.outputReceived.emit(tr("Kernel image not found: {img}", img=img), "warning")
+    def _create_systemd_boot_entry(self, kernel_pkg: str, entries_dir: Path, esp: Path) -> str | None:
+        for filename in (f"vmlinuz-{kernel_pkg}", f"initramfs-{kernel_pkg}.img"):
+            if self._locate_boot_image(filename, esp) is None:
+                self.outputReceived.emit(tr("Kernel image not found: {img}", img=filename), "warning")
                 return None
 
         running_variant = LinuxDistroHelper.detect_running_kernel_variant()

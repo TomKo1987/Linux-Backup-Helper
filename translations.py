@@ -3,6 +3,24 @@ import threading as _threading
 LANGUAGES: dict[str, dict[str, str]] = {
     "English": {},
     "Deutsch": {
+        'Current boot default could not be determined — applying the selection anyway.':
+            'Aktueller Boot-Standard konnte nicht ermittelt werden — die Auswahl wird trotzdem angewendet.',
+        "Neither 'grub-mkconfig' nor 'grub2-mkconfig' was found — please regenerate {cfg} manually.":
+            "Weder 'grub-mkconfig' noch 'grub2-mkconfig' wurde gefunden — bitte {cfg} manuell neu erzeugen.",
+        'Regenerating {cfg}…':
+            '{cfg} wird neu erzeugt…',
+        '{tool} failed — the GRUB menu may be outdated.':
+            '{tool} fehlgeschlagen — das GRUB-Menü ist möglicherweise veraltet.',
+        "Neither 'grub-set-default' nor 'grub2-set-default' was found — please set the default entry manually.":
+            "Weder 'grub-set-default' noch 'grub2-set-default' wurde gefunden — bitte den Standardeintrag manuell setzen.",
+        'Cannot read {grub_env}':
+            '{grub_env} kann nicht gelesen werden',
+        'Aborting default-kernel set':
+            'Festlegung des Standardkernels wird abgebrochen',
+        '{tool} failed':
+            '{tool} fehlgeschlagen',
+        'unknown':
+            'unbekannt',
         'Yes': 'Ja',
         'No': 'Nein',
         'Close': 'Schließen',
@@ -1503,6 +1521,24 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'Select Language:': 'Sprache auswählen:',
     },
     "Français": {
+        'Current boot default could not be determined — applying the selection anyway.':
+            "Le noyau par défaut actuel n'a pas pu être déterminé — la sélection est appliquée malgré tout.",
+        "Neither 'grub-mkconfig' nor 'grub2-mkconfig' was found — please regenerate {cfg} manually.":
+            "Ni 'grub-mkconfig' ni 'grub2-mkconfig' n'a été trouvé — veuillez régénérer {cfg} manuellement.",
+        'Regenerating {cfg}…':
+            'Régénération de {cfg}…',
+        '{tool} failed — the GRUB menu may be outdated.':
+            'Échec de {tool} — le menu GRUB est peut-être obsolète.',
+        "Neither 'grub-set-default' nor 'grub2-set-default' was found — please set the default entry manually.":
+            "Ni 'grub-set-default' ni 'grub2-set-default' n'a été trouvé — veuillez définir l'entrée par défaut manuellement.",
+        'Cannot read {grub_env}':
+            'Impossible de lire {grub_env}',
+        'Aborting default-kernel set':
+            'Abandon de la définition du noyau par défaut',
+        '{tool} failed':
+            'Échec de {tool}',
+        'unknown':
+            'inconnu',
         'Yes': 'Oui',
         'No': 'Non',
         'Close': 'Fermer',
@@ -3007,6 +3043,24 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'Select Language:': 'Choisir la langue :',
     },
     "Español": {
+        'Current boot default could not be determined — applying the selection anyway.':
+            'No se pudo determinar el arranque predeterminado actual — se aplicará la selección de todos modos.',
+        "Neither 'grub-mkconfig' nor 'grub2-mkconfig' was found — please regenerate {cfg} manually.":
+            "No se encontró ni 'grub-mkconfig' ni 'grub2-mkconfig' — regenere {cfg} manualmente.",
+        'Regenerating {cfg}…':
+            'Regenerando {cfg}…',
+        '{tool} failed — the GRUB menu may be outdated.':
+            '{tool} falló — el menú de GRUB puede estar desactualizado.',
+        "Neither 'grub-set-default' nor 'grub2-set-default' was found — please set the default entry manually.":
+            "No se encontró ni 'grub-set-default' ni 'grub2-set-default' — establezca la entrada predeterminada manualmente.",
+        'Cannot read {grub_env}':
+            'No se puede leer {grub_env}',
+        'Aborting default-kernel set':
+            'Se cancela el establecimiento del kernel predeterminado',
+        '{tool} failed':
+            '{tool} falló',
+        'unknown':
+            'desconocido',
         'Yes': 'Sí',
         'No': 'No',
         'Close': 'Cerrar',

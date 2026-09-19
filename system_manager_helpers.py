@@ -101,7 +101,7 @@ def _scroll_dlg(_parent, title: str, body: QWidget, on_save=None) -> tuple[QDial
 def _detect_boot_info() -> tuple[str, str, str]:
     bootloader = LinuxDistroHelper.detect_bootloader()
     current_variant = LinuxDistroHelper.detect_running_kernel_variant()
-    system_default = LinuxDistroHelper.detect_system_default_kernel(bootloader) or current_variant
+    system_default = LinuxDistroHelper.detect_system_default_kernel(bootloader) or ""
     return bootloader, current_variant, system_default
 
 
@@ -303,9 +303,10 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, aur_he
 
     dk = ((default_kernel_override if default_kernel_override is not None else S.default_kernel) or "")
     dk_pkg = dk or system_default_variant or tr("(not selected)")
-    if system_default_variant and system_default_variant != dk_pkg:
-        _sdv: str = system_default_variant or ""
-        sys_def_info = tr(" [System default: {sdv}]", sdv=_sdv)
+    if not system_default_variant:
+        sys_def_info = tr(" [System default: {sdv}]", sdv=tr("unknown"))
+    elif system_default_variant != dk_pkg:
+        sys_def_info = tr(" [System default: {sdv}]", sdv=system_default_variant)
     else:
         sys_def_info = ""
     dk_note = tr(" (Is already default. No changes necessary.)") if (

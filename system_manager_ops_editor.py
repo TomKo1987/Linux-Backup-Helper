@@ -31,6 +31,15 @@ if TYPE_CHECKING:
 else:
     _OpsMixinBase = object
 
+_BOOTLOADER_LABELS: dict[str, str] = {
+    "grub": "GRUB",
+    "systemd-boot": "systemd-boot",
+    "refind": "rEFInd",
+    "limine": "Limine",
+    "syslinux": "Syslinux / EXTLINUX",
+    "efistub": "EFISTUB",
+}
+
 
 class _OpsEditorMixin(_OpsMixinBase):
     if TYPE_CHECKING:
@@ -40,7 +49,7 @@ class _OpsEditorMixin(_OpsMixinBase):
 
     def _edit_ops(self):
         bootloader, current_variant, _system_default_variant = _detect_boot_info()
-        bl_label = {"grub": "GRUB", "systemd-boot": "systemd-boot"}.get(bootloader, tr("unknown bootloader"))
+        bl_label = _BOOTLOADER_LABELS.get(bootloader, tr("unknown bootloader"))
 
         _saved_default_variant = S.default_kernel or _system_default_variant
 
@@ -201,7 +210,8 @@ class _OpsEditorMixin(_OpsMixinBase):
 
                                 suffixes = []
                                 if is_current: suffixes.append(tr("running"))
-                                if variant == _system_default_variant: suffixes.append(tr("default"))
+                                if _system_default_variant and variant == _system_default_variant:
+                                    suffixes.append(tr("default"))
                                 if is_installed and not is_current: suffixes.append(tr("installed"))
 
                                 if is_current:

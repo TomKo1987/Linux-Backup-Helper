@@ -1,8 +1,11 @@
 import concurrent.futures
+import fnmatch
+import json
 import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import threading
 import time
@@ -505,6 +508,18 @@ _session_cache: list = []
 _bootloader_cache: list = []
 _esp_cache: list = []
 _cpu_vendor_cache: list = []
+_default_kernel_cache: dict[str, str | None] = {}
+_priv_reader: list = []
+_sudo_ok_cache: list = []
+_pkexec_state_cache: list = []
+_boot_lock = threading.Lock()
+
+_SD_BOOT_GUID = "4a67b082-0a4c-41cf-b6c7-440b29bb8c4f"
+_EFIVARS_DIR = Path("/sys/firmware/efi/efivars")
+_VMLINUZ_RE = re.compile(r"vmlinuz-(linux[\w.+-]*)")
+_PLAIN_VMLINUZ_RE = re.compile(r"vmlinuz-linux(?![\w-])")
+_PLAIN_LINUX_RE = re.compile(r"(?:^|[^\w-])(?:linux|arch)(?![\w-])")
+_GRUB_ENTRY_RE = re.compile(r"""^(menuentry|submenu)\s+['"]([^'"]*)['"]""")
 
 
 class LinuxDistroHelper:
@@ -1018,51 +1033,154 @@ class LinuxDistroHelper:
         return "sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo"
 
     @staticmethod
+    def _sudo_noninteractive_ok() -> bool:
+        with _boot_lock:
+            if _sudo_ok_cache:
+                return _sudo_ok_cache[0]
+        ok = False
+        if os.geteuid() == 0:
+            ok = True
+        elif shutil.which("sudo"):
+            try:
+                ok = subprocess.run(["sudo", "-n", "true"], capture_output=True, stdin=subprocess.DEVNULL,
+                                    timeout=5, check=False).returncode == 0
+            except (OSError, subprocess.SubprocessError):
+                ok = False
+        with _boot_lock:
+            if not _sudo_ok_cache:
+                _sudo_ok_cache.append(ok)
+        return ok
+
+    @staticmethod
+    def _pkexec_declined() -> bool:
+        with _boot_lock:
+            return bool(_pkexec_state_cache) and _pkexec_state_cache[0] is False
+
+    @staticmethod
+    def _pkexec_note_result(authorized: bool) -> None:
+        with _boot_lock:
+            if not _pkexec_state_cache:
+                _pkexec_state_cache.append(authorized)
+            elif authorized:
+                _pkexec_state_cache[0] = True
+
+    @staticmethod
+    def _privileged_run(args: list[str], timeout: int, *, text: bool) -> subprocess.CompletedProcess | None:
+        if os.geteuid() == 0:
+            cmd, via_pkexec = list(args), False
+        elif LinuxDistroHelper._sudo_noninteractive_ok():
+            cmd, via_pkexec = ["sudo", "-n", *args], False
+        elif shutil.which("pkexec") and not LinuxDistroHelper._pkexec_declined():
+            cmd, via_pkexec = ["pkexec", *args], True
+        else:
+            return None
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=text, stdin=subprocess.DEVNULL,
+                               timeout=timeout, check=False)
+        except (OSError, subprocess.SubprocessError):
+            if via_pkexec:
+                LinuxDistroHelper._pkexec_note_result(False)
+            return None
+        if via_pkexec:
+            LinuxDistroHelper._pkexec_note_result(r.returncode not in (126, 127))
+        return r
+
+    @staticmethod
+    def _sudo_capture(args: list[str], timeout: int = 10) -> str | None:
+        r = LinuxDistroHelper._privileged_run(args, timeout, text=True)
+        return r.stdout if r is not None and r.returncode == 0 else None
+
+    @staticmethod
+    def _sudo_capture_bytes(args: list[str], timeout: int = 10) -> bytes | None:
+        r = LinuxDistroHelper._privileged_run(args, timeout, text=False)
+        return r.stdout if r is not None and r.returncode == 0 else None
+
+    @staticmethod
+    def set_privileged_reader(reader: "Callable[[Path], str | None] | None") -> None:
+        with _boot_lock:
+            _priv_reader[:] = [reader] if reader is not None else []
+            _default_kernel_cache.clear()
+
+    @staticmethod
+    def _privileged_reader() -> "Callable[[Path], str | None] | None":
+        with _boot_lock:
+            return _priv_reader[0] if _priv_reader else None
+
+    @staticmethod
+    def read_text_priv(path: Path) -> str | None:
+        try:
+            return path.read_text(encoding="utf-8", errors="replace")
+        except (PermissionError, OSError):
+            pass
+        reader = LinuxDistroHelper._privileged_reader()
+        if reader is not None:
+            try:
+                text = reader(path)
+            except Exception as exc:
+                logger.debug("privileged read %s: %s", path, exc)
+                text = None
+            if text is not None:
+                return text
+        return LinuxDistroHelper._sudo_capture(["cat", str(path)])
+
+    @staticmethod
+    def list_dir_priv(path: Path, suffix: str = "") -> list[str]:
+        names: list[str]
+        try:
+            names = sorted(p.name for p in path.iterdir())
+        except (PermissionError, OSError):
+            out = LinuxDistroHelper._sudo_capture(["ls", "-1", str(path)])
+            names = sorted(n.strip() for n in out.splitlines() if n.strip()) if out else []
+        low = suffix.lower()
+        return [n for n in names if not low or n.lower().endswith(low)]
+
+    @staticmethod
+    def path_exists_priv(path: Path, *, directory: bool = False) -> bool:
+        try:
+            return stat.S_ISDIR(os.stat(path).st_mode) if directory else True
+        except PermissionError:
+            pass
+        except (OSError, ValueError):
+            return False
+        return LinuxDistroHelper._sudo_capture(["test", "-d" if directory else "-e", str(path)]) is not None
+
+    @staticmethod
+    def read_efi_var(name: str, guid: str = _SD_BOOT_GUID) -> str | None:
+        var_path = _EFIVARS_DIR / f"{name}-{guid}"
+        try:
+            raw = var_path.read_bytes()
+        except (PermissionError, OSError):
+            raw = LinuxDistroHelper._sudo_capture_bytes(["cat", str(var_path)])
+        if not raw or len(raw) <= 4:
+            return None
+        return raw[4:].decode("utf-16-le", errors="ignore").replace("\x00", "").strip() or None
+
+    @staticmethod
     def detect_esp() -> Path:
-        if _esp_cache:
-            return _esp_cache[0]
+        with _boot_lock:
+            if _esp_cache:
+                return _esp_cache[0]
         result = LinuxDistroHelper._detect_esp_uncached()
-        _esp_cache.append(result)
-        return result
+        with _boot_lock:
+            if not _esp_cache:
+                _esp_cache.append(result)
+            return _esp_cache[0]
 
     @staticmethod
     def _detect_esp_uncached() -> Path:
-        try:
-            out = subprocess.check_output(
-                ["bootctl", "--print-esp-path"], stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL, text=True, timeout=10
-            ).strip()
-            if out:
-                p = Path(out)
-                if p.is_dir():
-                    return p
-        except (subprocess.SubprocessError, FileNotFoundError, OSError):
-            pass
-
-        try:
-            with open("/proc/mounts", encoding="utf-8", errors="replace") as fh:
-                for line in fh:
-                    parts = line.split()
-                    if len(parts) >= 3 and parts[2].lower() in ("vfat", "fat", "msdos"):
-                        mp = Path(parts[1])
-                        if (mp / "EFI").is_dir() or (mp / "loader" / "loader.conf").exists():
-                            return mp
-        except OSError:
-            pass
-
-        for candidate in (Path("/efi"), Path("/boot/efi"), Path("/boot")):
-            if (candidate / "loader" / "loader.conf").exists() or (candidate / "EFI").is_dir():
-                return candidate
-        return Path("/boot")
+        candidates = LinuxDistroHelper._iter_esp_candidates()
+        for esp in candidates:
+            if LinuxDistroHelper._path_has_systemd_boot(esp):
+                return esp
+        for esp in candidates:
+            if LinuxDistroHelper.path_exists_priv(esp / "EFI", directory=True):
+                return esp
+        return candidates[0] if candidates else Path("/boot")
 
     @staticmethod
     def detect_uki_mode(esp: Path | None = None) -> bool:
         resolved_esp: Path = esp if esp is not None else LinuxDistroHelper.detect_esp()
-        efi_linux = resolved_esp / "EFI" / "Linux"
-        try:
-            return efi_linux.is_dir() and any(efi_linux.glob("*.efi"))
-        except OSError:
-            return False
+        return bool(LinuxDistroHelper.list_dir_priv(resolved_esp / "EFI" / "Linux", ".efi"))
 
     @staticmethod
     def _iter_esp_candidates() -> list[Path]:
@@ -1071,23 +1189,31 @@ class LinuxDistroHelper:
 
         def _add(_p: Path) -> None:
             try:
-                r = _p.resolve()
+                _r = _p.resolve()
             except OSError:
-                r = _p
-            if r not in seen and _p.exists():
-                seen.add(r)
+                _r = _p
+            if _r in seen:
+                return
+            try:
+                present = _p.exists()
+            except (PermissionError, OSError):
+                present = True
+            if present:
+                seen.add(_r)
                 candidates.append(_p)
 
-        for cmd in (["bootctl", "--print-esp-path"],
-                    ["sudo", "-n", "bootctl", "--print-esp-path"]):
-            try:
-                out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
-                                              text=True, timeout=10).strip()
+        if shutil.which("bootctl"):
+            for cmd in (["bootctl", "--print-esp-path"], ["bootctl", "--print-boot-path"]):
+                try:
+                    r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                                       timeout=10, check=False)
+                    out = r.stdout.strip() if r.returncode == 0 else ""
+                except (OSError, subprocess.SubprocessError):
+                    out = ""
+                if not out:
+                    out = (LinuxDistroHelper._sudo_capture(cmd) or "").strip()
                 if out:
                     _add(Path(out))
-                    break
-            except (subprocess.SubprocessError, FileNotFoundError, OSError):
-                pass
 
         try:
             with open("/proc/mounts", encoding="utf-8", errors="replace") as fh:
@@ -1095,7 +1221,7 @@ class LinuxDistroHelper:
                     parts = line.split()
                     if len(parts) < 2:
                         continue
-                    mp = Path(parts[1])
+                    mp = Path(parts[1].replace("\\040", " "))
                     fstype = parts[2].lower() if len(parts) >= 3 else ""
                     if fstype in ("vfat", "fat", "fat32", "msdos", "exfat"):
                         _add(mp)
@@ -1111,74 +1237,118 @@ class LinuxDistroHelper:
 
     @staticmethod
     def _path_has_systemd_boot(esp: Path) -> bool:
-        try:
-            if (esp / "loader" / "loader.conf").exists():
-                return True
-            if (esp / "loader" / "entries").is_dir():
-                return True
-            efi_linux = esp / "EFI" / "Linux"
-            if efi_linux.is_dir() and any(efi_linux.glob("*.efi")):
-                return True
-            for sd_efi in (
-                esp / "EFI" / "systemd" / "systemd-bootx64.efi",
-                esp / "EFI" / "systemd" / "systemd-bootaa64.efi",
-                esp / "EFI" / "BOOT" / "BOOTX64.EFI",
-            ):
-                if sd_efi.exists():
-                    if "BOOT" in str(sd_efi):
-                        if not (sd_efi.parent / "grubx64.efi").exists():
-                            return True
-                    else:
-                        return True
-        except OSError:
-            pass
-        return False
+        exists = LinuxDistroHelper.path_exists_priv
+        if exists(esp / "loader" / "loader.conf"):
+            return True
+        if LinuxDistroHelper.list_dir_priv(esp / "loader" / "entries", ".conf"):
+            return True
+        if LinuxDistroHelper.list_dir_priv(esp / "EFI" / "Linux", ".efi"):
+            return True
+        return any(exists(esp / "EFI" / "systemd" / f"systemd-boot{arch}.efi")
+                   for arch in ("x64", "aa64", "ia32", "arm", "riscv64", "loongarch64"))
+
+    @staticmethod
+    def detect_grub_cfg() -> Path | None:
+        exists = LinuxDistroHelper.path_exists_priv
+        for cfg in (Path("/boot/grub/grub.cfg"), Path("/boot/grub2/grub.cfg")):
+            if exists(cfg):
+                return cfg
+        for base in (Path("/boot/efi/EFI"), Path("/efi/EFI"), Path("/boot/EFI")):
+            for vendor in LinuxDistroHelper.list_dir_priv(base):
+                cfg = base / vendor / "grub.cfg"
+                if exists(cfg):
+                    return cfg
+        return None
+
+    @staticmethod
+    def grub_tool(name: str) -> str | None:
+        return shutil.which(name) or shutil.which(name.replace("grub-", "grub2-", 1))
 
     @staticmethod
     def detect_bootloader() -> str:
-        if _bootloader_cache:
-            return _bootloader_cache[0]
+        with _boot_lock:
+            if _bootloader_cache:
+                return _bootloader_cache[0]
         result = LinuxDistroHelper._detect_bootloader_uncached()
-        _bootloader_cache.append(result)
-        return result
+        with _boot_lock:
+            if not _bootloader_cache:
+                _bootloader_cache.append(result)
+            return _bootloader_cache[0]
+
+    @staticmethod
+    def _efibootmgr_output() -> str:
+        if not shutil.which("efibootmgr"):
+            return ""
+        try:
+            r = subprocess.run(["efibootmgr"], capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                               timeout=10, check=False)
+            if r.returncode == 0 and r.stdout.strip():
+                return r.stdout
+        except (OSError, subprocess.SubprocessError):
+            pass
+        return LinuxDistroHelper._sudo_capture(["efibootmgr"]) or ""
 
     @staticmethod
     def _detect_bootloader_uncached() -> str:
-        for cmd in (["bootctl", "is-installed"],
-                    ["sudo", "-n", "bootctl", "is-installed"]):
+        if shutil.which("bootctl"):
             try:
-                r = subprocess.run(cmd, capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL)
-                if r.returncode == 0:
-                    answer = r.stdout.strip().lower()
-                    if answer == "yes":
-                        return "systemd-boot"
-                    if answer == "no":
-                        break
-            except FileNotFoundError:
-                break
+                r = subprocess.run(["bootctl", "is-installed"], capture_output=True, text=True, timeout=10,
+                                   stdin=subprocess.DEVNULL, check=False)
+                answer = r.stdout.strip().lower() if r.returncode == 0 else ""
             except (OSError, subprocess.SubprocessError):
-                pass
+                answer = ""
+            if not answer:
+                answer = (LinuxDistroHelper._sudo_capture(["bootctl", "is-installed"]) or "").strip().lower()
+            if answer == "yes":
+                return "systemd-boot"
 
-        for esp in LinuxDistroHelper._iter_esp_candidates():
+        esp_candidates = LinuxDistroHelper._iter_esp_candidates()
+        for esp in esp_candidates:
             if LinuxDistroHelper._path_has_systemd_boot(esp):
                 return "systemd-boot"
 
-        if (Path("/sys/firmware/efi/efivars").exists()
-                and not Path("/boot/grub/grub.cfg").exists()):
-            try:
-                out = subprocess.check_output(["efibootmgr"], stderr=subprocess.DEVNULL,
-                                              stdin=subprocess.DEVNULL, text=True, timeout=10)
-                if "Linux Boot Manager" in out or "systemd" in out.lower():
-                    return "systemd-boot"
-            except (FileNotFoundError, subprocess.SubprocessError, OSError):
-                pass
+        if LinuxDistroHelper.detect_grub_cfg() is not None:
+            return "grub"
 
-        for grub_cfg in (Path("/boot/grub/grub.cfg"), Path("/boot/grub2/grub.cfg"),
-                         Path("/boot/efi/EFI/grub/grub.cfg")):
-            if grub_cfg.exists():
-                return "grub"
+        exists = LinuxDistroHelper.path_exists_priv
+        for esp in esp_candidates:
+            if exists(esp / "EFI" / "refind" / "refind.conf") or exists(esp / "EFI" / "refind" / "refind_x64.efi"):
+                return "refind"
+            if any(exists(esp / n) for n in ("limine.conf", "limine.cfg")) or \
+                    exists(esp / "EFI" / "limine" / "limine.conf"):
+                return "limine"
+        for cfg, name in ((Path("/boot/refind_linux.conf"), "refind"),
+                          (Path("/boot/limine.conf"), "limine"),
+                          (Path("/boot/limine.cfg"), "limine"),
+                          (Path("/boot/syslinux/syslinux.cfg"), "syslinux"),
+                          (Path("/boot/extlinux/extlinux.conf"), "syslinux")):
+            if exists(cfg):
+                return name
+
+        if Path("/sys/firmware/efi").exists():
+            out = LinuxDistroHelper._efibootmgr_output().lower()
+            if out:
+                if "linux boot manager" in out or "systemd-boot" in out:
+                    return "systemd-boot"
+                if "refind" in out:
+                    return "refind"
+                if "limine" in out:
+                    return "limine"
+                if "grub" in out:
+                    return "grub"
+                if "vmlinuz" in out or "efistub" in out:
+                    return "efistub"
 
         return "unknown"
+
+    @staticmethod
+    def invalidate_boot_caches() -> None:
+        with _boot_lock:
+            _bootloader_cache.clear()
+            _esp_cache.clear()
+            _default_kernel_cache.clear()
+            _sudo_ok_cache.clear()
+            _pkexec_state_cache.clear()
 
     def get_ucode_package(self) -> str | None:
         cpu_vendor = self.detect_cpu_vendor()
@@ -1231,68 +1401,239 @@ class LinuxDistroHelper:
     @staticmethod
     def _variant_from_text(value: str) -> str | None:
         val = value.lower()
-        if "lts" in val:
-            return "linux-lts"
-        if "zen" in val:
-            return "linux-zen"
-        if "hardened" in val:
-            return "linux-hardened"
+        m = _VMLINUZ_RE.search(val)
+        if m:
+            candidate = m.group(1).rstrip("-.")
+            if candidate in ARCH_KERNEL_VARIANTS:
+                return candidate
+        for tag in ("hardened", "zen", "lts"):
+            if tag in val:
+                return f"linux-{tag}"
         return None
 
     @staticmethod
-    def detect_system_default_kernel(bootloader: str) -> str | None:
-        found = None
-        if bootloader == "systemd-boot":
-            try:
-                esp = LinuxDistroHelper.detect_esp()
-                conf_path = esp / "loader" / "loader.conf"
-                if conf_path.exists():
-                    text = conf_path.read_text(encoding="utf-8", errors="replace")
-                    for line in text.splitlines():
-                        line = line.strip()
-                        if not line or line.startswith("#"):
-                            continue
-                        parts = line.split(None, 1)
-                        if len(parts) == 2 and parts[0].lower() == "default":
-                            val = parts[1].strip().lower()
-                            if val in ("@saved", "@current"):
-                                break
-                            found = LinuxDistroHelper._variant_from_text(val)
-                            if not found and ("arch" in val or "linux" in val):
-                                found = "linux"
-                            break
-            except OSError:
-                pass
+    def _esp_roots() -> list[Path]:
+        roots: list[Path] = []
+        seen: set[str] = set()
+        for path in (LinuxDistroHelper.detect_esp(), *LinuxDistroHelper._iter_esp_candidates(),
+                     Path("/efi"), Path("/boot/efi"), Path("/boot")):
+            key = str(path)
+            if key not in seen:
+                seen.add(key)
+                roots.append(path)
+        return roots
 
-        elif bootloader == "grub":
-            try:
-                grub_def_path = Path("/etc/default/grub")
-                default_val = ""
-                if grub_def_path.exists():
-                    try:
-                        with open(grub_def_path, "r", encoding="utf-8", errors="replace") as f:
-                            for line in f:
-                                if line.strip().upper().startswith("GRUB_DEFAULT="):
-                                    default_val = line.split("=", 1)[1].strip().strip('"\'').lower()
-                                    break
-                    except OSError:
-                        default_val = ""
+    @staticmethod
+    def _resolve_entry_variant(roots: list[Path], entry: str) -> str | None:
+        name = Path(entry.strip().strip('"').replace("\\", "/")).name
+        if not name:
+            return None
 
-                if default_val == "saved":
-                    try:
-                        output = subprocess.check_output(["grub-editenv", "list"], stderr=subprocess.DEVNULL,
-                                                         stdin=subprocess.DEVNULL, text=True, timeout=10)
-                        for line in output.splitlines():
-                            if line.startswith("saved_entry="):
-                                default_val = line.split("=", 1)[1].lower()
-                                break
-                    except (subprocess.SubprocessError, FileNotFoundError, OSError):
-                        default_val = ""
+        variant = LinuxDistroHelper._variant_from_text(name)
+        if variant:
+            return variant
 
-                found = LinuxDistroHelper._variant_from_text(default_val)
-                if not found and default_val and default_val not in ("0", "saved"):
-                    found = "linux"
-            except OSError:
-                pass
+        if name.lower().endswith(".conf"):
+            for root in roots:
+                content = LinuxDistroHelper.read_text_priv(root / "loader" / "entries" / name)
+                if not content:
+                    continue
+                for line in content.splitlines():
+                    key = line.strip().lower()
+                    if key.startswith(("linux", "initrd", "efi ", "version", "title")):
+                        variant = LinuxDistroHelper._variant_from_text(key)
+                        if variant:
+                            return variant
+                if _PLAIN_VMLINUZ_RE.search(content.lower()):
+                    return "linux"
 
-        return found or LinuxDistroHelper.detect_running_kernel_variant()
+        lower = name.lower()
+        if "linux" in lower or "arch" in lower:
+            return "linux"
+        return None
+
+    @staticmethod
+    def _expand_entry_glob(roots: list[Path], pattern: str) -> list[str]:
+        names: list[str] = []
+        for root in roots:
+            names += LinuxDistroHelper.list_dir_priv(root / "loader" / "entries", ".conf")
+            names += LinuxDistroHelper.list_dir_priv(root / "EFI" / "Linux", ".efi")
+        pat = pattern.lower()
+        return [n for n in dict.fromkeys(names) if fnmatch.fnmatchcase(n.lower(), pat)]
+
+    @staticmethod
+    def _bootctl_default_blob() -> str:
+        if not shutil.which("bootctl"):
+            return ""
+        try:
+            r = subprocess.run(["bootctl", "list", "--json=short"], capture_output=True, text=True,
+                               stdin=subprocess.DEVNULL, timeout=15, check=False)
+            raw = r.stdout if r.returncode == 0 and r.stdout.strip() else ""
+        except (OSError, subprocess.SubprocessError):
+            raw = ""
+        if not raw:
+            raw = LinuxDistroHelper._sudo_capture(["bootctl", "list", "--json=short"], timeout=15) or ""
+        if not raw.strip():
+            return ""
+        try:
+            entries = json.loads(raw)
+        except ValueError:
+            return ""
+        if not isinstance(entries, list):
+            return ""
+        for item in entries:
+            if isinstance(item, dict) and item.get("isDefault"):
+                fields = [str(item.get(key, "")) for key in ("linux", "id", "path", "version", "sortKey", "title")]
+                return " ".join(f for f in fields if f)
+        return ""
+
+    @staticmethod
+    def _loader_conf_defaults(roots: list[Path]) -> list[str]:
+        values: list[str] = []
+        for root in roots:
+            text = LinuxDistroHelper.read_text_priv(root / "loader" / "loader.conf")
+            if not text:
+                continue
+            for line in text.splitlines():
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#"):
+                    continue
+                parts = stripped.split(None, 1)
+                if len(parts) == 2 and parts[0].lower() == "default":
+                    value = parts[1].strip()
+                    if value and value not in values:
+                        values.append(value)
+                    break
+        return values
+
+    @staticmethod
+    def _systemd_boot_default_variant() -> str | None:
+        roots = LinuxDistroHelper._esp_roots()
+
+        blob = LinuxDistroHelper._bootctl_default_blob()
+        if blob:
+            variant = LinuxDistroHelper._variant_from_text(blob)
+            if variant:
+                return variant
+
+        entries: list[str] = []
+        efi_default = LinuxDistroHelper.read_efi_var("LoaderEntryDefault")
+        if efi_default:
+            entries.append(efi_default)
+        entries.extend(LinuxDistroHelper._loader_conf_defaults(roots))
+        if blob:
+            entries.append(blob)
+
+        for raw_entry in entries:
+            entry = raw_entry
+            if entry.startswith("@"):
+                entry = LinuxDistroHelper.read_efi_var(
+                    "LoaderEntrySelected" if entry.lower() == "@current" else "LoaderEntryLastBooted") or ""
+                if not entry:
+                    continue
+            if any(ch in entry for ch in "*?["):
+                matches = LinuxDistroHelper._expand_entry_glob(roots, entry)
+                variants = {v for v in (LinuxDistroHelper._resolve_entry_variant(roots, m) for m in matches) if v}
+                if len(variants) == 1:
+                    return variants.pop()
+                continue
+            variant = LinuxDistroHelper._resolve_entry_variant(roots, entry)
+            if variant:
+                return variant
+        logger.debug("systemd-boot default undetermined (roots=%s, privileged=%s)",
+                     [str(r) for r in roots], LinuxDistroHelper._sudo_noninteractive_ok())
+        return None
+
+    @staticmethod
+    def _grub_default_kernel() -> str | None:
+        default_val = ""
+        text = LinuxDistroHelper.read_text_priv(Path("/etc/default/grub")) or ""
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.upper().startswith("GRUB_DEFAULT="):
+                default_val = stripped.split("=", 1)[1].strip().strip("\"'")
+                break
+
+        if default_val.lower() == "saved":
+            default_val = ""
+            editenv = LinuxDistroHelper.grub_tool("grub-editenv")
+            if editenv:
+                try:
+                    r = subprocess.run([editenv, "list"], capture_output=True, text=True,
+                                       stdin=subprocess.DEVNULL, timeout=10, check=False)
+                    out = r.stdout if r.returncode == 0 else ""
+                except (FileNotFoundError, OSError, subprocess.SubprocessError):
+                    out = ""
+                if not out:
+                    out = LinuxDistroHelper._sudo_capture([editenv, "list"]) or ""
+                for line in out.splitlines():
+                    if line.startswith("saved_entry="):
+                        default_val = line.split("=", 1)[1].strip()
+                        break
+
+        if not default_val:
+            return None
+
+        variant = LinuxDistroHelper._variant_from_text(default_val)
+        if variant:
+            return variant
+
+        if default_val.isdigit():
+            title = LinuxDistroHelper._grub_entry_title(int(default_val))
+            if title is None:
+                return None
+            variant = LinuxDistroHelper._variant_from_text(title)
+            if variant:
+                return variant
+            return "linux" if "linux" in title.lower() else None
+
+        return "linux" if _PLAIN_LINUX_RE.search(default_val.lower()) else None
+
+    @staticmethod
+    def _grub_entry_title(index: int) -> str | None:
+        cfg = LinuxDistroHelper.detect_grub_cfg()
+        if cfg is None:
+            return None
+        text = LinuxDistroHelper.read_text_priv(cfg)
+        if not text:
+            return None
+        depth = 0
+        position = 0
+        for raw in text.splitlines():
+            line = raw.strip()
+            match = _GRUB_ENTRY_RE.match(line)
+            if match:
+                if depth == 0:
+                    if position == index:
+                        return match.group(2)
+                    position += 1
+                if line.endswith("{"):
+                    depth += 1
+                continue
+            if depth:
+                depth += line.count("{") - line.count("}")
+                depth = max(depth, 0)
+        return None
+
+    @staticmethod
+    def detect_system_default_kernel(bootloader: str | None = None) -> str | None:
+        bl = bootloader or LinuxDistroHelper.detect_bootloader()
+        with _boot_lock:
+            if bl in _default_kernel_cache:
+                return _default_kernel_cache[bl]
+        result = LinuxDistroHelper._detect_default_kernel_uncached(bl)
+        with _boot_lock:
+            _default_kernel_cache[bl] = result
+        return result
+
+    @staticmethod
+    def _detect_default_kernel_uncached(bootloader: str) -> str | None:
+        try:
+            if bootloader == "systemd-boot":
+                return LinuxDistroHelper._systemd_boot_default_variant()
+
+            if bootloader == "grub":
+                return LinuxDistroHelper._grub_default_kernel()
+        except OSError as exc:
+            logger.debug("detect_system_default_kernel(%s): %s", bootloader, exc)
+        return None
