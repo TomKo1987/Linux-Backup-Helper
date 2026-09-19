@@ -52,6 +52,23 @@ def _init_keyring() -> None:
             _keyring_ready = True
 
 
+def _keyring_backend_name() -> str:
+    try:
+        backend = keyring.get_keyring()
+    except (KeyringError, ImportError, RuntimeError):
+        return ""
+    return f"{type(backend).__module__}.{type(backend).__name__}"
+
+
+def keyring_is_secure() -> bool:
+    name = _keyring_backend_name().lower()
+    if not name:
+        return False
+    if "keyrings.alt" in name or "plaintext" in name or "fail" in name or "null" in name:
+        return False
+    return True
+
+
 class _VerifyPasswordDialog(QDialog):
     _MAX_ATTEMPTS = 3
 
@@ -206,6 +223,9 @@ class SambaPasswordManager:
             stored_user = keyring.get_password(_KEYRING_SERVICE, _KEYRING_USER_KEY) or _USER
             pw = keyring.get_password(_KEYRING_SERVICE, stored_user)
             if pw:
+                if not keyring_is_secure():
+                    logger.warning("Samba credentials were read from an unencrypted keyring backend (%s).",
+                                   _keyring_backend_name() or "unknown")
                 secure = SecureString(pw)
                 del pw
                 return stored_user, secure, False
@@ -222,6 +242,11 @@ class SambaPasswordManager:
             entry = self._find_kwallet_entry() or f"smb-{username}"
             self._write_to_kwallet(entry, username, password)
         else:
+            if not keyring_is_secure():
+                raise RuntimeError(tr(
+                    "No secure password store is available (backend: {b}). Install/enable a "
+                    "keyring daemon such as gnome-keyring or KWallet — the password will NOT "
+                    "be written to an unencrypted file.", b=_keyring_backend_name() or "none"))
             try:
                 keyring.set_password(_KEYRING_SERVICE, username, password)
                 keyring.set_password(_KEYRING_SERVICE, _KEYRING_USER_KEY, username)
@@ -303,6 +328,14 @@ class SambaPasswordDialog(_StandardKeysMixin, QDialog):
             banner.setStyleSheet(f"color:{t['success']};font-weight:bold;")
             banner.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(banner)
+
+            if from_kwallet:
+                hint = QLabel(tr("KWallet entries can only be removed in KWallet Manager "
+                                 "(kwalletmanager) — saving here overwrites the existing entry."))
+                hint.setStyleSheet(f"color:{t['muted']};font-style:italic;")
+                hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                hint.setWordWrap(True)
+                layout.addWidget(hint)
 
         layout.addStretch()
 

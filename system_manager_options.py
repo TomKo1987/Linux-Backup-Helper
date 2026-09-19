@@ -577,6 +577,7 @@ class SystemManagerLauncher:
         self._distro_name: str = self._distro.distro_pretty_name
         self._session: str = self._distro.detect_session() or ""
         self._sudo_checkbox: QCheckBox | None = None
+        self._needs_password: bool = True
         self._op_text: dict[str, str] | None = None
         self._op_tips: dict[str, str] | None = None
         self._yay_installed = None
@@ -607,7 +608,7 @@ class SystemManagerLauncher:
     def _confirm_and_start(self) -> None:
         ops = S.system_manager_ops
         if self._op_text is None:
-            _bootloader, _current_variant, _sys_default = _detect_boot_info()
+            _bootloader, _current_variant, _sys_default = _detect_boot_info(self.parent)
             _ik = self._distro.detect_installed_kernel_variants()
             _ik.add(_current_variant)
             _op_status = _compute_op_status(self._distro, self.aur_helper_installed, _sys_default,
@@ -679,17 +680,20 @@ class SystemManagerLauncher:
             content_layout.addLayout(row)
 
         confirm = QLabel(f"<span style='font-size:{font_sz(2)}px;'>" + tr("Start System Manager?") + "<br>"
-                         + tr("(Check 'Enter sudo password' if privileged commands require a password)") + "<br></span>")
+                         + tr("Administrator rights are detected automatically — you will only be asked "
+                              "for your password if it is really required.") + "<br></span>")
         confirm.setTextFormat(Qt.TextFormat.RichText)
         confirm.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
+        from privileged import is_root, passwordless_sudo
+        self._needs_password = not (is_root() or passwordless_sudo(force=True))
+
         sudo_cb = QCheckBox(tr("Enter sudo password 󰔨"))
-        sudo_cb.setStyleSheet(style_sudo_checkbox(muted=False))
-        if self.failed_attempts:
+        sudo_cb.setChecked(self._needs_password)
+        sudo_cb.setEnabled(False)
+        sudo_cb.setStyleSheet(style_sudo_checkbox(muted=not self._needs_password))
+        if self._needs_password:
             sudo_cb.setText(tr("Sudo password must be entered! 󰔨"))
-            sudo_cb.setChecked(True)
-            sudo_cb.setEnabled(False)
-            sudo_cb.setStyleSheet(style_sudo_checkbox(muted=True))
         apply_tooltip(sudo_cb, sudo_checkbox_tooltip())
         self._sudo_checkbox = sudo_cb
 
@@ -725,7 +729,7 @@ class SystemManagerLauncher:
             no_btn.setFocus()
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        if self._sudo_checkbox and self._sudo_checkbox.isChecked():
+        if getattr(self, "_needs_password", True):
             self._show_sudo_dialog()
         else:
             self._start_thread("")

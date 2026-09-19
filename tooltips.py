@@ -253,15 +253,18 @@ def copy_logic_tooltip() -> str:
         "<b>Execution Security (Hardened)</b><br><br>"
         "- <b>Zero Visibility:</b> Passwords are <b>never</b> passed via command-line arguments to prevent exposure in process lists.<br>"
         "- <b>RAM-Only Storage:</b> Credentials are stored in <code>/dev/shm</code> (RAM disk). If <code>/dev/shm</code> is unavailable, "
-        "no credential file is created and the connection falls back to an anonymous (guest) attempt.<br>"
-        "- <b>Race-Condition Protection:</b> The credential file remains active for the <b>exact duration</b> of the transfer "
-        "and is deleted immediately after the process ends.<br>"
+        "no credential file is created and the connection is <b>aborted</b> — it never silently falls back to an anonymous session.<br>"
+        "- <b>Race-Condition Protection:</b> Every <code>smbclient</code> call gets its own private credential file (mode <code>0600</code>), "
+        "which exists only while that single call runs and is deleted immediately after the process ends.<br>"
         "- <b>Secure Erasure:</b> Before deletion, the credential file is <b>overwritten with zeros</b> (Wipe) and synced.<br>"
-        "- <b>Guest Fallback:</b> In case of access errors to the secure storage, the system safely falls back to a guest connection.<br>"
+        "- <b>Guest Only Without Credentials:</b> An anonymous connection is used only if no credentials are stored at all. "
+        "If credentials exist but cannot be handled securely, the connection is aborted instead.<br>"
         "- <b>Memory Safety:</b> The core password buffer (<code>SecureString</code>) is a mutable <code>bytearray</code> that is <b>manually zeroed</b> after use. "
-        "During the credential-file write step the raw <code>bytearray</code> is written to <code>/dev/shm</code> directly — no intermediate "
-        "immutable <code>str</code> or <code>bytes</code> copy is ever created — and it is <b>zeroed byte-by-byte</b> immediately afterwards in a "
-        "<code>finally</code> block, before the file itself is wiped and deleted.",
+        "During the credential-file write step the <code>bytearray</code> is written to <code>/dev/shm</code> directly through a <code>memoryview</code> — "
+        "no additional immutable <code>bytes</code> copy is created — and the working copy is <b>zeroed byte-by-byte</b> immediately afterwards in a "
+        "<code>finally</code> block, before the file itself is wiped and deleted. "
+        "<i>Note:</i> When a password is typed in or read from KWallet or the keyring, the toolkit and the storage backend inevitably "
+        "hand it over as a short-lived <code>str</code> that Python cannot overwrite.",
         success=t['success'], warning=t['warning'], error=t['error']
     )
 
@@ -295,8 +298,10 @@ def sudo_checkbox_tooltip() -> str:
             "<code>sudo -v</code> every 4 min so the cache never expires during a long session — "
             "no further password input or file I/O is ever required.<br><br>"
             "<b>Cleanup:</b><br>"
-            "When System Manager finishes, <code>sudo -k</code> is called to <b>immediately "
+            "When System Manager finishes — and likewise right after a Dotfiles deploy or a boot-loader "
+            "check that asked for the password, and when the application quits — "
+            "<code>sudo -k</code> is called to <b>immediately "
             "invalidate</b> the credential cache, and the <code>SecureString</code> buffer "
             "is zeroed.<br><br>"
             "<i>Your password is never logged, never sent over the network, "
-            "never written to any file, and never stored beyond this session.</i>")
+            "never written to any file, and never kept after the operation or the application ends.</i>")

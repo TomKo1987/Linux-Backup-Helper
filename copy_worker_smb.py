@@ -38,7 +38,7 @@ def _get_smb_credentials() -> tuple[str, "_SecurePw | None"]:
     return (u or ""), pw
 
 
-def _write_all(fd: int, data: bytes) -> None:
+def _write_all(fd: int, data: "bytes | bytearray | memoryview") -> None:
     view = memoryview(data)
     total = len(view)
     written = 0
@@ -68,17 +68,22 @@ def _smb_cred_file(user: str, pw: "_SecurePw") -> "tuple[str, str]":
 
             pwd_bytes = pw.get_bytes()
             try:
-                write_start = 0
                 _write_all(fd, b"password = ")
-                for idx, byte_val in enumerate(pwd_bytes):
-                    if byte_val in (0x0D, 0x0A):
-                        _write_all(fd, bytes(pwd_bytes[write_start:idx]))
-                        write_start = idx + 1
-                _write_all(fd, bytes(pwd_bytes[write_start:]))
+                view = memoryview(pwd_bytes)
+                try:
+                    start = 0
+                    for idx in range(len(pwd_bytes)):
+                        if pwd_bytes[idx] in (0x0D, 0x0A):
+                            if idx > start:
+                                _write_all(fd, view[start:idx])
+                            start = idx + 1
+                    if len(pwd_bytes) > start:
+                        _write_all(fd, view[start:])
+                finally:
+                    view.release()
                 _write_all(fd, b"\n")
             finally:
-                for i in range(len(pwd_bytes)):
-                    pwd_bytes[i] = 0
+                pwd_bytes[:] = bytearray(len(pwd_bytes))
             os.fsync(fd)
             return tmp_dir, cred_path
         finally:
@@ -237,7 +242,7 @@ class _SmbClient:
             if wipe_fn is not None:
                 wipe_fn()
 
-    def _argv_with_creds(self, relaxed_protocol: bool = False) -> "tuple[list[str], str | None, str | None]":
+    def _argv_with_creds(self, relaxed_protocol: bool = False) -> "tuple[list[str] | None, str | None, str | None]":
         base_argv = [a for a in self._argv if a not in ("-m", "SMB3")] if relaxed_protocol else self._argv
         if self._guest:
             return base_argv[:], None, None
@@ -246,15 +251,17 @@ class _SmbClient:
                 logger.warning("SMB //%s/%s: user '%s' set but no password available, falling back to guest.",
                                self.host, self.share, self._user)
             return [*base_argv, "-N"], None, None
-        if _SHM_DIR is not None:
-            try:
-                tmp_dir, cred_path = _smb_cred_file(self._user, self._pw)
-                return [*base_argv, "-A", cred_path], tmp_dir, cred_path
-            except (OSError, RuntimeError) as exc:
-                logger.warning("SMB //%s/%s: Secure pw failed (%s). Falling back to guest.", self.host, self.share, exc)
-        else:
-            logger.warning("SMB //%s/%s: /dev/shm not available. Falling back to guest.", self.host, self.share)
-        return [*base_argv, "-N"], None, None
+        if _SHM_DIR is None:
+            logger.error("SMB //%s/%s: /dev/shm not available — refusing to fall back to guest.",
+                         self.host, self.share)
+            return None, None, None
+        try:
+            tmp_dir, cred_path = _smb_cred_file(self._user, self._pw)
+        except (OSError, RuntimeError) as exc:
+            logger.error("SMB //%s/%s: secure credential file failed (%s) — refusing guest fallback.",
+                         self.host, self.share, exc)
+            return None, None, None
+        return [*base_argv, "-A", cred_path], tmp_dir, cred_path
 
     def _run_with_creds(self, input_data: str, timeout: int,
                         cancel: "threading.Event | None" = None) -> "tuple[subprocess.Popen | None, str, str]":
@@ -263,6 +270,9 @@ class _SmbClient:
             force_relaxed = share_key in self._relaxed_shares
 
         argv, tmp_dir, cred_path = self._argv_with_creds(relaxed_protocol=force_relaxed)
+        if argv is None:
+            return None, "", tr("SMB credentials could not be provided securely (tmpfs unavailable) — "
+                                "connection aborted instead of falling back to an anonymous session.")
         wipe_fn = None
         if tmp_dir and cred_path:
             _tmp_dir, _cred_path = tmp_dir, cred_path
@@ -274,6 +284,8 @@ class _SmbClient:
         if failed and not force_relaxed and (cancel is None or not cancel.is_set()) and _is_unreachable(err):
 
             argv2, tmp_dir2, cred_path2 = self._argv_with_creds(relaxed_protocol=True)
+            if argv2 is None:
+                return proc, out, err
             wipe_fn2 = None
             if tmp_dir2 and cred_path2:
                 _tmp_dir2, _cred_path2 = tmp_dir2, cred_path2

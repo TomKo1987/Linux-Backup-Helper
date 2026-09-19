@@ -3,7 +3,6 @@ import os
 import pwd
 import queue
 import re
-import secrets
 import select as _select
 import shlex
 import shutil
@@ -25,6 +24,7 @@ from PyQt6.QtWidgets import (
 from dotfiles_manager import first_path
 from firewall_rules import build_firewalld_commands, build_ufw_commands
 from linux_distro_helper import LinuxDistroHelper, ARCH_KERNEL_VARIANTS
+from privileged import SudoSession
 from state import S, _HOME, _USER, logger, apply_replacements, _ANSI_RE, active_pkg_names, active_dotfiles
 from themes import current_theme, font_sz
 from translations import tr
@@ -110,27 +110,6 @@ def _fmt_html(text: str, kind: str) -> str:
     lines = [f"<p style='{style}'>{_html.escape(apply_replacements(ln))}</p>"
              for ln in text.splitlines() if ln.strip()]
     return "\n".join(lines) + "<br>"
-
-
-class _SudoKeepalive(threading.Thread):
-    _INTERVAL = 240
-
-    def __init__(self, stop_event: threading.Event, pw=None) -> None:
-        super().__init__(daemon=True, name="sudo-keepalive")
-        self._stop, self._pw = stop_event, pw
-
-    def run(self) -> None:
-        while not self._stop.wait(self._INTERVAL):
-            try:
-                r = subprocess.run(["sudo", "-n", "-v"], capture_output=True, timeout=10)
-                if r.returncode != 0 and self._pw:
-                    buf = _pw_bytes(self._pw)
-                    try:
-                        subprocess.run(["sudo", "-S", "-v"], input=buf, capture_output=True, timeout=10)
-                    finally:
-                        _zero(buf)
-            except Exception as exc:
-                logger.debug("_SudoKeepalive: %s", exc)
 
 
 class _PackageCache:
@@ -471,8 +450,6 @@ class SystemManagerThread(QThread):
         from sudo_password import SecureString
         self._pw = sudo_password if isinstance(sudo_password, SecureString) else SecureString(sudo_password or "")
         self._stop = threading.Event()
-        self._stop_keepalive = threading.Event()
-        self._keepalive: _SudoKeepalive | None = None
         self._enabled_tasks: dict[str, tuple] = {}
         self._task_status: dict[str, str] = {}
         self._input_event: threading.Event = threading.Event()
@@ -506,12 +483,10 @@ class SystemManagerThread(QThread):
             if self.terminated: return
             if not self._verify_sudo(): self.passwordFailed.emit(); return
             self.passwordSuccess.emit()
+            if self._pw:
+                SudoSession.instance().attach(self._pw)
             LinuxDistroHelper.set_privileged_reader(self._read_file_sudo)
             LinuxDistroHelper.invalidate_boot_caches()
-            self._stop_keepalive.clear()
-            _keepalive = _SudoKeepalive(self._stop_keepalive, self._pw)
-            self._keepalive = _keepalive
-            _keepalive.start()
             if not self.terminated: self._run_all_tasks()
         except Exception as exc:
             try:
@@ -549,11 +524,8 @@ class SystemManagerThread(QThread):
 
     def _cleanup(self) -> None:
         LinuxDistroHelper.set_privileged_reader(None)
-        self._stop_keepalive.set()
-        if self._keepalive: self._keepalive.join(timeout=5); self._keepalive = None
+        SudoSession.instance().release()
         self._pw.clear()
-        try: subprocess.run(["sudo", "-k"], capture_output=True, timeout=5)
-        except (subprocess.SubprocessError, OSError): pass
 
     def _prepare_tasks(self) -> None:
         all_tasks = {
@@ -640,10 +612,9 @@ class SystemManagerThread(QThread):
                     self._task_status[remaining_id] = _Status.WARNING
                 break
 
-    @staticmethod
-    def _inject(cmd: list[str]) -> list[str]:
-        if cmd and cmd[0] == "sudo" and not (len(cmd) > 1 and cmd[1] == "-S"):
-            return ["sudo", "-S", *cmd[1:]]
+    def _inject(self, cmd: list[str]) -> list[str]:
+        if cmd and cmd[0] == "sudo" and not (len(cmd) > 1 and cmd[1] in ("-S", "-n")):
+            return ["sudo", "-S" if self._pw else "-n", *cmd[1:]]
         return cmd
 
     def _exec(self, cmd: list[str] | str, stream: bool = False, timeout: int | None = 15,
@@ -658,7 +629,7 @@ class SystemManagerThread(QThread):
                 if inner_cmd.startswith("sudo "):
                     inner_cmd = inner_cmd[5:]
                 inner_cmd = inner_cmd.replace("&& sudo ", "&& ").replace("|| sudo ", "|| ").replace("; sudo ", "; ")
-                cmd = ["sudo", "-S", "sh", "-c", inner_cmd]
+                cmd = ["sudo", "-S" if self._pw else "-n", "sh", "-c", inner_cmd]
             else:
                 cmd = self._inject(shlex.split(cmd))
         elif isinstance(cmd, list):
@@ -668,7 +639,7 @@ class SystemManagerThread(QThread):
         if self._pw and isinstance(cmd, list):
             if cmd[:2] == ["sudo", "-S"] or cmd[:1] in (["yay"], ["paru"]):
                 pw_to_send = self._pw
-                if cmd[:1] in (["yay"], ["paru"]) and "--sudoflags=-S" not in cmd:
+                if cmd[:1] in (["yay"], ["paru"]) and not any(a.startswith("--sudoflags=") for a in cmd):
                     cmd.append("--sudoflags=-S")
 
         if not stream:
@@ -957,74 +928,13 @@ class SystemManagerThread(QThread):
 
     def _verify_sudo(self) -> bool:
         self.outputReceived.emit(tr("Verifying sudo access…"), "operation")
+
+        ok = SudoSession.verify(self._pw)
         try:
-            subprocess.run(["sudo", "-k"], capture_output=True, timeout=5)
-        except (OSError, subprocess.SubprocessError):
+            self.outputReceived.emit(tr("Sudo access successfully verified") if ok else tr("Authentication failed: Invalid Password"),
+                                     "success" if ok else "error")
+        except RuntimeError:
             pass
-        token = secrets.token_hex(16)
-        pw_buf = _pw_bytes(self._pw)
-        ok, proc = False, None
-        try:
-            proc = subprocess.Popen(["sudo", "-S", "sh", "-c", f"printf '%s\\n' {shlex.quote(token)}"],
-                                    env=self._env_snapshot, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            try:
-                if proc.stdin:
-                    proc.stdin.write(pw_buf)
-                    proc.stdin.flush()
-                    proc.stdin.close()
-            except OSError:
-                pass
-
-            chunks: list[bytes] = []
-
-            def _read_out() -> None:
-                try:
-                    if proc and proc.stdout:
-                        chunks.append(proc.stdout.read())
-                except (OSError, ValueError):
-                    pass
-
-            def _kill_on_retry() -> None:
-                n = 0
-                try:
-                    if not proc or not proc.stderr:
-                        return
-                    for raw in iter(proc.stderr.readline, b""):
-                        line = raw.decode("utf-8", errors="replace")
-                        if "[sudo]" in line.lower() and "password" in line.lower():
-                            n += 1
-                            if n >= 2:
-                                try:
-                                    proc.kill()
-                                except (ProcessLookupError, AttributeError):
-                                    pass
-                                return
-                except (OSError, ValueError):
-                    pass
-
-            t1 = threading.Thread(target=_read_out, daemon=True); t2 = threading.Thread(target=_kill_on_retry, daemon=True)
-            t1.start(); t2.start()
-            try:
-                proc.wait(timeout=15)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
-            t1.join(5); t2.join(5)
-            output = b"".join(chunks)
-            ok = proc.returncode == 0 and output.strip() == token.encode()
-        except Exception as exc: logger.error("_verify_sudo: %s", exc)
-        finally:
-            _zero(pw_buf)
-            if proc and proc.returncode is None:
-                try:
-                    proc.kill()
-                except OSError:
-                    pass
-            try:
-                self.outputReceived.emit(tr("Sudo access successfully verified") if ok else tr("Authentication failed: Invalid Password"),
-                                         "success" if ok else "error")
-            except RuntimeError:
-                pass
         return ok
 
     def _install_pkg(self, name: str, label: str | None = None) -> bool:

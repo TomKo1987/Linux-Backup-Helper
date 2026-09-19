@@ -511,7 +511,6 @@ _cpu_vendor_cache: list = []
 _default_kernel_cache: dict[str, str | None] = {}
 _priv_reader: list = []
 _sudo_ok_cache: list = []
-_pkexec_state_cache: list = []
 _boot_lock = threading.Lock()
 
 _SD_BOOT_GUID = "4a67b082-0a4c-41cf-b6c7-440b29bb8c4f"
@@ -1034,56 +1033,13 @@ class LinuxDistroHelper:
 
     @staticmethod
     def _sudo_noninteractive_ok() -> bool:
-        with _boot_lock:
-            if _sudo_ok_cache:
-                return _sudo_ok_cache[0]
-        ok = False
-        if os.geteuid() == 0:
-            ok = True
-        elif shutil.which("sudo"):
-            try:
-                ok = subprocess.run(["sudo", "-n", "true"], capture_output=True, stdin=subprocess.DEVNULL,
-                                    timeout=5, check=False).returncode == 0
-            except (OSError, subprocess.SubprocessError):
-                ok = False
-        with _boot_lock:
-            if not _sudo_ok_cache:
-                _sudo_ok_cache.append(ok)
-        return ok
-
-    @staticmethod
-    def _pkexec_declined() -> bool:
-        with _boot_lock:
-            return bool(_pkexec_state_cache) and _pkexec_state_cache[0] is False
-
-    @staticmethod
-    def _pkexec_note_result(authorized: bool) -> None:
-        with _boot_lock:
-            if not _pkexec_state_cache:
-                _pkexec_state_cache.append(authorized)
-            elif authorized:
-                _pkexec_state_cache[0] = True
+        from privileged import passwordless_sudo
+        return passwordless_sudo()
 
     @staticmethod
     def _privileged_run(args: list[str], timeout: int, *, text: bool) -> subprocess.CompletedProcess | None:
-        if os.geteuid() == 0:
-            cmd, via_pkexec = list(args), False
-        elif LinuxDistroHelper._sudo_noninteractive_ok():
-            cmd, via_pkexec = ["sudo", "-n", *args], False
-        elif shutil.which("pkexec") and not LinuxDistroHelper._pkexec_declined():
-            cmd, via_pkexec = ["pkexec", *args], True
-        else:
-            return None
-        try:
-            r = subprocess.run(cmd, capture_output=True, text=text, stdin=subprocess.DEVNULL,
-                               timeout=timeout, check=False)
-        except (OSError, subprocess.SubprocessError):
-            if via_pkexec:
-                LinuxDistroHelper._pkexec_note_result(False)
-            return None
-        if via_pkexec:
-            LinuxDistroHelper._pkexec_note_result(r.returncode not in (126, 127))
-        return r
+        from privileged import run_privileged
+        return run_privileged(args, timeout=timeout, text=text)
 
     @staticmethod
     def _sudo_capture(args: list[str], timeout: int = 10) -> str | None:
@@ -1348,7 +1304,8 @@ class LinuxDistroHelper:
             _esp_cache.clear()
             _default_kernel_cache.clear()
             _sudo_ok_cache.clear()
-            _pkexec_state_cache.clear()
+        from privileged import invalidate_sudo_probe
+        invalidate_sudo_probe()
 
     def get_ucode_package(self) -> str | None:
         cpu_vendor = self.detect_cpu_vendor()

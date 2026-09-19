@@ -1,5 +1,4 @@
 import shlex
-import subprocess
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
@@ -20,6 +19,8 @@ _HOOK_TIMEOUT = 120
 
 
 def run_hooks(hooks: list[str], *, abort_on_error: bool = True, label: str = "") -> tuple[bool, list[str]]:
+    from privileged import run_user_command
+
     errors: list[str] = []
 
     def _fail(_msg: str) -> bool:
@@ -40,12 +41,7 @@ def run_hooks(hooks: list[str], *, abort_on_error: bool = True, label: str = "")
 
         logger.info("run_hooks: [%s] %s", label or "hook", cmd)
         try:
-            result = subprocess.run(
-                tokens,
-                capture_output=True,
-                text=True,
-                timeout=_HOOK_TIMEOUT,
-            )
+            result = run_user_command(tokens, timeout=_HOOK_TIMEOUT)
             if result.returncode != 0:
                 stderr = (result.stderr or result.stdout or "").strip()
                 msg = (
@@ -55,9 +51,6 @@ def run_hooks(hooks: list[str], *, abort_on_error: bool = True, label: str = "")
                 )
                 if _fail(msg):
                     return False, errors
-        except subprocess.TimeoutExpired:
-            if _fail(f"Hook timed out after {_HOOK_TIMEOUT}s ({label}): {cmd!r}"):
-                return False, errors
         except Exception as exc:
             if _fail(f"Hook exception ({label}): {exc} — {cmd!r}"):
                 return False, errors

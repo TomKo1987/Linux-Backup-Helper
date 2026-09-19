@@ -48,7 +48,7 @@ class _OpsEditorMixin(_OpsMixinBase):
         aur_helper_installed: bool
 
     def _edit_ops(self):
-        bootloader, current_variant, _system_default_variant = _detect_boot_info()
+        bootloader, current_variant, _system_default_variant = _detect_boot_info(self)
         bl_label = _BOOTLOADER_LABELS.get(bootloader, tr("unknown bootloader"))
 
         _saved_default_variant = S.default_kernel or _system_default_variant

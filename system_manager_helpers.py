@@ -98,10 +98,23 @@ def _scroll_dlg(_parent, title: str, body: QWidget, on_save=None) -> tuple[QDial
     return dlg, lay
 
 
-def _detect_boot_info() -> tuple[str, str, str]:
+def _detect_boot_info(parent=None) -> tuple[str, str, str]:
     bootloader = LinuxDistroHelper.detect_bootloader()
     current_variant = LinuxDistroHelper.detect_running_kernel_variant()
     system_default = LinuxDistroHelper.detect_system_default_kernel(bootloader) or ""
+
+    if not system_default and bootloader != "unknown" and parent is not None:
+        from privileged import SudoSession, authenticate, is_root, passwordless_sudo, release_session
+        if not (is_root() or passwordless_sudo(force=True)):
+            had_password = SudoSession.instance().has_password()
+            if authenticate(parent):
+                try:
+                    LinuxDistroHelper.invalidate_boot_caches()
+                    system_default = LinuxDistroHelper.detect_system_default_kernel(bootloader) or ""
+                finally:
+                    if not had_password:
+                        release_session()
+
     return bootloader, current_variant, system_default
 
 

@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
 
 from backup_stats import BackupStatsDialog
 from misc_dialogs import LogViewer, SysInfoDialog, NotesDialog
+from privileged import release_session
 from drive_utils import get_mounts, is_mounted, unmount_drive, get_session_managed_mounts
 from dry_run import launch_dry_run
 from icons import _ICON_B64
@@ -450,6 +451,7 @@ def main():
     app = QApplication(sys.argv)
     app.setWindowIcon(_make_icon())
     app.setApplicationName("Backup Helper")
+    app.aboutToQuit.connect(release_session)
     install_qt_base_translator(app)
 
     def _excepthook(exc_type, exc_value, exc_tb):

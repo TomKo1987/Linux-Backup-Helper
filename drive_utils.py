@@ -136,14 +136,12 @@ def _execute_drive_op(drive: dict, cmd_key: str, timeout: int) -> tuple[bool, st
     ok, reason, tokens = _validate_cmd(cmd)
     if not ok:
         return False, tr("Drive '{name}': {reason}", name=name, reason=reason)
+    from privileged import run_user_command
     try:
-        result = subprocess.run(tokens, capture_output=True, text=True, timeout=timeout)
+        result = run_user_command(tokens, timeout=timeout)
         if result.returncode == 0:
             return True, ""
         return False, result.stderr.strip() or result.stdout.strip() or tr("exit code {code}", code=result.returncode)
-    except subprocess.TimeoutExpired:
-        logger.debug("_execute_drive_op: '%s' (%s) timed out after %ds", name, cmd_key, timeout)
-        return False, tr("Timed out after {timeout}s", timeout=timeout)
     except Exception as e:
         logger.debug("_execute_drive_op: '%s' (%s) raised %s: %s", name, cmd_key, type(e).__name__, e)
         return False, str(e)

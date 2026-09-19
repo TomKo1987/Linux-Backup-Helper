@@ -2,7 +2,6 @@ import difflib
 import html as _html
 import os
 import shutil
-import subprocess
 from datetime import datetime
 from pathlib import Path
 
@@ -36,13 +35,10 @@ def _read_safe(path: Path) -> str | None:
             return None
         return path.read_text(encoding="utf-8", errors="replace")
     except PermissionError:
-        try:
-            r = subprocess.run(["sudo", "-n", "cat", str(path)],
-                               capture_output=True, text=True, timeout=10)
-            if r.returncode == 0:
-                return r.stdout
-        except (subprocess.SubprocessError, OSError):
-            pass
+        from privileged import run_privileged
+        r = run_privileged(["cat", str(path)], timeout=10)
+        if r is not None and r.returncode == 0:
+            return r.stdout
         return None
     except OSError:
         return None
@@ -138,6 +134,21 @@ def _colored_diff_html(src_lines: list[str], dst_lines: list[str], theme: dict) 
     return html
 
 
+def _needs_root(files: list[dict]) -> bool:
+    for f in files:
+        dst = _expand(first_path(f.get("destination", "")))
+        probe = dst if _path_exists(dst) else dst.parent
+        while True:
+            if _path_exists(probe):
+                break
+            if probe.parent == probe:
+                break
+            probe = probe.parent
+        if not os.access(probe, os.W_OK):
+            return True
+    return False
+
+
 class _DeployWorker(QThread):
     progress = pyqtSignal(str, bool)
     finished = pyqtSignal(int, int)
@@ -148,7 +159,12 @@ class _DeployWorker(QThread):
         self._backup = backup
 
     def run(self) -> None:
+        from privileged import auth_required_message, run_privileged
         ok = err = 0
+
+        def _priv(args: list[str], timeout: int):
+            return run_privileged(args, timeout=timeout)
+
         for f in self._files:
             src = _expand(first_path(f.get("source", "")))
             dst = _expand(first_path(f.get("destination", "")))
@@ -179,34 +195,31 @@ class _DeployWorker(QThread):
                         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                         if dst.is_dir():
                             bak_path = dst.with_name(f"{dst.name}.bak_{ts}")
-                            bres = subprocess.run(
-                                ["sudo", "cp", "-a", str(dst), str(bak_path)],
-                                capture_output=True, text=True, timeout=30)
+                            bres = _priv(["cp", "-a", str(dst), str(bak_path)], 30)
                         else:
                             bak_path = dst.with_suffix(f"{dst.suffix}.bak_{ts}")
-                            bres = subprocess.run(
-                                ["sudo", "cp", "-p", str(dst), str(bak_path)],
-                                capture_output=True, text=True, timeout=15)
+                            bres = _priv(["cp", "-p", str(dst), str(bak_path)], 15)
+                        if bres is None:
+                            self.progress.emit(f"  ✗ {src.name}: {auth_required_message()}", True)
+                            err += 1
+                            continue
                         if bres.returncode != 0:
                             self.progress.emit(
                                 f"  ✗ {src.name}: {tr('sudo backup failed: {err}, skipping overwrite', err=bres.stderr.strip())}", True)
                             err += 1
                             continue
 
-                    subprocess.run(
-                        ["sudo", "mkdir", "-p", str(dst.parent)],
-                        capture_output=True, text=True, timeout=15)
+                    _priv(["mkdir", "-p", str(dst.parent)], 15)
 
                     if is_dir:
-                        r = subprocess.run(
-                            ["sudo", "cp", "-a", "-T", str(src), str(dst)],
-                            capture_output=True, text=True, timeout=60)
+                        r = _priv(["cp", "-a", "-T", str(src), str(dst)], 60)
                     else:
-                        r = subprocess.run(
-                            ["sudo", "cp", str(src), str(dst)],
-                            capture_output=True, text=True, timeout=30)
+                        r = _priv(["cp", str(src), str(dst)], 30)
 
-                    if r.returncode == 0:
+                    if r is None:
+                        self.progress.emit(f"  ✗ {src.name}: {auth_required_message()}", True)
+                        err += 1
+                    elif r.returncode == 0:
                         suffix = "/" if is_dir else ""
                         self.progress.emit(f"  ✓ {src.name}{suffix}  →  {dst}  ({tr('via sudo')})", False)
                         ok += 1
@@ -214,9 +227,6 @@ class _DeployWorker(QThread):
                         self.progress.emit(
                             f"  ✗ {src.name}: {tr('sudo cp failed: {err}', err=r.stderr.strip())}", True)
                         err += 1
-                except subprocess.TimeoutExpired:
-                    self.progress.emit(f"  ✗ {src.name}: {tr('sudo cp timed out')}", True)
-                    err += 1
                 except Exception as exc2:
                     self.progress.emit(f"  ✗ {src.name}: {exc2}", True)
                     err += 1
@@ -605,6 +615,16 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
         if ans != QMessageBox.StandardButton.Yes:
             return
 
+        own_session = False
+        if _needs_root(files):
+            from privileged import SudoSession, authenticate
+            had_password = SudoSession.instance().has_password()
+            if not authenticate(self):
+                QMessageBox.warning(self, tr("Authentication Required"),
+                                    tr("Deploying these files requires administrator rights."))
+                return
+            own_session = not had_password and SudoSession.instance().has_password()
+
         worker = _DeployWorker(files, backup=self._backup_cb.isChecked())
         self._worker = worker
         t = current_theme()
@@ -615,6 +635,9 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
                 f"<p style='color:{color};font-family:monospace;font-size:{font_sz(-1)}px;'>{_html.escape(msg)}</p>")
 
         def _on_done(ok: int, err: int) -> None:
+            if own_session:
+                from privileged import release_session
+                release_session()
             col = t["error"] if err else t["success"]
             self._diff_view.append(
                 f"<p style='color:{col};font-family:monospace;font-size:{font_sz(1)}px;font-weight:bold;'>"
