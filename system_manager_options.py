@@ -25,15 +25,15 @@ from ui_utils import ask_text, ask_yes_no, checkbox_row_frame_style, fit_button_
 
 from system_manager_helpers import (
     _is_specific, _commit_pkgs, _pkg_checkboxes, _scroll_dlg, _read_import_file, _pkg_form_dialog,
-    _check_aur_helper_installed, _detect_effective_aur_helper, _raw_to_label_html, _raw_to_tips,
+    _detect_effective_aur_helper, _raw_to_label_html, _raw_to_tips,
     PackageVerifierThread, _add_select_all_tri, _STATE_DELETE, _STATE_DISABLED,
-    _detect_boot_info, _compute_op_status, _build_op_text
+    _detect_boot_info, _compute_op_status, _build_op_text, _AurHelperCacheMixin
 )
 from system_manager_ops_editor import _OpsEditorMixin
 from system_manager_dotfiles_editor import _DotfilesEditorMixin
 
 
-class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
+class SystemManagerOptions(_AurHelperCacheMixin, _OpsEditorMixin, _DotfilesEditorMixin, QDialog):
 
     def __init__(self, _parent=None, distro: LinuxDistroHelper | None = None):
         super().__init__(_parent)
@@ -41,7 +41,7 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
         self.setMinimumSize(1400, 700)
         self._distro = distro or LinuxDistroHelper()
         self._session: str = self._distro.detect_session() or ""
-        self._aur_helper_installed: bool | None = None
+        self._aur_helper_installed_cache: bool | None = None
         self._verifier_threads: list[PackageVerifierThread] = []
         self._build()
 
@@ -99,12 +99,6 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
         close = QPushButton(tr("Close"))
         close.clicked.connect(self.close)
         lay.addWidget(close)
-
-    @property
-    def aur_helper_installed(self) -> bool:
-        if self._aur_helper_installed is None:
-            self._aur_helper_installed = _check_aur_helper_installed(self._distro)
-        return bool(self._aur_helper_installed)
 
     def _reopen_pkgs(self, pkg_type: str) -> None:
         QTimer.singleShot(0, lambda: self._edit_pkgs(pkg_type))
@@ -568,7 +562,7 @@ class SystemManagerOptions(_OpsEditorMixin, _DotfilesEditorMixin, QDialog):
         verifier_thread.start()
 
 
-class SystemManagerLauncher:
+class SystemManagerLauncher(_AurHelperCacheMixin):
 
     def __init__(self, _parent=None):
         self.parent = _parent
@@ -580,15 +574,9 @@ class SystemManagerLauncher:
         self._needs_password: bool = True
         self._op_text: dict[str, str] | None = None
         self._op_tips: dict[str, str] | None = None
-        self._yay_installed = None
+        self._aur_helper_installed_cache: bool | None = None
         self._sm_thread = None
         self._sm_dialog = None
-
-    @property
-    def aur_helper_installed(self) -> bool:
-        if self._yay_installed is None:
-            self._yay_installed = _check_aur_helper_installed(self._distro)
-        return bool(self._yay_installed)
 
     def launch(self) -> None:
         if not S.system_manager_ops:

@@ -477,6 +477,17 @@ def _check_aur_helper_installed(distro: LinuxDistroHelper) -> bool:
     return distro.has_aur and _is_helper_present(distro, S.aur_helper)
 
 
+class _AurHelperCacheMixin:
+    _distro: LinuxDistroHelper
+    _aur_helper_installed_cache: bool | None = None
+
+    @property
+    def aur_helper_installed(self) -> bool:
+        if self._aur_helper_installed_cache is None:
+            self._aur_helper_installed_cache = _check_aur_helper_installed(self._distro)
+        return bool(self._aur_helper_installed_cache)
+
+
 def _is_helper_present(distro: LinuxDistroHelper, helper: str) -> bool:
     return distro.package_is_installed(helper) or shutil.which(helper) is not None
 

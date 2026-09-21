@@ -1080,7 +1080,7 @@ class SystemManagerThread(QThread):
                 overall = False
                 continue
 
-            cmd = ["sudo", "cp"] + (["-r"] if Path(src).is_dir() else []) + [src, dst]
+            cmd = ["sudo", "cp"] + (["-rT"] if Path(src).is_dir() else []) + [src, dst]
             if self._exec(cmd, stream=True).returncode == 0:
                 self.outputReceived.emit(tr("Copied successfully:\n'{src}' 󰧂 '{dst}'", src=src, dst=dst), "success")
             else:
@@ -1115,7 +1115,7 @@ class SystemManagerThread(QThread):
             self.outputReceived.emit(tr("Failed to install reflector"), "error")
             return False
 
-        cmd = ["sudo", "-S", "reflector", "--verbose", "--latest", "10",
+        cmd = ["sudo", "-S" if self._pw else "-n", "reflector", "--verbose", "--latest", "10",
                "--protocol", "https", "--sort", "rate", "--save", "/etc/pacman.d/mirrorlist"]
         if country: cmd += ["--country", country]
         self.outputReceived.emit(tr("Running: {cmd}", cmd=' '.join(cmd)), "info")
@@ -1496,6 +1496,7 @@ class SystemManagerThread(QThread):
         return sorted(n.strip() for n in r.stdout.splitlines() if n.strip().lower().endswith(suffix.lower()))
 
     def _find_uki_entry(self, kernel_pkg: str, esp: Path) -> str | None:
+        kernel_pkg = kernel_pkg.lower()
         for name in self._list_dir(esp / "EFI" / "Linux", ".efi"):
             stem = name.lower().removesuffix(".efi")
             if stem == kernel_pkg or stem.endswith((f"-{kernel_pkg}", f"_{kernel_pkg}")):
@@ -1708,8 +1709,8 @@ class SystemManagerThread(QThread):
 
         target_dir = _HOME / helper
         shutil.rmtree(target_dir, ignore_errors=True)
-        for msg, cmd, kw in [(f"Cloning {helper}…", ["git", "clone", repo_url], {"cwd": str(_HOME)}),
-                             (f"Building {helper}…", ["makepkg", "-c", "--noconfirm"], {"cwd": str(target_dir)})]:
+        for msg, cmd, kw in [(tr("Cloning {helper}…", helper=helper), ["git", "clone", repo_url], {"cwd": str(_HOME)}),
+                             (tr("Building {helper}…", helper=helper), ["makepkg", "-c", "--noconfirm"], {"cwd": str(target_dir)})]:
             self.outputReceived.emit(msg, "subprocess")
             if self._exec(cmd, stream=True, **kw).returncode != 0:
                 shutil.rmtree(target_dir, ignore_errors=True)
@@ -1822,6 +1823,18 @@ class SystemManagerThread(QThread):
             return _Status.WARNING
         return self._enable_service(service)
 
+    def _apply_firewall_rules(self, service: str) -> bool:
+        if service == "ufw":
+            cmds = build_ufw_commands(S.firewall_config.get("rules", []))
+        elif service == "firewalld":
+            cmds = build_firewalld_commands(S.firewall_config.get("rules", []))
+        else:
+            return True
+        for c in cmds:
+            if self._exec(c, stream=True).returncode != 0:
+                return False
+        return True
+
     def _enable_service(self, service: str) -> bool:
         if service.endswith(".timer") and not shutil.which("systemctl"):
             self.outputReceived.emit(
@@ -1837,7 +1850,7 @@ class SystemManagerThread(QThread):
 
             if is_enabled and is_active:
                 self.outputReceived.emit(tr("{svc} already enabled and active — nothing to do", svc=svc), "success")
-                return True
+                return self._apply_firewall_rules(service)
             if is_enabled and not is_active:
                 self.outputReceived.emit(tr("{svc} already enabled, starting it now", svc=svc), "info")
                 ok = (self._exec(["sudo", "systemctl", "start", svc], stream=True).returncode == 0)
@@ -1852,7 +1865,7 @@ class SystemManagerThread(QThread):
             already_active = self._exec(["rc-service", service, "status"]).returncode == 0
             if already_enabled and already_active:
                 self.outputReceived.emit(tr("{service} already enabled and active", service=service), "success")
-                return True
+                return self._apply_firewall_rules(service)
             if not already_enabled:
                 self.outputReceived.emit(tr("Enabling {service} (OpenRC)", service=service), "info")
                 self._exec(["sudo", "rc-update", "add", service, "default"], stream=True)
@@ -1863,7 +1876,7 @@ class SystemManagerThread(QThread):
             self.outputReceived.emit(tr("Enabling {service} (runit)", service=service), "info")
             if os.path.exists(f"/var/service/{service}"):
                 self.outputReceived.emit(tr("{service} already enabled", service=service), "success")
-                return True
+                return self._apply_firewall_rules(service)
             ok = False
             if os.path.isdir(f"/etc/sv/{service}"):
                 ok = (self._exec(["sudo", "ln", "-s", f"/etc/sv/{service}", "/var/service/"],
@@ -1894,22 +1907,13 @@ class SystemManagerThread(QThread):
 
         else:
             self.outputReceived.emit(tr("Unsupported init system. Please enable '{service}' manually.", service=service), "warning")
-            return True
+            return self._apply_firewall_rules(service)
 
         if ok:
             self.outputReceived.emit(tr("{service} successfully enabled", service=service), "success")
-            if service == "ufw":
-                cmds = build_ufw_commands(S.firewall_config.get("rules", []))
-                for c in cmds:
-                    if self._exec(c, stream=True).returncode != 0: return False
+            return self._apply_firewall_rules(service)
 
-            elif service == "firewalld":
-                cmds = build_firewalld_commands(S.firewall_config.get("rules", []))
-                for c in cmds:
-                    if self._exec(c, stream=True).returncode != 0: return False
-
-        else:
-            self.outputReceived.emit(tr("Failed to enable {service}", service=service), "error")
+        self.outputReceived.emit(tr("Failed to enable {service}", service=service), "error")
         return ok
 
     def _remove_orphans(self) -> bool:

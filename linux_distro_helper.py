@@ -172,7 +172,7 @@ _PKG: dict[str, dict[str, Any]] = {
         "install": "sudo env DEBIAN_FRONTEND=noninteractive apt-get install -yq -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold' {p}",
         "update": "sudo env DEBIAN_FRONTEND=noninteractive apt-get update && sudo env DEBIAN_FRONTEND=noninteractive apt-get upgrade -yq -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold'",
         "remove": "sudo env DEBIAN_FRONTEND=noninteractive apt-get autoremove -yq {p}",
-        "clean": "sudo apt-get clean && sudo apt-get autoremove -y",
+        "clean": "sudo apt-get clean",
         "orphans": "apt-get --dry-run autoremove",
         "has_aur": False,
         "kernel": "linux-headers-generic",
@@ -823,7 +823,7 @@ class LinuxDistroHelper:
             fam = self.family()
             if fam == "arch":
                 tag = _kernel_tag(kv)
-                return f"linux-{tag}-headers" if tag else "linux-headers"
+                return f"linux-{tag}-headers" if tag in ("hardened", "lts", "zen") else "linux-headers"
             if fam == "debian":  return f"linux-headers-{kv}"
             if fam in ("fedora", "amazon2", "fedora-atomic"): return f"kernel-devel-{kv}"
             if fam in ("suse", "suse-immutable"): return "kernel-default-devel"
@@ -1364,7 +1364,7 @@ class LinuxDistroHelper:
             if candidate in ARCH_KERNEL_VARIANTS:
                 return candidate
         for tag in ("hardened", "zen", "lts"):
-            if tag in val:
+            if re.search(r"(?<![a-z0-9])" + tag + r"(?![a-z0-9])", val):
                 return f"linux-{tag}"
         return None
 
@@ -1542,7 +1542,7 @@ class LinuxDistroHelper:
             variant = LinuxDistroHelper._variant_from_text(title)
             if variant:
                 return variant
-            return "linux" if "linux" in title.lower() else None
+            return "linux" if _PLAIN_LINUX_RE.search(title.lower()) else None
 
         return "linux" if _PLAIN_LINUX_RE.search(default_val.lower()) else None
 
@@ -1556,21 +1556,31 @@ class LinuxDistroHelper:
             return None
         depth = 0
         position = 0
+        target_kind: str | None = None
+        first_child_title: str | None = None
         for raw in text.splitlines():
             line = raw.strip()
             match = _GRUB_ENTRY_RE.match(line)
             if match:
+                if target_kind == "submenu" and depth == 1 and match.group(1) == "menuentry" \
+                        and first_child_title is None:
+                    first_child_title = match.group(2)
                 if depth == 0:
                     if position == index:
-                        return match.group(2)
-                    position += 1
+                        if match.group(1) == "menuentry":
+                            return match.group(2)
+                        target_kind = "submenu"
+                    else:
+                        position += 1
                 if line.endswith("{"):
                     depth += 1
                 continue
             if depth:
                 depth += line.count("{") - line.count("}")
                 depth = max(depth, 0)
-        return None
+                if target_kind == "submenu" and depth == 0:
+                    return first_child_title
+        return first_child_title if target_kind == "submenu" else None
 
     @staticmethod
     def detect_system_default_kernel(bootloader: str | None = None) -> str | None:
