@@ -1,4 +1,3 @@
-import os
 import subprocess
 import threading
 
@@ -10,10 +9,11 @@ from PyQt6.QtWidgets import (
 )
 
 from dialog_base import _TextViewDialog
-from state import RESTART_DIALOG, S, _LOG_FILE, apply_replacements, logger, save_profile
+from state import RESTART_DIALOG, S, _LOG_FILE, apply_replacements, frozen_safe_env, logger, save_profile
 from themes import THEMES, apply_style, current_theme, font_sz
 from translations import LANGUAGES, tr, notify_language_listeners
 from ui_utils import ask_yes_no, _StandardKeysMixin, footer_bar_style, header_bar_style, hdr_label, ok_cancel_buttons
+
 
 class LogViewer(_TextViewDialog):
 
@@ -88,7 +88,7 @@ class SysInfoDialog(_TextViewDialog):
     def _run(self) -> None:
         try:
             r = subprocess.run(["inxi", "-SMCGAz", "--no-host", "--color", "0"], capture_output=True, text=True,
-                               timeout=15, env={**os.environ, "LANG": "C"}, check=False)
+                               timeout=15, env=frozen_safe_env({"LANG": "C"}), check=False)
             result = r.stdout.strip() or r.stderr.strip() or tr("No output received from inxi.")
         except FileNotFoundError:
             result = tr(

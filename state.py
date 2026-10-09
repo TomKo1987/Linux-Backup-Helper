@@ -3,6 +3,7 @@ import logging
 import os
 import pwd
 import re
+import sys
 import threading
 from dataclasses import dataclass, field, fields as _dc_fields
 from logging.handlers import RotatingFileHandler
@@ -12,6 +13,20 @@ from typing import Any
 from constants import USER_SHELLS, ARCH_KERNEL_VARIANTS, PKG_NAME_RE
 
 _state_lock = threading.Lock()
+
+
+def frozen_safe_env(extra: "dict[str, str] | None" = None) -> "dict[str, str]":
+    env = os.environ.copy()
+    if getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS"):
+        for var in ("LD_LIBRARY_PATH", "LD_PRELOAD"):
+            orig = env.pop(f"{var}_ORIG", None)
+            if orig is not None:
+                env[var] = orig
+            else:
+                env.pop(var, None)
+    if extra:
+        env.update(extra)
+    return env
 
 
 RESTART_DIALOG: int = 2

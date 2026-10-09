@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
 )
 from keyring.errors import PasswordDeleteError, KeyringError
 
-from state import logger, _USER
+from state import logger, _USER, frozen_safe_env
 from sudo_password import SecureString
 from themes import current_theme
 from translations import tr
@@ -167,7 +167,8 @@ class SambaPasswordManager:
             return None
         try:
             result = subprocess.run(
-                ["kwallet-query"] + args, input=input_data, capture_output=True, text=True, timeout=_KWALLET_TIMEOUT, check=False)
+                ["kwallet-query"] + args, input=input_data, capture_output=True, text=True, timeout=_KWALLET_TIMEOUT, check=False,
+                env=frozen_safe_env())
 
             return result.stdout if result.returncode == 0 else None
         except FileNotFoundError:

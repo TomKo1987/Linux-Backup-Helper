@@ -12,7 +12,7 @@ from pathlib import Path as _Path
 from typing import Callable, Protocol, TYPE_CHECKING
 
 from drive_utils import is_smb
-from state import logger
+from state import logger, frozen_safe_env
 from translations import tr
 
 if TYPE_CHECKING:
@@ -214,7 +214,7 @@ class _SmbClient:
     def _spawn(self, argv: list[str], input_data: str, timeout: int, wipe_fn=None,
                cancel: "threading.Event | None" = None) -> "tuple[subprocess.Popen | None, str, str]":
         tid = threading.get_ident()
-        env = dict(os.environ, LC_ALL="C", LANG="C")
+        env = frozen_safe_env({"LC_ALL": "C", "LANG": "C"})
         try:
             proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                     text=True, encoding="utf-8", env=env)

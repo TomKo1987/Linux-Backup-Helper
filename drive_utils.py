@@ -2,7 +2,6 @@ import os
 import re
 import shlex
 import subprocess
-import sys
 import threading
 import time
 from functools import lru_cache
@@ -10,7 +9,7 @@ from os.path import abspath, expanduser
 
 from PyQt6.QtWidgets import QMessageBox
 
-from state import S, logger, _USER
+from state import S, logger, _USER, frozen_safe_env
 from translations import tr
 from ui_utils import ask_yes_no
 
@@ -288,15 +287,7 @@ def open_in_file_manager(path: str) -> tuple[bool, str]:
 
 
 def _clean_subprocess_env() -> dict:
-    env = os.environ.copy()
-    if getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS"):
-        for var in ("LD_LIBRARY_PATH", "LD_PRELOAD"):
-            orig = env.pop(f"{var}_ORIG", None)
-            if orig is not None:
-                env[var] = orig
-            else:
-                env.pop(var, None)
-    return env
+    return frozen_safe_env()
 
 
 _RSYNC_SSH_OPTS = (

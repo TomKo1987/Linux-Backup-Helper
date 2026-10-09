@@ -8,7 +8,7 @@ import time
 from types import SimpleNamespace
 from typing import Any, Sequence, cast
 
-from state import logger
+from state import logger, frozen_safe_env
 from translations import tr
 
 __all__ = [
@@ -57,8 +57,7 @@ def sudo_available() -> bool:
 
 
 def clean_env() -> dict:
-    env = os.environ.copy()
-    env.update({"LC_ALL": "C", "LANG": "C", "LANGUAGE": "C"})
+    env = frozen_safe_env({"LC_ALL": "C", "LANG": "C", "LANGUAGE": "C"})
     env.pop("SUDO_ASKPASS", None)
     return env
 

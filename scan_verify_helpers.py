@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
 from dotfiles_manager import first_path
 from drive_utils import check_drives_to_mount, mount_required_drives
 from linux_distro_helper import LinuxDistroHelper, USER_SHELLS, ARCH_KERNEL_VARIANTS
-from state import S, logger, active_pkg_names, active_dotfiles
+from state import S, logger, active_pkg_names, active_dotfiles, frozen_safe_env
 from themes import current_theme, font_sz
 from translations import tr
 from ui_utils import color_style
@@ -184,7 +184,7 @@ def _get_arch_de_deps(helper: LinuxDistroHelper) -> frozenset[str]:
         try:
             r = subprocess.run(["pacman", "-Qi", meta],
                                capture_output=True, text=True, timeout=15,
-                               env={**os.environ, "LC_ALL": "C"})
+                               env=frozen_safe_env({"LC_ALL": "C"}))
             lines = r.stdout.splitlines()
         except (RuntimeError, subprocess.SubprocessError, OSError):
             continue
