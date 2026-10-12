@@ -10,6 +10,7 @@ from state import _CONFIG_DIR, _USER, logger
 
 def _runtime_dir() -> Path:
     for candidate in (
+        f"/run/user/{os.getuid()}" if os.path.isdir(f"/run/user/{os.getuid()}") else None,
         os.environ.get("XDG_RUNTIME_DIR"),
         tempfile.gettempdir(),
     ):
@@ -37,7 +38,7 @@ def acquire_backup_lock() -> bool:
 
     try:
         _LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(str(_LOCK_PATH), os.O_CREAT | os.O_RDWR, 0o600)
+        fd = os.open(str(_LOCK_PATH), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
     except OSError as exc:
         logger.warning("backup_lock: could not open lock file: %s", exc)
         return True

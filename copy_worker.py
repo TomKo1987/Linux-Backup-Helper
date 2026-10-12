@@ -207,7 +207,7 @@ def _copy_symlink(src: str, dst: str) -> tuple:
             and not _clear_conflicting_dir(dst)):
         return "error", tr("Destination is a non-empty directory and could not be replaced"), 0
 
-    tmp = f"{dst}.{_PID}.{threading.get_ident()}.lnk.part"
+    tmp = _tmp_path(dst, ".lnk.part")
     try:
         _silent_unlink(tmp)
         os.symlink(target, tmp)
@@ -321,6 +321,16 @@ def _fsync_parent_dir(path: str) -> None:
         logger.debug("fsync parent dir %s failed: %s", d, e)
 
 
+def _tmp_path(dst: str, suffix: str) -> str:
+    parent, base = os.path.split(dst)
+    tag = f".{_PID}.{threading.get_ident()}{suffix}"
+    room = 255 - len(tag.encode())
+    raw = os.fsencode(base)
+    if len(raw) > room:
+        base = os.fsdecode(raw[:max(room, 1)])
+    return os.path.join(parent, base + tag) if parent else base + tag
+
+
 def _copy_file(src, dst, cancel, cached_st=None):
     if cached_st is True:
         return _copy_symlink(src, dst)
@@ -328,7 +338,7 @@ def _copy_file(src, dst, cancel, cached_st=None):
         return _copy_symlink(src, dst)
 
     for _attempt in range(2):
-        tmp = f"{dst}.{_PID}.{threading.get_ident()}.part"
+        tmp = _tmp_path(dst, ".part")
         rfd = wfd = None
         success = False
         try:
@@ -944,6 +954,23 @@ class CopyWorker(QThread):
         excludes_raw = list(extra[0]) if extra and extra[0] else None
         excludes = _rsync_excludes(rsync_src, excludes_raw)
         mirror = title in self._mirror_titles
+
+        if mirror and not is_ssh(src):
+            try:
+                if os.path.isdir(src):
+                    with os.scandir(src) as _it:
+                        src_empty = next(_it, None) is None
+                    if src_empty:
+                        logger.warning("mirror skipped: source '%s' is empty", src)
+                        flusher.push(er=[(src, tr("Source directory is empty — mirror deletion skipped "
+                                                  "to protect the destination"), 0)])
+                        _track(0, 0, 1)
+                        return
+            except OSError as exc:
+                logger.warning("mirror skipped: cannot read source '%s': %s", src, exc)
+                flusher.push(er=[(src, str(exc), 0)])
+                _track(0, 0, 1)
+                return
 
         cmd = build_rsync_cmd(rsync_src, dst, exclude=excludes, delete=mirror)
         logger.debug("_copy_ssh_tasks: %s", " ".join(cmd))

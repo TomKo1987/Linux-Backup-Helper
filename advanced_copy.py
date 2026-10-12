@@ -18,7 +18,8 @@ __all__ = [
     "delete_paths", "apply_advanced_options", "restore_exclude_paths",
 ]
 
-_VERSION_RE = re.compile(r"^(\d+)\s*[-_]\s*")
+
+_VERSION_RE = re.compile(r"^(\d+) - \d{4}-\d{2}-\d{2} \d{2}-\d{2}-\d{2}$")
 _SSH_PREVIEW_TIMEOUT_S = 30
 
 
@@ -394,6 +395,16 @@ def apply_advanced_options(tasks: list[tuple], *, interactive: bool = True, pare
                             logger.warning(
                                 "Mirror delete [%s]: source %r missing — skipping cleanup for safety",
                                 title, apply_replacements(s_abs))
+                        continue
+                    try:
+                        source_empty = not any(True for _ in os.scandir(s_abs))
+                    except OSError as exc:
+                        logger.warning("Mirror delete [%s]: source %r unreadable (%s) — skipping cleanup for safety",
+                                       title, apply_replacements(s_abs), exc)
+                        continue
+                    if source_empty:
+                        logger.warning("Mirror delete [%s]: source %r is empty (unmounted drive?) — "
+                                       "skipping cleanup for safety", title, apply_replacements(s_abs))
                         continue
                     excludes = _abs_excludes(excl, s_abs, s_str)
                     extraneous = find_extraneous_paths(s_abs, d_abs, excludes)

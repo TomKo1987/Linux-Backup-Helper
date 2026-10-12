@@ -163,7 +163,7 @@ class _OpsEditorMixin(_OpsMixinBase):
                 unsupported = (is_arch and self._distro.family() != "arch") or \
                               (key == "enable_firewall" and not self._distro.firewall_supported()) or \
                               (key == "enable_ntp_sync" and not self._distro.ntp_supported()) or \
-                              (key == "enable_fstrim_timer" and not shutil.which("systemctl"))
+                              (key == "enable_fstrim_timer" and not self._distro.systemd_running())
 
                 if unsupported:
                     cb.setVisible(False)

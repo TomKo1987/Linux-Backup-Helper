@@ -6,7 +6,7 @@ import subprocess
 import threading
 import time
 from types import SimpleNamespace
-from typing import Any, Sequence, cast
+from typing import Any, Sequence
 
 from state import logger, frozen_safe_env
 from translations import tr
@@ -14,7 +14,8 @@ from translations import tr
 __all__ = [
     "AuthRequired", "SudoSession", "authenticate", "auth_required_message",
     "is_root", "invalidate_sudo_probe", "passwordless_sudo", "release_session",
-    "run_privileged", "run_user_command", "split_sudo", "sudo_available",
+    "pw_stdin", "run_privileged", "run_user_command", "split_sudo", "sudo_available",
+    "zero_buffer",
 ]
 
 _PROBE_TTL = 30.0
@@ -35,14 +36,14 @@ def auth_required_message() -> str:
               "passwordless sudo for this command.")
 
 
-def _zero(buf: bytearray | None) -> None:
+def zero_buffer(buf: bytearray | None) -> None:
     if buf:
         buf[:] = bytearray(len(buf))
 
 
-def _pw_stdin(pw: Any) -> bytearray:
+def pw_stdin(pw: Any) -> bytearray:
     if not pw:
-        return bytearray()
+        return bytearray(b"\n")
     buf = pw.get_bytes()
     buf.append(0x0A)
     return buf
@@ -111,6 +112,12 @@ def passwordless_sudo(force: bool = False) -> bool:
     return ok
 
 
+_SUDO_FLAGS_WITH_ARG = frozenset({
+    "-u", "--user", "-g", "--group", "-p", "--prompt", "-C", "--close-from", "-D", "--chdir",
+    "-r", "--role", "-t", "--type", "-R", "--chroot", "-T", "--command-timeout", "-U", "--other-user",
+})
+
+
 def split_sudo(tokens: Sequence[str]) -> list[str]:
     out = list(tokens)
     if not out or os.path.basename(out[0]) != "sudo":
@@ -118,9 +125,10 @@ def split_sudo(tokens: Sequence[str]) -> list[str]:
     out.pop(0)
     while out and out[0].startswith("-"):
         flag = out.pop(0)
-        if flag in ("-u", "--user", "-g", "--group", "-p", "--prompt", "-C", "--close-from"):
-            if out:
-                out.pop(0)
+        if flag == "--":
+            break
+        if flag in _SUDO_FLAGS_WITH_ARG and out:
+            out.pop(0)
     return out
 
 
@@ -175,8 +183,10 @@ class SudoSession:
             self._thread = None
             pw = self._pw
             self._pw = None
-        if thread is not None and thread is not threading.current_thread():
-            cast(threading.Thread, thread).join(timeout=5)
+        if thread is not None:
+            t = thread
+            if t is not threading.current_thread():
+                t.join(timeout=5)
         if pw is not None:
             try:
                 pw.clear()
@@ -199,12 +209,12 @@ class SudoSession:
                 r = subprocess.run(["sudo", "-n", "-v"], capture_output=True,
                                    stdin=subprocess.DEVNULL, env=clean_env(), timeout=10, check=False)
                 if r.returncode != 0:
-                    buf = _pw_stdin(pw)
+                    buf = pw_stdin(pw)
                     try:
                         subprocess.run(["sudo", "-S", "-p", "", "-v"], input=buf,
                                        capture_output=True, env=clean_env(), timeout=10, check=False)
                     finally:
-                        _zero(buf)
+                        zero_buffer(buf)
             except Exception as exc:
                 logger.debug("sudo keepalive: %s", exc)
 
@@ -222,7 +232,7 @@ class SudoSession:
         except (OSError, subprocess.SubprocessError):
             pass
         token = secrets.token_hex(16)
-        buf = _pw_stdin(pw)
+        buf = pw_stdin(pw)
         proc = None
         ok = False
         try:
@@ -239,7 +249,7 @@ class SudoSession:
         except Exception as exc:
             logger.error("sudo verification failed: %s", exc)
         finally:
-            _zero(buf)
+            zero_buffer(buf)
             if proc is not None and proc.returncode is None:
                 try:
                     proc.kill()
@@ -274,7 +284,7 @@ def run_privileged(args: Sequence[str], *, timeout: int = 15, text: bool = True,
     if argv is None:
         logger.debug("run_privileged: no non-interactive privilege path for %r", args[:1])
         return None
-    buf = _pw_stdin(pw) if pw is not None else None
+    buf = pw_stdin(pw) if pw is not None else None
     try:
         r = subprocess.run(
             argv,
@@ -295,7 +305,7 @@ def run_privileged(args: Sequence[str], *, timeout: int = 15, text: bool = True,
         logger.debug("run_privileged: %s", exc)
         return None
     finally:
-        _zero(buf)
+        zero_buffer(buf)
 
 
 def run_user_command(tokens: Sequence[str], *, timeout: int = 30,

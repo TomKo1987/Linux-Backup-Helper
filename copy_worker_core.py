@@ -48,10 +48,10 @@ _SKIP_GLOBS: tuple[str, ...] = (
     "*.sqlite-wal", "*.sqlite-shm", "*.journal", "*-journal", "*_journal",
     "*.db-wal", "*.db-shm",
     "idb", "WebStorage", "Session Storage", "Local Storage", "leveldb", "*.ldb",
-    "temp", "tmp", "*.tmp", "*.bak", "*.baklz4",
+    "temp", "tmp", "*.tmp", "*.baklz4",
     "recovery.jsonlz4", "recovery.baklz4", "sessionstore-backups",
     "Thumbs.db", ".DS_Store", ".quota", ".user64", ".healthcheck", ".active-update",
-    "GPUCache", "ShaderCache", "blob_storage", "prefs.js",
+    "GPUCache", "ShaderCache", "blob_storage",
 )
 
 
@@ -168,7 +168,14 @@ _tls        = threading.local()
 _TIME_CHECK_EVERY = 32
 _seen_dirs_global: set[str] = set()
 _seen_dirs_lock = threading.Lock()
-_SHM_DIR: str | None = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else None
+def _find_ram_dir() -> str | None:
+    for cand in ("/dev/shm", os.environ.get("XDG_RUNTIME_DIR", ""), f"/run/user/{os.getuid()}"):
+        if cand and os.path.isdir(cand) and os.access(cand, os.W_OK | os.X_OK):
+            return cand
+    return None
+
+
+_SHM_DIR: str | None = _find_ram_dir()
 
 _smb_procs: dict[int, subprocess.Popen] = {}
 _smb_procs_lock = threading.Lock()

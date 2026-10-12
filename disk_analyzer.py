@@ -147,8 +147,8 @@ class _ScanWorker(QThread):
         sizes: dict[Path, int] = {}
         try:
             proc = subprocess.Popen(
-                ["du", "-x", "--block-size=1", "--max-depth=1", str(self._root)],
-                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                ["du", "-x", "-k", "-d", "1", str(self._root)],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             )
             n_found = 0
 
@@ -158,14 +158,14 @@ class _ScanWorker(QThread):
                         if self._cancel.is_set():
                             proc.kill()
                             break
-                        line = line.rstrip("\n")
+                        line = line.rstrip(b"\n")
                         if not line:
                             continue
-                        parts = line.split("\t", 1)
+                        parts = line.split(b"\t", 1)
                         if len(parts) == 2:
                             try:
-                                sz = int(parts[0])
-                                path = Path(parts[1])
+                                sz = int(parts[0]) * 1024
+                                path = Path(os.fsdecode(parts[1]))
                                 if path != self._root:
                                     sizes[path] = sz
                                     n_found += 1

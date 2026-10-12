@@ -3,7 +3,9 @@ import logging
 import os
 import pwd
 import re
+import subprocess
 import sys
+import tempfile
 import threading
 from dataclasses import dataclass, field, fields as _dc_fields
 from logging.handlers import RotatingFileHandler
@@ -15,24 +17,83 @@ from constants import USER_SHELLS, ARCH_KERNEL_VARIANTS, PKG_NAME_RE
 _state_lock = threading.Lock()
 
 
+_FROZEN = bool(getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS"))
+
+
 def frozen_safe_env(extra: "dict[str, str] | None" = None) -> "dict[str, str]":
     env = os.environ.copy()
-    if getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS"):
+    if _FROZEN:
         for var in ("LD_LIBRARY_PATH", "LD_PRELOAD"):
             orig = env.pop(f"{var}_ORIG", None)
             if orig is not None:
                 env[var] = orig
             else:
                 env.pop(var, None)
+        meipass = getattr(sys, "_MEIPASS", "")
+        if meipass:
+            for key, value in list(env.items()):
+                if meipass not in value:
+                    continue
+                kept = [p for p in value.split(os.pathsep) if p and not p.startswith(meipass)]
+                if kept:
+                    env[key] = os.pathsep.join(kept)
+                else:
+                    del env[key]
     if extra:
         env.update(extra)
     return env
 
 
+_popen_hardened = False
+
+
+def harden_subprocess() -> None:
+    global _popen_hardened
+    if _popen_hardened:
+        return
+    _popen_hardened = True
+    original_init = subprocess.Popen.__init__
+
+    def _init(self, *args, **kwargs):
+        if _FROZEN and kwargs.get("env") is None:
+            kwargs["env"] = frozen_safe_env()
+        text_mode = (kwargs.get("text") or kwargs.get("universal_newlines")
+                     or kwargs.get("encoding") or kwargs.get("errors"))
+        if text_mode and kwargs.get("errors") is None:
+            kwargs["errors"] = "replace"
+        original_init(self, *args, **kwargs)
+
+    subprocess.Popen.__init__ = _init
+
+
+harden_subprocess()
+
+
 RESTART_DIALOG: int = 2
-_USER = pwd.getpwuid(os.getuid()).pw_name
-_HOME = Path.home()
-_CONFIG_DIR   = _HOME / ".config" / "Backup Helper"
+
+
+def _current_user() -> str:
+    try:
+        return pwd.getpwuid(os.getuid()).pw_name
+    except KeyError:
+        return os.environ.get("USER") or os.environ.get("LOGNAME") or str(os.getuid())
+
+
+def _home_dir() -> Path:
+    try:
+        return Path.home()
+    except (RuntimeError, KeyError):
+        return Path(os.environ.get("HOME") or tempfile.gettempdir())
+
+
+_USER = _current_user()
+_HOME = _home_dir()
+_xdg_config = os.environ.get("XDG_CONFIG_HOME", "")
+_CONFIG_BASE  = Path(_xdg_config) if _xdg_config and os.path.isabs(_xdg_config) else _HOME / ".config"
+_CONFIG_DIR   = _CONFIG_BASE / "Backup Helper"
+_LEGACY_CONFIG_DIR = _HOME / ".config" / "Backup Helper"
+if _CONFIG_DIR != _LEGACY_CONFIG_DIR and not _CONFIG_DIR.exists() and _LEGACY_CONFIG_DIR.exists():
+    _CONFIG_DIR = _LEGACY_CONFIG_DIR
 _PROFILES_DIR = _CONFIG_DIR / "profiles"
 _LOG_HIST_DIR = _CONFIG_DIR / "logs_history"
 _LOG_FILE     = _LOG_HIST_DIR / "backup_helper.log"
@@ -42,7 +103,10 @@ _ANSI_RE      = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
 
 def _make_logger(name: str) -> logging.Logger:
-    _LOG_HIST_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        _LOG_HIST_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
     log = logging.getLogger(name)
     if log.handlers:
         return log
@@ -63,7 +127,16 @@ def _make_logger(name: str) -> logging.Logger:
 
 logger = _make_logger("backup_helper")
 
-_text_replacements: tuple[tuple[str, str], ...] = ((_HOME.as_posix(), "~"), (f"/run/media/{_USER}/", ""))
+def _build_text_replacements() -> tuple[tuple["re.Pattern[str]", str], ...]:
+    repl: list[tuple["re.Pattern[str]", str]] = []
+    home = _HOME.as_posix().rstrip("/")
+    if home:
+        repl.append((re.compile(r"(?<!\w)" + re.escape(home) + r"(?![\w.\-])"), "~"))
+    repl.append((re.compile(r"(?<!\w)" + re.escape(f"/run/media/{_USER}/")), ""))
+    return tuple(repl)
+
+
+_text_replacements: tuple[tuple["re.Pattern[str]", str], ...] = _build_text_replacements()
 
 
 def active_dotfiles() -> list[dict]:
@@ -106,8 +179,8 @@ def sort_specific_pkg_list(pkg_list: list) -> None:
 
 
 def apply_replacements(text: str) -> str:
-    for old, new in _text_replacements:
-        text = text.replace(old, new)
+    for pattern, new in _text_replacements:
+        text = pattern.sub(new, text)
     return text
 
 
@@ -167,25 +240,44 @@ S = State()
 _KNOWN_UI_KEYS = frozenset(State().ui.keys())
 
 
+def _read_umask() -> int:
+    mask = os.umask(0)
+    os.umask(mask)
+    return mask
+
+
+_UMASK: int = _read_umask()
+
+
+def _current_umask() -> int:
+    return _UMASK
+
+
 def _atomic_write(path: Path, data: dict | list) -> None:
     with _state_lock:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = path.with_suffix(".tmp")
+        target = Path(os.path.realpath(path))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
+        tmp_path = Path(tmp_name)
         try:
-            with open(tmp_path, "w", encoding="utf-8") as f:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
                 f.flush()
                 os.fsync(f.fileno())
-            os.replace(tmp_path, path)
             try:
-                dfd = os.open(str(path.parent), os.O_RDONLY)
+                os.chmod(tmp_path, target.stat().st_mode & 0o777)
+            except OSError:
+                os.chmod(tmp_path, 0o666 & ~_current_umask())
+            os.replace(tmp_path, target)
+            try:
+                dfd = os.open(str(target.parent), os.O_RDONLY)
                 try:
                     os.fsync(dfd)
                 finally:
                     os.close(dfd)
             except OSError:
                 pass
-        except (OSError, TypeError, ValueError):
+        except BaseException:
             tmp_path.unlink(missing_ok=True)
             raise
 
@@ -307,10 +399,16 @@ def _parse_profile_data(path: Path, data: dict) -> tuple[dict, bool]:
         raw = v.get("header_color") or v.get("color") or "#ffffff"
         return raw if _valid_hex_color(raw) else "#ffffff"
 
+    raw_headers = data.get("header", {})
+    if not isinstance(raw_headers, dict):
+        raw_headers = {}
     new_headers = {k: {"inactive": bool(v.get("inactive")), "color": _resolve_color(v)}
-                   for k, v in data.get("header", {}).items() if isinstance(v, dict)}
+                   for k, v in raw_headers.items() if isinstance(v, dict)}
 
-    new_entries = [e for raw in data.get("entries", []) if (e := _parse_entry(raw)) is not None]
+    raw_entries = data.get("entries", [])
+    if not isinstance(raw_entries, list):
+        raw_entries = []
+    new_entries = [e for raw in raw_entries if (e := _parse_entry(raw)) is not None]
     new_mount = [o for o in data.get("mount_options", []) if isinstance(o, dict)]
 
     def _as_list(key: str) -> list:
@@ -436,10 +534,10 @@ def save_profile(path: Path | None = None) -> bool:
                 continue
             try:
                 other_data = json.loads(other.read_text(encoding="utf-8"))
-                if other_data.get("is_default"):
+                if isinstance(other_data, dict) and other_data.get("is_default"):
                     other_data.pop("is_default")
                     _atomic_write(other, other_data)
-            except (OSError, json.JSONDecodeError):
+            except (OSError, ValueError):
                 pass
 
     data = {

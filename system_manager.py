@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import threading
 import time
+import ssl
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -24,22 +25,16 @@ from PyQt6.QtWidgets import (
 from dotfiles_manager import first_path
 from firewall_rules import build_firewalld_commands, build_ufw_commands
 from linux_distro_helper import LinuxDistroHelper, ARCH_KERNEL_VARIANTS
-from privileged import SudoSession
-from state import S, _HOME, _USER, logger, apply_replacements, _ANSI_RE, active_pkg_names, active_dotfiles
+from privileged import SudoSession, pw_stdin as _pw_bytes, zero_buffer as _zero
+from state import (S, _HOME, _USER, logger, apply_replacements, _ANSI_RE, active_pkg_names, active_dotfiles,
+                   frozen_safe_env)
 from themes import current_theme, font_sz
 from translations import tr
 from ui_utils import fit_button_width, _StandardKeysMixin
 
 
-def _zero(buf: bytearray) -> None: buf[:] = bytearray(len(buf))
-
-
-def _pw_bytes(pw) -> bytearray:
-    if not pw:
-        return bytearray()
-    buf = pw.get_bytes()
-    buf.append(ord('\n'))
-    return buf
+_UNSET_TIMEOUT = -1
+_SUDO_PROMPT = "[sudo] password: "
 
 
 _INFO_RE = re.compile(
@@ -454,8 +449,7 @@ class SystemManagerThread(QThread):
         self._task_status: dict[str, str] = {}
         self._input_event: threading.Event = threading.Event()
         self._input_value: str = ""
-        self._env_snapshot: dict = os.environ.copy()
-        self._env_snapshot.update({"LC_ALL": "C", "LANG": "C", "LANGUAGE": "C"})
+        self._env_snapshot: dict = frozen_safe_env({"LC_ALL": "C", "LANG": "C", "LANGUAGE": "C"})
         self.distro: LinuxDistroHelper | None = None
         self._pkg_cache: _PackageCache | None = None
         try:
@@ -614,11 +608,16 @@ class SystemManagerThread(QThread):
 
     def _inject(self, cmd: list[str]) -> list[str]:
         if cmd and cmd[0] == "sudo" and not (len(cmd) > 1 and cmd[1] in ("-S", "-n")):
-            return ["sudo", "-S" if self._pw else "-n", *cmd[1:]]
+            if self._pw:
+                return ["sudo", "-S", "-p", _SUDO_PROMPT, *cmd[1:]]
+            return ["sudo", "-n", *cmd[1:]]
         return cmd
 
-    def _exec(self, cmd: list[str] | str, stream: bool = False, timeout: int | None = 15,
+    def _exec(self, cmd: list[str] | str, stream: bool = False, timeout: int | None = _UNSET_TIMEOUT,
               cwd: str | None = None) -> SimpleNamespace:
+        stream_deadline = (None if timeout in (None, _UNSET_TIMEOUT) else time.monotonic() + timeout)
+        if timeout == _UNSET_TIMEOUT:
+            timeout = None if stream else 15
 
         if self.terminated:
             return SimpleNamespace(returncode=1, stdout="", stderr="")
@@ -629,7 +628,7 @@ class SystemManagerThread(QThread):
                 if inner_cmd.startswith("sudo "):
                     inner_cmd = inner_cmd[5:]
                 inner_cmd = inner_cmd.replace("&& sudo ", "&& ").replace("|| sudo ", "|| ").replace("; sudo ", "; ")
-                cmd = ["sudo", "-S" if self._pw else "-n", "sh", "-c", inner_cmd]
+                cmd = (["sudo", "-S", "-p", _SUDO_PROMPT] if self._pw else ["sudo", "-n"]) + ["sh", "-c", inner_cmd]
             else:
                 cmd = self._inject(shlex.split(cmd))
         elif isinstance(cmd, list):
@@ -794,6 +793,10 @@ class SystemManagerThread(QThread):
         sentinels = 0
 
         while sentinels < 2:
+            if stream_deadline is not None and time.monotonic() > stream_deadline:
+                self.outputReceived.emit(tr("Command timed out and was stopped"), "error")
+                proc.kill()
+                break
             try:
                 item = out_q.get(timeout=0.25)
             except queue.Empty:
@@ -891,7 +894,7 @@ class SystemManagerThread(QThread):
 
             self.outputReceived.emit(text, _kind)
 
-        _wait_timeout = timeout if (not self.terminated) else 30
+        _wait_timeout = (timeout if timeout is not None else 120) if (not self.terminated) else 30
 
         try:
             rc = proc.wait(timeout=_wait_timeout) if proc.poll() is None else proc.returncode
@@ -1089,14 +1092,28 @@ class SystemManagerThread(QThread):
         return overall
 
     @staticmethod
+    def _ssl_context() -> "ssl.SSLContext":
+        ctx = ssl.create_default_context()
+        if ctx.cert_store_stats().get("x509_ca", 0) == 0:
+            for bundle in ("/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt",
+                           "/etc/ssl/ca-bundle.pem", "/etc/pki/tls/cacert.pem", "/etc/ssl/cert.pem",
+                           "/var/lib/ca-certificates/ca-bundle.pem"):
+                if os.path.isfile(bundle):
+                    try:
+                        return ssl.create_default_context(cafile=bundle)
+                    except (ssl.SSLError, OSError):
+                        continue
+        return ctx
+
+    @staticmethod
     def _detect_country() -> str:
         for url in ("https://ipinfo.io/country", "https://ifconfig.co/country-iso"):
             try:
-                with urllib.request.urlopen(url, timeout=5) as r:
+                with urllib.request.urlopen(url, timeout=5, context=SystemManagerThread._ssl_context()) as r:
                     if r.status == 200:
                         code = r.read().decode().strip().upper()
                         if len(code) == 2 and code.isalpha(): return code
-            except (urllib.error.URLError, TimeoutError, OSError): continue
+            except (urllib.error.URLError, TimeoutError, OSError, ssl.SSLError): continue
         return ""
 
     def _update_mirrors(self) -> bool:
@@ -1115,7 +1132,7 @@ class SystemManagerThread(QThread):
             self.outputReceived.emit(tr("Failed to install reflector"), "error")
             return False
 
-        cmd = ["sudo", "-S" if self._pw else "-n", "reflector", "--verbose", "--latest", "10",
+        cmd = [*(["sudo", "-S", "-p", _SUDO_PROMPT] if self._pw else ["sudo", "-n"]), "reflector", "--verbose", "--latest", "10",
                "--protocol", "https", "--sort", "rate", "--save", "/etc/pacman.d/mirrorlist"]
         if country: cmd += ["--country", country]
         self.outputReceived.emit(tr("Running: {cmd}", cmd=' '.join(cmd)), "info")
@@ -1204,7 +1221,10 @@ class SystemManagerThread(QThread):
         except OSError as exc:
             self.outputReceived.emit(tr("Could not verify /etc/shells: {exc}", exc=exc), "warning")
 
-        ok = (self._exec(["sudo", "chsh", "-s", shell, _USER], stream=True).returncode == 0)
+        ok = shutil.which("chsh") is not None and \
+            self._exec(["sudo", "chsh", "-s", shell, _USER], stream=True).returncode == 0
+        if not ok and shutil.which("usermod"):
+            ok = (self._exec(["sudo", "usermod", "-s", shell, _USER], stream=True).returncode == 0)
         self._emit_result(ok, tr("Shell for '{user}' set to '{shell}'", user=_USER, shell=shell), tr("Shell for '{user}' failed to change to '{shell}'", user=_USER, shell=shell))
         return ok
 
@@ -1369,8 +1389,9 @@ class SystemManagerThread(QThread):
             self.outputReceived.emit(tr("Cannot read {grub_env}", grub_env=grub_env), "error")
             return False
 
-        if not re.search(r"^GRUB_DEFAULT=saved\s*$", text, re.MULTILINE):
+        if not re.search(r"""^GRUB_DEFAULT=["']?saved["']?\s*$""", text, re.MULTILINE):
             self.outputReceived.emit(tr("Patching /etc/default/grub: setting GRUB_DEFAULT=saved…"), "info")
+            self._exec(["sudo", "cp", "-p", "/etc/default/grub", "/etc/default/grub.bak-backup-helper"])
             new_text = re.sub(r"^GRUB_DEFAULT=.*$", "GRUB_DEFAULT=saved", text, flags=re.MULTILINE)
             if "GRUB_DEFAULT=" not in text:
                 new_text = "GRUB_DEFAULT=saved\n" + new_text
@@ -1474,11 +1495,6 @@ class SystemManagerThread(QThread):
             if not created:
                 return _Status.WARNING
             target_conf = created
-        elif not canonical_exists:
-            if not LinuxDistroHelper.detect_uki_mode(esp):
-                created = self._create_systemd_boot_entry(kernel_pkg, entries_dir, esp)
-                if created:
-                    target_conf = created
 
         if target_conf is None:
             self.outputReceived.emit(tr("No systemd-boot entry could be determined for '{kernel_pkg}'",
@@ -1498,7 +1514,7 @@ class SystemManagerThread(QThread):
     def _find_uki_entry(self, kernel_pkg: str, esp: Path) -> str | None:
         kernel_pkg = kernel_pkg.lower()
         for name in self._list_dir(esp / "EFI" / "Linux", ".efi"):
-            stem = name.lower().removesuffix(".efi")
+            stem = re.sub(r"\+\d+(?:-\d+)?$", "", name.lower().removesuffix(".efi"))
             if stem == kernel_pkg or stem.endswith((f"-{kernel_pkg}", f"_{kernel_pkg}")):
                 return name
         return None
@@ -1803,7 +1819,8 @@ class SystemManagerThread(QThread):
         unit = service if service.endswith((".service", ".timer")) else f"{service}.service"
         if LinuxDistroHelper.systemd_unit_exists(unit):
             return True
-        if os.path.isfile(f"/etc/init.d/{base}") or os.path.isdir(f"/etc/sv/{base}"):
+        if os.path.isfile(f"/etc/init.d/{base}") or os.path.isdir(f"/etc/sv/{base}") \
+                or os.path.isfile(f"/etc/dinit.d/{base}"):
             return True
         return os.path.isfile(f"/etc/rc.d/rc.{base}")
 
@@ -1836,11 +1853,12 @@ class SystemManagerThread(QThread):
         return True
 
     def _enable_service(self, service: str) -> bool:
-        if service.endswith(".timer") and not shutil.which("systemctl"):
+        systemd_active = LinuxDistroHelper.systemd_running()
+        if service.endswith(".timer") and not systemd_active:
             self.outputReceived.emit(
                 tr("{service} is a systemd timer with no equivalent on this init system — skipping", service=service), "warning")
             return True
-        if shutil.which("systemctl"):
+        if systemd_active:
             unit_suffix = ".timer" if service.endswith(".timer") else ".service"
             svc = service if service.endswith((".service", ".timer")) else f"{service}{unit_suffix}"
             self.outputReceived.emit(tr("Checking {svc} (systemd)", svc=svc), "info")
@@ -1872,20 +1890,40 @@ class SystemManagerThread(QThread):
             ok = already_active or (self._exec(["sudo", "rc-service", service, "start"],
                                                 stream=True).returncode == 0)
 
-        elif shutil.which("sv") and os.path.isdir("/var/service"):
+        elif shutil.which("dinitctl"):
+            self.outputReceived.emit(tr("Enabling {service} (dinit)", service=service), "info")
+            ok = (self._exec(["sudo", "dinitctl", "enable", service], stream=True).returncode == 0)
+            if ok:
+                ok = (self._exec(["sudo", "dinitctl", "start", service], stream=True).returncode == 0)
+
+        elif shutil.which("sv") and (_run_dir := next((d for d in ("/var/service", "/etc/service")
+                                                       if os.path.isdir(d)), None)):
             self.outputReceived.emit(tr("Enabling {service} (runit)", service=service), "info")
-            if os.path.exists(f"/var/service/{service}"):
+            if os.path.exists(f"{_run_dir}/{service}"):
                 self.outputReceived.emit(tr("{service} already enabled", service=service), "success")
                 return self._apply_firewall_rules(service)
             ok = False
             if os.path.isdir(f"/etc/sv/{service}"):
-                ok = (self._exec(["sudo", "ln", "-s", f"/etc/sv/{service}", "/var/service/"],
+                ok = (self._exec(["sudo", "ln", "-s", f"/etc/sv/{service}", f"{_run_dir}/"],
                                  stream=True).returncode == 0)
                 if ok:
                     ok = (self._exec(["sudo", "sv", "up", service], stream=True).returncode == 0)
             else:
                 self.outputReceived.emit(
                     tr("No runit service definition found at /etc/sv/{service}", service=service), "error")
+
+        elif os.path.isfile(f"/etc/init.d/{service}") and not os.path.isfile(f"/etc/rc.d/rc.{service}"):
+            self.outputReceived.emit(tr("Enabling {service} (SysV init)", service=service), "info")
+            init_script = f"/etc/init.d/{service}"
+            ok = True
+            if shutil.which("update-rc.d"):
+                ok = (self._exec(["sudo", "update-rc.d", service, "defaults"], stream=True).returncode == 0)
+                if ok:
+                    self._exec(["sudo", "update-rc.d", service, "enable"], stream=True)
+            elif shutil.which("chkconfig"):
+                ok = (self._exec(["sudo", "chkconfig", service, "on"], stream=True).returncode == 0)
+            if ok and self._exec(["sudo", init_script, "status"], stream=False).returncode != 0:
+                ok = (self._exec(["sudo", init_script, "start"], stream=True).returncode == 0)
 
         elif os.path.isfile(f"/etc/rc.d/rc.{service}"):
             self.outputReceived.emit(tr("Enabling {service} (BSD-style rc.d)", service=service), "info")
@@ -1967,7 +2005,7 @@ class SystemManagerThread(QThread):
             for _helper in ("paru", "yay"):
                 if shutil.which(_helper) or self.distro.package_is_installed(_helper):
                     self.outputReceived.emit(tr("Cleaning {_helper} cache", _helper=_helper), "info")
-                    helper_ok = (self._exec([_helper, "-Scc", "--noconfirm"], stream=True).returncode == 0)
+                    helper_ok = (self._exec([_helper, "-Sc", "--noconfirm"], stream=True).returncode == 0)
                     self._emit_result(helper_ok, tr("{helper} cache successfully cleaned", helper=_helper),
                                       tr("{helper} cache cleaning failed", helper=_helper))
                     if not helper_ok:

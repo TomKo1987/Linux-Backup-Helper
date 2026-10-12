@@ -25,6 +25,10 @@ _ALLOWED_MOUNT_CMDS = frozenset({
 })
 
 
+_TRUSTED_BIN_PREFIXES = ("/usr/bin/", "/usr/sbin/", "/bin/", "/sbin/", "/usr/local/bin/", "/usr/local/sbin/",
+                         "/run/wrappers/bin/", "/run/current-system/sw/bin/", "/usr/lib/")
+
+
 _session_managed_mounts: list[dict] = []
 _session_mounts_lock = threading.Lock()
 _OCTAL_ESCAPE_RE = re.compile(r"\\(\d{3})")
@@ -93,7 +97,8 @@ def _validate_cmd(cmd: str) -> tuple[bool, str, list[str]]:
     if not tokens:
         return False, tr("No command tokens found"), []
     expanded = [os.path.expanduser(tok) for tok in tokens]
-    base = os.path.basename(expanded[0])
+    cmd_tok = expanded[0]
+    base = os.path.basename(cmd_tok)
     if base == "sudo":
         for tok in expanded[1:]:
             if (tok in ("-u", "--user")
@@ -101,12 +106,15 @@ def _validate_cmd(cmd: str) -> tuple[bool, str, list[str]]:
                     or (tok.startswith("-u") and len(tok) > 2)):
                 return False, tr("sudo user-switching flags are not permitted"), []
             if not tok.startswith("-"):
+                cmd_tok = tok
                 base = os.path.basename(tok)
                 break
         else:
             return False, tr("sudo without a command"), []
     if base not in _ALLOWED_MOUNT_CMDS:
         return False, tr("'{base}' is not an allowed command", base=base), []
+    if "/" in cmd_tok and not cmd_tok.startswith(_TRUSTED_BIN_PREFIXES):
+        return False, tr("'{base}' is not an allowed command", base=cmd_tok), []
     for tok in expanded:
         if ".." in tok.split("/"):
             return False, tr("Path traversal detected in token: {tok!r}", tok=tok), []
@@ -124,7 +132,8 @@ def _str(v) -> str:
 def _mount_paths(name: str) -> tuple[str, ...]:
     if not _valid_drive_name(name):
         return ()
-    return f"/run/media/{_USER}/{name}", f"/media/{_USER}/{name}", f"/mnt/{name}"
+    return (f"/run/media/{_USER}/{name}", f"/media/{_USER}/{name}", f"/mnt/{name}",
+            f"/media/{name}", f"/run/media/{name}")
 
 
 def _execute_drive_op(drive: dict, cmd_key: str, timeout: int) -> tuple[bool, str]:
@@ -278,16 +287,12 @@ def open_in_file_manager(path: str) -> tuple[bool, str]:
             ["xdg-open", target],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             start_new_session=True,
-            env=_clean_subprocess_env(),
+            env=frozen_safe_env(),
         )
     except OSError as exc:
         logger.warning("open_in_file_manager xdg-open: %s", exc)
         return False, str(exc)
     return True, ""
-
-
-def _clean_subprocess_env() -> dict:
-    return frozen_safe_env()
 
 
 _RSYNC_SSH_OPTS = (

@@ -1509,6 +1509,9 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'systemd-boot entry created for {variant}': 'systemd-boot-Eintrag für {variant} erstellt',
         '{service} already enabled': '{service} bereits aktiviert',
         'Enabling {service} (BSD-style rc.d)': '{service} wird aktiviert (BSD-artiges rc.d)',
+        'Enabling {service} (SysV init)': '{service} wird aktiviert (SysV-Init)',
+        'Source directory is empty — mirror deletion skipped to protect the destination':
+            'Quellverzeichnis ist leer — Spiegel-Löschung übersprungen, um das Ziel zu schützen',
         "Unsupported init system. Please enable '{service}' manually.":
             'Nicht unterstütztes Init-System. Bitte aktivieren Sie „{service}“ manuell.',
         'Failed to make {rc_script} executable': '{rc_script} konnte nicht ausführbar gemacht werden',
@@ -3089,6 +3092,9 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'systemd-boot entry created for {variant}': 'Entrée systemd-boot créée pour {variant}',
         '{service} already enabled': '{service} déjà activé',
         'Enabling {service} (BSD-style rc.d)': 'Activation de {service} (rc.d de type BSD)',
+        'Enabling {service} (SysV init)': 'Activation de {service} (SysV init)',
+        'Source directory is empty — mirror deletion skipped to protect the destination':
+            'Le répertoire source est vide — suppression en miroir ignorée pour protéger la destination',
         "Unsupported init system. Please enable '{service}' manually.":
             "Système d'initialisation non pris en charge. Veuillez activer « {service} » manuellement.",
         'Failed to make {rc_script} executable': 'Échec de la mise en exécutable de {rc_script}',
@@ -4667,6 +4673,9 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'systemd-boot entry created for {variant}': 'Entrada de systemd-boot creada para {variant}',
         '{service} already enabled': '{service} ya está habilitado',
         'Enabling {service} (BSD-style rc.d)': 'Habilitando {service} (rc.d de estilo BSD)',
+        'Enabling {service} (SysV init)': 'Habilitando {service} (SysV init)',
+        'Source directory is empty — mirror deletion skipped to protect the destination':
+            'El directorio de origen está vacío — se omitió el borrado del espejo para proteger el destino',
         "Unsupported init system. Please enable '{service}' manually.":
             'Sistema de inicio no compatible. Habilite «{service}» manualmente.',
         'Failed to make {rc_script} executable': 'No se pudo hacer que {rc_script} fuera ejecutable',

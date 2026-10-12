@@ -2,6 +2,7 @@ import base64 as _b64
 import json
 import sys
 import os
+import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -12,12 +13,12 @@ from PyQt6.QtWidgets import (
     QPushButton, QVBoxLayout, QCheckBox, QTimeEdit, QFrame,
     QGridLayout, )
 
-from state import S, logger, _HOME
+from state import S, logger, _HOME, frozen_safe_env
 from themes import current_theme, font_sz
 from translations import tr
 from ui_utils import _StandardKeysMixin
 
-_SYSTEMD_USER_DIR = _HOME / ".config" / "systemd" / "user"
+_SYSTEMD_USER_DIR = Path(os.environ.get("XDG_CONFIG_HOME") or _HOME / ".config") / "systemd" / "user"
 _SERVICE_NAME = "backup-helper-auto"
 
 _INTERVALS: dict[str, str] = {
@@ -35,22 +36,47 @@ def _unit_names() -> tuple[Path, Path]:
         _SYSTEMD_USER_DIR / f"{_SERVICE_NAME}.timer",
     )
 
+def scheduler_supported() -> bool:
+    return os.path.isdir("/run/systemd/system") and shutil.which("systemctl") is not None
+
+
+def _systemctl(*args: str, check: bool = False, capture: bool = True) -> "subprocess.CompletedProcess":
+    return subprocess.run(["systemctl", "--user", *args], capture_output=capture, text=True,
+                          timeout=10, check=check, env=frozen_safe_env())
+
+
+def _calendar_error(expr: str) -> str:
+    analyzer = shutil.which("systemd-analyze")
+    if not analyzer:
+        return ""
+    try:
+        r = subprocess.run([analyzer, "calendar", expr], capture_output=True, text=True, timeout=10,
+                           env=frozen_safe_env(), check=False)
+    except (subprocess.SubprocessError, OSError):
+        return ""
+    return "" if r.returncode == 0 else (r.stderr or r.stdout).strip()
+
+
 def is_timer_active() -> bool:
+    if not scheduler_supported():
+        return False
     try:
         r = subprocess.run(
             ["systemctl", "--user", "is-enabled", f"{_SERVICE_NAME}.timer"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, timeout=5, env=frozen_safe_env(), check=False,
         )
         return r.returncode == 0 and r.stdout.strip() not in ("disabled", "masked", "invalid")
     except (subprocess.SubprocessError, OSError):
         return False
 
 def get_next_run_time() -> str:
+    if not scheduler_supported():
+        return ""
     try:
         r = subprocess.run(
             ["systemctl", "--user", "show",
              f"{_SERVICE_NAME}.timer", "--property=NextElapseUSecRealtime"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, timeout=5, env=frozen_safe_env(), check=False,
         )
         for line in r.stdout.splitlines():
             if line.startswith("NextElapseUSecRealtime="):
@@ -78,10 +104,17 @@ def _exec_start_prefix() -> str:
 def install_timer(interval_key: str, backup_headers: list[str], *, on_calendar: str = "", only_on_ac: bool = False) -> tuple[bool, str]:
     if interval_key not in _INTERVALS:
         return False, tr("Unknown interval")
+    if not scheduler_supported():
+        return False, tr("Automatic backups need systemd (systemctl was not found). "
+                         "Use cron or your init system to run: {cmd}", cmd=_exec_start_prefix() + " --headless-backup-b64 <groups>")
 
     on_cal = on_calendar.strip().replace("\n", "").replace("\r", "")
     if not on_cal:
         return False, tr("No OnCalendar expression provided.")
+
+    cal_err = _calendar_error(on_cal)
+    if cal_err:
+        return False, tr("Invalid OnCalendar expression: {e}", e=cal_err)
 
     headers_b64 = _b64.b64encode(json.dumps(backup_headers).encode()).decode()
 
@@ -92,12 +125,14 @@ def install_timer(interval_key: str, backup_headers: list[str], *, on_calendar: 
     service = (
         "[Unit]\n"
         "Description=Backup Helper Automatic Backup\n"
-        "After=network-online.target\n"
+        "After=network-online.target graphical-session.target\n"
         f"{ac_condition}"
         "\n"
         "[Service]\n"
         "Type=oneshot\n"
         f"ExecStart={exec_prefix} --headless-backup-b64 \"{headers_b64}\"\n"
+        "Nice=10\n"
+        "IOSchedulingClass=idle\n"
     )
 
     timer = (
@@ -121,40 +156,35 @@ def install_timer(interval_key: str, backup_headers: list[str], *, on_calendar: 
                 tmp.write_text(content, encoding="utf-8")
                 with open(tmp, "r+b") as fh:
                     os.fsync(fh.fileno())
-                tmp.rename(file_path)
+                os.replace(tmp, file_path)
                 try:
                     dfd = os.open(str(file_path.parent), os.O_RDONLY)
                     try:
                         os.fsync(dfd)
                     finally:
                         os.close(dfd)
-                except (subprocess.SubprocessError, OSError):
+                except OSError:
                     pass
             except Exception:
                 tmp.unlink(missing_ok=True)
                 raise
-        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, timeout=10)
-        subprocess.run(
-            ["systemctl", "--user", "enable", "--now", f"{_SERVICE_NAME}.timer"],
-            check=True, timeout=10,
-        )
+        _systemctl("daemon-reload", check=True)
+        _systemctl("enable", "--now", f"{_SERVICE_NAME}.timer", check=True)
         logger.info("scheduler: Timer installed (%s, ac_only=%s)", interval_key, only_on_ac)
         return True, ""
+    except subprocess.CalledProcessError as exc:
+        return False, (exc.stderr or exc.stdout or str(exc)).strip()
     except Exception as exc:
         return False, str(exc)
 
 def remove_timer() -> tuple[bool, str]:
     try:
-        subprocess.run(
-            ["systemctl", "--user", "disable", "--now", f"{_SERVICE_NAME}.timer"],
-            capture_output=True, timeout=10,
-        )
+        if scheduler_supported():
+            _systemctl("disable", "--now", f"{_SERVICE_NAME}.timer")
         for p in _unit_names():
             p.unlink(missing_ok=True)
-        subprocess.run(
-            ["systemctl", "--user", "daemon-reload"],
-            capture_output=True, timeout=10,
-        )
+        if scheduler_supported():
+            _systemctl("daemon-reload")
         return True, ""
     except Exception as exc:
         return False, str(exc)

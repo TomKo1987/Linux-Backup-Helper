@@ -381,7 +381,7 @@ class SettingsWindow(_BaseCheckboxWindow):
         t = current_theme()
         fs = font_scale()
         path = (str(_PROFILES_DIR / f"{S.profile_name}.json") if S.profile_name else str(_PROFILES_DIR))
-        lbl = QLabel(f"<span style='font-size:{fs['lg']}px;color:{t['accent2']}'> 󰔨   {apply_replacements(path)}</span>")  # noqa: path not translated (file path)
+        lbl = QLabel(f"<span style='font-size:{fs['lg']}px;color:{t['accent2']}'> 󰔨   {apply_replacements(path)}</span>")  # noqa: E501
         lbl.setTextFormat(Qt.TextFormat.RichText)
         apply_tooltip(lbl, copy_logic_tooltip())
         return lbl

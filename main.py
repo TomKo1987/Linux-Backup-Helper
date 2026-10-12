@@ -9,7 +9,7 @@ import os as _os
 if _os.getuid() == 0:
     print("Warning: Running Backup Helper as root is not recommended.")
     print("Your profile and config will be stored in /root/.config instead of your user home.")
-    if sys.stdin.isatty():
+    if sys.stdin is not None and sys.stdin.isatty():
         try:
             response = input("Continue anyway? [y/N] ").strip().lower()
             if response not in ("y", "yes"):
@@ -25,10 +25,10 @@ import shutil
 import threading
 from pathlib import Path
 
-from PyQt6.QtCore import QByteArray, QThread, Qt, QTimer
+from PyQt6.QtCore import QByteArray, QEvent, QObject, QThread, Qt, QTimer
 from PyQt6.QtGui import QIcon, QPixmap, QCloseEvent, QAction
 from PyQt6.QtWidgets import (
-    QInputDialog, QMainWindow, QGridLayout, QFileDialog, QVBoxLayout,
+    QDialog, QInputDialog, QMainWindow, QGridLayout, QFileDialog, QVBoxLayout,
     QMenu, QMessageBox, QPushButton, QSystemTrayIcon, QWidget, QApplication
 )
 
@@ -46,6 +46,27 @@ from themes import apply_style, register_style_listener, unregister_style_listen
 from translations import install_qt_base_translator, register_language_listener, unregister_language_listener, tr
 from ui_utils import _StandardKeysMixin, ask_profile_name, ask_yes_no
 from windows import base_window
+
+class _ScreenFitFilter(QObject):
+
+    def eventFilter(self, a0, a1) -> bool:
+        if a1 is not None and a1.type() == QEvent.Type.Show and isinstance(a0, (QDialog, QMainWindow)):
+            try:
+                if a0.isWindow() and not a0.property("_screen_fitted"):
+                    a0.setProperty("_screen_fitted", True)
+                    screen = a0.screen() or QApplication.primaryScreen()
+                    if screen is not None:
+                        geo = screen.availableGeometry()
+                        max_w, max_h = int(geo.width() * 0.96), int(geo.height() * 0.94)
+                        mw, mh = a0.minimumWidth(), a0.minimumHeight()
+                        if mw > max_w or mh > max_h:
+                            a0.setMinimumSize(min(mw, max_w), min(mh, max_h))
+                        if a0.width() > max_w or a0.height() > max_h:
+                            a0.resize(min(a0.width(), max_w), min(a0.height(), max_h))
+            except RuntimeError:
+                pass
+        return False
+
 
 def _make_icon() -> QIcon:
     try:
@@ -174,15 +195,19 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
 
     def _open(self, cls, *args, setup_fn=None) -> None:
         self.hide()
-        while True:
-            dlg = cls(self, *args)
-            if setup_fn:
-                setup_fn(dlg)
-            result = dlg.exec()
-            dlg.deleteLater()
-            if result != RESTART_DIALOG:
-                break
-        self.show()
+        try:
+            while True:
+                dlg = cls(self, *args)
+                try:
+                    if setup_fn:
+                        setup_fn(dlg)
+                    result = dlg.exec()
+                finally:
+                    dlg.deleteLater()
+                if result != RESTART_DIALOG:
+                    break
+        finally:
+            self.show()
         self._refresh_status_panel()
 
     def _open_settings(self) -> None:
@@ -448,7 +473,12 @@ def main():
     parser.add_argument("--headless-backup-b64", dest="headless_b64",     default=None)
     args, _ = parser.parse_known_args()
 
+    headless_run = args.headless_headers is not None or args.headless_b64 is not None
+    if headless_run and not (_os.environ.get("DISPLAY") or _os.environ.get("WAYLAND_DISPLAY")):
+        _os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
     app = QApplication(sys.argv)
+    app.installEventFilter(_ScreenFitFilter(app))
     app.setWindowIcon(_make_icon())
     app.setApplicationName("Backup Helper")
     app.aboutToQuit.connect(release_session)
@@ -480,7 +510,7 @@ def main():
 
     has_profile = startup_load()
 
-    if args.headless_headers is not None or args.headless_b64 is not None:
+    if headless_run:
         import json
 
         if args.headless_b64 is not None:
@@ -502,13 +532,22 @@ def main():
         from copy_worker_gui import CopyDialog
         from advanced_copy import apply_advanced_options
         tasks = _build_backup_tasks(headers)
+        if not has_profile:
+            logger.error("Headless backup: no profile available")
+            sys.exit(2)
+        exit_code = 0
         if tasks:
             adv = apply_advanced_options(tasks, interactive=False, parent=None)
-            CopyDialog(None, adv.tasks, tr("Backup (scheduled)"),
-                       pre_deleted=adv.deleted, pre_errors=adv.errors, op_kind="backup").exec()
+            dlg = CopyDialog(None, adv.tasks, tr("Backup (scheduled)"), pre_deleted=adv.deleted,
+                             pre_errors=adv.errors, op_kind="backup", headless=True)
+            dlg.exec()
+            if getattr(dlg, "_lock_denied", False):
+                exit_code = 75
+            elif getattr(dlg, "_display_errors", 0):
+                exit_code = 1
         else:
             logger.warning("Headless backup: no matching tasks found (headers=%s)", headers)
-        sys.exit(0)
+        sys.exit(exit_code)
 
     win = MainWindow()
     apply_style()

@@ -712,10 +712,11 @@ class CopyDialog(_StandardKeysMixin, QDialog):
 
     def __init__(self, parent, tasks, operation: str, *,
                 pre_deleted: "list | None" = None, pre_errors: "list | None" = None,
-                op_kind: "str | None" = None) -> None:
+                op_kind: "str | None" = None, headless: bool = False) -> None:
         super().__init__(parent)
         self.setWindowTitle(operation)
         self._op_kind = op_kind
+        self._headless = headless
 
         self._lock_denied = not acquire_backup_lock()
         if self._lock_denied:
@@ -725,7 +726,10 @@ class CopyDialog(_StandardKeysMixin, QDialog):
                    + (tr(" — process PID {pid}.", pid=holder) if holder else ".")
                    + tr("\n\nPlease wait for it to finish before starting a new one."))
             logger.warning("CopyDialog: refused to start, backup lock already held (pid=%s)", holder)
-            QTimer.singleShot(0, lambda: (QMessageBox.warning(self, tr("Backup Already Running"), msg), self.reject()))
+            if headless:
+                QTimer.singleShot(0, self.reject)
+            else:
+                QTimer.singleShot(0, lambda: (QMessageBox.warning(self, tr("Backup Already Running"), msg), self.reject()))
             self.worker = None
             return
 
@@ -1065,7 +1069,11 @@ class CopyDialog(_StandardKeysMixin, QDialog):
                     urgency="normal",
                 )
 
-        if self._not_found_paths and not cancelled:
+        if self._headless:
+            for p, t_ in self._not_found_paths:
+                logger.warning("Headless backup: configured path not found: %s%s", p, f" ({t_})" if t_ else "")
+            QTimer.singleShot(500, self.accept)
+        elif self._not_found_paths and not cancelled:
             n = len(self._not_found_paths)
             paths_text = "\n".join(
                 f"  \u2022 {p} ({t})" if t else f"  \u2022 {p}"

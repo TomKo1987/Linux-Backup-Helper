@@ -28,13 +28,6 @@ def _clean_title(text: str) -> str: return _HTML_TAG_RE.sub(" ", text).strip()
 def _ep(path_str: str) -> Path: return Path(path_str.strip()).expanduser()
 
 
-def _mtime(path: Path) -> float:
-    try:
-        return path.stat().st_mtime
-    except OSError:
-        return 0.0
-
-
 def _stat_or_none(path: Path) -> "os.stat_result | None":
     try:
         return path.stat()
@@ -247,8 +240,11 @@ def _get_all_sm_services(helper: LinuxDistroHelper) -> list[tuple[str, str]]:
 
 
 def _service_is_active(name: str) -> bool:
+    if not os.path.isdir("/run/systemd/system"):
+        return False
     try:
-        r = subprocess.run(["systemctl", "is-active", f"{name}.service"], capture_output=True, text=True, timeout=5)
+        r = subprocess.run(["systemctl", "is-active", f"{name}.service"], capture_output=True, text=True,
+                           timeout=5, check=False)
         return r.stdout.strip() == "active"
     except (OSError, subprocess.SubprocessError):
         return False

@@ -66,9 +66,10 @@ _DISTROS_SOLUS = {"solus"}
 
 def _run_capture(cmd: list[str], timeout: int = 25) -> list[str]:
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                           stdin=subprocess.DEVNULL, check=False)
         return [line.strip() for line in r.stdout.splitlines() if line.strip()]
-    except Exception as exc:
+    except (OSError, subprocess.SubprocessError) as exc:
         logger.warning("_run_capture %s: %s", cmd[0] if cmd else "?", exc)
         return []
 
@@ -126,6 +127,12 @@ SESSIONS = ["KDE", "GNOME", "XFCE", "Cinnamon", "MATE", "LXDE", "LXQt", "Budgie"
             "Hyprland", "bspwm", "dwm", "awesome", "qtile", "xmonad", "Wayfire", "River", "niri", "COSMIC"]
 
 _SESSION_LOWER: dict[str, str] = {s.lower(): s for s in SESSIONS}
+_SESSION_LOWER.update({
+    "plasma": "KDE", "plasmax11": "KDE", "plasmawayland": "KDE", "kde-plasma": "KDE", "plasma-bigscreen": "KDE",
+    "gnome-xorg": "GNOME", "gnome-classic": "GNOME", "gnome-wayland": "GNOME", "ubuntu": "GNOME",
+    "xfce4": "XFCE", "lxqt-wayland": "LXQt", "i3-with-shmlog": "i3", "sway-session": "Sway",
+    "hyprland-session": "Hyprland", "cosmic-session": "COSMIC",
+})
 
 _PKG_MGR_NAME: dict[str, str] = {"arch": "pacman", "debian": "apt", "fedora": "dnf", "amazon2": "yum",
                                  "suse": "zypper", "solus": "eopkg", "void": "xbps", "gentoo": "emerge",
@@ -162,7 +169,7 @@ _PKG: dict[str, dict[str, Any]] = {
         "install": "sudo pacman -S --needed --noconfirm {p}",
         "update": "sudo pacman -Syu --noconfirm",
         "remove": "sudo pacman -Rns --noconfirm {p}",
-        "clean": "sudo pacman -Scc --noconfirm",
+        "clean": "sudo pacman -Sc --noconfirm",
         "orphans": "pacman -Qdtq",
         "has_aur": True,
         "kernel": "linux-headers",
@@ -170,7 +177,7 @@ _PKG: dict[str, dict[str, Any]] = {
     "debian": {
         "check": lambda p: ["sh", "-c", f"dpkg-query -W -f='${{Status}}' {shlex.quote(p)} 2>/dev/null | grep -q '^install ok installed$'"],
         "install": "sudo env DEBIAN_FRONTEND=noninteractive apt-get install -yq -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold' {p}",
-        "update": "sudo env DEBIAN_FRONTEND=noninteractive apt-get update && sudo env DEBIAN_FRONTEND=noninteractive apt-get upgrade -yq -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold'",
+        "update": "sudo env DEBIAN_FRONTEND=noninteractive apt-get update && sudo env DEBIAN_FRONTEND=noninteractive apt-get upgrade -yq --with-new-pkgs -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold'",
         "remove": "sudo env DEBIAN_FRONTEND=noninteractive apt-get autoremove -yq {p}",
         "clean": "sudo apt-get clean",
         "orphans": "apt-get --dry-run autoremove",
@@ -210,7 +217,7 @@ _PKG: dict[str, dict[str, Any]] = {
     "void": {
         "check": lambda p: ["xbps-query", p],
         "install": "sudo xbps-install -y {p}",
-        "update": "sudo xbps-install -Su",
+        "update": "sudo xbps-install -Syu",
         "remove": "sudo xbps-remove -y {p}",
         "clean": "sudo xbps-remove -Oo",
         "orphans": "xbps-query -O",
@@ -243,7 +250,7 @@ _PKG: dict[str, dict[str, Any]] = {
         "update": "sudo apk update && sudo apk upgrade",
         "remove": "sudo apk del {p}",
         "clean": "sudo apk cache clean",
-        "orphans": "apk info --orphaned",
+        "orphans": "",
         "has_aur": False,
         "kernel": "linux-headers",
     },
@@ -352,7 +359,7 @@ _SSH_PKGS: dict = {
     None:        ["openssh-server"],
 }
 _SSH_SVC  = {"debian": "ssh", None: "sshd"}
-_SAMBA_SVC = {"debian": "smbd", None: "smb"}
+_SAMBA_SVC = {"debian": "smbd", "void": "smbd", "alpine": "samba", "gentoo": "samba", None: "smb"}
 _SAMBA_PKGS: dict = {
     "debian":    ["samba", "samba-common-bin"],
     "fedora":    ["samba", "samba-common"],
@@ -510,7 +517,8 @@ _esp_cache: list = []
 _cpu_vendor_cache: list = []
 _default_kernel_cache: dict[str, str | None] = {}
 _priv_reader: list = []
-_sudo_ok_cache: list = []
+_esp_cand_cache: list = []
+_ESP_CAND_TTL = 30.0
 _boot_lock = threading.Lock()
 
 _SD_BOOT_GUID = "4a67b082-0a4c-41cf-b6c7-440b29bb8c4f"
@@ -802,7 +810,7 @@ class LinuxDistroHelper:
                 if not line or line.startswith(("Last metadata", "Extra")):
                     continue
                 name = re.sub(r"^\d+:", "", line)
-                name = re.sub(r"-\d.*$", "", name)
+                name = re.sub(r"-\d+:.*$", "", name) if re.search(r"-\d+:", name) else re.sub(r"-\d.*$", "", name)
                 if name and self.valid(name):
                     pkgs.append(name)
             return pkgs
@@ -823,7 +831,8 @@ class LinuxDistroHelper:
             fam = self.family()
             if fam == "arch":
                 tag = _kernel_tag(kv)
-                return f"linux-{tag}-headers" if tag in ("hardened", "lts", "zen") else "linux-headers"
+                return f"linux-{tag}-headers" if tag in ("hardened", "lts", "zen", "rt", "xanmod", "cachyos") \
+                    else "linux-headers"
             if fam == "debian":  return f"linux-headers-{kv}"
             if fam in ("fedora", "amazon2", "fedora-atomic"): return f"kernel-devel-{kv}"
             if fam in ("suse", "suse-immutable"): return "kernel-default-devel"
@@ -848,7 +857,7 @@ class LinuxDistroHelper:
 
         if fam in ("fedora", "fedora-atomic"):
             raw = _run_capture(["sh", "-c",
-                                "dnf repoquery --userinstalled -q --qf '%{name}' 2>/dev/null"])
+                                "dnf repoquery --userinstalled -q --qf '%{name}\\n' 2>/dev/null"])
             if not raw:
                 raw = _run_capture(["sh", "-c", "rpm -qa --qf '%{NAME}\\n' 2>/dev/null"])
             return sorted(set(raw)), []
@@ -867,10 +876,17 @@ class LinuxDistroHelper:
             return sorted({n for n in names if self.valid(n)}), []
 
         if fam in ("suse", "suse-immutable"):
-            raw = _run_capture(["sh", "-c",
-                                "zypper se --installed-only 2>/dev/null "
-                                "| awk -F'|' '/^i /{gsub(/ /,\"\",$2);if($2)print $2}'"])
-            return sorted(raw), []
+            raw = _run_capture(["zypper", "--no-refresh", "--non-interactive", "search", "--installed-only"])
+            explicit: set[str] = set()
+            every: set[str] = set()
+            for line in raw:
+                cols = [c.strip() for c in line.split("|")]
+                if len(cols) < 3 or not cols[0].startswith("i") or not self.valid(cols[1]):
+                    continue
+                every.add(cols[1])
+                if cols[0].startswith("i+"):
+                    explicit.add(cols[1])
+            return sorted(explicit or every), []
 
         if fam == "void":
             raw = _run_capture(["xbps-query", "-m"])
@@ -941,8 +957,12 @@ class LinuxDistroHelper:
         return result
 
     @staticmethod
+    def systemd_running() -> bool:
+        return os.path.isdir("/run/systemd/system") and shutil.which("systemctl") is not None
+
+    @staticmethod
     def systemd_unit_exists(unit: str) -> bool:
-        if not shutil.which("systemctl"):
+        if not LinuxDistroHelper.systemd_running():
             return False
         try:
             r = subprocess.run(["systemctl", "cat", "--no-pager", "--", unit],
@@ -1066,7 +1086,9 @@ class LinuxDistroHelper:
     def read_text_priv(path: Path) -> str | None:
         try:
             return path.read_text(encoding="utf-8", errors="replace")
-        except (PermissionError, OSError):
+        except (FileNotFoundError, NotADirectoryError, IsADirectoryError):
+            return None
+        except OSError:
             pass
         reader = LinuxDistroHelper._privileged_reader()
         if reader is not None:
@@ -1084,7 +1106,9 @@ class LinuxDistroHelper:
         names: list[str]
         try:
             names = sorted(p.name for p in path.iterdir())
-        except (PermissionError, OSError):
+        except (FileNotFoundError, NotADirectoryError):
+            names = []
+        except OSError:
             out = LinuxDistroHelper._sudo_capture(["ls", "-1", str(path)])
             names = sorted(n.strip() for n in out.splitlines() if n.strip()) if out else []
         low = suffix.lower()
@@ -1093,7 +1117,8 @@ class LinuxDistroHelper:
     @staticmethod
     def path_exists_priv(path: Path, *, directory: bool = False) -> bool:
         try:
-            return stat.S_ISDIR(os.stat(path).st_mode) if directory else True
+            st = os.stat(path)
+            return stat.S_ISDIR(st.st_mode) if directory else True
         except PermissionError:
             pass
         except (OSError, ValueError):
@@ -1105,7 +1130,9 @@ class LinuxDistroHelper:
         var_path = _EFIVARS_DIR / f"{name}-{guid}"
         try:
             raw = var_path.read_bytes()
-        except (PermissionError, OSError):
+        except (FileNotFoundError, NotADirectoryError):
+            return None
+        except OSError:
             raw = LinuxDistroHelper._sudo_capture_bytes(["cat", str(var_path)])
         if not raw or len(raw) <= 4:
             return None
@@ -1135,18 +1162,29 @@ class LinuxDistroHelper:
 
     @staticmethod
     def detect_uki_mode(esp: Path | None = None) -> bool:
-        resolved_esp: Path = esp if esp is not None else LinuxDistroHelper.detect_esp()
-        return bool(LinuxDistroHelper.list_dir_priv(resolved_esp / "EFI" / "Linux", ".efi"))
+        roots = [esp] if esp is not None else LinuxDistroHelper._esp_roots()
+        return any(LinuxDistroHelper.list_dir_priv(root / "EFI" / "Linux", ".efi") for root in roots)
 
     @staticmethod
     def _iter_esp_candidates() -> list[Path]:
+        now = time.monotonic()
+        with _boot_lock:
+            if _esp_cand_cache and now - _esp_cand_cache[0][0] < _ESP_CAND_TTL:
+                return list(_esp_cand_cache[0][1])
+        found = LinuxDistroHelper._scan_esp_candidates()
+        with _boot_lock:
+            _esp_cand_cache[:] = [(time.monotonic(), list(found))]
+        return found
+
+    @staticmethod
+    def _scan_esp_candidates() -> list[Path]:
         seen: set[Path] = set()
         candidates: list[Path] = []
 
         def _add(_p: Path) -> None:
             try:
                 _r = _p.resolve()
-            except OSError:
+            except (OSError, RuntimeError):
                 _r = _p
             if _r in seen:
                 return
@@ -1196,10 +1234,6 @@ class LinuxDistroHelper:
         exists = LinuxDistroHelper.path_exists_priv
         if exists(esp / "loader" / "loader.conf"):
             return True
-        if LinuxDistroHelper.list_dir_priv(esp / "loader" / "entries", ".conf"):
-            return True
-        if LinuxDistroHelper.list_dir_priv(esp / "EFI" / "Linux", ".efi"):
-            return True
         return any(exists(esp / "EFI" / "systemd" / f"systemd-boot{arch}.efi")
                    for arch in ("x64", "aa64", "ia32", "arm", "riscv64", "loongarch64"))
 
@@ -1226,6 +1260,8 @@ class LinuxDistroHelper:
             if _bootloader_cache:
                 return _bootloader_cache[0]
         result = LinuxDistroHelper._detect_bootloader_uncached()
+        if result == "unknown":
+            return result
         with _boot_lock:
             if not _bootloader_cache:
                 _bootloader_cache.append(result)
@@ -1246,7 +1282,16 @@ class LinuxDistroHelper:
 
     @staticmethod
     def _detect_bootloader_uncached() -> str:
-        if shutil.which("bootctl"):
+        loader_info = (LinuxDistroHelper.read_efi_var("LoaderInfo") or "").lower()
+        booted_by_other = bool(loader_info) and "systemd-boot" not in loader_info
+        if "systemd-boot" in loader_info:
+            return "systemd-boot"
+        if booted_by_other:
+            for key, name in (("refind", "refind"), ("limine", "limine"), ("grub", "grub")):
+                if key in loader_info:
+                    return name
+
+        if not booted_by_other and shutil.which("bootctl"):
             try:
                 r = subprocess.run(["bootctl", "is-installed"], capture_output=True, text=True, timeout=10,
                                    stdin=subprocess.DEVNULL, check=False)
@@ -1259,9 +1304,10 @@ class LinuxDistroHelper:
                 return "systemd-boot"
 
         esp_candidates = LinuxDistroHelper._iter_esp_candidates()
-        for esp in esp_candidates:
-            if LinuxDistroHelper._path_has_systemd_boot(esp):
-                return "systemd-boot"
+        if not booted_by_other:
+            for esp in esp_candidates:
+                if LinuxDistroHelper._path_has_systemd_boot(esp):
+                    return "systemd-boot"
 
         if LinuxDistroHelper.detect_grub_cfg() is not None:
             return "grub"
@@ -1302,8 +1348,8 @@ class LinuxDistroHelper:
         with _boot_lock:
             _bootloader_cache.clear()
             _esp_cache.clear()
+            _esp_cand_cache.clear()
             _default_kernel_cache.clear()
-            _sudo_ok_cache.clear()
         from privileged import invalidate_sudo_probe
         invalidate_sudo_probe()
 
@@ -1589,8 +1635,9 @@ class LinuxDistroHelper:
             if bl in _default_kernel_cache:
                 return _default_kernel_cache[bl]
         result = LinuxDistroHelper._detect_default_kernel_uncached(bl)
-        with _boot_lock:
-            _default_kernel_cache[bl] = result
+        if result is not None:
+            with _boot_lock:
+                _default_kernel_cache[bl] = result
         return result
 
     @staticmethod
