@@ -68,6 +68,13 @@ def get_next_run_time() -> str:
 def _systemd_escape_percent(value: str) -> str:
     return value.replace("%", "%%")
 
+def _exec_start_prefix() -> str:
+    python_exe = _systemd_escape_percent(sys.executable)
+    if getattr(sys, "frozen", False):
+        return f'"{python_exe}"'
+    exe_path = _systemd_escape_percent(str(Path(__file__).resolve().parent / "main.py"))
+    return f'"{python_exe}" "{exe_path}"'
+
 def install_timer(interval_key: str, backup_headers: list[str], *, on_calendar: str = "", only_on_ac: bool = False) -> tuple[bool, str]:
     if interval_key not in _INTERVALS:
         return False, tr("Unknown interval")
@@ -76,13 +83,11 @@ def install_timer(interval_key: str, backup_headers: list[str], *, on_calendar: 
     if not on_cal:
         return False, tr("No OnCalendar expression provided.")
 
-    exe = Path(__file__).resolve().parent / "main.py"
     headers_b64 = _b64.b64encode(json.dumps(backup_headers).encode()).decode()
 
     ac_condition = "ConditionACPower=true\n" if only_on_ac else ""
 
-    python_exe = _systemd_escape_percent(sys.executable)
-    exe_path = _systemd_escape_percent(str(exe))
+    exec_prefix = _exec_start_prefix()
 
     service = (
         "[Unit]\n"
@@ -92,7 +97,7 @@ def install_timer(interval_key: str, backup_headers: list[str], *, on_calendar: 
         "\n"
         "[Service]\n"
         "Type=oneshot\n"
-        f"ExecStart=\"{python_exe}\" \"{exe_path}\" --headless-backup-b64 \"{headers_b64}\"\n"
+        f"ExecStart={exec_prefix} --headless-backup-b64 \"{headers_b64}\"\n"
     )
 
     timer = (
