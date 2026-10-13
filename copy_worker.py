@@ -15,7 +15,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 from drive_utils import is_smb, is_ssh, build_rsync_cmd, _SSH_HOST_RE
 from pre_post_hooks import run_hooks as _run_hooks
-from state import logger
+from state import logger, frozen_safe_env
 from translations import tr
 
 from copy_worker_core import (
@@ -220,10 +220,22 @@ def _copy_symlink(src: str, dst: str) -> tuple:
         return "error", str(exc), 0
 
 
+_HAS_COPY_FILE_RANGE = hasattr(os, "copy_file_range")
+_HAS_SENDFILE = hasattr(os, "sendfile")
+
+
+_CFR_FALLBACK_ERRNOS = frozenset({
+    errno.ENOSYS, errno.EOPNOTSUPP, errno.ENOTSUP, errno.EXDEV, errno.EINVAL,
+    errno.EBADF, errno.EOVERFLOW, errno.ENODEV, errno.ENOTTY, errno.ESPIPE,
+})
+
+
 def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> "tuple[int, OSError | None]":
     rem = total
     last_err: OSError | None = None
     try:
+        if not _HAS_COPY_FILE_RANGE:
+            raise OSError(errno.ENOSYS, "copy_file_range unavailable")
         while rem > 0:
             if cancel.is_set():
                 raise InterruptedError
@@ -234,7 +246,7 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> "tupl
     except InterruptedError:
         raise
     except OSError as exc:
-        if exc.errno not in (errno.ENOSYS, errno.EOPNOTSUPP, errno.ENOTSUP, errno.EXDEV, errno.EINVAL):
+        if exc.errno not in _CFR_FALLBACK_ERRNOS:
             raise
         logger.debug("copy_file_range not supported, falling back: %s", exc)
         try:
@@ -250,7 +262,7 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> "tupl
         except OSError:
             pass
         rem = total
-    if rem > 0:
+    if rem > 0 and _HAS_SENDFILE:
         offset = total - rem
         try:
             while rem > 0:
@@ -351,6 +363,9 @@ def _copy_file(src, dst, cancel, cached_st=None):
                     st = os.stat(src)
                 except OSError:
                     return "error", tr("Source unreadable"), 0
+
+            if not stat.S_ISREG(st.st_mode):
+                return "skip", tr("Not a regular file (device, socket or pipe)"), 0
 
             dst_st = _lstat_or_none(dst)
 
@@ -609,7 +624,7 @@ class CopyWorker(QThread):
     entry_status = pyqtSignal(str, int, int, int, int)
     scan_finished = pyqtSignal(int)
     _RSYNC_PROGRESS_RE = re.compile(
-        r"^\s*([\d,]+)\s+(\d+)%\s+([\d.]+\w+/s)\s+([\d:]+)"
+        r"^\s*([\d,.\u202f\u00a0 ]+?)\s+(\d+)%\s+([\d.,]+\w+/s)\s+([\d:]+)"
     )
 
     def __init__(self, tasks) -> None:
@@ -648,6 +663,23 @@ class CopyWorker(QThread):
         return result
 
     @staticmethod
+    def _dst_inside_src_guard(src: str, dst: str) -> frozenset:
+        if is_smb(src) or is_ssh(src) or is_smb(dst) or is_ssh(dst):
+            return frozenset()
+        try:
+            if not os.path.isdir(src):
+                return frozenset()
+            real_src = os.path.realpath(src)
+            real_dst = os.path.realpath(dst)
+            if real_dst == real_src or os.path.commonpath([real_src, real_dst]) != real_src:
+                return frozenset()
+        except (OSError, ValueError):
+            return frozenset()
+        logger.warning("destination %r lies inside source %r — it is excluded from the scan", dst, src)
+        rel = os.path.relpath(real_dst, real_src)
+        return frozenset({dst, os.path.join(src, rel)})
+
+    @staticmethod
     def _normalize_tasks(tasks) -> list[tuple[str, str, str, frozenset]]:
         result = []
         for t in tasks:
@@ -672,6 +704,9 @@ class CopyWorker(QThread):
                         exc_set = frozenset(os.path.join(s_norm, n) for n in names)
                     else:
                         exc_set = frozenset()
+                    guard = CopyWorker._dst_inside_src_guard(s_norm, d_norm)
+                    if guard:
+                        exc_set = frozenset(exc_set | guard)
                     result.append((s_norm, d_norm, title, exc_set))
         return result
 
@@ -972,6 +1007,12 @@ class CopyWorker(QThread):
                 _track(0, 0, 1)
                 return
 
+        if shutil.which("rsync") is None:
+            logger.error("rsync binary not found — remote task '%s' reported as error", title or src)
+            flusher.push(er=[(src, tr("'rsync' not found — install it (package 'rsync') to enable SSH backups"), 0)])
+            _track(0, 0, 1)
+            return
+
         cmd = build_rsync_cmd(rsync_src, dst, exclude=excludes, delete=mirror)
         logger.debug("_copy_ssh_tasks: %s", " ".join(cmd))
 
@@ -980,8 +1021,12 @@ class CopyWorker(QThread):
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 bufsize=1,
+                env=frozen_safe_env(),
             )
         except OSError as exc:
             logger.error("rsync launch failed for '%s': %s", src, exc)
@@ -1049,7 +1094,9 @@ class CopyWorker(QThread):
                 _track(0, 0, 0, len(deleted_this_task))
             return
 
-        if proc.returncode == 0:
+        if proc.returncode in (0, 24):
+            if proc.returncode == 24:
+                logger.warning("rsync: some source files vanished during transfer (exit 24): %s", src)
             flusher.push(ok=[(src, dst, 0)])
             _track(1, 0, 0, len(deleted_this_task))
             logger.info("rsync OK: %s → %s", src, dst)

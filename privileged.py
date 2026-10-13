@@ -13,9 +13,9 @@ from translations import tr
 
 __all__ = [
     "AuthRequired", "SudoSession", "authenticate", "auth_required_message",
-    "is_root", "invalidate_sudo_probe", "passwordless_sudo", "release_session",
-    "pw_stdin", "run_privileged", "run_user_command", "split_sudo", "sudo_available",
-    "zero_buffer",
+    "doas_available", "is_root", "invalidate_sudo_probe", "passwordless_sudo", "priv_tool",
+    "release_session", "pw_stdin", "run_privileged", "run_user_command", "split_sudo",
+    "sudo_available", "sudo_prefix", "zero_buffer",
 ]
 
 _PROBE_TTL = 30.0
@@ -57,6 +57,31 @@ def sudo_available() -> bool:
     return shutil.which("sudo") is not None
 
 
+def doas_available() -> bool:
+    return shutil.which("doas") is not None
+
+
+def priv_tool() -> str | None:
+    if is_root():
+        return "root"
+    if sudo_available():
+        return "sudo"
+    if doas_available():
+        return "doas"
+    return None
+
+
+def sudo_prefix(has_password: bool, prompt: str = "") -> list[str]:
+    tool = priv_tool()
+    if tool == "root":
+        return []
+    if tool == "doas":
+        return ["doas", "-n"]
+    if has_password:
+        return ["sudo", "-S", "-p", prompt]
+    return ["sudo", "-n"]
+
+
 def clean_env() -> dict:
     env = frozen_safe_env({"LC_ALL": "C", "LANG": "C", "LANGUAGE": "C"})
     env.pop("SUDO_ASKPASS", None)
@@ -88,7 +113,8 @@ def passwordless_sudo(force: bool = False) -> bool:
     global _probe_cache
     if is_root():
         return True
-    if not sudo_available():
+    tool = "sudo" if sudo_available() else "doas" if doas_available() else None
+    if tool is None:
         return False
     now = time.monotonic()
     if not force:
@@ -96,12 +122,12 @@ def passwordless_sudo(force: bool = False) -> bool:
             if _probe_cache and (now - _probe_cache[0]) < _PROBE_TTL:
                 return _probe_cache[1]
     try:
-        ok = subprocess.run(["sudo", "-n", "true"], capture_output=True,
+        ok = subprocess.run([tool, "-n", "true"], capture_output=True,
                             stdin=subprocess.DEVNULL, env=clean_env(),
                             timeout=5, check=False).returncode == 0
     except (OSError, subprocess.SubprocessError):
         ok = False
-    if not ok and _account_has_no_password():
+    if not ok and tool == "sudo" and _account_has_no_password():
         try:
             ok = subprocess.run(["sudo", "-S", "-p", "", "true"], input="\n", capture_output=True,
                                 text=True, env=clean_env(), timeout=5, check=False).returncode == 0
@@ -112,6 +138,8 @@ def passwordless_sudo(force: bool = False) -> bool:
     return ok
 
 
+_DOAS_FLAGS_WITH_ARG = frozenset({"-u", "-C"})
+
 _SUDO_FLAGS_WITH_ARG = frozenset({
     "-u", "--user", "-g", "--group", "-p", "--prompt", "-C", "--close-from", "-D", "--chdir",
     "-r", "--role", "-t", "--type", "-R", "--chroot", "-T", "--command-timeout", "-U", "--other-user",
@@ -120,14 +148,16 @@ _SUDO_FLAGS_WITH_ARG = frozenset({
 
 def split_sudo(tokens: Sequence[str]) -> list[str]:
     out = list(tokens)
-    if not out or os.path.basename(out[0]) != "sudo":
+    wrapper = os.path.basename(out[0]) if out else ""
+    if wrapper not in ("sudo", "doas"):
         return out
+    with_arg = _SUDO_FLAGS_WITH_ARG if wrapper == "sudo" else _DOAS_FLAGS_WITH_ARG
     out.pop(0)
     while out and out[0].startswith("-"):
         flag = out.pop(0)
         if flag == "--":
             break
-        if flag in _SUDO_FLAGS_WITH_ARG and out:
+        if flag in with_arg and out:
             out.pop(0)
     return out
 
@@ -225,7 +255,7 @@ class SudoSession:
         if not pw:
             return passwordless_sudo(force=True)
         if not sudo_available():
-            return False
+            return passwordless_sudo(force=True)
         try:
             subprocess.run(["sudo", "-k"], capture_output=True,
                            stdin=subprocess.DEVNULL, timeout=5, check=False)
@@ -266,6 +296,8 @@ def _build_argv(args: Sequence[str]) -> tuple[list[str] | None, Any]:
     if is_root():
         return argv, None
     if not sudo_available():
+        if doas_available() and passwordless_sudo():
+            return ["doas", "-n", *argv], None
         return None, None
     pw = SudoSession.instance().password()
     if pw is not None:
@@ -315,7 +347,7 @@ def run_user_command(tokens: Sequence[str], *, timeout: int = 30,
     if not argv:
         return SimpleNamespace(returncode=1, stdout="", stderr=tr("Empty command"))
 
-    needs_root = os.path.basename(argv[0]) == "sudo"
+    needs_root = os.path.basename(argv[0]) in ("sudo", "doas")
     if needs_root:
         inner = split_sudo(argv)
         if not inner:
@@ -349,7 +381,7 @@ def authenticate(parent=None, *, force: bool = False) -> bool:
         if passwordless_sudo(force=True):
             return True
     if not sudo_available():
-        return False
+        return passwordless_sudo(force=True)
 
     from sudo_password import SudoPasswordDialog
 

@@ -14,6 +14,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 from PyQt6.QtCore import Qt, QElapsedTimer, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QIcon, QTextCursor, QCloseEvent, QKeyEvent
@@ -25,7 +26,7 @@ from PyQt6.QtWidgets import (
 from dotfiles_manager import first_path
 from firewall_rules import build_firewalld_commands, build_ufw_commands
 from linux_distro_helper import LinuxDistroHelper, ARCH_KERNEL_VARIANTS
-from privileged import SudoSession, pw_stdin as _pw_bytes, zero_buffer as _zero
+from privileged import SudoSession, pw_stdin as _pw_bytes, sudo_prefix as _sudo_prefix, zero_buffer as _zero
 from state import (S, _HOME, _USER, logger, apply_replacements, _ANSI_RE, active_pkg_names, active_dotfiles,
                    frozen_safe_env)
 from themes import current_theme, font_sz
@@ -65,6 +66,120 @@ _PKG_LOCK_INFO: tuple[tuple[str, str, str], ...] = (
 
 
 class _Status: PENDING, IN_PROGRESS, SUCCESS, WARNING, ERROR = ("pending", "in_progress", "success", "warning", "error")
+
+
+_REFLECTOR_SAFE_IDS = frozenset({
+    "arch", "archlinux", "arch-linux", "endeavouros", "cachyos", "garuda", "arcolinux", "rebornos",
+    "archcraft", "blendos", "crystal", "archbang", "archlabs", "omarchy", "archman",
+})
+
+
+_OTHER_BOOTLOADERS = frozenset({"refind", "limine", "syslinux", "lilo", "rpi", "efistub"})
+
+
+def _kernel_image_re(kernel_pkg: str) -> "re.Pattern[str]":
+    return re.compile(r"vmlinuz-" + re.escape(kernel_pkg) + r"(?![\w-])", re.IGNORECASE)
+
+
+def _replace_or_add_line(text: str, pattern: str, new_line: str, *, append: bool = False) -> str:
+    rx = re.compile(pattern, re.MULTILINE | re.IGNORECASE)
+    if rx.search(text):
+        return rx.sub(lambda _m: new_line, text, count=1)
+    body = text if text.endswith("\n") or not text else text + "\n"
+    return body + new_line + "\n" if append else new_line + "\n" + body
+
+
+def _refind_set_default(text: str, kernel_pkg: str) -> "str | None":
+    return _replace_or_add_line(text, r"^[ \t]*default_selection\b.*$",
+                                f'default_selection "vmlinuz-{kernel_pkg}"', append=True)
+
+
+def _limine_set_default(text: str, kernel_pkg: str) -> "str | None":
+    rx = _kernel_image_re(kernel_pkg)
+    lines = text.splitlines()
+    new_fmt = any(re.match(r"^/", ln) for ln in lines)
+    head_re = re.compile(r"^(/+)") if new_fmt else re.compile(r"^(:)")
+    top = 0
+    cur_top = 0
+    cur_depth = 0
+    found: "int | None" = None
+    for ln in lines:
+        m = head_re.match(ln)
+        if m:
+            cur_depth = len(m.group(1)) if new_fmt else 1
+            if cur_depth == 1:
+                top += 1
+                cur_top = top
+            continue
+        if cur_top and rx.search(ln) and re.search(r"(kernel_path|path|kernel)\s*[:=]", ln, re.IGNORECASE):
+            if cur_depth == 1:
+                found = cur_top
+                break
+            return None
+    if found is None:
+        return None
+    if new_fmt:
+        return _replace_or_add_line(text, r"^[ \t]*default_entry[ \t]*:.*$", f"default_entry: {found}")
+    return _replace_or_add_line(text, r"^[ \t]*DEFAULT_ENTRY[ \t]*=.*$", f"DEFAULT_ENTRY={found}")
+
+
+def _syslinux_set_default(text: str, kernel_pkg: str) -> "str | None":
+    rx = _kernel_image_re(kernel_pkg)
+    label: "str | None" = None
+    cur: "str | None" = None
+    for ln in text.splitlines():
+        m = re.match(r"^\s*label\s+(\S+)", ln, re.IGNORECASE)
+        if m:
+            cur = m.group(1)
+            continue
+        if cur and re.match(r"^\s*(linux|kernel)\s", ln, re.IGNORECASE) and rx.search(ln):
+            label = cur
+            break
+    if label is None:
+        return None
+    text = re.sub(r"^[ \t]*menu[ \t]+default[ \t]*\n", "", text, flags=re.MULTILINE | re.IGNORECASE)
+    return _replace_or_add_line(text, r"^[ \t]*default[ \t]+\S.*$", f"DEFAULT {label}")
+
+
+def _lilo_set_default(text: str, kernel_pkg: str) -> "str | None":
+    rx = _kernel_image_re(kernel_pkg)
+    label: "str | None" = None
+    image_matches = False
+    in_image = False
+    for ln in text.splitlines():
+        if re.match(r"^\s*image\s*=", ln, re.IGNORECASE):
+            in_image = True
+            image_matches = bool(rx.search(ln))
+            continue
+        if in_image and image_matches:
+            m = re.match(r"^\s*label\s*=\s*\"?([^\s\"]+)\"?", ln, re.IGNORECASE)
+            if m:
+                label = m.group(1)
+                break
+    if label is None:
+        return None
+    return _replace_or_add_line(text, r"^[ \t]*default[ \t]*=.*$", f"default={label}")
+
+
+def _rpi_set_kernel(text: str, kernel_file: str) -> str:
+    return _replace_or_add_line(text, r"^[ \t]*kernel[ \t]*=.*$", f"kernel={kernel_file}", append=True)
+
+
+def _efibootmgr_new_order(listing: str, kernel_pkg: str) -> "tuple[str | None, str]":
+    rx = _kernel_image_re(kernel_pkg)
+    order_m = re.search(r"^BootOrder:\s*([0-9A-Fa-f,]+)", listing, re.MULTILINE)
+    if not order_m:
+        return None, ""
+    order = [x.upper() for x in order_m.group(1).split(",") if x]
+    num = ""
+    for ln in listing.splitlines():
+        m = re.match(r"^Boot([0-9A-Fa-f]{4})\*?\s+(.*)$", ln)
+        if m and rx.search(m.group(2)):
+            num = m.group(1).upper()
+            break
+    if not num:
+        return None, ""
+    return ",".join([num] + [x for x in order if x != num]), num
 
 
 _FONT_MONO = "DejaVu Sans Mono, Noto Sans Mono"
@@ -154,7 +269,12 @@ class SystemManagerDialog(_StandardKeysMixin, QDialog):
         grad = f"background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {t['bg2']},stop:1 {t['header_sep']});"
 
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
-        self.setMinimumSize(*self.DIALOG_SIZE)
+        min_w, min_h = self.DIALOG_SIZE
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            min_w, min_h = min(min_w, avail.width()), min(min_h, avail.height())
+        self.setMinimumSize(min_w, min_h)
         self.setStyleSheet(f"QTextEdit{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {t['bg']},stop:1 {t['bg2']});"
                            f"color:{t['text']};border:none;border-radius:8px;}}")
 
@@ -608,9 +728,7 @@ class SystemManagerThread(QThread):
 
     def _inject(self, cmd: list[str]) -> list[str]:
         if cmd and cmd[0] == "sudo" and not (len(cmd) > 1 and cmd[1] in ("-S", "-n")):
-            if self._pw:
-                return ["sudo", "-S", "-p", _SUDO_PROMPT, *cmd[1:]]
-            return ["sudo", "-n", *cmd[1:]]
+            return [*_sudo_prefix(bool(self._pw), _SUDO_PROMPT), *cmd[1:]]
         return cmd
 
     def _exec(self, cmd: list[str] | str, stream: bool = False, timeout: int | None = _UNSET_TIMEOUT,
@@ -628,7 +746,7 @@ class SystemManagerThread(QThread):
                 if inner_cmd.startswith("sudo "):
                     inner_cmd = inner_cmd[5:]
                 inner_cmd = inner_cmd.replace("&& sudo ", "&& ").replace("|| sudo ", "|| ").replace("; sudo ", "; ")
-                cmd = (["sudo", "-S", "-p", _SUDO_PROMPT] if self._pw else ["sudo", "-n"]) + ["sh", "-c", inner_cmd]
+                cmd = [*_sudo_prefix(bool(self._pw), _SUDO_PROMPT), "sh", "-c", inner_cmd]
             else:
                 cmd = self._inject(shlex.split(cmd))
         elif isinstance(cmd, list):
@@ -1116,11 +1234,25 @@ class SystemManagerThread(QThread):
             except (urllib.error.URLError, TimeoutError, OSError, ssl.SSLError): continue
         return ""
 
-    def _update_mirrors(self) -> bool:
+    def _update_mirrors(self) -> bool | str | Any:
         if not self.distro: return False
         if self.distro.family() != "arch":
             self.outputReceived.emit(tr("Mirror update is only supported on Arch Linux"), "info")
             return True
+
+        distro_id = (self.distro.distro_id_raw or "").lower()
+        if distro_id.startswith("manjaro"):
+            if not shutil.which("pacman-mirrors"):
+                self.outputReceived.emit(tr("'pacman-mirrors' not found — skipping mirror update"), "warning")
+                return _Status.WARNING
+            self.outputReceived.emit(tr("Manjaro detected — using 'pacman-mirrors' instead of reflector"), "info")
+            return self._exec(["sudo", "pacman-mirrors", "--geoip"], stream=True).returncode == 0
+        if distro_id not in _REFLECTOR_SAFE_IDS:
+            self.outputReceived.emit(
+                tr("Mirror update with reflector is skipped on '{distro}': its mirror list is not the Arch Linux "
+                   "one and would be overwritten with unsuitable servers.", distro=distro_id or "unknown"),
+                "warning")
+            return _Status.WARNING
 
         country = self._detect_country()
         self.outputReceived.emit(tr("Detected country: {country}", country=country) if country else tr("No country detected — using worldwide mirrors"),
@@ -1132,7 +1264,9 @@ class SystemManagerThread(QThread):
             self.outputReceived.emit(tr("Failed to install reflector"), "error")
             return False
 
-        cmd = [*(["sudo", "-S", "-p", _SUDO_PROMPT] if self._pw else ["sudo", "-n"]), "reflector", "--verbose", "--latest", "10",
+        if os.path.isfile("/etc/pacman.d/mirrorlist"):
+            self._exec(["sudo", "cp", "-p", "/etc/pacman.d/mirrorlist", "/etc/pacman.d/mirrorlist.bak-backup-helper"])
+        cmd = [*_sudo_prefix(bool(self._pw), _SUDO_PROMPT), "reflector", "--verbose", "--latest", "10",
                "--protocol", "https", "--sort", "rate", "--save", "/etc/pacman.d/mirrorlist"]
         if country: cmd += ["--country", country]
         self.outputReceived.emit(tr("Running: {cmd}", cmd=' '.join(cmd)), "info")
@@ -1351,13 +1485,114 @@ class SystemManagerThread(QThread):
             result = self._set_grub_default(kernel_pkg)
         elif bootloader == "systemd-boot":
             result = self._set_systemd_boot_default(kernel_pkg, LinuxDistroHelper.detect_esp())
+        elif bootloader in _OTHER_BOOTLOADERS:
+            result = self._set_default_other(bootloader, kernel_pkg)
         else:
-            self.outputReceived.emit(tr("No supported bootloader found (grub.cfg or loader.conf). "
-                                        "Please set the default kernel manually."), "warning")
+            self.outputReceived.emit(tr("Bootloader '{bl}' is not supported for automatic default-kernel "
+                                        "selection. Please set the default kernel manually.", bl=bootloader),
+                                     "warning")
             return _Status.WARNING
 
         LinuxDistroHelper.invalidate_boot_caches()
         return result
+
+    def _write_priv_file(self, path: Path, text: str) -> bool:
+        if LinuxDistroHelper.path_exists_priv(path):
+            self._exec(["sudo", "cp", "-p", str(path), f"{path}.bak-backup-helper"])
+        r = self._exec(["sudo", "sh", "-c", f"printf '%s' {shlex.quote(text)} > {shlex.quote(str(path))}"],
+                       stream=False, timeout=15)
+        return r.returncode == 0
+
+    def _patch_boot_config(self, name: str, candidates: "list[Path]", kernel_pkg: str, transform,
+                           post=None) -> "bool | str":
+        cfg = next((c for c in candidates if LinuxDistroHelper.path_exists_priv(c)), None)
+        if cfg is None:
+            self.outputReceived.emit(tr("{name} configuration file not found — please set the default kernel "
+                                        "manually.", name=name), "warning")
+            return _Status.WARNING
+        text = LinuxDistroHelper.read_text_priv(cfg)
+        if text is None:
+            self.outputReceived.emit(tr("Cannot read {grub_env}", grub_env=cfg), "error")
+            return False
+        new_text = transform(text, kernel_pkg)
+        if new_text is None:
+            self.outputReceived.emit(tr("No top-level {name} entry for '{kernel_pkg}' found in {cfg} — please set "
+                                        "the default kernel manually.", name=name, kernel_pkg=kernel_pkg, cfg=cfg),
+                                     "warning")
+            return _Status.WARNING
+        if new_text != text:
+            self.outputReceived.emit(tr("Updating {cfg}…", cfg=cfg), "info")
+            if not self._write_priv_file(cfg, new_text):
+                self.outputReceived.emit(tr("Failed to update {path}", path=cfg), "error")
+                return False
+        if post is not None and not post():
+            return False
+        self.outputReceived.emit(tr("{name} default set to '{pkg}'", name=name, pkg=kernel_pkg), "success")
+        return True
+
+    def _set_default_other(self, bootloader: str, kernel_pkg: str) -> "bool | str":
+        roots = LinuxDistroHelper.esp_roots()
+        if bootloader == "refind":
+            cands = [r / "EFI" / "refind" / "refind.conf" for r in roots] + [Path("/boot/refind.conf")]
+            return self._patch_boot_config("rEFInd", cands, kernel_pkg, _refind_set_default)
+
+        if bootloader == "limine":
+            names = ("limine.conf", "limine.cfg")
+            cands = [r / sub / n for r in roots for sub in ("", "EFI/limine", "limine", "EFI/BOOT", "boot")
+                     for n in names]
+            cands += [Path("/boot/limine") / n for n in names]
+            return self._patch_boot_config("Limine", cands, kernel_pkg, _limine_set_default)
+
+        if bootloader == "syslinux":
+            cands = [Path("/boot/syslinux/syslinux.cfg"), Path("/boot/syslinux/extlinux.conf"),
+                     Path("/boot/extlinux/extlinux.conf"), Path("/boot/extlinux/syslinux.cfg")]
+            return self._patch_boot_config("Syslinux", cands, kernel_pkg, _syslinux_set_default)
+
+        if bootloader == "lilo":
+            def _run_lilo() -> bool:
+                lilo = shutil.which("lilo") or ("/sbin/lilo" if os.path.exists("/sbin/lilo") else None)
+                if not lilo:
+                    self.outputReceived.emit(tr("'lilo' not found — please run it manually to apply the change."),
+                                             "warning")
+                    return False
+                _ok = self._exec(["sudo", lilo], stream=True, timeout=120).returncode == 0
+                if not _ok:
+                    self.outputReceived.emit(tr("{tool} failed", tool="lilo"), "error")
+                return _ok
+            return self._patch_boot_config("LILO", [Path("/etc/lilo.conf")], kernel_pkg,
+                                           _lilo_set_default, post=_run_lilo)
+
+        if bootloader == "rpi":
+            for base in (Path("/boot/firmware"), Path("/boot")):
+                cfg = base / "config.txt"
+                if not LinuxDistroHelper.path_exists_priv(cfg):
+                    continue
+                img = next((n for n in (f"vmlinuz-{kernel_pkg}", f"kernel-{kernel_pkg}.img",
+                                        f"kernel8-{kernel_pkg}.img")
+                            if LinuxDistroHelper.path_exists_priv(base / n)), None)
+                if img is None:
+                    self.outputReceived.emit(tr("Kernel image not found: {img}", img=f"vmlinuz-{kernel_pkg}"),
+                                             "warning")
+                    return _Status.WARNING
+                return self._patch_boot_config("Raspberry Pi firmware", [cfg], kernel_pkg,
+                                               lambda t, _p, _i=img: _rpi_set_kernel(t, _i))
+            self.outputReceived.emit(tr("{name} configuration file not found — please set the default kernel "
+                                        "manually.", name="Raspberry Pi firmware"), "warning")
+            return _Status.WARNING
+
+        r = self._exec(["sudo", "efibootmgr", "-v"], stream=False, timeout=15)
+        if r.returncode != 0:
+            self.outputReceived.emit(tr("'efibootmgr' failed — please set the default kernel manually."), "warning")
+            return _Status.WARNING
+        new_order, num = _efibootmgr_new_order(r.stdout, kernel_pkg)
+        if new_order is None:
+            self.outputReceived.emit(tr("No firmware boot entry for '{kernel_pkg}' found — please set the default "
+                                        "kernel manually.", kernel_pkg=kernel_pkg), "warning")
+            return _Status.WARNING
+        ok = self._exec(["sudo", "efibootmgr", "-o", new_order], stream=True, timeout=15).returncode == 0
+        self._emit_result(ok, tr("{name} default set to '{pkg}'", name=f"EFISTUB (Boot{num})", pkg=kernel_pkg),
+                          tr("{tool} failed", tool="efibootmgr"))
+        return ok
 
     @staticmethod
     def _grub_cfg_path() -> Path:
@@ -1723,9 +1958,18 @@ class SystemManagerThread(QThread):
             return False
         self._invalidate_pkg_cache()
 
-        target_dir = _HOME / helper
+        build_root = _HOME / ".cache" / "backup-helper-aur"
+        target_dir = build_root / helper
+        try:
+            build_root.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            self.outputReceived.emit(tr("Cannot create build directory {dir}: {exc}", dir=build_root, exc=exc), "error")
+            return False
         shutil.rmtree(target_dir, ignore_errors=True)
-        for msg, cmd, kw in [(tr("Cloning {helper}…", helper=helper), ["git", "clone", repo_url], {"cwd": str(_HOME)}),
+        _go_dirs = (_HOME / ".config" / "go", _HOME / "go")
+        _rust_dirs = (_HOME / ".cargo" / "registry", _HOME / ".cargo" / "git")
+        _preexisting = {str(d) for d in (*_go_dirs, *_rust_dirs) if d.exists()}
+        for msg, cmd, kw in [(tr("Cloning {helper}…", helper=helper), ["git", "clone", repo_url], {"cwd": str(build_root)}),
                              (tr("Building {helper}…", helper=helper), ["makepkg", "-c", "--noconfirm"], {"cwd": str(target_dir)})]:
             self.outputReceived.emit(msg, "subprocess")
             if self._exec(cmd, stream=True, **kw).returncode != 0:
@@ -1736,12 +1980,14 @@ class SystemManagerThread(QThread):
         if helper == "yay" and "go" in freshly_added and self.distro.package_is_installed("go"):
             to_remove.append("go")
             self._exec(["go", "clean", "-modcache"], timeout=30)
-            for d in (_HOME / ".config" / "go", _HOME / "go"):
-                shutil.rmtree(d, ignore_errors=True)
+            for d in _go_dirs:
+                if str(d) not in _preexisting:
+                    shutil.rmtree(d, ignore_errors=True)
         elif helper == "paru" and "rust" in freshly_added and self.distro.package_is_installed("rust"):
             to_remove.append("rust")
-            for d in (_HOME / ".cargo" / "registry", _HOME / ".cargo" / "git"):
-                shutil.rmtree(d, ignore_errors=True)
+            for d in _rust_dirs:
+                if str(d) not in _preexisting:
+                    shutil.rmtree(d, ignore_errors=True)
 
         if self.distro.package_is_installed(f"{helper}-debug"): to_remove.append(f"{helper}-debug")
         if to_remove and self._exec(["sudo", "pacman", "-R", "--noconfirm", *to_remove], stream=True).returncode != 0:
@@ -1820,7 +2066,7 @@ class SystemManagerThread(QThread):
         if LinuxDistroHelper.systemd_unit_exists(unit):
             return True
         if os.path.isfile(f"/etc/init.d/{base}") or os.path.isdir(f"/etc/sv/{base}") \
-                or os.path.isfile(f"/etc/dinit.d/{base}"):
+                or os.path.isdir(f"/etc/runit/sv/{base}") or os.path.isfile(f"/etc/dinit.d/{base}"):
             return True
         return os.path.isfile(f"/etc/rc.d/rc.{base}")
 
@@ -1896,21 +2142,24 @@ class SystemManagerThread(QThread):
             if ok:
                 ok = (self._exec(["sudo", "dinitctl", "start", service], stream=True).returncode == 0)
 
-        elif shutil.which("sv") and (_run_dir := next((d for d in ("/var/service", "/etc/service")
+        elif shutil.which("sv") and (_run_dir := next((d for d in ("/var/service", "/etc/runit/runsvdir/default",
+                                                                    "/etc/service", "/run/runit/service")
                                                        if os.path.isdir(d)), None)):
             self.outputReceived.emit(tr("Enabling {service} (runit)", service=service), "info")
             if os.path.exists(f"{_run_dir}/{service}"):
                 self.outputReceived.emit(tr("{service} already enabled", service=service), "success")
                 return self._apply_firewall_rules(service)
             ok = False
-            if os.path.isdir(f"/etc/sv/{service}"):
-                ok = (self._exec(["sudo", "ln", "-s", f"/etc/sv/{service}", f"{_run_dir}/"],
+            _sv_def = next((d for d in (f"/etc/sv/{service}", f"/etc/runit/sv/{service}") if os.path.isdir(d)), None)
+            if _sv_def:
+                ok = (self._exec(["sudo", "ln", "-s", _sv_def, f"{_run_dir}/"],
                                  stream=True).returncode == 0)
                 if ok:
                     ok = (self._exec(["sudo", "sv", "up", service], stream=True).returncode == 0)
             else:
                 self.outputReceived.emit(
-                    tr("No runit service definition found at /etc/sv/{service}", service=service), "error")
+                    tr("No runit service definition found for {service} (looked in /etc/sv and /etc/runit/sv)",
+                       service=service), "error")
 
         elif os.path.isfile(f"/etc/init.d/{service}") and not os.path.isfile(f"/etc/rc.d/rc.{service}"):
             self.outputReceived.emit(tr("Enabling {service} (SysV init)", service=service), "info")

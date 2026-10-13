@@ -4748,6 +4748,118 @@ LANGUAGES: dict[str, dict[str, str]] = {
 }
 
 
+LANGUAGES["Deutsch"].update({
+    "'rsync' not found — install it (package 'rsync') to enable SSH backups":
+        "'rsync' nicht gefunden — bitte installieren (Paket 'rsync'), um SSH-Backups zu aktivieren",
+    'Not a regular file (device, socket or pipe)':
+        'Keine reguläre Datei (Gerät, Socket oder Pipe)',
+    'Download incomplete: local file is missing':
+        'Download unvollständig: lokale Datei fehlt',
+    'Download incomplete: {got} of {want} bytes':
+        'Download unvollständig: {got} von {want} Bytes',
+    "'efibootmgr' failed — please set the default kernel manually.":
+        "'efibootmgr' ist fehlgeschlagen — bitte den Standardkernel manuell festlegen.",
+    "'lilo' not found — please run it manually to apply the change.":
+        "'lilo' nicht gefunden — bitte manuell ausführen, um die Änderung zu übernehmen.",
+    "'pacman-mirrors' not found — skipping mirror update":
+        "'pacman-mirrors' nicht gefunden — Mirror-Update übersprungen",
+    "Bootloader '{bl}' is not supported for automatic default-kernel selection. Please set the default kernel manually.":
+        "Der Bootloader '{bl}' wird für die automatische Standardkernel-Auswahl nicht unterstützt. Bitte den Standardkernel manuell festlegen.",
+    'Cannot create build directory {dir}: {exc}':
+        'Build-Verzeichnis {dir} kann nicht erstellt werden: {exc}',
+    "Manjaro detected — using 'pacman-mirrors' instead of reflector":
+        "Manjaro erkannt — 'pacman-mirrors' statt reflector wird verwendet",
+    "Mirror update with reflector is skipped on '{distro}': its mirror list is not the Arch Linux one and would be overwritten with unsuitable servers.":
+        "Das Mirror-Update mit reflector wird auf '{distro}' übersprungen: Die Mirrorlist ist nicht die von Arch Linux und würde mit ungeeigneten Servern überschrieben.",
+    "No firmware boot entry for '{kernel_pkg}' found — please set the default kernel manually.":
+        "Kein Firmware-Booteintrag für '{kernel_pkg}' gefunden — bitte den Standardkernel manuell festlegen.",
+    'No runit service definition found for {service} (looked in /etc/sv and /etc/runit/sv)':
+        'Keine runit-Dienstdefinition für {service} gefunden (gesucht in /etc/sv und /etc/runit/sv)',
+    "No top-level {name} entry for '{kernel_pkg}' found in {cfg} — please set the default kernel manually.":
+        "In {cfg} wurde kein {name}-Haupteintrag für '{kernel_pkg}' gefunden — bitte den Standardkernel manuell festlegen.",
+    'Updating {cfg}…':
+        '{cfg} wird aktualisiert…',
+    '{name} configuration file not found — please set the default kernel manually.':
+        'Konfigurationsdatei von {name} nicht gefunden — bitte den Standardkernel manuell festlegen.',
+    "{name} default set to '{pkg}'":
+        "Standard von {name} auf '{pkg}' gesetzt",
+})
+
+LANGUAGES["Français"].update({
+    "'rsync' not found — install it (package 'rsync') to enable SSH backups":
+        "'rsync' introuvable — installez-le (paquet 'rsync') pour activer les sauvegardes SSH",
+    'Not a regular file (device, socket or pipe)':
+        'Pas un fichier régulier (périphérique, socket ou tube)',
+    'Download incomplete: local file is missing':
+        'Téléchargement incomplet : le fichier local est manquant',
+    'Download incomplete: {got} of {want} bytes':
+        'Téléchargement incomplet : {got} octets sur {want}',
+    "'efibootmgr' failed — please set the default kernel manually.":
+        "'efibootmgr' a échoué — veuillez définir le noyau par défaut manuellement.",
+    "'lilo' not found — please run it manually to apply the change.":
+        "'lilo' introuvable — exécutez-le manuellement pour appliquer la modification.",
+    "'pacman-mirrors' not found — skipping mirror update":
+        "'pacman-mirrors' introuvable — mise à jour des miroirs ignorée",
+    "Bootloader '{bl}' is not supported for automatic default-kernel selection. Please set the default kernel manually.":
+        "Le chargeur d'amorçage '{bl}' n'est pas pris en charge pour la sélection automatique du noyau par défaut. Veuillez le définir manuellement.",
+    'Cannot create build directory {dir}: {exc}':
+        'Impossible de créer le répertoire de compilation {dir} : {exc}',
+    "Manjaro detected — using 'pacman-mirrors' instead of reflector":
+        "Manjaro détecté — utilisation de 'pacman-mirrors' au lieu de reflector",
+    "Mirror update with reflector is skipped on '{distro}': its mirror list is not the Arch Linux one and would be overwritten with unsuitable servers.":
+        "La mise à jour des miroirs avec reflector est ignorée sur '{distro}' : sa liste de miroirs n'est pas celle d'Arch Linux et serait écrasée par des serveurs inadaptés.",
+    "No firmware boot entry for '{kernel_pkg}' found — please set the default kernel manually.":
+        "Aucune entrée d'amorçage du micrologiciel pour '{kernel_pkg}' — veuillez définir le noyau par défaut manuellement.",
+    'No runit service definition found for {service} (looked in /etc/sv and /etc/runit/sv)':
+        'Aucune définition de service runit trouvée pour {service} (recherché dans /etc/sv et /etc/runit/sv)',
+    "No top-level {name} entry for '{kernel_pkg}' found in {cfg} — please set the default kernel manually.":
+        "Aucune entrée {name} de premier niveau pour '{kernel_pkg}' dans {cfg} — veuillez définir le noyau par défaut manuellement.",
+    'Updating {cfg}…':
+        'Mise à jour de {cfg}…',
+    '{name} configuration file not found — please set the default kernel manually.':
+        'Fichier de configuration de {name} introuvable — veuillez définir le noyau par défaut manuellement.',
+    "{name} default set to '{pkg}'":
+        "Valeur par défaut de {name} définie sur '{pkg}'",
+})
+
+LANGUAGES["Español"].update({
+    "'rsync' not found — install it (package 'rsync') to enable SSH backups":
+        "No se encontró 'rsync': instálelo (paquete 'rsync') para habilitar las copias SSH",
+    'Not a regular file (device, socket or pipe)':
+        'No es un archivo normal (dispositivo, socket o tubería)',
+    'Download incomplete: local file is missing':
+        'Descarga incompleta: falta el archivo local',
+    'Download incomplete: {got} of {want} bytes':
+        'Descarga incompleta: {got} de {want} bytes',
+    "'efibootmgr' failed — please set the default kernel manually.":
+        "'efibootmgr' falló: establezca el kernel predeterminado manualmente.",
+    "'lilo' not found — please run it manually to apply the change.":
+        "No se encontró 'lilo': ejecútelo manualmente para aplicar el cambio.",
+    "'pacman-mirrors' not found — skipping mirror update":
+        "No se encontró 'pacman-mirrors': se omite la actualización de réplicas",
+    "Bootloader '{bl}' is not supported for automatic default-kernel selection. Please set the default kernel manually.":
+        "El gestor de arranque '{bl}' no admite la selección automática del kernel predeterminado. Establézcalo manualmente.",
+    'Cannot create build directory {dir}: {exc}':
+        'No se puede crear el directorio de compilación {dir}: {exc}',
+    "Manjaro detected — using 'pacman-mirrors' instead of reflector":
+        "Manjaro detectado: se usa 'pacman-mirrors' en lugar de reflector",
+    "Mirror update with reflector is skipped on '{distro}': its mirror list is not the Arch Linux one and would be overwritten with unsuitable servers.":
+        "Se omite la actualización de réplicas con reflector en '{distro}': su lista de réplicas no es la de Arch Linux y se sobrescribiría con servidores inadecuados.",
+    "No firmware boot entry for '{kernel_pkg}' found — please set the default kernel manually.":
+        "No se encontró ninguna entrada de arranque del firmware para '{kernel_pkg}': establezca el kernel predeterminado manualmente.",
+    'No runit service definition found for {service} (looked in /etc/sv and /etc/runit/sv)':
+        'No se encontró ninguna definición de servicio runit para {service} (buscado en /etc/sv y /etc/runit/sv)',
+    "No top-level {name} entry for '{kernel_pkg}' found in {cfg} — please set the default kernel manually.":
+        "No se encontró ninguna entrada principal de {name} para '{kernel_pkg}' en {cfg}: establezca el kernel predeterminado manualmente.",
+    'Updating {cfg}…':
+        'Actualizando {cfg}…',
+    '{name} configuration file not found — please set the default kernel manually.':
+        'No se encontró el archivo de configuración de {name}: establezca el kernel predeterminado manualmente.',
+    "{name} default set to '{pkg}'":
+        "Valor predeterminado de {name} establecido en '{pkg}'",
+})
+
+
 def current_language() -> str:
     from state import S
     lang = S.ui.get("language", "English")

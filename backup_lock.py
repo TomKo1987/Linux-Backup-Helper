@@ -10,8 +10,9 @@ from state import _CONFIG_DIR, _USER, logger
 
 def _runtime_dir() -> Path:
     for candidate in (
-        f"/run/user/{os.getuid()}" if os.path.isdir(f"/run/user/{os.getuid()}") else None,
+        _CONFIG_DIR,
         os.environ.get("XDG_RUNTIME_DIR"),
+        f"/run/user/{os.getuid()}" if os.path.isdir(f"/run/user/{os.getuid()}") else None,
         tempfile.gettempdir(),
     ):
         if not candidate:
@@ -69,13 +70,6 @@ def release_backup_lock() -> None:
         return
     try:
         fcntl.flock(_lock_fd, fcntl.LOCK_UN)
-    except OSError:
-        pass
-    try:
-        st_fd = os.fstat(_lock_fd)
-        st_path = os.stat(_LOCK_PATH)
-        if (st_fd.st_dev, st_fd.st_ino) == (st_path.st_dev, st_path.st_ino):
-            _LOCK_PATH.unlink(missing_ok=True)
     except OSError:
         pass
     try:

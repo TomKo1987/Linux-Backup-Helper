@@ -38,6 +38,8 @@ _BOOTLOADER_LABELS: dict[str, str] = {
     "limine": "Limine",
     "syslinux": "Syslinux / EXTLINUX",
     "efistub": "EFISTUB",
+    "lilo": "LILO",
+    "rpi": "Raspberry Pi firmware",
 }
 
 

@@ -360,7 +360,7 @@ class FirewallSettingsDialog(QDialog):
             tokens = []
             success = False
 
-        if tokens and tokens[0] == "sudo": tokens.pop(0)
+        if tokens and tokens[0] in ("sudo", "doas"): tokens.pop(0)
         if tokens and tokens[0] == "ufw": tokens.pop(0)
 
         if not tokens:

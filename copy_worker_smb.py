@@ -217,7 +217,7 @@ class _SmbClient:
         env = frozen_safe_env({"LC_ALL": "C", "LANG": "C"})
         try:
             proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                    text=True, encoding="utf-8", env=env)
+                                    text=True, encoding="utf-8", errors="replace", env=env)
             with _smb_procs_lock:
                 _smb_procs[tid] = proc
             if cancel is not None and cancel.is_set():
@@ -787,6 +787,11 @@ class _ShareProcessor:
                 for j in batch:
                     src = self._job_src(j, is_get)
                     dst = j.dst_path if is_get else self._remote_url(j.remote_path)
+                    if is_get:
+                        problem = self._finalize_download(j)
+                        if problem:
+                            er_list.append((src, problem))
+                            continue
                     ok_list.append((src, dst))
             elif _is_unreachable(err):
                 self._unreachable.set()
@@ -799,6 +804,23 @@ class _ShareProcessor:
                 stack.append(batch[:mid])
 
         return ok_list, er_list
+
+    @staticmethod
+    def _finalize_download(job: "_SmbJob") -> str:
+        try:
+            st = os.stat(job.dst_path)
+        except OSError:
+            return tr("Download incomplete: local file is missing")
+        if 0 <= job.remote_size != st.st_size:
+            _silent_unlink(job.dst_path)
+            return tr("Download incomplete: {got} of {want} bytes",
+                      got=st.st_size, want=job.remote_size)
+        if job.remote_mtime >= 0:
+            try:
+                os.utime(job.dst_path, (job.remote_mtime, job.remote_mtime))
+            except OSError as exc:
+                logger.debug("could not set mtime on %s: %s", job.dst_path, exc)
+        return ""
 
     def _record(self, ok_c: list, sk_c: list, er_c: list) -> None:
         def _meta(url: str) -> tuple[str, int]:

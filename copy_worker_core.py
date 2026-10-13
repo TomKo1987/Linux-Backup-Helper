@@ -9,7 +9,7 @@ from functools import lru_cache
 from urllib.parse import urlparse
 
 from drive_utils import is_smb, is_ssh
-from state import logger
+from state import logger, frozen_safe_env
 from themes import register_cache_invalidation_hook as _reg_cache_hook
 from translations import tr
 
@@ -124,7 +124,8 @@ def _notify(title: str, body: str, urgency: str = "normal") -> None:
     try:
         subprocess.Popen([_NOTIFY_SEND, f"--urgency={urgency}", f"--expire-time={expire_time}", "--app-name=Backup Helper",
                           "--icon=drive-harddisk", title, body],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+                         env=frozen_safe_env())
     except OSError:
         pass
 

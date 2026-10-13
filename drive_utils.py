@@ -26,7 +26,8 @@ _ALLOWED_MOUNT_CMDS = frozenset({
 
 
 _TRUSTED_BIN_PREFIXES = ("/usr/bin/", "/usr/sbin/", "/bin/", "/sbin/", "/usr/local/bin/", "/usr/local/sbin/",
-                         "/run/wrappers/bin/", "/run/current-system/sw/bin/", "/usr/lib/")
+                         "/run/wrappers/bin/", "/run/current-system/sw/bin/", "/run/current-system/profile/bin/",
+                         "/usr/lib/", "/usr/libexec/")
 
 
 _session_managed_mounts: list[dict] = []
@@ -99,7 +100,7 @@ def _validate_cmd(cmd: str) -> tuple[bool, str, list[str]]:
     expanded = [os.path.expanduser(tok) for tok in tokens]
     cmd_tok = expanded[0]
     base = os.path.basename(cmd_tok)
-    if base == "sudo":
+    if base in ("sudo", "doas"):
         for tok in expanded[1:]:
             if (tok in ("-u", "--user")
                     or tok.startswith("--user=")
@@ -295,11 +296,36 @@ def open_in_file_manager(path: str) -> tuple[bool, str]:
     return True, ""
 
 
-_RSYNC_SSH_OPTS = (
-    "ssh -o StrictHostKeyChecking=accept-new "
-    "-o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 "
-    "-o BatchMode=yes -o Compression=no"
-)
+_OPENSSH_VER_RE = re.compile(r"OpenSSH_(\d+)\.(\d+)")
+
+
+@lru_cache(maxsize=1)
+def _ssh_supports_accept_new() -> bool:
+    try:
+        r = subprocess.run(["ssh", "-V"], capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                           timeout=5, check=False, env=frozen_safe_env())
+    except (OSError, subprocess.SubprocessError):
+        return True
+    m = _OPENSSH_VER_RE.search((r.stderr or "") + (r.stdout or ""))
+    if not m:
+        return True
+    return (int(m.group(1)), int(m.group(2))) >= (7, 6)
+
+
+def _rsync_ssh_opts() -> str:
+    strict = "-o StrictHostKeyChecking=accept-new " if _ssh_supports_accept_new() else ""
+    return (f"ssh {strict}"
+            "-o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 "
+            "-o BatchMode=yes -o Compression=no")
+
+
+_RSYNC_SHELL_META_RE = re.compile(r"[\s'\"()&;$*?\[\]{}<>|!#~`\\]")
+
+
+def _remote_spec_needs_protect(spec: str) -> bool:
+    if not (is_ssh(spec) and not spec.startswith("ssh://")):
+        return False
+    return bool(_RSYNC_SHELL_META_RE.search(spec.split(":", 1)[-1]))
 
 _RSYNC_SKIP_COMPRESS = (
     "7z/avi/bz2/deb/flac/gz/heic/heif/iso/jpeg/jpg/lz/lz4/lzma/lzo/"
@@ -315,8 +341,10 @@ def build_rsync_cmd(src: str, dst: str, *, delete: bool = False, exclude: list[s
         "rsync", "-azH", "--numeric-ids",
         f"--skip-compress={_RSYNC_SKIP_COMPRESS}",
         "--partial", "--partial-dir=.rsync-partial",
-        f"--info={info}", "-e", _RSYNC_SSH_OPTS,
+        f"--info={info}", "-e", _rsync_ssh_opts(),
     ]
+    if _remote_spec_needs_protect(src) or _remote_spec_needs_protect(dst):
+        cmd.append("--protect-args")
     if delete:
         cmd.append("--delete")
     if dry_run:

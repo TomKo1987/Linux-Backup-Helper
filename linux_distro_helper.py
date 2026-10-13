@@ -39,7 +39,8 @@ _VER_PKG = re.compile(r"[-_]\d[\w.+~:-]*$")
 
 _DISTROS_FEDORA = {"fedora", "rhel", "centos", "rocky", "almalinux", "nobara", "ultramarine", "mageia",
                    "openmandriva", "amzn", "ol", "oracle", "scientific", "springdale", "eurolinux", "navylinux",
-                   "circle", "miraclelinux", "openela", "risios", "qubes", "berry", "korora", "rhel-ha"}
+                   "circle", "miraclelinux", "openela", "risios", "qubes", "berry", "korora", "rhel-ha",
+                   "anolis", "alinux", "opencloudos", "tencentos", "openeuler"}
 
 _DISTROS_FEDORA_ATOMIC = {"fedora-silverblue", "fedora-kinoite", "fedora-sericea", "fedora-onyx", "silverblue",
                           "kinoite", "bazzite", "bluefin", "aurora", "ucore", "ublue", "nobara-atomic",
@@ -527,6 +528,11 @@ _VMLINUZ_RE = re.compile(r"vmlinuz-(linux[\w.+-]*)")
 _PLAIN_VMLINUZ_RE = re.compile(r"vmlinuz-linux(?![\w-])")
 _PLAIN_LINUX_RE = re.compile(r"(?:^|[^\w-])(?:linux|arch)(?![\w-])")
 _GRUB_ENTRY_RE = re.compile(r"""^(menuentry|submenu)\s+['"]([^'"]*)['"]""")
+_MOUNT_ESCAPE_RE = re.compile(r"\\([0-7]{3})")
+
+
+def _unescape_mount_field(value: str) -> str:
+    return _MOUNT_ESCAPE_RE.sub(lambda m: chr(int(m.group(1), 8)), value)
 
 
 class LinuxDistroHelper:
@@ -616,6 +622,8 @@ class LinuxDistroHelper:
             elif Path("/run/ostree-booted").exists() or (
                     shutil.which("rpm-ostree") and not shutil.which("dnf")):
                 raw_family = "fedora-atomic"
+            elif not shutil.which("dnf") and shutil.which("yum"):
+                raw_family = "amazon2"
 
         if raw_family == "suse" and shutil.which("transactional-update") and not shutil.which("zypper"):
             raw_family = "suse-immutable"
@@ -953,7 +961,8 @@ class LinuxDistroHelper:
             except Exception as err:
                 logger.error("Error detect_session: %s", err)
 
-        _session_cache.append(result)
+        if result is not None:
+            _session_cache.append(result)
         return result
 
     @staticmethod
@@ -1162,7 +1171,7 @@ class LinuxDistroHelper:
 
     @staticmethod
     def detect_uki_mode(esp: Path | None = None) -> bool:
-        roots = [esp] if esp is not None else LinuxDistroHelper._esp_roots()
+        roots = [esp] if esp is not None else LinuxDistroHelper.esp_roots()
         return any(LinuxDistroHelper.list_dir_priv(root / "EFI" / "Linux", ".efi") for root in roots)
 
     @staticmethod
@@ -1215,7 +1224,7 @@ class LinuxDistroHelper:
                     parts = line.split()
                     if len(parts) < 2:
                         continue
-                    mp = Path(parts[1].replace("\\040", " "))
+                    mp = Path(_unescape_mount_field(parts[1]))
                     fstype = parts[2].lower() if len(parts) >= 3 else ""
                     if fstype in ("vfat", "fat", "fat32", "msdos", "exfat"):
                         _add(mp)
@@ -1243,7 +1252,15 @@ class LinuxDistroHelper:
         for cfg in (Path("/boot/grub/grub.cfg"), Path("/boot/grub2/grub.cfg")):
             if exists(cfg):
                 return cfg
-        for base in (Path("/boot/efi/EFI"), Path("/efi/EFI"), Path("/boot/EFI")):
+        bases: list[Path] = [Path("/boot/efi/EFI"), Path("/efi/EFI"), Path("/boot/EFI"), Path("/esp/EFI"),
+                             Path("/boot/firmware/EFI")]
+        for esp in LinuxDistroHelper._iter_esp_candidates():
+            bases.append(esp / "EFI")
+        seen: set[str] = set()
+        for base in bases:
+            if str(base) in seen:
+                continue
+            seen.add(str(base))
             for vendor in LinuxDistroHelper.list_dir_priv(base):
                 cfg = base / vendor / "grub.cfg"
                 if exists(cfg):
@@ -1317,13 +1334,18 @@ class LinuxDistroHelper:
             if exists(esp / "EFI" / "refind" / "refind.conf") or exists(esp / "EFI" / "refind" / "refind_x64.efi"):
                 return "refind"
             if any(exists(esp / n) for n in ("limine.conf", "limine.cfg")) or \
-                    exists(esp / "EFI" / "limine" / "limine.conf"):
+                    any(exists(esp / sub / "limine.conf") for sub in ("EFI/limine", "limine", "boot/limine", "boot")):
                 return "limine"
         for cfg, name in ((Path("/boot/refind_linux.conf"), "refind"),
                           (Path("/boot/limine.conf"), "limine"),
                           (Path("/boot/limine.cfg"), "limine"),
+                          (Path("/boot/limine/limine.conf"), "limine"),
                           (Path("/boot/syslinux/syslinux.cfg"), "syslinux"),
-                          (Path("/boot/extlinux/extlinux.conf"), "syslinux")):
+                          (Path("/boot/syslinux/extlinux.conf"), "syslinux"),
+                          (Path("/boot/extlinux/extlinux.conf"), "syslinux"),
+                          (Path("/etc/lilo.conf"), "lilo"),
+                          (Path("/boot/firmware/cmdline.txt"), "rpi"),
+                          (Path("/boot/cmdline.txt"), "rpi")):
             if exists(cfg):
                 return name
 
@@ -1338,8 +1360,11 @@ class LinuxDistroHelper:
                     return "limine"
                 if "grub" in out:
                     return "grub"
-                if "vmlinuz" in out or "efistub" in out:
+                if "vmlinuz" in out or "efistub" in out or "initrd=" in out:
                     return "efistub"
+                if any(key in out for key in ("shim", "ubuntu", "debian", "fedora", "opensuse", "centos",
+                                              "rocky", "almalinux", "red hat", "suse")):
+                    return "grub"
 
         return "unknown"
 
@@ -1415,7 +1440,7 @@ class LinuxDistroHelper:
         return None
 
     @staticmethod
-    def _esp_roots() -> list[Path]:
+    def esp_roots() -> list[Path]:
         roots: list[Path] = []
         seen: set[str] = set()
         for path in (LinuxDistroHelper.detect_esp(), *LinuxDistroHelper._iter_esp_candidates(),
@@ -1511,7 +1536,7 @@ class LinuxDistroHelper:
 
     @staticmethod
     def _systemd_boot_default_variant() -> str | None:
-        roots = LinuxDistroHelper._esp_roots()
+        roots = LinuxDistroHelper.esp_roots()
 
         blob = LinuxDistroHelper._bootctl_default_blob()
         if blob:
