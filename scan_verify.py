@@ -8,7 +8,7 @@ from linux_distro_helper import LinuxDistroHelper
 from state import S, logger
 from themes import current_theme, font_sz
 from translations import tr
-from ui_utils import color_style, _StandardKeysMixin
+from ui_utils import color_style, stop_thread, _StandardKeysMixin
 
 from scan_verify_capture import _CaptureTab
 from scan_verify_verify import _VerifyTab
@@ -29,7 +29,7 @@ class ScanVerifyDialog(_StandardKeysMixin, QDialog):
             if tab is not None:
                 worker = getattr(tab, "_worker", None)
                 if isinstance(worker, QThread) and worker.isRunning():
-                    if not worker.wait(5000):
+                    if not stop_thread(worker, 5000):
                         logger.warning("ScanVerifyDialog: worker did not finish within timeout on close "
                                       "— detaching its signals so a late result cannot reach destroyed widgets")
                         self._detach_worker_signals(worker)
@@ -61,7 +61,7 @@ class ScanVerifyDialog(_StandardKeysMixin, QDialog):
         scr = QApplication.primaryScreen()
         size = self._clamped_size(scr.availableGeometry().width() * 2 // 3,
                                   scr.availableGeometry().height() * 3 // 4) if scr else None
-        self.resize(*size) if size else self.resize(950, 640)
+        self.resize(*(size or (950, 640)))
 
     def fit_to_content(self) -> None:
         def _do_resize() -> None:

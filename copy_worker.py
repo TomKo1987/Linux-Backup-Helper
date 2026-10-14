@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Callable
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from drive_utils import is_smb, is_ssh, build_rsync_cmd, _SSH_HOST_RE
+from drive_utils import is_smb, is_ssh, build_rsync_cmd, _SSH_USER_HOST_RE
 from pre_post_hooks import run_hooks as _run_hooks
 from state import logger, frozen_safe_env
 from translations import tr
@@ -78,9 +78,9 @@ def _ssh_split(spec: str) -> tuple[str, str]:
     m = _SSH_URL_RE.match(spec)
     if m:
         return m.group(1), (m.group(2) or "")
-    m = _SSH_HOST_RE.match(spec)
+    m = _SSH_USER_HOST_RE.match(spec)
     if m:
-        path = m.group(2)
+        path = m.group("rpath")
         return spec[:len(spec) - len(path)], path
     return spec, ""
 
@@ -1130,7 +1130,6 @@ class CopyWorker(QThread):
             _run_futures(futs, self._cancel, "rsync task")
 
     def _scan_copy_local_pipelined(self, tasks: list, flusher: "_Flusher", tracker: "_EntryTracker", *,
-                                    emit_scan_finished: bool = False,
                                     on_count_change: "Callable[[int], None] | None" = None,
                                     on_scan_done: "Callable[[], None] | None" = None) -> int:
 
@@ -1138,8 +1137,6 @@ class CopyWorker(QThread):
         if not tasks:
             if on_scan_done is not None:
                 on_scan_done()
-            if emit_scan_finished:
-                self.scan_finished.emit(0)
             return 0
 
         pipe_q: queue.Queue = queue.Queue(maxsize=_PIPE_MAXSIZE)
@@ -1321,9 +1318,6 @@ class CopyWorker(QThread):
                 flusher.set_flush_thresh(ft)
                 if on_count_change is not None:
                     on_count_change(total)
-                if emit_scan_finished:
-                    flusher.set_total(total)
-                    self.scan_finished.emit(total)
             finally:
                 if on_scan_done is not None:
                     on_scan_done()

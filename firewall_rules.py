@@ -165,7 +165,7 @@ def build_firewalld_rich_rule(rule: dict) -> str | None:
         proto_val = rule["proto"] if rule["proto"] != "both" else "tcp"
         port = f' port port="{firewalld_port}" protocol="{proto_val}"'
     elif rule["proto"] != "both":
-        proto = f' protocol="{rule["proto"]}"'
+        proto = f' protocol value="{rule["proto"]}"'
 
     return f'rule family="{source_family(src_val)}"{src}{port}{proto} {action}{limit_clause}'
 

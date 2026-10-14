@@ -12,6 +12,7 @@ from drive_utils import is_smb, is_ssh
 from state import logger, frozen_safe_env
 from themes import register_cache_invalidation_hook as _reg_cache_hook
 from translations import tr
+from ui_utils import format_size
 
 _CHUNK           = 32 * 1024 * 1024
 _IO_BUF          =  8 * 1024 * 1024
@@ -270,18 +271,8 @@ _reg_cache_hook(_invalidate_copy_worker_caches)
 del _reg_cache_hook
 
 
-_SIZE_UNITS = ("B", "KB", "MB", "GB", "TB")
 def _format_unit(value: float) -> str:
-    if value < 0:
-        logger.debug("_format_unit: negative value %r", value)
-        value = 0.0
-    if value == 0:
-        return f"0 {_SIZE_UNITS[0]}"
-    for unit in _SIZE_UNITS[:-1]:
-        if value < 1024.0:
-            return f"{int(value)} {unit}" if unit == "B" else f"{value:.2f} {unit}"
-        value /= 1024.0
-    return f"{value:.2f} {_SIZE_UNITS[-1]}"
+    return format_size(value, 2)
 
 
 def _is_unreachable(err: str) -> bool:

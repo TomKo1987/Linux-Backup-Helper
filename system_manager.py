@@ -89,6 +89,12 @@ def _replace_or_add_line(text: str, pattern: str, new_line: str, *, append: bool
     return body + new_line + "\n" if append else new_line + "\n" + body
 
 
+def _sub_literal(pattern: str, repl: str, text: str) -> str:
+    def _literal(_m: "re.Match[str]") -> str:
+        return repl
+    return re.compile(pattern, re.MULTILINE).sub(_literal, text)
+
+
 def _refind_set_default(text: str, kernel_pkg: str) -> "str | None":
     return _replace_or_add_line(text, r"^[ \t]*default_selection\b.*$",
                                 f'default_selection "vmlinuz-{kernel_pkg}"', append=True)
@@ -1848,7 +1854,7 @@ class SystemManagerThread(QThread):
             self.outputReceived.emit(tr("Writing default to loader.conf: {entry_conf}", entry_conf=entry_conf), "info")
             conf_text = self._read_file_sudo(loader_conf) or ""
             if re.search(r"^default\s+", conf_text, re.MULTILINE):
-                new_conf = re.sub(r"^default\s+\S+", f"default {entry_conf}", conf_text, flags=re.MULTILINE)
+                new_conf = _sub_literal(r"^default\s+\S+", f"default {entry_conf}", conf_text)
             else:
                 new_conf = f"default {entry_conf}\n" + conf_text
             ok = self._exec(
@@ -1906,7 +1912,7 @@ class SystemManagerThread(QThread):
             new_content = content
 
             if re.search(r"^sort-key\s+", new_content, re.MULTILINE):
-                new_content = re.sub(r"^sort-key\s+\S+", f"sort-key {sort_val}", new_content, flags=re.MULTILINE)
+                new_content = _sub_literal(r"^sort-key\s+\S+", f"sort-key {sort_val}", new_content)
             else:
                 new_content = new_content.rstrip() + f"\nsort-key {sort_val}\n"
 
@@ -1919,13 +1925,13 @@ class SystemManagerThread(QThread):
 
                 if f"({variant})" not in current_title:
                     if re.search(r"^title\s+", new_content, re.MULTILINE):
-                        new_content = re.sub(r"^title\s+.*$", f"title {target_title}", new_content, flags=re.MULTILINE)
+                        new_content = _sub_literal(r"^title\s+.*$", f"title {target_title}", new_content)
                     else:
                         new_content = f"title {target_title}\n" + new_content
 
                 if options_line and fpath.name != default_filename:
                     if re.search(r"^options\s+", new_content, re.MULTILINE):
-                        new_content = re.sub(r"^options\s+.*$", options_line, new_content, flags=re.MULTILINE)
+                        new_content = _sub_literal(r"^options\s+.*$", options_line, new_content)
                     else:
                         new_content = new_content.rstrip() + f"\n{options_line}\n"
 

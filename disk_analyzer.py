@@ -1,7 +1,6 @@
 import csv
 import io
 import os
-import re
 import shutil
 import subprocess
 import threading
@@ -16,27 +15,17 @@ from PyQt6.QtWidgets import (
     QPushButton, QVBoxLayout, QApplication,
 )
 
+from drive_utils import get_mounts, _decode_octal
 from state import _HOME, logger
 from themes import current_theme, font_sz
 from translations import tr
-from ui_utils import fit_button_width, footer_bar_style, header_bar_style, _StandardKeysMixin
-
-_PROC_MOUNTS_OCTAL_RE = re.compile(r"\\(\d{3})")
-_SIZE_UNITS = ("B", "KB", "MB", "GB", "TB")
+from ui_utils import fit_button_width, format_size, footer_bar_style, header_bar_style, _StandardKeysMixin
 
 _R_PATH       = 0
 _R_SIZE       = 1
 _R_IS_DIR     = 2
 _R_FILE_COUNT = 3
 _R_IS_MOUNT   = 4
-
-
-def _fmt_size(value: float) -> str:
-    for unit in _SIZE_UNITS[:-1]:
-        if value < 1024.0:
-            return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} {unit}"
-        value /= 1024.0
-    return f"{value:.2f} {_SIZE_UNITS[-1]}"
 
 
 def _fmt_count(n: int) -> str:
@@ -97,10 +86,10 @@ def _get_disk_info(path: Path) -> dict:
                 for line in f:
                     cols = line.split()
                     if len(cols) >= 3:
-                        d = _PROC_MOUNTS_OCTAL_RE.sub(lambda x: chr(int(x.group(1), 8)), cols[0])
-                        m = _PROC_MOUNTS_OCTAL_RE.sub(lambda x: chr(int(x.group(1), 8)), cols[1])
+                        d = _decode_octal(cols[0])
+                        m = _decode_octal(cols[1])
                         t_ = cols[2]
-                        if real.startswith(m) and len(m) > len(best_mnt):
+                        if (real == m or real.startswith(m.rstrip("/") + "/")) and len(m) > len(best_mnt):
                             best_mnt = m
                             if dev   == "?": dev   = d
                             if mount == "?": mount = m
@@ -128,15 +117,7 @@ class _ScanWorker(QThread):
         results: list[tuple[Path, int, bool, int, bool]] = []
         skipped_mounts = 0
 
-        mount_points: set[str] = set()
-        try:
-            with open("/proc/mounts", encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    cols = line.split()
-                    if len(cols) >= 2:
-                        mount_points.add(os.path.realpath(cols[1]))
-        except OSError:
-            pass
+        mount_points: set[str] = {os.path.realpath(mnt) for _dev, mnt in get_mounts(max_age=0.0)}
 
         root_real = os.path.realpath(str(self._root))
         try:
@@ -293,7 +274,7 @@ class _DiskInfoBar(QFrame):
 
         self._lbl_stats.setText(
             tr("Total: {total}   │   Used: {used} ({pct:.1f}%)   │   Free: {free}",
-               total=_fmt_size(total), used=_fmt_size(used), pct=pct, free=_fmt_size(free))
+               total=format_size(total), used=format_size(used), pct=pct, free=format_size(free))
         )
 
         bar_width = 40
@@ -740,7 +721,7 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
             bar = _bar(bar_frac)
 
             icon = "📁 " if is_dir else "📄 "
-            size_str = _fmt_size(size)
+            size_str = format_size(size)
             pct_scan = (size / max(scan_total, 1)) * 100
 
             count_str = tr("  [{n} files]", n=_fmt_count(file_count)) if is_dir else ""
@@ -773,7 +754,7 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
         if query:
             self._status.setText(
                 tr("{count} results for '{q}'  ·  Shown: {shown}  ·  Total entries: {total}",
-                   count=shown_count, q=text, shown=_fmt_size(shown_total), total=len(self._results))
+                   count=shown_count, q=text, shown=format_size(shown_total), total=len(self._results))
             )
         else:
             dir_count = sum(1 for x in self._results if x[_R_IS_DIR] and not x[_R_IS_MOUNT])
@@ -784,7 +765,7 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
                 tr("{count} entries  ·  {dirs} folders · {files} files  ·  "
                    "Scan total: {total} ({pct:.1f}% of used disk space){mounts}{elapsed}",
                    count=shown_count, dirs=dir_count, files=file_count,
-                   total=_fmt_size(shown_total), pct=pct_of_disk,
+                   total=format_size(shown_total), pct=pct_of_disk,
                    mounts=mount_note, elapsed=elapsed_str)
             )
 
@@ -832,7 +813,7 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
         size_str = "?"
         for entry in self._results:
             if entry[_R_PATH] == path:
-                size_str = _fmt_size(entry[_R_SIZE])
+                size_str = format_size(entry[_R_SIZE])
                 break
 
         menu       = QMenu(self)
@@ -911,7 +892,7 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
             except ValueError:
                 name = str(path)
             kind = tr("mount") if is_mount else (tr("dir") if is_dir else tr("file"))
-            w.writerow([name, str(path), size, _fmt_size(size), kind, file_count])
+            w.writerow([name, str(path), size, format_size(size), kind, file_count])
         QApplication.clipboard().setText(buf.getvalue())
         self._status.setText(tr("✓ Results copied to clipboard as CSV"))
 

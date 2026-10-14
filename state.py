@@ -97,8 +97,8 @@ if _CONFIG_DIR != _LEGACY_CONFIG_DIR and not _CONFIG_DIR.exists() and _LEGACY_CO
 _PROFILES_DIR = _CONFIG_DIR / "profiles"
 _LOG_HIST_DIR = _CONFIG_DIR / "logs_history"
 _LOG_FILE     = _LOG_HIST_DIR / "backup_helper.log"
-_PROFILE_RE   = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9\-. _]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$")
-_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+_PROFILE_RE   = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9\-. _]*[a-zA-Z0-9]\Z|^[a-zA-Z0-9]\Z")
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}\Z")
 _ANSI_RE      = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
 

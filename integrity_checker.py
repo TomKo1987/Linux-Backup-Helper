@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
 from state import S
 from themes import current_theme, font_sz
 from translations import tr
-from ui_utils import _StandardKeysMixin, build_dialog_shell, clear_layout, size_to_screen
+from ui_utils import _StandardKeysMixin, format_size, build_dialog_shell, clear_layout, size_to_screen, stop_thread
 from drive_utils import is_smb, is_ssh
 from copy_worker_core import _SKIP_RE
 
@@ -35,32 +35,25 @@ def _quick_scan(path_str: str) -> dict | None:
     newest = 0.0
     names: set[str] = set()
     try:
-        for entry in os.scandir(root):
-            if _SKIP_RE.search(entry.name):
-                continue
-            names.add(entry.name)
-            try:
-                st = entry.stat(follow_symlinks=False)
-                if entry.is_dir(follow_symlinks=False):
-                    dc += 1
-                else:
-                    fc += 1
-                    total += st.st_size
-                newest = max(newest, st.st_mtime)
-            except OSError:
-                pass
+        with os.scandir(root) as it:
+            for entry in it:
+                if _SKIP_RE.search(entry.name):
+                    continue
+                names.add(entry.name)
+                try:
+                    st = entry.stat(follow_symlinks=False)
+                    if entry.is_dir(follow_symlinks=False):
+                        dc += 1
+                    else:
+                        fc += 1
+                        total += st.st_size
+                    newest = max(newest, st.st_mtime)
+                except OSError:
+                    pass
     except OSError:
         return None
     return {"file_count": fc, "dir_count": dc, "total_size": total,
             "mtime_newest": newest, "names": names}
-
-
-def _fmt_bytes(n: int | float) -> str:
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if n < 1024 or unit == "TB":
-            return f"{n:.1f} {unit}" if unit != "B" else f"{n} B"
-        n /= 1024
-    return str(n)
 
 
 def _age(mtime: float) -> str:
@@ -84,6 +77,8 @@ class _CheckWorker(QThread):
 
     def run(self) -> None:
         for entry in self._entries:
+            if self.isInterruptionRequested():
+                return
             title   = entry.get("title", "?")
             sources = entry.get("source", [])
             dests   = entry.get("destination", [])
@@ -131,8 +126,8 @@ class _CheckWorker(QThread):
                                    "({dst_size} vs "
                                    "{src_size})",
                                    pct=ratio * 100,
-                                   dst_size=_fmt_bytes(dst_info['total_size']),
-                                   src_size=_fmt_bytes(src_info['total_size']))
+                                   dst_size=format_size(dst_info['total_size']),
+                                   src_size=format_size(src_info['total_size']))
                             )
                             ok = False
 
@@ -256,9 +251,7 @@ class IntegrityCheckerDialog(_StandardKeysMixin, QDialog):
         self._build()
 
     def closeEvent(self, a0: QCloseEvent | None) -> None:
-        if self._worker and self._worker.isRunning():
-            self._worker.quit()
-            self._worker.wait(2000)
+        stop_thread(self._worker, 5000)
         super().closeEvent(a0)
 
     def _build(self) -> None:
@@ -316,7 +309,7 @@ class IntegrityCheckerDialog(_StandardKeysMixin, QDialog):
         self._run_btn.setEnabled(False)
         self._progress.show()
         self._status_lbl.setText(tr("Checking {n} entries…", n=len(entries)))
-        self._results: list[dict] = []
+        self._results = []
 
         self._worker = _CheckWorker(entries)
         self._worker.result_ready.connect(self._on_result)
@@ -326,7 +319,7 @@ class IntegrityCheckerDialog(_StandardKeysMixin, QDialog):
     def _on_result(self, result: dict) -> None:
         self._results.append(result)
         row = _ResultRow(result)
-        self._body_lay.insertWidget(self._body_lay.count(), row)
+        self._body_lay.addWidget(row)
 
     def _on_done(self) -> None:
         self._progress.hide()

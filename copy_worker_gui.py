@@ -841,12 +841,16 @@ class CopyDialog(_StandardKeysMixin, QDialog):
 
         space_warnings = _check_destination_space(tasks)
         if space_warnings:
-            show_scrollable_message(
-                self,
-                tr("Low Disk Space"),
-                tr("Warning: one or more destinations are running low on space:"),
-                "\n".join(space_warnings) + "\n\n" + tr("The backup will still proceed."),
-            )
+            if self._headless:
+                for line in space_warnings:
+                    logger.warning("Headless backup: low disk space — %s", line)
+            else:
+                show_scrollable_message(
+                    self,
+                    tr("Low Disk Space"),
+                    tr("Warning: one or more destinations are running low on space:"),
+                    "\n".join(space_warnings) + "\n\n" + tr("The backup will still proceed."),
+                )
 
         self.worker.start()
         self._summary.update_stats(self._operation, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, False)

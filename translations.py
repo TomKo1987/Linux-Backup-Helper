@@ -704,7 +704,6 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'sudo backup failed: {err}, skipping overwrite':
             'sudo-Backup fehlgeschlagen: {err}, Überschreiben wird übersprungen',
         'sudo cp failed: {err}': 'sudo cp fehlgeschlagen: {err}',
-        'sudo cp timed out': 'sudo cp: Zeitüberschreitung',
         'via sudo': 'über sudo',
         '{count} files tracked  —  ✓ {identical} identical  ·  ≠ {changed} changed/new  ·  ✗ {missing} missing source':
             '{count} Dateien erfasst  —  ✓ {identical} identisch  ·  ≠ {changed} geändert/neu  ·  ✗ {missing} Quelle fehlt',
@@ -837,9 +836,6 @@ LANGUAGES: dict[str, dict[str, str]] = {
         '✗ Errors': '✗ Fehler',
         '✗ Errors (0)': '✗ Fehler (0)',
         '✗ Errors ({n:,})': '✗ Fehler ({n:,})',
-        '⤵ Copied': '⤵ Kopiert',
-        '⤵ Copied (0)': '⤵ Kopiert (0)',
-        '⤵ Copied ({n:,})': '⤵ Kopiert ({n:,})',
         '🏁 ETA': '🏁 ETA',
         '📋 Copy All': '📋 Alles kopieren',
         '📋 Copy Visible': '📋 Sichtbares kopieren',
@@ -927,8 +923,6 @@ LANGUAGES: dict[str, dict[str, str]] = {
         "'{n}' for '{s}' already exists.": "'{n}' für '{s}' existiert bereits.",
         "'{n}' is not a valid package name.\n\nAllowed: letters, digits, '.', '_', '+', '-' (must not start with a separator).\nGentoo category/package atoms (e.g. 'net-misc/openssh') are also allowed.":
             "'{n}' ist kein gültiger Paketname.\n\nErlaubt: Buchstaben, Ziffern, '.', '_', '+', '-' (darf nicht mit einem Trennzeichen beginnen).\nGentoo-Kategorie/Paket-Atome (z. B. 'net-misc/openssh') sind ebenfalls erlaubt.",
-        "(Check 'Enter sudo password' if privileged commands require a password)":
-            "('Sudo-Passwort eingeben' aktivieren, wenn privilegierte Befehle ein Passwort erfordern)",
         "AUR Helper: '{h}' {s}": "AUR-Helfer: '{h}' {s}",
         'Add Specific Package': 'Spezifisches Paket hinzufügen',
         'Add {l}': '{l} hinzufügen',
@@ -1326,12 +1320,8 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'One or more kernels failed to install': 'Ein oder mehrere Kernel konnten nicht installiert werden',
         'Headers Package': 'Headers-Paket',
         'Setting default kernel to: {kernel_pkg}': 'Standardkernel wird gesetzt auf: {kernel_pkg}',
-        'No supported bootloader found (grub.cfg or loader.conf). Please set the default kernel manually.':
-            'Kein unterstützter Bootloader gefunden (grub.cfg oder loader.conf). Bitte setzen Sie den Standardkernel manuell.',
-        'Regenerating /boot/grub/grub.cfg…': '/boot/grub/grub.cfg wird neu erzeugt…',
         'Found GRUB entry: {entry_id!r}': 'GRUB-Eintrag gefunden: {entry_id!r}',
         "GRUB default set to '{pkg}'": 'GRUB-Standard auf „{pkg}“ gesetzt',
-        'grub-set-default failed': 'grub-set-default fehlgeschlagen',
         "systemd-boot default set to '{path}'": 'systemd-boot-Standard auf „{path}“ gesetzt',
         '{helper} successfully installed': '{helper} erfolgreich installiert',
         '{helper} installation failed': 'Installation von {helper} fehlgeschlagen',
@@ -1401,8 +1391,6 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'Microcode already installed ({pkg})': 'Mikrocode bereits installiert ({pkg})',
         'Kernel variant management is only supported on Arch Linux (detected: {family})':
             'Die Verwaltung von Kernel-Varianten wird nur unter Arch Linux unterstützt (erkannt: {family})',
-        'Regenerating /boot/grub/grub.cfg for newly installed kernel(s)…':
-            '/boot/grub/grub.cfg wird für neu installierte Kernel neu erzeugt…',
         'No default kernel configured — skipping': 'Kein Standardkernel konfiguriert — wird übersprungen',
         'Default kernel selection is only supported on Arch Linux (detected: {family})':
             'Die Auswahl des Standardkernels wird nur unter Arch Linux unterstützt (erkannt: {family})',
@@ -1410,8 +1398,6 @@ LANGUAGES: dict[str, dict[str, str]] = {
         '{kernel_pkg} is already default': '{kernel_pkg} ist bereits Standard',
         'Patching /etc/default/grub: setting GRUB_DEFAULT=saved…':
             '/etc/default/grub wird angepasst: GRUB_DEFAULT=saved wird gesetzt…',
-        'grub-mkconfig failed — aborting default-kernel set':
-            'grub-mkconfig fehlgeschlagen — Festlegung des Standardkernels wird abgebrochen',
         "Could not locate a GRUB menu entry for '{kernel_pkg}' in grub.cfg.\nThe kernel packages were installed — please set the boot default manually via GRUB.":
             'Es konnte kein GRUB-Menüeintrag für „{kernel_pkg}“ in grub.cfg gefunden werden.\nDie Kernel-Pakete wurden installiert — bitte legen Sie den Boot-Standard manuell über GRUB fest.',
         'No template found in {entries_dir}': 'Keine Vorlage in {entries_dir} gefunden',
@@ -1465,9 +1451,6 @@ LANGUAGES: dict[str, dict[str, str]] = {
             'Unbekannte Kernel-Variante: {variant!r} — wird übersprungen',
         '{variant} already installed — skipping': '{variant} bereits installiert — wird übersprungen',
         'Kernel Package': 'Kernel-Paket',
-        'grub-mkconfig failed — new kernel(s) may not appear in the GRUB menu until it is regenerated manually.':
-            'grub-mkconfig fehlgeschlagen — neue Kernel erscheinen möglicherweise erst im GRUB-Menü, nachdem es manuell neu erzeugt wurde.',
-        'Cannot read {grub_env}: {exc}': '{grub_env} kann nicht gelesen werden: {exc}',
         'Failed to patch /etc/default/grub': '/etc/default/grub konnte nicht angepasst werden',
         "UKI mode detected but no matching .efi found for '{kernel_pkg}'. Please run 'bootctl set-default' manually.":
             'UKI-Modus erkannt, aber keine passende .efi-Datei für „{kernel_pkg}“ gefunden. Bitte führen Sie „bootctl set-default“ manuell aus.',
@@ -1578,8 +1561,6 @@ LANGUAGES: dict[str, dict[str, str]] = {
             'Build-Verzeichnis {dir} kann nicht gelesen werden: {exc}',
         "No package known for '{service}' on {pm} — skipping":
             "Für '{service}' ist unter {pm} kein Paket bekannt — wird übersprungen",
-        'No runit service definition found at /etc/sv/{service}':
-            'Keine runit-Dienstdefinition unter /etc/sv/{service} gefunden',
     },
     "Français": {
         'Current boot default could not be determined — applying the selection anyway.':
@@ -2283,7 +2264,6 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'only on system (not in profile)': 'uniquement sur le système (pas dans le profil)',
         'sudo backup failed: {err}, skipping overwrite': 'échec de la sauvegarde sudo : {err}, écrasement ignoré',
         'sudo cp failed: {err}': 'échec de sudo cp : {err}',
-        'sudo cp timed out': "délai d'attente dépassé pour sudo cp",
         'via sudo': 'via sudo',
         '{count} files tracked  —  ✓ {identical} identical  ·  ≠ {changed} changed/new  ·  ✗ {missing} missing source':
             '{count} fichiers suivis  —  ✓ {identical} identique(s)  ·  ≠ {changed} modifié(s)/nouveau(x)  ·  ✗ {missing} source(s) manquante(s)',
@@ -2416,9 +2396,6 @@ LANGUAGES: dict[str, dict[str, str]] = {
         '✗ Errors': '✗ Erreurs',
         '✗ Errors (0)': '✗ Erreurs (0)',
         '✗ Errors ({n:,})': '✗ Erreurs ({n:,})',
-        '⤵ Copied': '⤵ Copié',
-        '⤵ Copied (0)': '⤵ Copié (0)',
-        '⤵ Copied ({n:,})': '⤵ Copié ({n:,})',
         '🏁 ETA': '🏁 ETA',
         '📋 Copy All': '📋 Tout copier',
         '📋 Copy Visible': '📋 Copier la sélection visible',
@@ -2506,8 +2483,6 @@ LANGUAGES: dict[str, dict[str, str]] = {
         "'{n}' for '{s}' already exists.": "'{n}' pour '{s}' existe déjà.",
         "'{n}' is not a valid package name.\n\nAllowed: letters, digits, '.', '_', '+', '-' (must not start with a separator).\nGentoo category/package atoms (e.g. 'net-misc/openssh') are also allowed.":
             "'{n}' n'est pas un nom de paquet valide.\n\nAutorisé : lettres, chiffres, '.', '_', '+', '-' (ne doit pas commencer par un séparateur).\nLes atomes catégorie/paquet Gentoo (p. ex. 'net-misc/openssh') sont également autorisés.",
-        "(Check 'Enter sudo password' if privileged commands require a password)":
-            "(Cochez 'Entrer le mot de passe sudo' si les commandes privilégiées nécessitent un mot de passe)",
         "AUR Helper: '{h}' {s}": "Assistant AUR : '{h}' {s}",
         'Add Specific Package': 'Ajouter un paquet spécifique',
         'Add {l}': 'Ajouter {l}',
@@ -2910,12 +2885,8 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'One or more kernels failed to install': "L'installation d'un ou plusieurs noyaux a échoué",
         'Headers Package': "Paquet d'en-têtes",
         'Setting default kernel to: {kernel_pkg}': 'Définition du noyau par défaut sur : {kernel_pkg}',
-        'No supported bootloader found (grub.cfg or loader.conf). Please set the default kernel manually.':
-            'Aucun chargeur de démarrage pris en charge trouvé (grub.cfg ou loader.conf). Veuillez définir le noyau par défaut manuellement.',
-        'Regenerating /boot/grub/grub.cfg…': 'Régénération de /boot/grub/grub.cfg…',
         'Found GRUB entry: {entry_id!r}': 'Entrée GRUB trouvée : {entry_id!r}',
         "GRUB default set to '{pkg}'": 'Valeur par défaut de GRUB définie sur « {pkg} »',
-        'grub-set-default failed': 'Échec de grub-set-default',
         "systemd-boot default set to '{path}'": 'Valeur par défaut de systemd-boot définie sur « {path} »',
         '{helper} successfully installed': '{helper} installé avec succès',
         '{helper} installation failed': "Échec de l'installation de {helper}",
@@ -2985,8 +2956,6 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'Microcode already installed ({pkg})': 'Microcode déjà installé ({pkg})',
         'Kernel variant management is only supported on Arch Linux (detected: {family})':
             "La gestion des variantes de noyau n'est prise en charge que sous Arch Linux (détecté : {family})",
-        'Regenerating /boot/grub/grub.cfg for newly installed kernel(s)…':
-            'Régénération de /boot/grub/grub.cfg pour le(s) noyau(x) nouvellement installé(s)…',
         'No default kernel configured — skipping': 'Aucun noyau par défaut configuré — ignoré',
         'Default kernel selection is only supported on Arch Linux (detected: {family})':
             "La sélection du noyau par défaut n'est prise en charge que sous Arch Linux (détecté : {family})",
@@ -2994,8 +2963,6 @@ LANGUAGES: dict[str, dict[str, str]] = {
         '{kernel_pkg} is already default': '{kernel_pkg} est déjà la valeur par défaut',
         'Patching /etc/default/grub: setting GRUB_DEFAULT=saved…':
             'Modification de /etc/default/grub : définition de GRUB_DEFAULT=saved…',
-        'grub-mkconfig failed — aborting default-kernel set':
-            'Échec de grub-mkconfig — abandon de la définition du noyau par défaut',
         "Could not locate a GRUB menu entry for '{kernel_pkg}' in grub.cfg.\nThe kernel packages were installed — please set the boot default manually via GRUB.":
             'Impossible de trouver une entrée de menu GRUB pour « {kernel_pkg} » dans grub.cfg.\nLes paquets du noyau ont été installés — veuillez définir manuellement le démarrage par défaut via GRUB.',
         'No template found in {entries_dir}': 'Aucun modèle trouvé dans {entries_dir}',
@@ -3048,9 +3015,6 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'Unknown kernel variant: {variant!r} — skipping': 'Variante de noyau inconnue : {variant!r} — ignorée',
         '{variant} already installed — skipping': '{variant} déjà installé — ignoré',
         'Kernel Package': 'Paquet noyau',
-        'grub-mkconfig failed — new kernel(s) may not appear in the GRUB menu until it is regenerated manually.':
-            "Échec de grub-mkconfig — le(s) nouveau(x) noyau(x) peut/peuvent ne pas apparaître dans le menu GRUB tant qu'il n'est pas régénéré manuellement.",
-        'Cannot read {grub_env}: {exc}': 'Impossible de lire {grub_env} : {exc}',
         'Failed to patch /etc/default/grub': 'Échec de la modification de /etc/default/grub',
         "UKI mode detected but no matching .efi found for '{kernel_pkg}'. Please run 'bootctl set-default' manually.":
             'Mode UKI détecté mais aucun fichier .efi correspondant trouvé pour « {kernel_pkg} ». Veuillez exécuter « bootctl set-default » manuellement.',
@@ -3161,8 +3125,6 @@ LANGUAGES: dict[str, dict[str, str]] = {
             'Impossible de lire le répertoire de compilation {dir} : {exc}',
         "No package known for '{service}' on {pm} — skipping":
             'Aucun paquet connu pour « {service} » sur {pm} — ignoré',
-        'No runit service definition found at /etc/sv/{service}':
-            'Aucune définition de service runit trouvée dans /etc/sv/{service}',
     },
     "Español": {
         'Current boot default could not be determined — applying the selection anyway.':
@@ -3866,7 +3828,6 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'sudo backup failed: {err}, skipping overwrite':
             'la copia de seguridad sudo falló: {err}, se omite la sobrescritura',
         'sudo cp failed: {err}': 'sudo cp falló: {err}',
-        'sudo cp timed out': 'tiempo de espera agotado en sudo cp',
         'via sudo': 'vía sudo',
         '{count} files tracked  —  ✓ {identical} identical  ·  ≠ {changed} changed/new  ·  ✗ {missing} missing source':
             '{count} archivos rastreados  —  ✓ {identical} idéntico(s)  ·  ≠ {changed} modificado(s)/nuevo(s)  ·  ✗ {missing} origen(es) faltante(s)',
@@ -4000,9 +3961,6 @@ LANGUAGES: dict[str, dict[str, str]] = {
         '✗ Errors': '✗ Errores',
         '✗ Errors (0)': '✗ Errores (0)',
         '✗ Errors ({n:,})': '✗ Errores ({n:,})',
-        '⤵ Copied': '⤵ Copiado',
-        '⤵ Copied (0)': '⤵ Copiado (0)',
-        '⤵ Copied ({n:,})': '⤵ Copiado ({n:,})',
         '🏁 ETA': '🏁 ETA',
         '📋 Copy All': '📋 Copiar todo',
         '📋 Copy Visible': '📋 Copiar visible',
@@ -4090,8 +4048,6 @@ LANGUAGES: dict[str, dict[str, str]] = {
         "'{n}' for '{s}' already exists.": "'{n}' para '{s}' ya existe.",
         "'{n}' is not a valid package name.\n\nAllowed: letters, digits, '.', '_', '+', '-' (must not start with a separator).\nGentoo category/package atoms (e.g. 'net-misc/openssh') are also allowed.":
             "'{n}' no es un nombre de paquete válido.\n\nPermitido: letras, dígitos, '.', '_', '+', '-' (no puede empezar con un separador).\nTambién se permiten átomos de categoría/paquete de Gentoo (p. ej. 'net-misc/openssh').",
-        "(Check 'Enter sudo password' if privileged commands require a password)":
-            "(Marque 'Introducir contraseña sudo' si los comandos privilegiados requieren contraseña)",
         "AUR Helper: '{h}' {s}": "Ayudante AUR: '{h}' {s}",
         'Add Specific Package': 'Añadir paquete específico',
         'Add {l}': 'Añadir {l}',
@@ -4489,12 +4445,8 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'One or more kernels failed to install': 'No se pudo instalar uno o más kernels',
         'Headers Package': 'Paquete de cabeceras',
         'Setting default kernel to: {kernel_pkg}': 'Estableciendo el kernel predeterminado en: {kernel_pkg}',
-        'No supported bootloader found (grub.cfg or loader.conf). Please set the default kernel manually.':
-            'No se encontró ningún gestor de arranque compatible (grub.cfg o loader.conf). Establezca el kernel predeterminado manualmente.',
-        'Regenerating /boot/grub/grub.cfg…': 'Regenerando /boot/grub/grub.cfg…',
         'Found GRUB entry: {entry_id!r}': 'Entrada de GRUB encontrada: {entry_id!r}',
         "GRUB default set to '{pkg}'": 'Valor predeterminado de GRUB establecido en «{pkg}»',
-        'grub-set-default failed': 'Error en grub-set-default',
         "systemd-boot default set to '{path}'": 'Valor predeterminado de systemd-boot establecido en «{path}»',
         '{helper} successfully installed': '{helper} instalado correctamente',
         '{helper} installation failed': 'Error al instalar {helper}',
@@ -4565,8 +4517,6 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'Microcode already installed ({pkg})': 'Microcódigo ya instalado ({pkg})',
         'Kernel variant management is only supported on Arch Linux (detected: {family})':
             'La gestión de variantes de kernel solo es compatible con Arch Linux (detectado: {family})',
-        'Regenerating /boot/grub/grub.cfg for newly installed kernel(s)…':
-            'Regenerando /boot/grub/grub.cfg para el/los kernel(s) recién instalado(s)…',
         'No default kernel configured — skipping': 'No hay ningún kernel predeterminado configurado — omitiendo',
         'Default kernel selection is only supported on Arch Linux (detected: {family})':
             'La selección del kernel predeterminado solo es compatible con Arch Linux (detectado: {family})',
@@ -4574,8 +4524,6 @@ LANGUAGES: dict[str, dict[str, str]] = {
         '{kernel_pkg} is already default': '{kernel_pkg} ya es el predeterminado',
         'Patching /etc/default/grub: setting GRUB_DEFAULT=saved…':
             'Modificando /etc/default/grub: estableciendo GRUB_DEFAULT=saved…',
-        'grub-mkconfig failed — aborting default-kernel set':
-            'Error en grub-mkconfig — se cancela el establecimiento del kernel predeterminado',
         "Could not locate a GRUB menu entry for '{kernel_pkg}' in grub.cfg.\nThe kernel packages were installed — please set the boot default manually via GRUB.":
             'No se pudo encontrar una entrada de menú GRUB para «{kernel_pkg}» en grub.cfg.\nLos paquetes del kernel se instalaron — establezca manualmente el arranque predeterminado a través de GRUB.',
         'No template found in {entries_dir}': 'No se encontró ninguna plantilla en {entries_dir}',
@@ -4629,9 +4577,6 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'Unknown kernel variant: {variant!r} — skipping': 'Variante de kernel desconocida: {variant!r} — omitiendo',
         '{variant} already installed — skipping': '{variant} ya instalado — omitiendo',
         'Kernel Package': 'Paquete de kernel',
-        'grub-mkconfig failed — new kernel(s) may not appear in the GRUB menu until it is regenerated manually.':
-            'Error en grub-mkconfig — es posible que el/los nuevo(s) kernel(s) no aparezca(n) en el menú de GRUB hasta que se regenere manualmente.',
-        'Cannot read {grub_env}: {exc}': 'No se puede leer {grub_env}: {exc}',
         'Failed to patch /etc/default/grub': 'No se pudo modificar /etc/default/grub',
         "UKI mode detected but no matching .efi found for '{kernel_pkg}'. Please run 'bootctl set-default' manually.":
             'Se detectó el modo UKI, pero no se encontró un archivo .efi coincidente para «{kernel_pkg}». Ejecute «bootctl set-default» manualmente.',
@@ -4742,8 +4687,6 @@ LANGUAGES: dict[str, dict[str, str]] = {
             'No se puede leer el directorio de compilación {dir}: {exc}',
         "No package known for '{service}' on {pm} — skipping":
             'No se conoce ningún paquete para «{service}» en {pm}: se omite',
-        'No runit service definition found at /etc/sv/{service}':
-            'No se encontró ninguna definición de servicio runit en /etc/sv/{service}',
     },
 }
 
@@ -4783,6 +4726,18 @@ LANGUAGES["Deutsch"].update({
         'Konfigurationsdatei von {name} nicht gefunden — bitte den Standardkernel manuell festlegen.',
     "{name} default set to '{pkg}'":
         "Standard von {name} auf '{pkg}' gesetzt",
+    'Automatic backups need systemd (systemctl was not found). Use cron or your init system to run: {cmd}':
+        'Automatische Backups benötigen systemd (systemctl wurde nicht gefunden). Verwenden Sie cron oder Ihr Init-System, um Folgendes auszuführen: {cmd}',
+    'Invalid OnCalendar expression: {e}':
+        'Ungültiger OnCalendar-Ausdruck: {e}',
+    'Cloning {helper}…':
+        '{helper} wird geklont…',
+    'Building {helper}…':
+        '{helper} wird gebaut…',
+    'Command timed out and was stopped':
+        'Zeitüberschreitung — Befehl wurde gestoppt',
+    'Enabling {service} (dinit)':
+        '{service} wird aktiviert (dinit)',
 })
 
 LANGUAGES["Français"].update({
@@ -4820,6 +4775,18 @@ LANGUAGES["Français"].update({
         'Fichier de configuration de {name} introuvable — veuillez définir le noyau par défaut manuellement.',
     "{name} default set to '{pkg}'":
         "Valeur par défaut de {name} définie sur '{pkg}'",
+    'Automatic backups need systemd (systemctl was not found). Use cron or your init system to run: {cmd}':
+        'Les sauvegardes automatiques nécessitent systemd (systemctl est introuvable). Utilisez cron ou votre système d’init pour exécuter : {cmd}',
+    'Invalid OnCalendar expression: {e}':
+        'Expression OnCalendar invalide : {e}',
+    'Cloning {helper}…':
+        'Clonage de {helper}…',
+    'Building {helper}…':
+        'Compilation de {helper}…',
+    'Command timed out and was stopped':
+        'Délai dépassé — la commande a été arrêtée',
+    'Enabling {service} (dinit)':
+        'Activation de {service} (dinit)',
 })
 
 LANGUAGES["Español"].update({
@@ -4857,6 +4824,18 @@ LANGUAGES["Español"].update({
         'No se encontró el archivo de configuración de {name}: establezca el kernel predeterminado manualmente.',
     "{name} default set to '{pkg}'":
         "Valor predeterminado de {name} establecido en '{pkg}'",
+    'Automatic backups need systemd (systemctl was not found). Use cron or your init system to run: {cmd}':
+        'Las copias automáticas requieren systemd (no se encontró systemctl). Use cron o su sistema init para ejecutar: {cmd}',
+    'Invalid OnCalendar expression: {e}':
+        'Expresión OnCalendar no válida: {e}',
+    'Cloning {helper}…':
+        'Clonando {helper}…',
+    'Building {helper}…':
+        'Compilando {helper}…',
+    'Command timed out and was stopped':
+        'Tiempo agotado: el comando se detuvo',
+    'Enabling {service} (dinit)':
+        'Activando {service} (dinit)',
 })
 
 
@@ -4928,5 +4907,6 @@ def notify_language_listeners() -> None:
     for fn in listeners:
         try:
             fn()
-        except ValueError:
-            pass
+        except Exception as exc:
+            from state import logger
+            logger.error("Language listener error (%s): %s", fn, exc)

@@ -1,5 +1,7 @@
 import base64 as _b64
+import binascii
 import json
+import re
 import sys
 import os
 import shutil
@@ -204,6 +206,59 @@ def get_active_interval() -> str:
         pass
     return ""
 
+_TIME_RE = r"(\d{2}):(\d{2}):00"
+_CAL_PATTERNS: tuple[tuple[str, "re.Pattern[str]"], ...] = (
+    ("Daily",        re.compile(rf"^\*-\*-\* {_TIME_RE}$")),
+    ("Every 2 days", re.compile(rf"^\*-\*-\*/2 {_TIME_RE}$")),
+    ("Weekly",       re.compile(rf"^Mon \*-\*-\* {_TIME_RE}$")),
+    ("Monthly",      re.compile(rf"^\*-\*-01 {_TIME_RE}$")),
+)
+
+
+def _parse_on_calendar(on_cal: str) -> "tuple[str, tuple[int, int] | None] | None":
+    on_cal = on_cal.strip()
+    if on_cal == _INTERVALS["Hourly"]:
+        return "Hourly", None
+    for key, pattern in _CAL_PATTERNS:
+        m = pattern.match(on_cal)
+        if m:
+            hh, mm = int(m.group(1)), int(m.group(2))
+            if 0 <= hh < 24 and 0 <= mm < 60:
+                return key, (hh, mm)
+    return None
+
+
+def get_active_headers() -> "list[str] | None":
+    svc_path, _ = _unit_names()
+    try:
+        text = svc_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    m = re.search(r'--headless-backup-b64\s+"?([A-Za-z0-9+/=]+)"?', text)
+    if not m:
+        return None
+    try:
+        parsed = json.loads(_b64.b64decode(m.group(1), validate=True).decode("utf-8"))
+    except (ValueError, binascii.Error):
+        return None
+    return parsed if isinstance(parsed, list) and all(isinstance(h, str) for h in parsed) else None
+
+
+def get_active_config() -> "dict | None":
+    _, tmr_path = _unit_names()
+    try:
+        text = tmr_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    for line in text.splitlines():
+        if line.strip().startswith("OnCalendar="):
+            parsed = _parse_on_calendar(line.split("=", 1)[1])
+            if parsed is None:
+                return None
+            return {"interval": parsed[0], "time": parsed[1], "headers": get_active_headers()}
+    return None
+
+
 def get_ac_only() -> bool:
     svc_path, _ = _unit_names()
     try:
@@ -240,7 +295,7 @@ class SchedulerDialog(_StandardKeysMixin, QDialog):
 
         igrid.addWidget(QLabel(tr("Interval:")), 0, 0)
         self._combo = QComboBox()
-        for _key in _INTERVALS.keys():
+        for _key in _INTERVALS:
             self._combo.addItem(tr(_key), _key)
         self._combo.currentIndexChanged.connect(lambda _i: self._on_interval_changed(self._combo.currentData()))
         igrid.addWidget(self._combo, 0, 1)
@@ -308,11 +363,16 @@ class SchedulerDialog(_StandardKeysMixin, QDialog):
 
         self._on_interval_changed(self._combo.currentData())
 
-        active = get_active_interval()
-        if active and active in _INTERVALS:
-            idx = self._combo.findData(active)
+        cfg = get_active_config()
+        if cfg:
+            idx = self._combo.findData(cfg["interval"])
             if idx >= 0:
                 self._combo.setCurrentIndex(idx)
+            if cfg["time"]:
+                self._time_edit.setTime(QTime(*cfg["time"]))
+            if cfg["headers"] is not None and self._checks:
+                for cb, h in self._checks:
+                    cb.setChecked(h in cfg["headers"])
 
     def _on_interval_changed(self, text: str) -> None:
         is_custom = (text == "Custom time …")

@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 from state import active_dotfiles
 from themes import current_theme, font_sz, register_style_listener, unregister_style_listener
 from translations import tr
-from ui_utils import ask_yes_no, color_style, fit_button_width, header_bar_style, _StandardKeysMixin
+from ui_utils import ask_yes_no, color_style, fit_button_width, header_bar_style, stop_thread, _StandardKeysMixin
 
 
 def first_path(v) -> str:
@@ -166,6 +166,8 @@ class _DeployWorker(QThread):
             return run_privileged(args, timeout=timeout)
 
         for f in self._files:
+            if self.isInterruptionRequested():
+                break
             src = _expand(first_path(f.get("source", "")))
             dst = _expand(first_path(f.get("destination", "")))
             if not _path_exists(src):
@@ -250,9 +252,8 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
         self.finished.connect(lambda _r: unregister_style_listener(self._refresh_styles))
 
     def closeEvent(self, a0: QCloseEvent | None) -> None:
-        if isinstance(self._worker, QThread) and self._worker.isRunning():
-            self._worker.quit()
-            self._worker.wait(2000)
+        if isinstance(self._worker, QThread):
+            stop_thread(self._worker, 5000)
         super().closeEvent(a0)
 
     def _build_ui(self) -> None:

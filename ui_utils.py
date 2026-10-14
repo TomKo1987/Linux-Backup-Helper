@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Callable, TYPE_CHECKING
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QThread, QTimer, Qt
 from PyQt6.QtGui import QTextCursor, QKeyEvent
 from PyQt6.QtWidgets import (
     QAbstractButton, QApplication, QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
@@ -9,13 +9,49 @@ from PyQt6.QtWidgets import (
     QScrollArea, QVBoxLayout, QWidget, QPlainTextEdit
 )
 
-from state import _HOME, _PROFILE_RE
+from state import _HOME, _PROFILE_RE, logger
 from translations import tr
 
 if TYPE_CHECKING:
     _MixinBase = QWidget
 else:
     _MixinBase = object
+
+
+_SIZE_UNITS = ("B", "KB", "MB", "GB", "TB")
+
+_orphaned_threads: "set[QThread]" = set()
+
+
+def stop_thread(worker: "QThread | None", timeout_ms: int = 3000) -> bool:
+    if worker is None or not worker.isRunning():
+        return True
+    worker.requestInterruption()
+    if worker.wait(timeout_ms):
+        return True
+
+    logger.warning("stop_thread: %s did not stop within %d ms — keeping it alive until it finishes",
+                   type(worker).__name__, timeout_ms)
+    _orphaned_threads.add(worker)
+
+    def _reap() -> None:
+        if worker is not None and worker.isRunning():
+            QTimer.singleShot(1000, _reap)
+        else:
+            if worker is not None:
+                _orphaned_threads.discard(worker)
+
+    QTimer.singleShot(1000, _reap)
+    return False
+
+
+def format_size(value: float, decimals: int = 1) -> str:
+    value = max(float(value), 0.0)
+    for unit in _SIZE_UNITS[:-1]:
+        if value < 1024.0:
+            return f"{int(value)} {unit}" if unit == "B" else f"{value:.{decimals}f} {unit}"
+        value /= 1024.0
+    return f"{value:.{decimals}f} {_SIZE_UNITS[-1]}"
 
 
 def fit_button_width(btn: QAbstractButton, h_pad: int = 28, min_floor: int = 0) -> None:
@@ -142,7 +178,7 @@ def ask_yes_no_scrollable(
     height_fraction: float = 0.7,
 ) -> int:
 
-    dlg, body_lay, footer_row = _build_scrollable_dialog(
+    dlg, _body_lay, footer_row = _build_scrollable_dialog(
         parent, title, intro, body_text,
         width_fraction=width_fraction, min_width=min_width, max_width=max_width,
         min_height=min_height, height_fraction=height_fraction,
@@ -190,7 +226,7 @@ def show_scrollable_message(
     height_fraction: float = 0.7,
 ) -> None:
 
-    dlg, body_lay, footer_row = _build_scrollable_dialog(
+    dlg, _body_lay, footer_row = _build_scrollable_dialog(
         parent, title, intro, body_text,
         width_fraction=width_fraction, min_width=min_width, max_width=max_width,
         min_height=min_height, height_fraction=height_fraction,

@@ -374,6 +374,7 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
         if self._quitting:
             self._refresh_timer.stop()
             unregister_style_listener(self._build_ui)
+            unregister_style_listener(self._sync_tray)
             unregister_language_listener(self._retranslate)
             if a0 is not None:
                 a0.accept()
@@ -466,6 +467,25 @@ def _first_run_wizard(parent) -> bool:
     save_profile()
     return True
 
+def _parse_headless_headers(b64_arg: str | None, plain_arg: str | None) -> list[str] | None:
+    import json
+    try:
+        if b64_arg is not None:
+            parsed = json.loads(_b64.b64decode(b64_arg, validate=True).decode("utf-8"))
+        elif plain_arg is not None:
+            try:
+                parsed = json.loads(plain_arg)
+            except json.JSONDecodeError:
+                return [h.strip() for h in plain_arg.split(",") if h.strip()]
+        else:
+            return None
+    except (ValueError, binascii.Error):
+        return None
+    if isinstance(parsed, list) and all(isinstance(h, str) for h in parsed):
+        return parsed
+    return None
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(add_help=False)
@@ -489,6 +509,8 @@ def main():
             sys.__excepthook__(exc_type, exc_value, exc_tb)
             return
         logger.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_tb))
+        if headless_run:
+            return
         try:
             if QThread.currentThread() is app.thread():
                 QMessageBox.critical(None, tr("Critical Error"), tr("Unexpected error:") + f"\n{exc_value}")
@@ -511,30 +533,18 @@ def main():
     has_profile = startup_load()
 
     if headless_run:
-        import json
+        headers = _parse_headless_headers(args.headless_b64, args.headless_headers)
+        if headers is None:
+            logger.error("Headless backup: group list argument is invalid — aborting instead of backing up everything")
+            sys.exit(2)
 
-        if args.headless_b64 is not None:
-            try:
-                headers = json.loads(_b64.b64decode(args.headless_b64).decode())
-                if not isinstance(headers, list):
-                    headers = []
-            except (json.JSONDecodeError, ValueError, binascii.Error, UnicodeDecodeError):
-                headers = []
-        else:
-            assert args.headless_headers is not None
-            _raw = str(args.headless_headers)
-            try:
-                _parsed = json.loads(_raw)
-                headers = _parsed if isinstance(_parsed, list) else []
-            except (json.JSONDecodeError, ValueError):
-                headers = [h.strip() for h in _raw.split(",") if h.strip()]
+        if not has_profile:
+            logger.error("Headless backup: no profile available")
+            sys.exit(2)
 
         from copy_worker_gui import CopyDialog
         from advanced_copy import apply_advanced_options
         tasks = _build_backup_tasks(headers)
-        if not has_profile:
-            logger.error("Headless backup: no profile available")
-            sys.exit(2)
         exit_code = 0
         if tasks:
             adv = apply_advanced_options(tasks, interactive=False, parent=None)

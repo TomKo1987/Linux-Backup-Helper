@@ -240,17 +240,11 @@ def is_smb(path: str) -> bool: return path.startswith(("smb://", "cifs://"))
 def _is_subpath(parent: str, child: str) -> bool: return (child.rstrip("/") + "/").startswith(parent.rstrip("/") + "/")
 
 
-_SSH_HOST_RE = re.compile(r"^(?:[^/@\s]+@)?([^/@\s:]+):(?!//)(.+)$")
+_SSH_USER_HOST_RE = re.compile(r"^(?:(?P<user>[^/@\s]+)@)?(?P<host>[^/@\s:]+):(?!//)(?P<rpath>.+)$")
 
 
 def is_ssh(path: str) -> bool:
-    if path.startswith("ssh://"):
-        return True
-    m = _SSH_HOST_RE.match(path)
-    return bool(m and m.group(1))
-
-
-_SSH_USER_HOST_RE = re.compile(r"^(?:(?P<user>[^/@\s]+)@)?(?P<host>[^/@\s:]+):(?!//)(?P<rpath>.+)$")
+    return path.startswith("ssh://") or _SSH_USER_HOST_RE.match(path) is not None
 
 
 def to_browsable_uri(path: str) -> str:
