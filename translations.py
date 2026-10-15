@@ -110,7 +110,7 @@ LANGUAGES: dict[str, dict[str, str]] = {
             '⚠  Erkennung installierter Pakete nicht verfügbar ({error}) — es konnte nur „im Profil, nicht installiert“ geprüft werden.',
         '{tracked} not tracked  ·  {missing} missing from the system': '{tracked} nicht erfasst  ·  {missing} auf dem System fehlend',
         '✓ in profile': '✓ im Profil',
-        '{svc}.service is currently {state}': '{svc}.service ist derzeit {state}',
+        '{unit} is currently {state}': '{unit} ist derzeit {state}',
         'active': 'aktiv',
         'smb scan error': 'SMB-Scanfehler',
         "'smbclient' not found — install the Samba client tools (e.g. package "
@@ -625,8 +625,8 @@ LANGUAGES: dict[str, dict[str, str]] = {
             "atd initialisieren ('{pkgs}' installieren. 'atd.service' aktivieren & starten)",
         "Initialise firewall (Install '{pkgs}'. Enable & start '{svc}.service' and apply rules.)":
             "Firewall initialisieren ('{pkgs}' installieren. '{svc}.service' aktivieren & starten und Regeln anwenden.)",
-        "Initialise printer support<br>(Install '{pkgs}'. Enable & start 'cups.service')":
-            "Druckerunterstützung initialisieren<br>('{pkgs}' installieren. 'cups.service' aktivieren & starten)",
+        "Initialise printer support<br>(Install '{pkgs}'. Enable & start 'cups.socket' — CUPS then starts on demand)":
+            "Druckerunterstützung initialisieren<br>('{pkgs}' installieren. 'cups.socket' aktivieren & starten — CUPS startet dann bei Bedarf)",
         "Initialise {svc} (Install '{pkgs}'. Enable & start '{svc}.service')":
             "{svc} initialisieren ('{pkgs}' installieren. '{svc}.service' aktivieren & starten)",
         "Install 'AUR Packages' ('{helper}' required. Using '{helper} -S --needed ...')":
@@ -1670,7 +1670,7 @@ LANGUAGES: dict[str, dict[str, str]] = {
             '⚠  Détection des paquets installés indisponible ({error}) — seul « dans le profil, non installé » a pu être vérifié.',
         '{tracked} not tracked  ·  {missing} missing from the system': '{tracked} non suivi(s)  ·  {missing} manquant(s) sur le système',
         '✓ in profile': '✓ dans le profil',
-        '{svc}.service is currently {state}': '{svc}.service est actuellement {state}',
+        '{unit} is currently {state}': '{unit} est actuellement {state}',
         'active': 'actif',
         'smb scan error': "erreur d'analyse SMB",
         "'smbclient' not found — install the Samba client tools (e.g. package "
@@ -2185,8 +2185,8 @@ LANGUAGES: dict[str, dict[str, str]] = {
             "Initialiser atd (Installer '{pkgs}'. Activer & démarrer 'atd.service')",
         "Initialise firewall (Install '{pkgs}'. Enable & start '{svc}.service' and apply rules.)":
             "Initialiser le pare-feu (Installer '{pkgs}'. Activer & démarrer '{svc}.service' et appliquer les règles.)",
-        "Initialise printer support<br>(Install '{pkgs}'. Enable & start 'cups.service')":
-            "Initialiser le support d'imprimante<br>(Installer '{pkgs}'. Activer & démarrer 'cups.service')",
+        "Initialise printer support<br>(Install '{pkgs}'. Enable & start 'cups.socket' — CUPS then starts on demand)":
+            "Initialiser le support d'imprimante<br>(Installer '{pkgs}'. Activer & démarrer 'cups.socket' — CUPS démarre alors à la demande)",
         "Initialise {svc} (Install '{pkgs}'. Enable & start '{svc}.service')":
             "Initialiser {svc} (Installer '{pkgs}'. Activer & démarrer '{svc}.service')",
         "Install 'AUR Packages' ('{helper}' required. Using '{helper} -S --needed ...')":
@@ -3232,7 +3232,7 @@ LANGUAGES: dict[str, dict[str, str]] = {
             '⚠  Detección de paquetes instalados no disponible ({error}) — solo se pudo comprobar "en el perfil, no instalado".',
         '{tracked} not tracked  ·  {missing} missing from the system': '{tracked} no seguido(s)  ·  {missing} faltante(s) en el sistema',
         '✓ in profile': '✓ en el perfil',
-        '{svc}.service is currently {state}': '{svc}.service está actualmente {state}',
+        '{unit} is currently {state}': '{unit} está actualmente {state}',
         'active': 'activo',
         'smb scan error': 'error de escaneo SMB',
         "'smbclient' not found — install the Samba client tools (e.g. package "
@@ -3747,8 +3747,8 @@ LANGUAGES: dict[str, dict[str, str]] = {
             "Inicializar atd (Instalar '{pkgs}'. Activar e iniciar 'atd.service')",
         "Initialise firewall (Install '{pkgs}'. Enable & start '{svc}.service' and apply rules.)":
             "Inicializar cortafuegos (Instalar '{pkgs}'. Activar e iniciar '{svc}.service' y aplicar reglas.)",
-        "Initialise printer support<br>(Install '{pkgs}'. Enable & start 'cups.service')":
-            "Inicializar soporte de impresora<br>(Instalar '{pkgs}'. Activar e iniciar 'cups.service')",
+        "Initialise printer support<br>(Install '{pkgs}'. Enable & start 'cups.socket' — CUPS then starts on demand)":
+            "Inicializar soporte de impresora<br>(Instalar '{pkgs}'. Activar e iniciar 'cups.socket' — CUPS arranca entonces bajo demanda)",
         "Initialise {svc} (Install '{pkgs}'. Enable & start '{svc}.service')":
             "Inicializar {svc} (Instalar '{pkgs}'. Activar e iniciar '{svc}.service')",
         "Install 'AUR Packages' ('{helper}' required. Using '{helper} -S --needed ...')":

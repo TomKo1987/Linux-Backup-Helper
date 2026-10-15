@@ -208,7 +208,7 @@ def _get_arch_de_deps(helper: LinuxDistroHelper) -> frozenset[str]:
 
 _OP_SERVICE_ALL: dict[str, str] = {"enable_bluetooth_service": "bluetooth",
                                    "enable_atd_service": "atd",
-                                   "enable_printer_support": "cups",
+                                   "enable_printer_support": "cups.socket",
                                    "enable_flatpak_integration": "",
                                    "install_snap": "snapd"}
 
@@ -239,11 +239,15 @@ def _get_all_sm_services(helper: LinuxDistroHelper) -> list[tuple[str, str]]:
     return [(op, svc) for op, svc in _resolve_all_ops(helper).items() if svc]
 
 
+def _unit_name(name: str) -> str:
+    return name if name.endswith((".service", ".socket", ".timer")) else f"{name}.service"
+
+
 def _service_is_active(name: str) -> bool:
     if not os.path.isdir("/run/systemd/system"):
         return False
     try:
-        r = subprocess.run(["systemctl", "is-active", f"{name}.service"], capture_output=True, text=True,
+        r = subprocess.run(["systemctl", "is-active", _unit_name(name)], capture_output=True, text=True,
                            timeout=5, check=False)
         return r.stdout.strip() == "active"
     except (OSError, subprocess.SubprocessError):

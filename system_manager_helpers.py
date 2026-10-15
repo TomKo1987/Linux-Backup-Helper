@@ -364,7 +364,7 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, aur_he
                    pkgs=pkglist(distro.get_flatpak_packages)),
                 _tip("enable_flatpak_integration")),
             "enable_printer_support": (
-                tr("Initialise printer support<br>(Install '{pkgs}'. Enable & start 'cups.service')",
+                tr("Initialise printer support<br>(Install '{pkgs}'. Enable & start 'cups.socket' — CUPS then starts on demand)",
                    pkgs=pkglist(distro.get_printer_packages)),
                 _tip("enable_printer_support")),
             "enable_ssh_service": (

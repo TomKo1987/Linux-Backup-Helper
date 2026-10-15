@@ -9,7 +9,7 @@ from themes import current_theme, font_sz
 from translations import tr
 
 from scan_verify_helpers import (
-    _clean_title, _ensure_drives_mounted, _make_progress_widget, _Section, _VerifyWorker
+    _clean_title, _ensure_drives_mounted, _make_progress_widget, _Section, _unit_name, _VerifyWorker
 )
 
 
@@ -152,9 +152,9 @@ class _VerifyTab(QWidget):
             sec = _Section("⚙️", tr("Services"), n_ok, len(services), t["success"], t["warning"])
             for s in services:
                 if s["active"]:
-                    sec.add_row("✅", f"{s['service']}.service", tr("Active"), t["success"])
+                    sec.add_row("✅", _unit_name(s['service']), tr("Active"), t["success"])
                 else:
-                    sec.add_row("⚠", f"{s['service']}.service", tr("Inactive"), t["warning"])
+                    sec.add_row("⚠", _unit_name(s['service']), tr("Inactive"), t["warning"])
             cl.addWidget(sec)
         elif S.system_manager_ops:
             sec = _Section("⚙️", tr("Services"), 0, 0, t["muted"], t["muted"])

@@ -15,7 +15,7 @@ from ui_utils import color_style, sep
 
 from scan_verify_helpers import (
     _ensure_drives_mounted, _get_arch_de_deps, _get_sm_managed_packages,
-    _make_progress_widget, _CaptureWorker, _IGNORE_EXACT, _IGNORE_PREFIXES
+    _make_progress_widget, _CaptureWorker, _IGNORE_EXACT, _IGNORE_PREFIXES, _unit_name
 )
 
 
@@ -429,7 +429,7 @@ class _CaptureTab(QWidget):
                 name_lbl.setTextFormat(Qt.TextFormat.RichText)
                 name_lbl.setMinimumWidth(250)
                 name_lbl.setStyleSheet(f"color:{t['text']};background:transparent;")
-                svc_lbl = QLabel(f"({svc}.service)")
+                svc_lbl = QLabel(f"({_unit_name(svc)})")
                 svc_lbl.setStyleSheet(f"color:{t['muted']};font-size:{font_sz(-2)}px;"
                                       f"font-family:monospace;background:transparent;")
                 svc_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -445,9 +445,9 @@ class _CaptureTab(QWidget):
                 cb.setChecked(active)
                 cb.setMinimumWidth(250)
                 cb.setStyleSheet(f"color:{t['success'] if active else t['muted']};background:transparent;")
-                cb.setToolTip(tr("{svc}.service is currently {state}", svc=svc,
+                cb.setToolTip(tr("{unit} is currently {state}", unit=_unit_name(svc),
                                  state=tr("active") if active else tr("inactive")))
-                svc_lbl = QLabel(f"({svc}.service)")
+                svc_lbl = QLabel(f"({_unit_name(svc)})")
                 svc_lbl.setStyleSheet(f"color:{t['muted']};font-size:{font_sz(-2)}px;"
                                       f"font-family:monospace;background:transparent;")
                 svc_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)

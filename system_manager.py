@@ -684,7 +684,8 @@ class SystemManagerThread(QThread):
     def _service_tasks(self) -> dict:
         if not self.distro: return {}
         d = self.distro
-        specs = {"enable_printer_support": (tr("Initialising printer support…"), "cups", d.get_printer_packages),
+        printer_svc = "cups.socket" if LinuxDistroHelper.systemd_running() else "cups"
+        specs = {"enable_printer_support": (tr("Initialising printer support…"), printer_svc, d.get_printer_packages),
                  "enable_ssh_service": (tr("Initialising SSH server…"), d.get_ssh_service_name(), d.get_ssh_packages),
                  "enable_samba_network_filesharing": (tr("Initialising Samba…"), d.get_samba_service_name(),
                                                       d.get_samba_packages),
@@ -702,9 +703,10 @@ class SystemManagerThread(QThread):
             fw_pkgs = d.get_firewall_packages_for(fw_backend)
             specs["enable_firewall"] = (tr("Initialising firewall…"), fw_backend, lambda: fw_pkgs)
 
-        return {
-            k: (desc, lambda s=svc, p=pkg_fn: self._setup_service(s, p(), optional=self._OPTIONAL_SVC_PKGS.get(s, ())))
+        tasks = {
+            k: (desc, lambda s=svc, p=pkg_fn: self._setup_service(s, p(), optional=self._OPTIONAL_SVC_PKGS.get(s.split(".", 1)[0], ())))
             for k, (desc, svc, pkg_fn) in specs.items()}
+        return tasks
 
     def _run_all_tasks(self) -> None:
         task_items = list(self._enabled_tasks.items())
@@ -2111,8 +2113,7 @@ class SystemManagerThread(QThread):
                 tr("{service} is a systemd timer with no equivalent on this init system — skipping", service=service), "warning")
             return True
         if systemd_active:
-            unit_suffix = ".timer" if service.endswith(".timer") else ".service"
-            svc = service if service.endswith((".service", ".timer")) else f"{service}{unit_suffix}"
+            svc = service if service.endswith((".service", ".timer", ".socket")) else f"{service}.service"
             self.outputReceived.emit(tr("Checking {svc} (systemd)", svc=svc), "info")
 
             is_enabled = self._exec(["systemctl", "is-enabled", "--quiet", svc]).returncode == 0
