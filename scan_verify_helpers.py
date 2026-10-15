@@ -1,6 +1,7 @@
 import hashlib
 import os
 import re
+import shutil
 import stat
 import subprocess
 from functools import lru_cache as _lru_cache
@@ -127,7 +128,7 @@ def _get_sm_managed_packages(helper: LinuxDistroHelper) -> frozenset:
                    helper.get_bluetooth_packages, helper.get_cron_packages,
                    helper.get_at_packages, helper.get_firewall_packages,
                    helper.get_printer_packages, helper.get_flatpak_packages,
-                   helper.get_snap_packages):
+                   helper.get_snap_packages, helper.get_ntp_packages):
         try:
             result = get_fn()
             if result:
@@ -145,6 +146,7 @@ def _get_sm_managed_packages(helper: LinuxDistroHelper) -> frozenset:
         hdr_pkg = helper.get_kernel_headers_pkg()
         if hdr_pkg:
             pkgs.add(hdr_pkg)
+        pkgs.update(helper.get_kernel_headers_fallbacks())
     except (NotImplementedError, OSError, subprocess.SubprocessError):
         pass
 
@@ -206,13 +208,14 @@ def _get_arch_de_deps(helper: LinuxDistroHelper) -> frozenset[str]:
     return frozenset(result)
 
 
-_OP_SERVICE_ALL: dict[str, str] = {"enable_bluetooth_service": "bluetooth",
-                                   "enable_atd_service": "atd",
-                                   "enable_printer_support": "cups.socket",
+_OP_SERVICE_ALL: dict[str, str] = {"enable_atd_service": "atd",
                                    "enable_flatpak_integration": "",
                                    "install_snap": "snapd"}
 
-_OP_SERVICE_DYNAMIC_FNS: dict[str, str] = {"enable_ssh_service": "get_ssh_service_name",
+_OP_SERVICE_DYNAMIC_FNS: dict[str, str] = {"enable_bluetooth_service": "get_bluetooth_service_name",
+                                           "enable_printer_support": "get_printer_service_name",
+                                           "enable_ntp_sync": "get_ntp_service_name",
+                                           "enable_ssh_service": "get_ssh_service_name",
                                            "enable_samba_network_filesharing": "get_samba_service_name",
                                            "enable_cronie_service": "get_cron_service_name",
                                            "enable_firewall": "get_firewall_service_name"}
@@ -245,6 +248,19 @@ def _unit_name(name: str) -> str:
 
 def _service_is_active(name: str) -> bool:
     if not os.path.isdir("/run/systemd/system"):
+        base = name.split(".", 1)[0]
+        for cmd in (["rc-service", base, "status"], ["sv", "status", base]):
+            if shutil.which(cmd[0]) is None:
+                continue
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=5, check=False,
+                                   stdin=subprocess.DEVNULL, env=frozen_safe_env({"LC_ALL": "C"}))
+            except (OSError, subprocess.SubprocessError):
+                continue
+            out = r.stdout.lower()
+            if cmd[0] == "sv":
+                return r.returncode == 0 and out.startswith("run")
+            return r.returncode == 0 and "started" in out
         return False
     try:
         r = subprocess.run(["systemctl", "is-active", _unit_name(name)], capture_output=True, text=True,

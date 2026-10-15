@@ -226,7 +226,7 @@ _HAS_SENDFILE = hasattr(os, "sendfile")
 
 _CFR_FALLBACK_ERRNOS = frozenset({
     errno.ENOSYS, errno.EOPNOTSUPP, errno.ENOTSUP, errno.EXDEV, errno.EINVAL,
-    errno.EBADF, errno.EOVERFLOW, errno.ENODEV, errno.ENOTTY, errno.ESPIPE,
+    errno.EBADF, errno.EOVERFLOW, errno.ENODEV, errno.ENOTTY, errno.ESPIPE, errno.EPERM,
 })
 
 
@@ -1217,8 +1217,12 @@ class CopyWorker(QThread):
                 except NotADirectoryError:
                     batch.append((_src, _dst, _title, None))
                     local_n += 1
-                except (PermissionError, FileNotFoundError):
+                except FileNotFoundError:
                     pass
+                except PermissionError:
+                    logger.warning("scan %s: permission denied", _src)
+                    _push_errors(flusher, tracker, [(_src, tr("Permission denied — directory not readable"), _title)])
+                    local_n += 1
                 except OSError as exc:
                     logger.warning("scan %s: %s", _src, exc)
                 finally:

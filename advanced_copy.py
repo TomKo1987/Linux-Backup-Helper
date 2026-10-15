@@ -247,7 +247,8 @@ def _preview_ssh_mirror_delete(src: str, dst: str, excl) -> "list[str] | None":
     rsync_excludes = _rsync_excludes(rsync_src, list(excludes_abs) if excludes_abs else None)
     cmd = build_rsync_cmd(rsync_src, dst, delete=True, exclude=rsync_excludes, dry_run=True)
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=_SSH_PREVIEW_TIMEOUT_S)
+        proc = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                              timeout=_SSH_PREVIEW_TIMEOUT_S)
     except (OSError, subprocess.TimeoutExpired) as exc:
         logger.warning("SSH mirror delete preview failed for %r \u2192 %r: %s",
                         apply_replacements(src), apply_replacements(dst), exc)

@@ -282,7 +282,10 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, aur_he
     cron_svc = distro.get_cron_service_name()
 
     cpu_vendor = LinuxDistroHelper.detect_cpu_vendor() or "unknown"
-    ucode_pkg = {"intel": "intel-ucode", "amd": "amd-ucode"}.get(cpu_vendor, "intel-ucode / amd-ucode")
+    ucode_pkg = (distro.get_ucode_package()
+                 or {"intel": "intel-ucode", "amd": "amd-ucode"}.get(cpu_vendor, "intel-ucode / amd-ucode"))
+    printer_svc = distro.get_printer_service_name()
+    bluetooth_svc = distro.get_bluetooth_service_name()
     cpu_label = {"intel": "Intel", "amd": "AMD"}.get(cpu_vendor, cpu_vendor.capitalize())
 
     _ik = installed_kernels if installed_kernels is not None else distro.detect_installed_kernel_variants()
@@ -365,7 +368,10 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, aur_he
                 _tip("enable_flatpak_integration")),
             "enable_printer_support": (
                 tr("Initialise printer support<br>(Install '{pkgs}'. Enable & start 'cups.socket' — CUPS then starts on demand)",
-                   pkgs=pkglist(distro.get_printer_packages)),
+                   pkgs=pkglist(distro.get_printer_packages))
+                if printer_svc == "cups.socket" else
+                tr("Initialise printer support<br>(Install '{pkgs}'. Enable & start '{svc}')",
+                   pkgs=pkglist(distro.get_printer_packages), svc=printer_svc),
                 _tip("enable_printer_support")),
             "enable_ssh_service": (
                 tr("Initialise SSH server (Install '{pkgs}'. Enable & start '{svc}.service')",
@@ -378,7 +384,10 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, aur_he
                 _tip("enable_samba_network_filesharing")),
             "enable_bluetooth_service": (
                 tr("Initialise Bluetooth (Install '{pkgs}'. Enable & start 'bluetooth.service')",
-                   pkgs=pkglist(distro.get_bluetooth_packages)),
+                   pkgs=pkglist(distro.get_bluetooth_packages))
+                if bluetooth_svc == "bluetooth" else
+                tr("Initialise Bluetooth (Install '{pkgs}'. Enable & start '{svc}')",
+                   pkgs=pkglist(distro.get_bluetooth_packages), svc=bluetooth_svc),
                 _tip("enable_bluetooth_service")),
             "enable_atd_service": (
                 tr("Initialise atd (Install '{pkgs}'. Enable & start 'atd.service')",
@@ -579,7 +588,7 @@ class PackageVerifierThread(QThread):
                 elif fam == "void":
                     cmd = ["xbps-query", "-R", _pkg]
                 elif fam == "alpine":
-                    cmd = ["apk", "info", _pkg]
+                    cmd = ["sh", "-c", f"apk search -e -- {shlex.quote(_pkg)} 2>/dev/null | grep -q ."]
                 elif fam == "solus":
                     cmd = ["eopkg", "info", _pkg]
                 elif fam == "gentoo":

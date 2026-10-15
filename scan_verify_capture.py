@@ -398,7 +398,8 @@ class _CaptureTab(QWidget):
                                       "enable_samba_network_filesharing": tr("Samba (file sharing)"),
                                       "enable_cronie_service": tr("Cron (cronie/cron)"),
                                       "install_snap": tr("Snapd"),
-                                      "enable_flatpak_integration": tr("Flatpak")}
+                                      "enable_flatpak_integration": tr("Flatpak"),
+                                      "enable_ntp_sync": tr("Time synchronisation (NTP)")}
 
         svc_frame = QWidget()
         svc_vl = QVBoxLayout(svc_frame)
@@ -528,7 +529,7 @@ class _CaptureTab(QWidget):
         _section(tr("Dotfiles"), _dotfile_rows)
 
         services = res.get("services", [])
-        _section(tr("Services"), [("✓" if s["active"] else "⚠", f"{s['service']}.service ({s['op']})") for s in services])
+        _section(tr("Services"), [("✓" if s["active"] else "⚠", f"{_unit_name(s['service'])} ({s['op']})") for s in services])
 
         text = "\n".join(lines)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")

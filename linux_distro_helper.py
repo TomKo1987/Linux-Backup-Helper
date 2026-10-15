@@ -21,6 +21,16 @@ __all__ = ["ARCH_KERNEL_VARIANTS", "SESSIONS", "USER_SHELLS", "LinuxDistroHelper
 _MIN_PARALLEL = 5
 _INSTALLED_TTL = 30.0
 
+_SBIN_DIRS = ("/usr/local/sbin", "/usr/sbin", "/sbin")
+
+
+def _which(name: str) -> str | None:
+    found = shutil.which(name)
+    if found:
+        return found
+    extra = os.pathsep.join(d for d in _SBIN_DIRS if os.path.isdir(d))
+    return shutil.which(name, path=extra) if extra else None
+
 _DISTROS_ARCH = {"arch", "manjaro", "garuda", "endeavouros", "omarchy", "archman", "rebornos", "cachyos", "artix",
                  "arcolinux", "blendos", "crystal", "archcraft", "archbang", "archlabs", "steamos", "parabola",
                  "hyperbola", "obarun", "arch32", "archarm", "archlinux", "arch-linux", "athena", "biglinux",
@@ -177,9 +187,9 @@ _PKG: dict[str, dict[str, Any]] = {
     },
     "debian": {
         "check": lambda p: ["sh", "-c", f"dpkg-query -W -f='${{Status}}' {shlex.quote(p)} 2>/dev/null | grep -q '^install ok installed$'"],
-        "install": "sudo env DEBIAN_FRONTEND=noninteractive apt-get install -yq -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold' {p}",
-        "update": "sudo env DEBIAN_FRONTEND=noninteractive apt-get update && sudo env DEBIAN_FRONTEND=noninteractive apt-get upgrade -yq --with-new-pkgs -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold'",
-        "remove": "sudo env DEBIAN_FRONTEND=noninteractive apt-get autoremove -yq {p}",
+        "install": "sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a APT_LISTCHANGES_FRONTEND=none apt-get install -yq -o DPkg::Lock::Timeout=180 -o Acquire::Retries=3 -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold' {p}",
+        "update": "sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a APT_LISTCHANGES_FRONTEND=none apt-get update -o Acquire::Retries=3 && sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a APT_LISTCHANGES_FRONTEND=none apt-get upgrade -yq -o DPkg::Lock::Timeout=180 -o Acquire::Retries=3 --with-new-pkgs -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold'",
+        "remove": "sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a APT_LISTCHANGES_FRONTEND=none apt-get autoremove -yq -o DPkg::Lock::Timeout=180 {p}",
         "clean": "sudo apt-get clean",
         "orphans": "apt-get --dry-run autoremove",
         "has_aur": False,
@@ -188,9 +198,9 @@ _PKG: dict[str, dict[str, Any]] = {
     "fedora": {
         "check": lambda p: ["rpm", "-q", p],
         "install": "sudo dnf install -y {p}",
-        "update": "sudo dnf upgrade -y",
+        "update": "sudo dnf upgrade -y --refresh",
         "remove": "sudo dnf remove -y {p}",
-        "clean": "sudo dnf clean all && sudo dnf autoremove -y",
+        "clean": "sudo dnf clean all",
         "orphans": "dnf repoquery --unneeded",
         "has_aur": False,
         "kernel": "kernel-devel",
@@ -207,9 +217,9 @@ _PKG: dict[str, dict[str, Any]] = {
     },
     "suse": {
         "check": lambda p: ["rpm", "-q", p],
-        "install": "sudo zypper --non-interactive install {p}",
-        "update": "sudo zypper --non-interactive update",
-        "remove": "sudo zypper --non-interactive remove {p}",
+        "install": "sudo zypper --non-interactive --gpg-auto-import-keys install {p}",
+        "update": "sudo zypper --non-interactive --gpg-auto-import-keys update",
+        "remove": "sudo zypper --non-interactive --gpg-auto-import-keys remove {p}",
         "clean": "sudo zypper clean --all",
         "orphans": "zypper --no-refresh packages --unneeded",
         "has_aur": False,
@@ -217,8 +227,8 @@ _PKG: dict[str, dict[str, Any]] = {
     },
     "void": {
         "check": lambda p: ["xbps-query", p],
-        "install": "sudo xbps-install -y {p}",
-        "update": "sudo xbps-install -Syu",
+        "install": "sudo xbps-install -Sy {p}",
+        "update": "sudo xbps-install -Sy xbps && sudo xbps-install -Syu",
         "remove": "sudo xbps-remove -y {p}",
         "clean": "sudo xbps-remove -Oo",
         "orphans": "xbps-query -O",
@@ -247,10 +257,10 @@ _PKG: dict[str, dict[str, Any]] = {
     },
     "alpine": {
         "check": _alpine_check,
-        "install": "sudo apk add {p}",
+        "install": "sudo apk add -U {p}",
         "update": "sudo apk update && sudo apk upgrade",
         "remove": "sudo apk del {p}",
-        "clean": "sudo apk cache clean",
+        "clean": "sudo apk cache clean || sudo rm -rf /var/cache/apk/*",
         "orphans": "",
         "has_aur": False,
         "kernel": "linux-headers",
@@ -325,8 +335,8 @@ _RPM_LIST = ["rpm", "-qa", "--qf", "%{NAME}\n"]
 
 _INSTALLED_LIST_CMD: dict[str, list[str]] = {
     "arch": ["pacman", "-Qq"],
-    "debian": ["sh", "-c", "dpkg-query -W -f='${Status}|${Package}\\n' 2>/dev/null "
-                           "| awk -F'|' '$1==\"install ok installed\"{print $2}'"],
+    "debian": ["sh", "-c", "dpkg-query -W -f='${Status}|${Package}|${Architecture}\\n' 2>/dev/null "
+                           "| awk -F'|' '$1==\"install ok installed\"{print $2; print $2\":\"$3}'"],
     "fedora": _RPM_LIST,
     "fedora-atomic": _RPM_LIST,
     "amazon2": _RPM_LIST,
@@ -340,7 +350,10 @@ _INSTALLED_LIST_CMD: dict[str, list[str]] = {
     "solus": ["sh", "-c", "eopkg list-installed -N 2>/dev/null"],
 }
 
-_STRIP_VERSION_FAMILIES = frozenset({"void", "nixos", "slackware", "gentoo"})
+_STRIP_VERSION_FAMILIES = frozenset({"void", "nixos", "slackware"})
+
+_RPM_FAMILIES = frozenset({"fedora", "fedora-atomic", "amazon2", "suse", "suse-immutable"})
+_VERSIONED_NAME_RE = re.compile(r"-\d")
 
 
 _SSH_PKGS: dict = {
@@ -356,11 +369,12 @@ _SSH_PKGS: dict = {
     "gentoo":    ["net-misc/openssh"],
     "nixos":     ["openssh"],
     "slackware": ["openssh"],
-    "solus":     ["openssh-server"],
+    "solus":     ["openssh"],
     None:        ["openssh-server"],
 }
 _SSH_SVC  = {"debian": "ssh", None: "sshd"}
-_SAMBA_SVC = {"debian": "smbd", "void": "smbd", "alpine": "samba", "gentoo": "samba", None: "smb"}
+_SAMBA_SVC = {"debian": "smbd", "void": "smbd", "alpine": "samba", "gentoo": "samba", "slackware": "samba",
+              None: "smb"}
 _SAMBA_PKGS: dict = {
     "debian":    ["samba", "samba-common-bin"],
     "fedora":    ["samba", "samba-common"],
@@ -388,7 +402,8 @@ _CRON_PKGS: dict = {
     "suse-immutable": ["cron"],
     "arch":   ["cronie"],
     "void":   ["cronie"],
-    "alpine": ["cronie"],
+    "alpine": [],
+    "slackware": [],
     "nixos":  ["cronie"],
     "solus":  ["cronie"],
     "gentoo": ["sys-process/cronie"],
@@ -406,11 +421,13 @@ _BT_PKGS: dict = {
     "alpine": ["bluez"],
     "gentoo": ["net-wireless/bluez"],
     "solus":  ["bluez"],
+    "slackware": ["bluez"],
     None:     ["bluez", "bluez-tools"],
 }
 
 
 _PRINTER_PKGS: dict = {
+    "debian": ["cups", "ghostscript", "system-config-printer", "printer-driver-gutenprint"],
     "gentoo": ["net-print/cups", "app-text/ghostscript-gpl", "app-admin/system-config-printer", "net-print/gutenprint"],
     "nixos":  ["cups", "ghostscript", "system-config-printer", "gutenprint"],
     "alpine": ["cups", "ghostscript"],
@@ -431,6 +448,11 @@ _SNAP_PKGS: dict = {
     "slackware": [],
     "fedora-atomic": [],
     "suse-immutable": [],
+    "suse":   [],
+    "void":   [],
+    "alpine": [],
+    "solus":  [],
+    "amazon2": [],
     None:     ["snapd"],
 }
 
@@ -489,6 +511,8 @@ _WM_PROCS: dict[str, str] = {
     "qtile":          "qtile",
     "xmonad":         "xmonad",
 }
+
+_ALPINE_FLAVORS = frozenset({"lts", "virt", "edge", "rpi", "rpi4"})
 
 _KERNEL_TAGS: tuple[str, ...] = ("lts", "zen", "hardened", "rt", "xanmod", "cachyos", "bore", "tkg")
 _KERNEL_TOKEN_RE = re.compile(r"[-._+]")
@@ -607,7 +631,7 @@ class LinuxDistroHelper:
     @staticmethod
     def _probe_family_by_binaries() -> str | None:
         for binary, family in _BINARY_FAMILY:
-            if shutil.which(binary):
+            if _which(binary):
                 return family
         return None
 
@@ -620,12 +644,12 @@ class LinuxDistroHelper:
                 if major.isdigit() and int(major) < 2023:
                     raw_family = "amazon2"
             elif Path("/run/ostree-booted").exists() or (
-                    shutil.which("rpm-ostree") and not shutil.which("dnf")):
+                    _which("rpm-ostree") and not _which("dnf")):
                 raw_family = "fedora-atomic"
-            elif not shutil.which("dnf") and shutil.which("yum"):
+            elif not _which("dnf") and _which("yum"):
                 raw_family = "amazon2"
 
-        if raw_family == "suse" and shutil.which("transactional-update") and not shutil.which("zypper"):
+        if raw_family == "suse" and _which("transactional-update") and not _which("zypper"):
             raw_family = "suse-immutable"
 
         cfg = _PKG.get(raw_family)
@@ -645,6 +669,11 @@ class LinuxDistroHelper:
         self._orphans: str = cfg["orphans"]
         self.has_aur: bool = bool(cfg["has_aur"])
         self._kernel_pkg: str = cfg["kernel"]
+
+        if self._family == "suse":
+            ident = {self.distro_id_raw, *self._id_like.split()}
+            if any("tumbleweed" in tok or "slowroll" in tok for tok in ident):
+                self._update = "sudo zypper --non-interactive --gpg-auto-import-keys dup"
 
     def family(self) -> str: return self._family
 
@@ -711,7 +740,10 @@ class LinuxDistroHelper:
         if allow_bulk:
             names = self.installed_names()
             if names is not None:
-                return self._in_set(pkg, names)
+                if self._in_set(pkg, names):
+                    return True
+                if not self._needs_exact_check(pkg):
+                    return False
         try:
             r = subprocess.run(self._check_fn(pkg), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                stdin=subprocess.DEVNULL, timeout=10, check=False)
@@ -720,6 +752,9 @@ class LinuxDistroHelper:
             logger.warning("pkg check '%s': %s", pkg, exc)
             return False
 
+    def _needs_exact_check(self, pkg: str) -> bool:
+        return self.family() in _RPM_FAMILIES and bool(_VERSIONED_NAME_RE.search(pkg))
+
     def filter_not_installed(self, packages: list[str], *, refresh: bool = False) -> list[str]:
         valid = [p.strip() for p in packages if self.valid(p)]
         if not valid:
@@ -727,7 +762,8 @@ class LinuxDistroHelper:
 
         names = self.installed_names(refresh=refresh)
         if names is not None:
-            return [p for p in valid if not self._in_set(p, names)]
+            return [p for p in valid if not self._in_set(p, names)
+                    and not (self._needs_exact_check(p) and self.package_is_installed(p, allow_bulk=False))]
 
         if len(valid) < _MIN_PARALLEL:
             return [p for p in valid if not self.package_is_installed(p, allow_bulk=False)]
@@ -765,11 +801,20 @@ class LinuxDistroHelper:
 
     def get_pkg_install_cmd(self, package: str) -> str: return self._install.format(p=shlex.quote(package))
     def get_update_system_cmd(self)             -> str: return self._update
+
+    def get_update_steps(self) -> list[tuple[str, bool]]:
+        if self.family() == "debian":
+            refresh, sep, upgrade = self._update.partition(" && ")
+            if sep:
+                return [(refresh, True), (upgrade, False)]
+        return [(self._update, False)]
     def get_clean_cache_cmd(self)               -> str: return self._clean
     def get_find_orphans_cmd(self)              -> str: return self._orphans
 
     _DIRECT_ORPHAN_REMOVAL: dict[str, str] = {
         "solus": "sudo eopkg remove-orphans -y",
+        "fedora": "sudo dnf autoremove -y",
+        "void": "sudo xbps-remove -oy",
     }
 
     def get_direct_orphan_removal_cmd(self) -> str:
@@ -844,11 +889,34 @@ class LinuxDistroHelper:
             if fam == "debian":  return f"linux-headers-{kv}"
             if fam in ("fedora", "amazon2", "fedora-atomic"): return f"kernel-devel-{kv}"
             if fam in ("suse", "suse-immutable"): return "kernel-default-devel"
-            if fam in ("void", "alpine", "solus"): return "linux-headers"
+            if fam == "void":
+                m = re.match(r"(\d+)\.(\d+)", kv)
+                return f"linux{m.group(1)}.{m.group(2)}-headers" if m else "linux-headers"
+            if fam == "alpine":
+                flavor = kv.rsplit("-", 1)[-1]
+                return f"linux-{flavor}-dev" if flavor in _ALPINE_FLAVORS else "linux-headers"
+            if fam == "solus":
+                return "linux-lts-headers" if _kernel_tag(kv) == "lts" else "linux-current-headers"
             if fam == "gentoo":  return "sys-kernel/linux-headers"
         except Exception as exc:
             logger.error("kernel headers pkg: %s", exc)
         return self._kernel_pkg
+
+    def get_kernel_headers_fallbacks(self) -> list[str]:
+        fam = self.family()
+        primary = self.get_kernel_headers_pkg()
+        out: list[str] = []
+        if fam == "debian":
+            arch = _run_capture(["dpkg", "--print-architecture"])
+            if arch:
+                out.append(f"linux-headers-{arch[0]}")
+            out.append("linux-headers-generic")
+        elif fam in ("fedora", "amazon2"):
+            out.append("kernel-devel")
+        return [p for p in dict.fromkeys(out) if p != primary]
+
+    def kernel_headers_supported(self) -> bool:
+        return self.family() not in ("nixos", "unknown")
 
     def get_explicitly_installed_packages(self) -> tuple[list[str], list[str]]:
         fam = self.family()
@@ -967,7 +1035,7 @@ class LinuxDistroHelper:
 
     @staticmethod
     def systemd_running() -> bool:
-        return os.path.isdir("/run/systemd/system") and shutil.which("systemctl") is not None
+        return os.path.isdir("/run/systemd/system") and _which("systemctl") is not None
 
     @staticmethod
     def systemd_unit_exists(unit: str) -> bool:
@@ -995,8 +1063,43 @@ class LinuxDistroHelper:
     def get_bluetooth_packages(self) -> list[Any]: return _lookup(_BT_PKGS, self.family())
     def get_cron_packages(self)      -> list[Any]: return _lookup(_CRON_PKGS, self.family())
 
+    @staticmethod
+    def init_system() -> str:
+        if LinuxDistroHelper.systemd_running():
+            return "systemd"
+        if _which("rc-update") and _which("rc-service"):
+            return "openrc"
+        if _which("dinitctl"):
+            return "dinit"
+        if _which("sv") and any(os.path.isdir(d) for d in ("/var/service", "/etc/runit/runsvdir/default",
+                                                             "/etc/service", "/run/runit/service")):
+            return "runit"
+        if os.path.isdir("/etc/rc.d") and any(Path("/etc/rc.d").glob("rc.*")):
+            return "rc.d"
+        if os.path.isdir("/etc/init.d"):
+            return "sysv"
+        return "unknown"
+
+    def get_bluetooth_service_name(self) -> str:
+        if self.distro_id_raw == "artix" or self.family() == "void":
+            return "bluetoothd"
+        return "bluetooth"
+
+    def get_printer_service_name(self) -> str:
+        init = self.init_system()
+        if init == "systemd":
+            return "cups.socket"
+        if init in ("openrc", "runit", "dinit"):
+            return "cupsd"
+        if os.path.isfile("/etc/rc.d/rc.cups"):
+            return "cups"
+        return "cupsd" if os.path.isfile("/etc/init.d/cupsd") else "cups"
+
     def get_ssh_service_name(self)   -> str: return _SSH_SVC.get(self.family())   or _SSH_SVC[None]
-    def get_samba_service_name(self) -> str: return _SAMBA_SVC.get(self.family()) or _SAMBA_SVC[None]
+    def get_samba_service_name(self) -> str:
+        if self.distro_id_raw == "artix":
+            return "smbd"
+        return _SAMBA_SVC.get(self.family()) or _SAMBA_SVC[None]
     def get_cron_service_name(self)  -> str: return _CRON_SVC.get(self.family())  or _CRON_SVC[None]
 
     _FIREWALL_PKGS: dict = {
@@ -1042,14 +1145,14 @@ class LinuxDistroHelper:
         svc = self._NTP_SVC.get(self.family())
         if svc:
             return svc
-        if shutil.which("timedatectl"):
+        if _which("timedatectl"):
             return "systemd-timesyncd"
         return "chronyd"
 
     def ntp_supported(self) -> bool:
         if self.family() in self._NTP_SVC:
             return True
-        return bool(shutil.which("timedatectl") or shutil.which("chronyd") or shutil.which("chronyc"))
+        return bool(_which("timedatectl") or _which("chronyd") or _which("chronyc"))
 
     def get_printer_packages(self) -> list[Any]: return _lookup(_PRINTER_PKGS, self.family())
     def get_at_packages(self)      -> list[Any]: return _lookup(_AT_PKGS, self.family())
@@ -1205,7 +1308,7 @@ class LinuxDistroHelper:
                 seen.add(_r)
                 candidates.append(_p)
 
-        if shutil.which("bootctl"):
+        if _which("bootctl"):
             for cmd in (["bootctl", "--print-esp-path"], ["bootctl", "--print-boot-path"]):
                 try:
                     r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL,
@@ -1269,7 +1372,7 @@ class LinuxDistroHelper:
 
     @staticmethod
     def grub_tool(name: str) -> str | None:
-        return shutil.which(name) or shutil.which(name.replace("grub-", "grub2-", 1))
+        return _which(name) or _which(name.replace("grub-", "grub2-", 1))
 
     @staticmethod
     def detect_bootloader() -> str:
@@ -1286,7 +1389,7 @@ class LinuxDistroHelper:
 
     @staticmethod
     def _efibootmgr_output() -> str:
-        if not shutil.which("efibootmgr"):
+        if not _which("efibootmgr"):
             return ""
         try:
             r = subprocess.run(["efibootmgr"], capture_output=True, text=True, stdin=subprocess.DEVNULL,
@@ -1308,7 +1411,7 @@ class LinuxDistroHelper:
                 if key in loader_info:
                     return name
 
-        if not booted_by_other and shutil.which("bootctl"):
+        if not booted_by_other and _which("bootctl"):
             try:
                 r = subprocess.run(["bootctl", "is-installed"], capture_output=True, text=True, timeout=10,
                                    stdin=subprocess.DEVNULL, check=False)
@@ -1491,7 +1594,7 @@ class LinuxDistroHelper:
 
     @staticmethod
     def _bootctl_default_blob() -> str:
-        if not shutil.which("bootctl"):
+        if not _which("bootctl"):
             return ""
         try:
             r = subprocess.run(["bootctl", "list", "--json=short"], capture_output=True, text=True,
