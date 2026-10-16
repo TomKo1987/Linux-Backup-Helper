@@ -526,14 +526,28 @@ def _rsync_src_arg(src: str, cancel: "threading.Event | None" = None) -> str:
 
 
 
+_SMB_STATUS_TOKEN_RE = re.compile(r"NT_STATUS_[A-Z0-9_]+")
+_SMB_DOWN_STATUS = frozenset({
+    "NT_STATUS_HOST_UNREACHABLE", "NT_STATUS_IO_TIMEOUT", "NT_STATUS_CONNECTION_REFUSED",
+    "NT_STATUS_NETWORK_UNREACHABLE", "NT_STATUS_CONNECTION_RESET", "NT_STATUS_CONNECTION_DISCONNECTED",
+})
+
+
 def _is_unreachable(err: str) -> bool:
+    codes = _SMB_STATUS_TOKEN_RE.findall(err.upper())
+    if codes:
+        return any(c in _SMB_DOWN_STATUS for c in codes)
     return bool(_SMB_DOWN_RE.search(err))
 
 
 def _parse_smb(url: str) -> tuple[str, str, str]:
-    p     = urlparse(url.replace("\\", "/"))
-    host  = p.hostname or p.netloc
-    parts = [x for x in p.path.split("/") if x]
+    u = url.replace("\\", "/")
+    m = re.match(r"^[A-Za-z][A-Za-z0-9+.\-]*://", u)
+    if m:
+        u = u[m.end():]
+    netloc, _, path = u.partition("/")
+    host = urlparse("//" + netloc).hostname or netloc
+    parts = [x for x in path.split("/") if x]
     return host, (parts[0] if parts else ""), "/".join(parts[1:])
 
 

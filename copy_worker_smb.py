@@ -40,14 +40,21 @@ def _get_smb_credentials() -> tuple[str, "_SecurePw | None"]:
 
 
 _SMB_STATUS_RE = re.compile(r"NT_STATUS_[A-Z0-9_]+")
+_SMB_MKDIR_LINE_RE = re.compile(r"making remote directory|mkdir failed on directory|creating remote directory", re.I)
 
 
 def _smb_output_problem(stdout: str, stderr: str) -> str:
     for line in f"{stdout}\n{stderr}".splitlines():
         if "creating remote directory" in line:
             continue
-        if _SMB_STATUS_RE.search(line):
-            return line.strip()
+        if line.startswith(("putting file ", "getting file ")):
+            continue
+        m = _SMB_STATUS_RE.search(line)
+        if not m:
+            continue
+        if m.group(0) == "NT_STATUS_OBJECT_NAME_COLLISION" and _SMB_MKDIR_LINE_RE.search(line):
+            continue
+        return line.strip()
     return ""
 
 

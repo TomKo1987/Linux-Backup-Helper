@@ -313,10 +313,10 @@ class _SummaryWidget(QWidget):
             self._progress_bar.setFormat(tr("Cancelled"))
             return
         if total > 0:
-            pct = int(done * 100 / total)
+            pct = min(100, int(done * 100 / total))
             if self._progress_bar.maximum() != total:
                 self._progress_bar.setRange(0, total)
-            self._progress_bar.setValue(done)
+            self._progress_bar.setValue(min(done, total))
             self._prog_pct.setText(f"{pct}%")
             self._progress_bar.setFormat(tr("{pct}%  —  {done:,} / {total:,} files", pct=pct, done=done, total=total))
         else:
@@ -436,7 +436,7 @@ class _SummaryWidget(QWidget):
 class _LogWidget(QWidget):
     _PAGE    = 500
     _LOG_MAX = 150_000
-    _NATURAL_SORT_RE = re.compile(r"(\d+)")
+    _NATURAL_SORT_RE = re.compile(r"([0-9]+)")
     _sorted_ready = pyqtSignal(list, list)
 
     def __init__(self, color: str) -> None:
@@ -702,7 +702,7 @@ class _LogWidget(QWidget):
 
     @staticmethod
     def _natural_sort_key(s: str) -> list:
-        return [int(t) if t.isdigit() else t.lower() for t in _LogWidget._NATURAL_SORT_RE.split(s)]
+        return [int(t) if (i & 1) else t.lower() for i, t in enumerate(_LogWidget._NATURAL_SORT_RE.split(s))]
 
 
 
@@ -1044,8 +1044,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
                                         (self._fmt_ok, self._fmt_sk, self._fmt_de, self._fmt_er), strict=True):
             if pending:
                 cap = max(0, widget.log_max - widget.item_count)
-                if cap > 0:
-                    widget.bulk_add([fmt(*args) for args in islice(pending, cap)])
+                widget.bulk_add([fmt(*args) for args in islice(pending, cap + 1)])
                 pending.clear()
 
         tstr = f"{elapsed // 60:02d}:{elapsed % 60:02d}"

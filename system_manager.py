@@ -59,7 +59,7 @@ def _which(name: str) -> "str | None":
 
 _INFO_RE = re.compile(
     r"INFO:|rating|mirror|download|synchroniz|\$srcdir/|Success|Branch|Transmission|"
-    r"avg speed|=====|OK|Status Explanation|Status Legend:|Clone|PGP|MiB|Done|\.\.\.",
+    r"avg speed|=====|\bOK\b|Status Explanation|Status Legend:|Clone|PGP|MiB|Done|\.\.\.",
     re.IGNORECASE,
 )
 
@@ -953,7 +953,7 @@ class SystemManagerThread(QThread):
         while sentinels < 2:
             if stream_deadline is not None and time.monotonic() > stream_deadline:
                 self.outputReceived.emit(tr("Command timed out and was stopped"), "error")
-                proc.kill()
+                self._stop_proc(proc)
                 break
             try:
                 item = out_q.get(timeout=0.25)
@@ -1026,7 +1026,13 @@ class SystemManagerThread(QThread):
                 self._input_event.clear()
                 self._input_value = ""
                 self.inputRequested.emit(text)
-                answered = self._input_event.wait(timeout=300)
+                answered = False
+                for _ in range(600):
+                    if self._input_event.wait(timeout=0.5):
+                        answered = True
+                        break
+                    if self.terminated:
+                        break
                 answer = self._input_value.strip() if answered and self._input_value.strip() else "1"
                 try:
                     if proc.stdin and not proc.stdin.closed:
@@ -1057,10 +1063,10 @@ class SystemManagerThread(QThread):
         try:
             rc = proc.wait(timeout=_wait_timeout) if proc.poll() is None else proc.returncode
         except subprocess.TimeoutExpired:
+            self._stop_proc(proc)
             try:
-                proc.kill()
-                rc = proc.wait()
-            except OSError:
+                rc = proc.wait(timeout=10)
+            except (OSError, subprocess.SubprocessError):
                 rc = 1
         except (OSError, subprocess.SubprocessError):
             rc = 1
@@ -1083,6 +1089,19 @@ class SystemManagerThread(QThread):
         except OSError:
             pass
         return SimpleNamespace(returncode=rc if rc is not None else 1, stdout="", stderr="")
+
+    @staticmethod
+    def _stop_proc(proc: "subprocess.Popen") -> None:
+        try:
+            proc.terminate()
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+        except OSError:
+            pass
 
     def _emit_result(self, ok: bool, msg_ok: str, msg_err: str):
         self.outputReceived.emit(msg_ok if ok else msg_err, "success" if ok else "error")
@@ -1258,15 +1277,17 @@ class SystemManagerThread(QThread):
                 else:
                     shutil.copy2(src, dst)
                 copied = True
-            except PermissionError:
-                if not dst_dir.exists() and self._exec(["sudo", "mkdir", "-p", "--mode=755", str(dst_dir)]).returncode != 0:
-                    self.outputReceived.emit(tr("Cannot create directory: {dst_dir}", dst_dir=dst_dir), "error")
-                    overall = False
-                    continue
-                cmd = ["sudo", "cp"] + (["-rT"] if src_is_dir else []) + [src, dst]
-                copied = self._exec(cmd, stream=True).returncode == 0
             except (OSError, shutil.Error) as exc:
-                logger.error("_copy_dotfiles %s → %s: %s", src, dst, exc)
+                if not (isinstance(exc, PermissionError)
+                        or (isinstance(exc, shutil.Error) and "Permission denied" in str(exc))):
+                    logger.error("_copy_dotfiles %s → %s: %s", src, dst, exc)
+                else:
+                    if not dst_dir.exists() and self._exec(["sudo", "mkdir", "-p", "--mode=755", str(dst_dir)]).returncode != 0:
+                        self.outputReceived.emit(tr("Cannot create directory: {dst_dir}", dst_dir=dst_dir), "error")
+                        overall = False
+                        continue
+                    cmd = ["sudo", "cp", "-p"] + (["-rT"] if src_is_dir else []) + [src, dst]
+                    copied = self._exec(cmd, stream=True).returncode == 0
             if copied:
                 self.outputReceived.emit(tr("Copied successfully:\n'{src}' 󰧂 '{dst}'", src=src, dst=dst), "success")
             else:
