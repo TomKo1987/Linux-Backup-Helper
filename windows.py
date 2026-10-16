@@ -293,7 +293,7 @@ class _CopyMixin:
     def _start_copy(self: "_BaseCheckboxWindow") -> None:
         from copy_worker_gui import CopyDialog
         from drive_utils import check_drives_to_mount, mount_required_drives
-        from advanced_copy import apply_advanced_options, restore_exclude_paths
+        from advanced_copy import restore_exclude_paths
 
         selected = []
         for cb, src, dst, title, entry in self.checkbox_dirs:
@@ -315,11 +315,9 @@ class _CopyMixin:
         if not mount_required_drives(drives_to_mount, self):
             return
 
-        adv = apply_advanced_options(selected, interactive=True, parent=self, is_restore=self._is_restore)  # type: ignore[attr-defined]
-
-        dlg_copy = CopyDialog(self, adv.tasks, self._op_label,  # type: ignore[attr-defined]
-                              pre_deleted=adv.deleted, pre_errors=adv.errors,
-                              op_kind="restore" if self._is_restore else "backup")  # type: ignore[attr-defined]
+        dlg_copy = CopyDialog(self, selected, self._op_label,  # type: ignore[attr-defined]
+                              op_kind="restore" if self._is_restore else "backup",  # type: ignore[attr-defined]
+                              advanced=True, is_restore=self._is_restore)  # type: ignore[attr-defined]
         dlg_copy.exec()
 
     def _add_action_buttons(self: "_BaseCheckboxWindow", grid: QGridLayout, row: int) -> None:

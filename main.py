@@ -295,15 +295,13 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
 
     def _quick_backup(self, header: str | None) -> None:
         from copy_worker_gui import CopyDialog
-        from advanced_copy import apply_advanced_options
         tasks = _build_backup_tasks([header] if header is not None else None)
         if not tasks:
             QMessageBox.information(None, tr("Quick Backup"), tr("No backup entries found for this group."))
             return
-        adv = apply_advanced_options(tasks, interactive=True, parent=self)
         label = header or tr("All groups")
-        CopyDialog(None, adv.tasks, f"{tr('Quick Backup')} — {label}",
-                   pre_deleted=adv.deleted, pre_errors=adv.errors, op_kind="backup").exec()
+        CopyDialog(None, tasks, f"{tr('Quick Backup')} — {label}",
+                   op_kind="backup", advanced=True).exec()
         self._refresh_status_panel()
 
     def _on_tray_activated(self, r: QSystemTrayIcon.ActivationReason) -> None:
@@ -543,13 +541,11 @@ def main():
             sys.exit(2)
 
         from copy_worker_gui import CopyDialog
-        from advanced_copy import apply_advanced_options
         tasks = _build_backup_tasks(headers)
         exit_code = 0
         if tasks:
-            adv = apply_advanced_options(tasks, interactive=False, parent=None)
-            dlg = CopyDialog(None, adv.tasks, tr("Backup (scheduled)"), pre_deleted=adv.deleted,
-                             pre_errors=adv.errors, op_kind="backup", headless=True)
+            dlg = CopyDialog(None, tasks, tr("Backup (scheduled)"), op_kind="backup",
+                             headless=True, advanced=True)
             dlg.exec()
             if getattr(dlg, "_lock_denied", False):
                 exit_code = 75

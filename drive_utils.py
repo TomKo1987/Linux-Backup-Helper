@@ -306,11 +306,25 @@ def _ssh_supports_accept_new() -> bool:
     return (int(m.group(1)), int(m.group(2))) >= (7, 6)
 
 
-def _rsync_ssh_opts() -> str:
+def _rsync_ssh_opts(port: "str | None" = None) -> str:
     strict = "-o StrictHostKeyChecking=accept-new " if _ssh_supports_accept_new() else ""
-    return (f"ssh {strict}"
+    port_opt = f"-p {port} " if port else ""
+    return (f"ssh {port_opt}{strict}"
             "-o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 "
             "-o BatchMode=yes -o Compression=no")
+
+
+_SSH_URL_SPEC_RE = re.compile(
+    r"^ssh://(?:(?P<user>[^@/]+)@)?(?P<host>\[[^\x5d]+]|[^/:@]+)(?::(?P<port>\d{1,5}))?(?P<path>/.*)?$"
+)
+
+
+def _rsync_remote_spec(spec: str) -> "tuple[str, str | None]":
+    m = _SSH_URL_SPEC_RE.match(spec)
+    if m is None:
+        return spec, None
+    user = f"{m.group('user')}@" if m.group("user") else ""
+    return f"{user}{m.group('host')}:{m.group('path') or ''}", m.group("port")
 
 
 _RSYNC_SHELL_META_RE = re.compile(r"[\s'\"()&;$*?\[\]{}<>|!#~`\\]")
@@ -331,11 +345,13 @@ _RSYNC_SKIP_COMPRESS = (
 def build_rsync_cmd(src: str, dst: str, *, delete: bool = False, exclude: list[str] | None = None,
                     dry_run: bool = False) -> list[str]:
     info = "progress2,del" if delete else "progress2"
+    src, src_port = _rsync_remote_spec(src)
+    dst, dst_port = _rsync_remote_spec(dst)
     cmd = [
         "rsync", "-azH", "--numeric-ids",
         f"--skip-compress={_RSYNC_SKIP_COMPRESS}",
         "--partial", "--partial-dir=.rsync-partial",
-        f"--info={info}", "-e", _rsync_ssh_opts(),
+        f"--info={info}", "-e", _rsync_ssh_opts(src_port or dst_port),
     ]
     if _remote_spec_needs_protect(src) or _remote_spec_needs_protect(dst):
         cmd.append("--protect-args")
@@ -346,6 +362,15 @@ def build_rsync_cmd(src: str, dst: str, *, delete: bool = False, exclude: list[s
     for ex in (exclude or []):
         cmd += [f"--exclude={ex}"]
     cmd += ["--", src, dst]
+    return cmd
+
+
+def build_rsync_list_cmd(spec: str) -> list[str]:
+    spec, port = _rsync_remote_spec(spec)
+    cmd = ["rsync", "--list-only", "-e", _rsync_ssh_opts(port)]
+    if _remote_spec_needs_protect(spec):
+        cmd.append("--protect-args")
+    cmd += ["--", spec]
     return cmd
 
 

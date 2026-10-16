@@ -15,13 +15,14 @@ from PyQt6.QtWidgets import (
 from state import apply_replacements, logger
 from themes import current_theme, font_sz
 from translations import tr
-from ui_utils import card_frame_style, _StandardKeysMixin, show_scrollable_message
+from ui_utils import card_frame_style, _StandardKeysMixin, show_scrollable_message, ask_yes_no_scrollable
 
 from backup_lock import acquire_backup_lock, backup_lock_holder_pid, release_backup_lock
-from copy_worker_core import _check_destination_space, _format_unit, _cached_mono_style, _notify
-from copy_worker import CopyWorker, _NF_MARK
+from copy_worker_core import _format_unit, _cached_mono_style, _notify
+from copy_worker import CopyWorker, _NF_MARK, _ConfirmRequest
 
 _SEARCH_CACHE_MAX = 24
+_CONFIRM_PREVIEW_MAX = 200
 
 
 @dataclass
@@ -635,10 +636,7 @@ class _LogWidget(QWidget):
     def bulk_add(self, entries: list[str]) -> None:
         if not entries or self._truncated:
             return
-        remaining = self._LOG_MAX - len(self._items)
-        if remaining <= 0:
-            self._truncated = True
-            return
+        remaining = max(0, self._LOG_MAX - len(self._items))
         if len(entries) > remaining:
             entries = entries[:remaining]
             self._truncated = True
@@ -711,14 +709,16 @@ class _LogWidget(QWidget):
 class CopyDialog(_StandardKeysMixin, QDialog):
 
     def __init__(self, parent, tasks, operation: str, *,
-                pre_deleted: "list | None" = None, pre_errors: "list | None" = None,
-                op_kind: "str | None" = None, headless: bool = False) -> None:
+                op_kind: "str | None" = None, headless: bool = False,
+                advanced: bool = False, is_restore: bool = False) -> None:
         super().__init__(parent)
         self.setWindowTitle(operation)
         self._op_kind = op_kind
         self._headless = headless
+        self._advanced = advanced
 
-        self._lock_denied = not acquire_backup_lock()
+        self._owns_lock = acquire_backup_lock()
+        self._lock_denied = not self._owns_lock
         if self._lock_denied:
             holder = backup_lock_holder_pid()
             msg = (tr("Another backup is already running (either from the main window "
@@ -755,7 +755,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
             self.resize(1400, 800)
 
         self._operation = operation
-        self.worker     = CopyWorker(tasks)
+        self.worker     = CopyWorker(tasks, prepare=advanced, is_restore=is_restore, interactive=not headless)
         self.copied = self.skipped = self.errors = self.deleted = 0
         self._done  = self._total = 0
         self._final_elapsed: int | None = None
@@ -800,9 +800,6 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         self.tabs.setUsesScrollButtons(True)
         self.tabs.setSizePolicy(QSizePolicy.Policy.Expanding, self.tabs.sizePolicy().verticalPolicy())
 
-        self._seed_deleted(pre_deleted)
-        self._seed_errors(pre_errors)
-
         self.cancel_btn = QPushButton(tr("⏹ Cancel"))
         self.cancel_btn.setMinimumHeight(50)
         self.cancel_btn.setStyleSheet(
@@ -822,7 +819,10 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         layout.addWidget(self.tabs)
         layout.addWidget(self.cancel_btn)
 
-        self._set_status_running()
+        if advanced:
+            self._set_status_preparing()
+        else:
+            self._set_status_running()
         self.timer = QElapsedTimer()
         self.timer.start()
 
@@ -835,22 +835,9 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         self.worker.finished_work.connect(self._on_done)
         self.worker.scan_progress.connect(self._on_scan_progress)
         self.worker.entry_status.connect(self._summary.on_entry_status)
-
-        if self._preseed_deleted or self._preseed_errors:
-            self._update_tab_labels()
-
-        space_warnings = _check_destination_space(tasks)
-        if space_warnings:
-            if self._headless:
-                for line in space_warnings:
-                    logger.warning("Headless backup: low disk space — %s", line)
-            else:
-                show_scrollable_message(
-                    self,
-                    tr("Low Disk Space"),
-                    tr("Warning: one or more destinations are running low on space:"),
-                    "\n".join(space_warnings) + "\n\n" + tr("The backup will still proceed."),
-                )
+        self.worker.prepared.connect(self._on_prepared)
+        self.worker.confirm_delete.connect(self._on_confirm_delete)
+        self.worker.space_warnings.connect(self._on_space_warnings)
 
         self.worker.start()
         self._summary.update_stats(self._operation, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, False)
@@ -893,6 +880,52 @@ class CopyDialog(_StandardKeysMixin, QDialog):
 
     def _set_status_running(self) -> None:
         self._summary.set_status_html(self._status_badge("⏳", tr("{op} running…", op=self._operation), self._t["cyan"], self._t["accent"]))
+
+    def _set_status_preparing(self) -> None:
+        self._summary.set_status_html(self._status_badge("⏳", tr("Preparing…"), self._t["cyan"], self._t["accent"]))
+
+    def _release_lock(self) -> None:
+        if self._owns_lock:
+            self._owns_lock = False
+            release_backup_lock()
+
+    def _on_prepared(self, deleted: list, errors: list) -> None:
+        self._seed_deleted(deleted)
+        self._seed_errors(errors)
+        if deleted or errors:
+            self._update_tab_labels()
+        self._set_status_running()
+
+    def _on_confirm_delete(self, title: str, paths: list, request: _ConfirmRequest) -> None:
+        try:
+            shown = paths[:_CONFIRM_PREVIEW_MAX]
+            preview = "\n".join(f"  \u2022  {apply_replacements(p)}" for p in shown)
+            more = (tr("\n  \u2026and {n} more", n=len(paths) - len(shown))
+                    if len(paths) > len(shown) else "")
+            intro = tr("Mirror mode is about to delete {n} item(s) from the destination of "
+                       "'{title}' because they no longer exist in the source:\n\nDelete these now?",
+                       n=len(paths), title=title.replace("<br>", " "))
+            request.answer = ask_yes_no_scrollable(
+                self, tr("Confirm Mirror Delete"), intro, f"{preview}{more}",
+                default_yes=False,
+            ) == QMessageBox.StandardButton.Yes
+        except Exception as exc:
+            logger.error("Mirror delete confirmation failed: %s", exc, exc_info=True)
+            request.answer = False
+        finally:
+            request.event.set()
+
+    def _on_space_warnings(self, lines: list) -> None:
+        if self._headless:
+            for line in lines:
+                logger.warning("Headless backup: low disk space — %s", line)
+            return
+        show_scrollable_message(
+            self,
+            tr("Low Disk Space"),
+            tr("Warning: one or more destinations are running low on space:"),
+            "\n".join(lines) + "\n\n" + tr("The backup will still proceed."),
+        )
 
     def _set_status_scanning(self, phase: str, scanned: int) -> None:
         self._summary.set_status_html(self._status_badge("🔍", tr("{phase}… ({n:,} found)", phase=phase, n=scanned), self._t["accent2"]))
@@ -993,7 +1026,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
     def _on_done(self, c, s, e, d, cancelled) -> None:
         self._tick.stop()
         elapsed = self._final_elapsed = self.timer.elapsed() // 1000
-        release_backup_lock()
+        self._release_lock()
 
         self.copied, self.skipped, self.errors, self.deleted = c, s, e, d
         self._done = self._total
@@ -1106,5 +1139,5 @@ class CopyDialog(_StandardKeysMixin, QDialog):
             if a0 is not None:
                 a0.ignore()
         else:
-            release_backup_lock()
+            self._release_lock()
             super().closeEvent(a0)

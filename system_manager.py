@@ -7,6 +7,7 @@ import select as _select
 import shlex
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 import ssl
@@ -38,6 +39,14 @@ _UNSET_TIMEOUT = -1
 _SUDO_PROMPT = "[sudo] password: "
 
 _SBIN_DIRS = ("/usr/local/sbin", "/usr/sbin", "/sbin")
+
+_ATOMIC_WRITE_SCRIPT = (
+    'src=$1; dst=$(readlink -f -- "$2") || dst=$2; new="$dst.bh-new"; '
+    'if cat "$src" > "$new" '
+    '&& { chmod --reference="$dst" "$new" 2>/dev/null; chown --reference="$dst" "$new" 2>/dev/null; true; } '
+    '&& mv -f "$new" "$dst"; then exit 0; fi; '
+    'rm -f "$new"; cat "$src" > "$dst"'
+)
 
 
 def _which(name: str) -> "str | None":
@@ -1240,13 +1249,25 @@ class SystemManagerThread(QThread):
                 continue
 
             dst_dir = Path(dst).parent
-            if not dst_dir.exists() and self._exec(["sudo", "mkdir", "-p", "--mode=755", str(dst_dir)]).returncode != 0:
-                self.outputReceived.emit(tr("Cannot create directory: {dst_dir}", dst_dir=dst_dir), "error")
-                overall = False
-                continue
-
-            cmd = ["sudo", "cp"] + (["-rT"] if Path(src).is_dir() else []) + [src, dst]
-            if self._exec(cmd, stream=True).returncode == 0:
+            src_is_dir = Path(src).is_dir()
+            copied = False
+            try:
+                dst_dir.mkdir(parents=True, exist_ok=True)
+                if src_is_dir:
+                    shutil.copytree(src, dst, symlinks=True, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(src, dst)
+                copied = True
+            except PermissionError:
+                if not dst_dir.exists() and self._exec(["sudo", "mkdir", "-p", "--mode=755", str(dst_dir)]).returncode != 0:
+                    self.outputReceived.emit(tr("Cannot create directory: {dst_dir}", dst_dir=dst_dir), "error")
+                    overall = False
+                    continue
+                cmd = ["sudo", "cp"] + (["-rT"] if src_is_dir else []) + [src, dst]
+                copied = self._exec(cmd, stream=True).returncode == 0
+            except (OSError, shutil.Error) as exc:
+                logger.error("_copy_dotfiles %s → %s: %s", src, dst, exc)
+            if copied:
                 self.outputReceived.emit(tr("Copied successfully:\n'{src}' 󰧂 '{dst}'", src=src, dst=dst), "success")
             else:
                 self.outputReceived.emit(tr("Error copying: {src}", src=src), "error")
@@ -1588,12 +1609,27 @@ class SystemManagerThread(QThread):
         LinuxDistroHelper.invalidate_boot_caches()
         return result
 
-    def _write_priv_file(self, path: Path, text: str) -> bool:
-        if LinuxDistroHelper.path_exists_priv(path):
+    def _write_priv_file(self, path: Path, text: str, *, backup: bool = True) -> bool:
+        if backup and LinuxDistroHelper.path_exists_priv(path):
             self._exec(["sudo", "cp", "-p", str(path), f"{path}.bak-backup-helper"])
-        r = self._exec(["sudo", "sh", "-c", f"printf '%s' {shlex.quote(text)} > {shlex.quote(str(path))}"],
-                       stream=False, timeout=15)
-        return r.returncode == 0
+        tmp_path = ""
+        try:
+            fd, tmp_path = tempfile.mkstemp(prefix="backup-helper-write-")
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(text.encode("utf-8"))
+            os.chmod(tmp_path, 0o644)
+            r = self._exec(["sudo", "sh", "-c", _ATOMIC_WRITE_SCRIPT, "sh", tmp_path, str(path)],
+                           stream=False, timeout=15)
+            return r.returncode == 0
+        except OSError as exc:
+            logger.error("_write_priv_file %s: %s", path, exc)
+            return False
+        finally:
+            if tmp_path:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
     def _patch_boot_config(self, name: str, candidates: "list[Path]", kernel_pkg: str, transform,
                            post=None) -> "bool | str":
@@ -1718,13 +1754,10 @@ class SystemManagerThread(QThread):
 
         if not re.search(r"""^GRUB_DEFAULT=["']?saved["']?\s*$""", text, re.MULTILINE):
             self.outputReceived.emit(tr("Patching /etc/default/grub: setting GRUB_DEFAULT=saved…"), "info")
-            self._exec(["sudo", "cp", "-p", "/etc/default/grub", "/etc/default/grub.bak-backup-helper"])
             new_text = re.sub(r"^GRUB_DEFAULT=.*$", "GRUB_DEFAULT=saved", text, flags=re.MULTILINE)
             if "GRUB_DEFAULT=" not in text:
                 new_text = "GRUB_DEFAULT=saved\n" + new_text
-            ok = self._exec([
-                "sudo", "sh", "-c", f"printf '%s' {shlex.quote(new_text)} > /etc/default/grub"], stream=True).returncode == 0
-            if not ok:
+            if not self._write_priv_file(grub_env, new_text):
                 self.outputReceived.emit(tr("Failed to patch /etc/default/grub"), "error")
                 return False
 
@@ -1917,12 +1950,8 @@ class SystemManagerThread(QThread):
         new_content = self._retarget_boot_entry(template_content, running_kern_pkg, kernel_pkg)
         dest_path = entries_dir / f"{kernel_pkg}.conf"
 
-        escaped_content = shlex.quote(new_content)
         try:
-            r = self._exec(["sudo", "sh", "-c",
-                            f"printf '%s' {escaped_content} > {shlex.quote(str(dest_path))}"],
-                           stream=False, timeout=10)
-            if r.returncode == 0:
+            if self._write_priv_file(dest_path, new_content, backup=False):
                 self._update_sort_keys(f"{kernel_pkg}.conf", entries_dir, esp)
                 self._exec(["sync"], stream=False)
                 self.outputReceived.emit(tr("Created boot entry: {dest_path}", dest_path=dest_path), "success")
@@ -1943,11 +1972,7 @@ class SystemManagerThread(QThread):
                 new_conf = _sub_literal(r"^default\s+\S+", f"default {entry_conf}", conf_text)
             else:
                 new_conf = f"default {entry_conf}\n" + conf_text
-            ok = self._exec(
-                ["sudo", "sh", "-c",
-                 f"printf '%s' {shlex.quote(new_conf)} > {shlex.quote(str(loader_conf))}"],
-                stream=False).returncode == 0
-            if not ok:
+            if not self._write_priv_file(loader_conf, new_conf):
                 self._emit_result(False, "", tr("Failed to update {path}", path=loader_conf))
                 return False
 
@@ -2022,8 +2047,7 @@ class SystemManagerThread(QThread):
                         new_content = new_content.rstrip() + f"\n{options_line}\n"
 
             if new_content != content:
-                self._exec(["sudo", "sh", "-c", f"printf '%s' {shlex.quote(new_content)} > {shlex.quote(str(fpath))}"],
-                           stream=False, timeout=10)
+                self._write_priv_file(fpath, new_content, backup=False)
 
     def _read_file_sudo(self, path: Path) -> str | None:
         r = self._exec(["sudo", "cat", str(path)], stream=False)

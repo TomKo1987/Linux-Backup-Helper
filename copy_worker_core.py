@@ -8,7 +8,7 @@ import time
 from functools import lru_cache
 from urllib.parse import urlparse
 
-from drive_utils import is_smb, is_ssh
+from drive_utils import is_smb, is_ssh, build_rsync_list_cmd, _SSH_USER_HOST_RE
 from state import logger, frozen_safe_env
 from themes import register_cache_invalidation_hook as _reg_cache_hook
 from translations import tr
@@ -69,9 +69,53 @@ def _glob_to_regex(pattern: str) -> str:
 
 
 _SKIP_RE = re.compile(
-    "|".join(f"^{_glob_to_regex(p)}$" for p in _SKIP_GLOBS),
-    re.I,
+    "|".join(f"^{_glob_to_regex(p)}\\Z" for p in _SKIP_GLOBS),
+    re.I | re.S,
 )
+
+
+def _build_skip_matcher(globs: tuple[str, ...]):
+    exact: set[str] = set()
+    prefixes: list[str] = []
+    suffixes: list[str] = []
+    complex_globs: list[str] = []
+    for g in globs:
+        low = g.lower()
+        body = low.strip("*")
+        if "?" in low or "*" in body or not body:
+            complex_globs.append(g)
+        elif low.startswith("*") and low.endswith("*"):
+            complex_globs.append(g)
+        elif low.startswith("*"):
+            suffixes.append(body)
+        elif low.endswith("*"):
+            prefixes.append(body)
+        else:
+            exact.add(low)
+
+    compiled_regex = (
+        re.compile("|".join(f"^{_glob_to_regex(g)}\\Z" for g in complex_globs), re.I | re.S)
+        if complex_globs else None
+    )
+    prefix_t = tuple(prefixes)
+    suffix_t = tuple(suffixes)
+
+    def matcher(name: str) -> bool:
+        _low = name.lower()
+        if _low in exact:
+            return True
+        if prefix_t and _low.startswith(prefix_t):
+            return True
+        if suffix_t and _low.endswith(suffix_t):
+            return True
+        if compiled_regex is None:
+            return False
+        return compiled_regex.match(name) is not None
+
+    return matcher
+
+
+_should_skip = _build_skip_matcher(_SKIP_GLOBS)
 
 _SMB_LINE_RE = re.compile(
     r"^(.+?)\s+([ADRHNSV]*)\s*(?:\(.*?\)\s*)?(\d+)"
@@ -123,12 +167,14 @@ def _notify(title: str, body: str, urgency: str = "normal") -> None:
         return
     expire_time = "0" if urgency == "critical" else "-1"
     try:
-        subprocess.Popen([_NOTIFY_SEND, f"--urgency={urgency}", f"--expire-time={expire_time}", "--app-name=Backup Helper",
-                          "--icon=drive-harddisk", title, body],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
-                         env=frozen_safe_env())
+        proc = subprocess.Popen(
+            [_NOTIFY_SEND, f"--urgency={urgency}", f"--expire-time={expire_time}", "--app-name=Backup Helper",
+             "--icon=drive-harddisk", title, body],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+            start_new_session=True, env=frozen_safe_env())
     except OSError:
-        pass
+        return
+    threading.Thread(target=proc.wait, name="notify-reaper", daemon=True).start()
 
 
 def _check_destination_space(tasks: list[tuple]) -> list[str]:
@@ -185,7 +231,7 @@ _smb_procs_lock = threading.Lock()
 
 def _scan_dir_entries(src: str, dst: str, excl: frozenset, cancel: threading.Event):
     join     = os.path.join
-    skip     = _SKIP_RE.match
+    skip     = _should_skip
     is_set   = cancel.is_set
     has_excl = bool(excl)
     with os.scandir(src) as it:
@@ -203,7 +249,11 @@ def _scan_dir_entries(src: str, dst: str, excl: frozenset, cancel: threading.Eve
                     yield False, path, join(dst, name), True
                     continue
                 if e.is_dir(follow_symlinks=False):
-                    yield True, path, join(dst, name), None
+                    try:
+                        dir_st = e.stat(follow_symlinks=False)
+                    except OSError:
+                        dir_st = None
+                    yield True, path, join(dst, name), dir_st
                     continue
                 if not e.is_file(follow_symlinks=False):
                     continue
@@ -216,6 +266,17 @@ def _scan_dir_entries(src: str, dst: str, excl: frozenset, cancel: threading.Eve
             yield False, path, join(dst, name), st
 
 
+_fsynced_dirs_lock = threading.Lock()
+_fsynced_dirs: set[str] = set()
+
+
+def _reset_dir_caches() -> None:
+    with _seen_dirs_lock:
+        _seen_dirs_global.clear()
+    with _fsynced_dirs_lock:
+        _fsynced_dirs.clear()
+
+
 def _fsync_dir(path: str) -> None:
     try:
         dfd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
@@ -225,6 +286,29 @@ def _fsync_dir(path: str) -> None:
             os.close(dfd)
     except OSError as exc:
         logger.debug("fsync dir %s failed: %s", path, exc)
+
+
+def _fsync_dir_once(path: str) -> None:
+    d = path or "."
+    with _fsynced_dirs_lock:
+        if d in _fsynced_dirs:
+            return
+        _fsynced_dirs.add(d)
+    _fsync_dir(d)
+
+
+def _fsync_parent_dir(path: str) -> None:
+    _fsync_dir_once(os.path.dirname(path))
+
+
+def _tmp_path(dst: str, suffix: str) -> str:
+    parent, base = os.path.split(dst)
+    tag = f".{_PID}.{threading.get_ident()}{suffix}"
+    room = 255 - len(tag.encode())
+    raw = os.fsencode(base)
+    if len(raw) > room:
+        base = os.fsdecode(raw[:max(room, 1)])
+    return os.path.join(parent, base + tag) if parent else base + tag
 
 
 def _ensure_dir(path: str) -> bool:
@@ -241,20 +325,50 @@ def _ensure_dir(path: str) -> bool:
             seen.add(path)
             return True
     try:
-        created_any = not os.path.isdir(path)
         os.makedirs(path, exist_ok=True)
     except OSError as exc:
         logger.error("mkdir %s: %s", path, exc)
         return False
-    if created_any:
-        _fsync_dir(path)
-        parent = os.path.dirname(path.rstrip("/"))
-        if parent and parent != path:
-            _fsync_dir(parent)
     with _seen_dirs_lock:
         _seen_dirs_global.add(path)
     seen.add(path)
     return True
+
+
+def _make_new_dir(path: str) -> "bool | None":
+    for attempt in (0, 1):
+        try:
+            os.mkdir(path)
+        except FileExistsError:
+            return False if os.path.isdir(path) else None
+        except FileNotFoundError:
+            parent = os.path.dirname(path.rstrip("/"))
+            if attempt or not parent or parent == path or not _ensure_dir(parent):
+                return None
+            continue
+        except OSError as exc:
+            logger.error("mkdir %s: %s", path, exc)
+            return None
+        _remember_dir(path)
+        return True
+    return None
+
+
+def _remember_dir(path: str) -> None:
+    with _seen_dirs_lock:
+        _seen_dirs_global.add(path)
+
+
+def _apply_dir_attrs(entries: "list[tuple[str, int, int, int]]") -> None:
+    for path, mode, atime_ns, mtime_ns in sorted(entries, key=lambda e: e[0].count("/"), reverse=True):
+        try:
+            os.chmod(path, (mode & 0o7777) | 0o700)
+        except OSError as exc:
+            logger.debug("chmod %s failed: %s", path, exc)
+        try:
+            os.utime(path, ns=(atime_ns, mtime_ns))
+        except OSError as exc:
+            logger.debug("utime %s failed: %s", path, exc)
 
 
 @lru_cache(maxsize=256)
@@ -273,6 +387,143 @@ del _reg_cache_hook
 
 def _format_unit(value: float) -> str:
     return format_size(value, 2)
+
+
+_RSYNC_ERROR_TAIL = 5
+_RSYNC_LIST_TIMEOUT = 20
+_RSYNC_GLOB_CHARS = re.compile(r"([\\*?\[])")
+_LIKELY_FILE_TAIL_RE = re.compile(r"\.[A-Za-z0-9]{1,8}$")
+_SSH_URL_RE = re.compile(r"^(ssh://(?:[^@/]+@)?[^/]+)(/.*)?$")
+_RSYNC_LIST_LINE_RE = re.compile(
+    r"^([dl\-cbps])[rwxsStT\-]{9}\s+[\d,.]+\s+\d{4}/\d{2}/\d{2}\s+\d{2}:\d{2}:\d{2}\s(.*)$"
+)
+
+
+def _ssh_join(dst_spec: str, rel_path: str) -> str:
+    base = dst_spec.rstrip("/")
+    rel = rel_path.lstrip("/")
+    return f"{base}/{rel}" if rel else base
+
+
+def _rsync_escape_component(name: str) -> str:
+    return _RSYNC_GLOB_CHARS.sub(r"\\\1", name)
+
+
+def _ssh_split(spec: str) -> tuple[str, str]:
+    m = _SSH_URL_RE.match(spec)
+    if m:
+        return m.group(1), (m.group(2) or "")
+    m = _SSH_USER_HOST_RE.match(spec)
+    if m:
+        path = m.group("rpath")
+        return spec[:len(spec) - len(path)], path
+    return spec, ""
+
+
+def _relativize_excludes(raw_excludes: "list | None", base_dir: str, *,
+                         split_fn=None) -> list[str]:
+    patterns: list[str] = []
+    if not raw_excludes:
+        return patterns
+    for ex in raw_excludes:
+        ex_path = split_fn(ex)[1] if split_fn else ex
+        if not ex_path:
+            continue
+        try:
+            rel = os.path.relpath(ex_path, base_dir)
+        except ValueError:
+            continue
+        if rel == os.curdir or rel == os.pardir or rel.startswith(os.pardir + os.sep):
+            continue
+        escaped = "/".join(_rsync_escape_component(p) for p in rel.split(os.sep))
+        patterns.append("/" + escaped)
+    return patterns
+
+
+def _rsync_excludes(src: str, raw_excludes: "list | None") -> "list | None":
+    skip = list(_SKIP_GLOBS)
+    if is_ssh(src):
+        _prefix, remote_root = _ssh_split(src)
+        base_dir = (remote_root.rstrip("/") if remote_root.endswith("/")
+                    else os.path.dirname(remote_root.rstrip("/") or remote_root))
+        return _relativize_excludes(raw_excludes, base_dir, split_fn=_ssh_split) + skip
+    base_dir = src.rstrip("/") if src.endswith("/") else os.path.dirname(src.rstrip("/") or src)
+    return _relativize_excludes(raw_excludes, base_dir) + skip
+
+
+def _run_capture(cmd: list[str], timeout: float,
+                 cancel: "threading.Event | None" = None) -> "tuple[int, str, str] | None":
+    try:
+        proc = subprocess.Popen(
+            cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, encoding="utf-8", errors="replace", env=frozen_safe_env())
+    except OSError as exc:
+        logger.debug("_run_capture: cannot launch %s: %s", cmd[0], exc)
+        return None
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            out, err = proc.communicate(timeout=0.25)
+            return proc.returncode, out or "", err or ""
+        except subprocess.TimeoutExpired:
+            if (cancel is not None and cancel.is_set()) or time.monotonic() >= deadline:
+                proc.kill()
+                proc.communicate()
+                return None
+
+
+def _rsync_list(spec: str, cancel: "threading.Event | None" = None) -> "list[tuple[str, str]] | None":
+    if shutil.which("rsync") is None:
+        return None
+    res = _run_capture(build_rsync_list_cmd(spec), _RSYNC_LIST_TIMEOUT, cancel)
+    if res is None:
+        return None
+    rc, out, err = res
+    if rc != 0:
+        logger.debug("rsync --list-only %r failed (exit %d): %s", spec, rc, err.strip()[:200])
+        return None
+    entries: list[tuple[str, str]] = []
+    for line in out.splitlines():
+        m = _RSYNC_LIST_LINE_RE.match(line)
+        if m:
+            name = m.group(2)
+            if m.group(1) == "l":
+                name = name.split(" -> ", 1)[0]
+            entries.append((m.group(1), name))
+    return entries
+
+
+def _remote_kind(spec: str, cancel: "threading.Event | None" = None) -> "str | None":
+    entries = _rsync_list(spec.rstrip("/"), cancel)
+    if not entries:
+        return None
+    kind = entries[0][0]
+    if kind == "d":
+        return "dir"
+    if kind == "l":
+        probe = _rsync_list(spec.rstrip("/") + "/", cancel)
+        return "dir" if probe and probe[0][0] == "d" else "file"
+    return "file"
+
+
+def _ssh_dir_is_empty(src_dir: str, cancel: "threading.Event | None" = None) -> "bool | None":
+    entries = _rsync_list(src_dir.rstrip("/") + "/", cancel)
+    if entries is None:
+        return None
+    return not any(name != "." for _kind, name in entries)
+
+
+def _rsync_src_arg(src: str, cancel: "threading.Event | None" = None) -> str:
+    if src.endswith("/"):
+        return src
+    if is_ssh(src):
+        kind = _remote_kind(src, cancel)
+        if kind is None:
+            tail = src.rstrip("/").rsplit("/", 1)[-1]
+            kind = "file" if _LIKELY_FILE_TAIL_RE.search(tail) else "dir"
+        return f"{src}/" if kind == "dir" else src
+    return f"{src}/" if os.path.isdir(src) else src
+
 
 
 def _is_unreachable(err: str) -> bool:

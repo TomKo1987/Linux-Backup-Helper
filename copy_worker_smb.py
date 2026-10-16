@@ -1,5 +1,6 @@
 import concurrent.futures
 import os
+import re
 import shutil
 import stat as _stat_mod
 import subprocess
@@ -20,9 +21,9 @@ if TYPE_CHECKING:
 
 from copy_worker_core import (
     _SMB_WORKERS, _SMB_TIMEOUT, _SMB_LS_INDEX_TIMEOUT, _SMB_FILE_SECS, _SMB_CHUNK, _SMB_MIN_BYTES_PER_SEC,
-    _SHM_DIR, _smb_procs, _smb_procs_lock, _SMB_LINE_RE, _SKIP_RE, _CACHE_MISS,
+    _SHM_DIR, _smb_procs, _smb_procs_lock, _SMB_LINE_RE, _should_skip, _CACHE_MISS,
     _is_unreachable, _parse_smb, _q, _run_futures, _ensure_dir, _silent_unlink,
-    _parse_smb_mtime, _SMB_MTIME_TOLERANCE
+    _parse_smb_mtime, _SMB_MTIME_TOLERANCE, _tmp_path, _fsync_parent_dir
 )
 
 
@@ -36,6 +37,18 @@ def _get_smb_credentials() -> tuple[str, "_SecurePw | None"]:
     from samba_credentials import SambaPasswordManager
     u, pw, _ = SambaPasswordManager().get_credentials()
     return (u or ""), pw
+
+
+_SMB_STATUS_RE = re.compile(r"NT_STATUS_[A-Z0-9_]+")
+
+
+def _smb_output_problem(stdout: str, stderr: str) -> str:
+    for line in f"{stdout}\n{stderr}".splitlines():
+        if "creating remote directory" in line:
+            continue
+        if _SMB_STATUS_RE.search(line):
+            return line.strip()
+    return ""
 
 
 def _write_all(fd: int, data: "bytes | bytearray | memoryview") -> None:
@@ -141,6 +154,7 @@ class _SmbJob:
     local_size:   int = -1
     remote_mtime: int = -1
     local_mtime:  int = -1
+    tmp_path:     str = ""
 
     def size_matches_local(self) -> bool:
         if self.kind != "smb_get" or self.remote_size < 0:
@@ -163,7 +177,7 @@ def _build_smb_get_cmds(jobs: list[_SmbJob]) -> str:
     for rdir, group in groupby(sorted(jobs, key=_key), key=_key):
         lines.append(f'cd "/{_q(str(rdir))}"' if rdir else 'cd "/"')
         for j in group:
-            lines.append(f'get "{_q(os.path.basename(j.remote_path))}" "{_q(j.dst_path)}"')
+            lines.append(f'get "{_q(os.path.basename(j.remote_path))}" "{_q(j.tmp_path or j.dst_path)}"')
     lines.append("exit\n")
     return "\n".join(lines)
 
@@ -301,11 +315,13 @@ class _SmbClient:
         return proc, out, err
 
     def run(self, cmds: str, timeout: int, cancel: "threading.Event | None" = None) -> tuple[bool, str]:
-        proc, _, err = self._run_with_creds(cmds, timeout, cancel=cancel)
+        proc, out, err = self._run_with_creds(cmds, timeout, cancel=cancel)
         if proc is None:
             return False, err
-        ok = proc.returncode == 0
-        return ok, ("" if ok else (err.strip() or f"exit {proc.returncode}"))
+        if proc.returncode != 0:
+            return False, (err.strip() or f"exit {proc.returncode}")
+        problem = _smb_output_problem(out, err)
+        return (False, problem) if problem else (True, "")
 
     def ls_index(self, base: str) -> "dict | None":
         base = base.replace("\\", "/").rstrip("/")
@@ -499,7 +515,7 @@ class _SmbScanner:
         elif kind == "missing":
             lerr.append((src_url, "Path does not exist — skipping", title))
         elif kind == "file":
-            if not _SKIP_RE.search(os.path.basename(rpath)) and not _smb_path_excluded(src_url, excludes):
+            if not _should_skip(os.path.basename(rpath)) and not _smb_path_excluded(src_url, excludes):
                 lexp.append(_SmbJob(src_url=src_url, dst_path=dst, kind="smb_get", host=host, share=share,
                                     remote_path=rpath, remote_size=size, remote_mtime=mtime, title=title))
         else:
@@ -511,7 +527,7 @@ class _SmbScanner:
                 for path, (sz, mt) in idx.items():
                     if self._cancel.is_set():
                         break
-                    if _SKIP_RE.search(os.path.basename(path)):
+                    if _should_skip(os.path.basename(path)):
                         continue
                     full_url = f"smb://{host}/{share}/{path}"
                     if _smb_path_excluded(full_url, excludes):
@@ -535,7 +551,7 @@ class _SmbScanner:
 
     def _do_put_file(self, src: str, host: str, share: str, rpath: str, title: str, expanded: list,
                       excludes: frozenset = frozenset()) -> None:
-        if _SKIP_RE.search(os.path.basename(src)) or src in excludes:
+        if _should_skip(os.path.basename(src)) or src in excludes:
             return
         rp = f"{rpath}/{os.path.basename(src)}".lstrip("/")
         try:
@@ -567,7 +583,7 @@ class _SmbScanner:
             try:
                 with os.scandir(current_dir) as it:
                     for e in it:
-                        if _SKIP_RE.search(e.name) or e.path in excludes:
+                        if _should_skip(e.name) or e.path in excludes:
                             continue
                         try:
                             e_st = e.stat(follow_symlinks=True)
@@ -659,12 +675,12 @@ class _ShareProcessor:
                         local_mt = int(os.stat(j.src_url).st_mtime)
                     except OSError:
                         local_mt = -1
-                mtime_known_and_matches = (
+                remote_not_older = (
                     remote_mtime >= 0 and local_mt >= 0
-                    and abs(remote_mtime - local_mt) <= _SMB_MTIME_TOLERANCE
+                    and remote_mtime >= local_mt - _SMB_MTIME_TOLERANCE
                 )
                 mtime_unknown = remote_mtime < 0 or local_mt < 0
-                if same_size and (mtime_known_and_matches or mtime_unknown):
+                if same_size and (remote_not_older or mtime_unknown):
                     sk_immediate.append((j.src_url, tr("Up to date")))
                 else:
                     put_transfer.append(j)
@@ -770,6 +786,10 @@ class _ShareProcessor:
         ok_list: list = []
         er_list: list = []
         stack   = [list(jobs)]
+        if is_get:
+            for j in jobs:
+                if not j.tmp_path:
+                    j.tmp_path = _tmp_path(j.dst_path, ".smb.part")
 
         while stack:
             batch = stack.pop()
@@ -803,23 +823,39 @@ class _ShareProcessor:
                 stack.append(batch[mid:])
                 stack.append(batch[:mid])
 
+        if is_get:
+            for j in jobs:
+                _silent_unlink(j.tmp_path)
         return ok_list, er_list
 
     @staticmethod
     def _finalize_download(job: "_SmbJob") -> str:
+        tmp = job.tmp_path or job.dst_path
         try:
-            st = os.stat(job.dst_path)
+            st = os.stat(tmp)
         except OSError:
             return tr("Download incomplete: local file is missing")
         if 0 <= job.remote_size != st.st_size:
-            _silent_unlink(job.dst_path)
+            _silent_unlink(tmp)
             return tr("Download incomplete: {got} of {want} bytes",
                       got=st.st_size, want=job.remote_size)
         if job.remote_mtime >= 0:
             try:
-                os.utime(job.dst_path, (job.remote_mtime, job.remote_mtime))
+                os.utime(tmp, (job.remote_mtime, job.remote_mtime))
             except OSError as exc:
-                logger.debug("could not set mtime on %s: %s", job.dst_path, exc)
+                logger.debug("could not set mtime on %s: %s", tmp, exc)
+        if tmp != job.dst_path:
+            try:
+                fd = os.open(tmp, os.O_RDONLY)
+                try:
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+                os.replace(tmp, job.dst_path)
+            except OSError as exc:
+                _silent_unlink(tmp)
+                return str(exc)
+            _fsync_parent_dir(job.dst_path)
         return ""
 
     def _record(self, ok_c: list, sk_c: list, er_c: list) -> None:

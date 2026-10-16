@@ -13,7 +13,8 @@ from typing import TYPE_CHECKING, Callable
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from drive_utils import is_smb, is_ssh, build_rsync_cmd, _SSH_USER_HOST_RE
+from advanced_copy import AdvancedOptionsResult, DeleteError, apply_advanced_options
+from drive_utils import is_smb, is_ssh, build_rsync_cmd
 from pre_post_hooks import run_hooks as _run_hooks
 from state import logger, frozen_safe_env
 from translations import tr
@@ -21,10 +22,12 @@ from translations import tr
 from copy_worker_core import (
     _CHUNK, _IO_BUF, _WORKERS, _FLUSH_THRESH, _FLUSH_INTERVAL, _SCAN_EMIT_SECS,
     _SCAN_PIPE_BATCH, _LOCAL_BATCH, _PIPE_MAXSIZE, _ENTRY_EMIT_SECS,
-    _SMB_WORKERS, _PID, _EUID, _O_NOATIME, _seen_dirs_lock, _seen_dirs_global, _TIME_CHECK_EVERY,
-    _smb_procs, _smb_procs_lock, _RSYNC_DELETE_RE, _SKIP_GLOBS,
-    _scale_params, _scan_dir_entries,
-    _ensure_dir, _parse_smb, _run_futures, _silent_unlink
+    _SMB_WORKERS, _EUID, _O_NOATIME, _TIME_CHECK_EVERY,
+    _smb_procs, _smb_procs_lock, _RSYNC_DELETE_RE, _RSYNC_ERROR_TAIL,
+    _scale_params, _scan_dir_entries, _check_destination_space,
+    _ensure_dir, _make_new_dir, _apply_dir_attrs, _fsync_parent_dir, _tmp_path, _reset_dir_caches,
+    _parse_smb, _run_futures, _silent_unlink,
+    _ssh_join, _rsync_excludes, _rsync_src_arg, _ssh_dir_is_empty,
 )
 from copy_worker_smb import (
     _get_smb_credentials,
@@ -35,89 +38,12 @@ if TYPE_CHECKING:
     from copy_worker_smb import _SecurePw
 
 
-def _ssh_join(dst_spec: str, rel_path: str) -> str:
-    base = dst_spec.rstrip("/")
-    rel = rel_path.lstrip("/")
-    return f"{base}/{rel}" if rel else base
-
-
-_RSYNC_ERROR_TAIL = 5
 _NF_MARK = "\x1f"
 
 
 def _not_found_reason(title: str) -> str:
     base = tr("Path does not exist — skipping")
     return f"{base}{_NF_MARK}{title}" if title else base
-
-
-_RSYNC_GLOB_CHARS = re.compile(r"([\\*?\[])")
-
-
-def _rsync_escape_component(name: str) -> str:
-    return _RSYNC_GLOB_CHARS.sub(r"\\\1", name)
-
-
-_LIKELY_FILE_TAIL_RE = re.compile(r"\.[A-Za-z0-9]{1,8}$")
-
-
-def _rsync_src_arg(src: str) -> str:
-    if src.endswith("/"):
-        return src
-    if is_ssh(src):
-        tail = src.rstrip("/").rsplit("/", 1)[-1]
-        if not _LIKELY_FILE_TAIL_RE.search(tail):
-            return f"{src}/"
-        return src
-    return f"{src}/" if os.path.isdir(src) else src
-
-
-_SSH_URL_RE = re.compile(r"^(ssh://(?:[^@/]+@)?[^/]+)(/.*)?$")
-
-
-def _ssh_split(spec: str) -> tuple[str, str]:
-    m = _SSH_URL_RE.match(spec)
-    if m:
-        return m.group(1), (m.group(2) or "")
-    m = _SSH_USER_HOST_RE.match(spec)
-    if m:
-        path = m.group("rpath")
-        return spec[:len(spec) - len(path)], path
-    return spec, ""
-
-
-def _relativize_excludes(raw_excludes: "list | None", base_dir: str, *,
-                         split_fn=None) -> list[str]:
-    patterns: list[str] = []
-    if not raw_excludes:
-        return patterns
-    for ex in raw_excludes:
-        ex_path = split_fn(ex)[1] if split_fn else ex
-        if not ex_path:
-            continue
-        try:
-            rel = os.path.relpath(ex_path, base_dir)
-        except ValueError:
-            continue
-        if rel == os.curdir or rel.startswith(os.pardir):
-            continue
-        escaped = "/".join(_rsync_escape_component(p) for p in rel.split(os.sep))
-        patterns.append("/" + escaped)
-    return patterns
-
-
-def _rsync_excludes(src: str, raw_excludes: "list | None") -> "list | None":
-    skip = list(_SKIP_GLOBS)
-
-    if is_ssh(src):
-        _prefix, remote_root = _ssh_split(src)
-        base_dir = (remote_root.rstrip("/") if remote_root.endswith("/")
-                   else os.path.dirname(remote_root.rstrip("/") or remote_root))
-        patterns = _relativize_excludes(raw_excludes, base_dir, split_fn=_ssh_split)
-        return patterns + skip
-
-    base_dir = src.rstrip("/") if src.endswith("/") else os.path.dirname(src.rstrip("/") or src)
-    patterns = _relativize_excludes(raw_excludes, base_dir)
-    return patterns + skip
 
 
 def _bump_count(tc: dict, title: str, idx: int) -> None:
@@ -146,16 +72,30 @@ def _do_copy(entry, cancel: threading.Event, ok_l: list, sk_l: list, er_l: list,
         if title: _bump_count(tc, title, 2)
 
 
+_MTIME_GRANULARITY: tuple[tuple[int, int], ...] = (
+    (1_000_000_000, 2_000_000_000),
+    (10_000_000, 10_000_000),
+    (1_000, 1_000),
+    (100, 100),
+)
+
+
+def _mtime_tolerance_ns(dst_ns: int) -> int:
+    for unit, tolerance in _MTIME_GRANULARITY:
+        if dst_ns % unit == 0:
+            return tolerance
+    return 0
+
+
 def _is_up_to_date_local(dst: str, src_st: "os.stat_result",
                           dst_st: "os.stat_result | None" = None) -> bool:
-
     try:
         d = dst_st if dst_st is not None else os.lstat(dst)
-        return (stat.S_ISREG(d.st_mode)
-                and d.st_size == src_st.st_size
-                and abs(d.st_mtime_ns - src_st.st_mtime_ns) <= 2_000_000_000)
     except OSError:
         return False
+    if not stat.S_ISREG(d.st_mode) or d.st_size != src_st.st_size:
+        return False
+    return abs(d.st_mtime_ns - src_st.st_mtime_ns) <= _mtime_tolerance_ns(d.st_mtime_ns)
 
 
 def _is_symlink_up_to_date(dst: str, target: str) -> bool:
@@ -174,13 +114,13 @@ def _lstat_or_none(path: str) -> "os.stat_result | None":
 
 def _clear_conflicting_dir(dst: str) -> bool:
     try:
-        shutil.rmtree(dst)
+        os.rmdir(dst)
         return True
     except FileNotFoundError:
         return True
     except OSError as exc:
         if os.path.isdir(dst) and not os.path.islink(dst):
-            logger.error("could not remove conflicting directory %s: %s", dst, exc)
+            logger.error("destination %s is a non-empty directory and will not be replaced: %s", dst, exc)
             return False
         return True
 
@@ -307,40 +247,31 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> "tupl
 
 
 _FATAL_IO_ERRNOS = frozenset({errno.ENOSPC, errno.EDQUOT, errno.EIO, errno.EROFS})
+_FSYNC_UNSUPPORTED_ERRNOS = frozenset({errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP, errno.ENOSYS})
+_DROP_CACHE_MIN = 64 * 1024 * 1024
+
+
+def _fsync_data(fd: int, path: str) -> None:
+    try:
+        os.fsync(fd)
+    except OSError as exc:
+        if exc.errno in _FSYNC_UNSUPPORTED_ERRNOS:
+            logger.debug("fsync not supported for %s: %s", path, exc)
+            return
+        raise
+
+
+def _close_quiet(fd: "int | None") -> None:
+    if fd is None:
+        return
+    try:
+        os.close(fd)
+    except OSError:
+        pass
 
 
 class _IncompleteCopyError(OSError):
     pass
-
-
-_fsynced_dirs_lock = threading.Lock()
-_fsynced_dirs: set[str] = set()
-
-
-def _fsync_parent_dir(path: str) -> None:
-    d = os.path.dirname(path) or "."
-    with _fsynced_dirs_lock:
-        if d in _fsynced_dirs:
-            return
-        _fsynced_dirs.add(d)
-    try:
-        dfd = os.open(d, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-        try:
-            os.fsync(dfd)
-        finally:
-            os.close(dfd)
-    except OSError as e:
-        logger.debug("fsync parent dir %s failed: %s", d, e)
-
-
-def _tmp_path(dst: str, suffix: str) -> str:
-    parent, base = os.path.split(dst)
-    tag = f".{_PID}.{threading.get_ident()}{suffix}"
-    room = 255 - len(tag.encode())
-    raw = os.fsencode(base)
-    if len(raw) > room:
-        base = os.fsdecode(raw[:max(room, 1)])
-    return os.path.join(parent, base + tag) if parent else base + tag
 
 
 def _copy_file(src, dst, cancel, cached_st=None):
@@ -385,7 +316,16 @@ def _copy_file(src, dst, cancel, cached_st=None):
             except OSError:
                 rfd = os.open(src, os.O_RDONLY)
 
-            wfd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, st.st_mode & 0o777)
+            try:
+                opened_st = os.fstat(rfd)
+            except OSError:
+                opened_st = None
+            if (opened_st is not None and stat.S_ISREG(opened_st.st_mode)
+                    and (opened_st.st_size != st.st_size or opened_st.st_mtime_ns != st.st_mtime_ns)):
+                st = opened_st
+
+            _silent_unlink(tmp)
+            wfd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, st.st_mode & 0o777)
 
             try:
                 os.fchmod(wfd, st.st_mode & 0o777)
@@ -412,16 +352,16 @@ def _copy_file(src, dst, cancel, cached_st=None):
                     f"Incomplete copy: {copied}/{st.st_size} bytes written{reason}"
                 )
 
-            try:
-                os.fsync(wfd)
-            except OSError as e:
-                logger.debug("fsync failed for %s: %s", tmp, e)
+            _fsync_data(wfd, tmp)
+            if copied >= _DROP_CACHE_MIN:
+                try:
+                    os.posix_fadvise(rfd, 0, 0, os.POSIX_FADV_DONTNEED)
+                    os.posix_fadvise(wfd, 0, 0, os.POSIX_FADV_DONTNEED)
+                except OSError:
+                    pass
 
-            try:
-                os.close(wfd)
-            except OSError:
-                pass
-            wfd = None
+            closing_fd, wfd = wfd, None
+            os.close(closing_fd)
 
             try:
                 os.utime(tmp, ns=(st.st_atime_ns, st.st_mtime_ns))
@@ -457,16 +397,8 @@ def _copy_file(src, dst, cancel, cached_st=None):
             logger.error("copy %s → %s: %s", src, dst, exc)
             return "error", str(exc), 0
         finally:
-            if rfd is not None:
-                try:
-                    os.close(rfd)
-                except OSError:
-                    pass
-            if wfd is not None:
-                try:
-                    os.close(wfd)
-                except OSError:
-                    pass
+            _close_quiet(rfd)
+            _close_quiet(wfd)
             if not success:
                 _silent_unlink(tmp)
     return "error", tr("Copy failed after retries"), 0
@@ -617,34 +549,73 @@ class _BatchBuffer:
         self.pending = 0
 
 
+class _ConfirmRequest:
+    __slots__ = ("answer", "event")
+
+    def __init__(self) -> None:
+        self.event = threading.Event()
+        self.answer = False
+
+
 class CopyWorker(QThread):
     batch_update = pyqtSignal(list, list, list, list, int, int)
     finished_work = pyqtSignal(int, int, int, int, bool)
     scan_progress = pyqtSignal(str, int)
     entry_status = pyqtSignal(str, int, int, int, int)
     scan_finished = pyqtSignal(int)
+    prepared = pyqtSignal(list, list)
+    confirm_delete = pyqtSignal(str, list, object)
+    space_warnings = pyqtSignal(list)
     _RSYNC_PROGRESS_RE = re.compile(
         r"^\s*([\d,.\u202f\u00a0 ]+?)\s+(\d+)%\s+([\d.,]+\w+/s)\s+([\d:]+)"
     )
 
-    def __init__(self, tasks) -> None:
+    def __init__(self, tasks, *, prepare: bool = False, is_restore: bool = False,
+                 interactive: bool = True) -> None:
         super().__init__()
-        self._hooks: dict[str, tuple[list, list]] = self._extract_hooks(tasks)
-        self._mirror_titles: set[str] = self._extract_mirror_flags(tasks)
-        self.tasks = self._normalize_tasks(tasks)
         self._cancel = threading.Event()
+        self._prepare_raw: "list | None" = list(tasks) if prepare else None
+        self._is_restore = is_restore
+        self._interactive = interactive
+        self._hooks: dict[str, tuple[list, list]] = {}
+        self._mirror_pairs: set[tuple[str, str]] = set()
+        self.tasks: list[tuple[str, str, str, frozenset]] = []
         self._pre_fired_titles: set[str] = set()
         self._post_fired_titles: set[str] = set()
+        self._started_titles: set[str] = set()
+        self._pre_hooks_done = False
+        if not prepare:
+            self._configure(tasks)
+
+    def _configure(self, tasks) -> None:
+        self._hooks = self._extract_hooks(tasks)
+        self._mirror_pairs = self._extract_mirror_pairs(tasks)
+        self.tasks = self._normalize_tasks(tasks)
 
     @staticmethod
-    def _extract_mirror_flags(tasks) -> set[str]:
-        result: set[str] = set()
+    def _norm_path(path: str) -> str:
+        return path if (is_smb(path) or is_ssh(path)) else os.path.abspath(os.path.expanduser(path))
+
+    @classmethod
+    def _iter_pairs(cls, task):
+        src_raw, dst_raw = task[0], task[1]
+        srcs = [src_raw] if isinstance(src_raw, str) else src_raw
+        dsts = [dst_raw] if isinstance(dst_raw, str) else dst_raw
+        if not srcs or not dsts or len(srcs) != len(dsts):
+            return
+        for s, d in zip(srcs, dsts, strict=True):
+            if s and d:
+                s_str, d_str = str(s), str(d)
+                yield s_str, d_str, cls._norm_path(s_str), cls._norm_path(d_str)
+
+    @classmethod
+    def _extract_mirror_pairs(cls, tasks) -> set[tuple[str, str]]:
+        result: set[tuple[str, str]] = set()
         for t in tasks:
-            if not isinstance(t, (list, tuple)) or len(t) < 7:
+            if not isinstance(t, (list, tuple)) or len(t) < 7 or not t[6]:
                 continue
-            title = str(t[2]) if len(t) > 2 else ""
-            if title and t[6]:
-                result.add(title)
+            for _s, _d, s_norm, d_norm in cls._iter_pairs(t):
+                result.add((s_norm, d_norm))
         return result
 
     @staticmethod
@@ -679,35 +650,26 @@ class CopyWorker(QThread):
         rel = os.path.relpath(real_dst, real_src)
         return frozenset({dst, os.path.join(src, rel)})
 
-    @staticmethod
-    def _normalize_tasks(tasks) -> list[tuple[str, str, str, frozenset]]:
+    @classmethod
+    def _normalize_tasks(cls, tasks) -> list[tuple[str, str, str, frozenset]]:
         result = []
         for t in tasks:
             if not isinstance(t, (list, tuple)) or len(t) < 2:
                 continue
-            src_raw, dst_raw = t[0], t[1]
             title = str(t[2]) if len(t) > 2 else ""
             raw_excl = t[3] if len(t) > 3 else {}
-            srcs = [src_raw] if isinstance(src_raw, str) else src_raw
-            dsts = [dst_raw] if isinstance(dst_raw, str) else dst_raw
-            if not srcs or not dsts or len(srcs) != len(dsts):
-                continue
-            for s, d in zip(srcs, dsts, strict=True):
-                if s and d:
-                    s_str, d_str = str(s), str(d)
-                    s_norm = s_str if (is_smb(s_str) or is_ssh(s_str)) else os.path.abspath(os.path.expanduser(s_str))
-                    d_norm = d_str if (is_smb(d_str) or is_ssh(d_str)) else os.path.abspath(os.path.expanduser(d_str))
-                    if isinstance(raw_excl, (set, frozenset)):
-                        exc_set: frozenset = frozenset(raw_excl)
-                    elif isinstance(raw_excl, dict):
-                        names: list = raw_excl.get(s_norm) or raw_excl.get(s_str) or []
-                        exc_set = frozenset(os.path.join(s_norm, n) for n in names)
-                    else:
-                        exc_set = frozenset()
-                    guard = CopyWorker._dst_inside_src_guard(s_norm, d_norm)
-                    if guard:
-                        exc_set = frozenset(exc_set | guard)
-                    result.append((s_norm, d_norm, title, exc_set))
+            for _s_str, _d_str, s_norm, d_norm in cls._iter_pairs(t):
+                if isinstance(raw_excl, (set, frozenset)):
+                    exc_set: frozenset = frozenset(raw_excl)
+                elif isinstance(raw_excl, dict):
+                    names: list = raw_excl.get(s_norm) or raw_excl.get(_s_str) or []
+                    exc_set = frozenset(os.path.join(s_norm, n) for n in names)
+                else:
+                    exc_set = frozenset()
+                guard = cls._dst_inside_src_guard(s_norm, d_norm)
+                if guard:
+                    exc_set = frozenset(exc_set | guard)
+                result.append((s_norm, d_norm, title, exc_set))
         return result
 
     def cancel(self) -> None:
@@ -732,7 +694,8 @@ class CopyWorker(QThread):
     def _run_pre_hooks(self, tasks: list) -> set[str]:
         skip_titles: set[str] = set()
         seen: set[str] = set()
-        for _s, _d, _t, _exc in tasks:
+        for task in tasks:
+            _t = str(task[2]) if len(task) > 2 else ""
             if _t and _t not in seen:
                 seen.add(_t)
                 _pre, _ = self._hooks.get(_t, ([], []))
@@ -758,18 +721,63 @@ class CopyWorker(QThread):
             self._fire_hooks(title, "post", _post, abort=False)
 
     def _run_pending_post_hooks(self) -> None:
-        for title in sorted(self._pre_fired_titles - self._post_fired_titles):
+        pending = (self._pre_fired_titles | self._started_titles) - self._post_fired_titles
+        for title in sorted(pending):
             self._run_post_hooks_for_title(title)
 
     def run(self) -> None:
-        with _seen_dirs_lock:
-            _seen_dirs_global.clear()
-        with _fsynced_dirs_lock:
-            _fsynced_dirs.clear()
+        _reset_dir_caches()
         try:
+            if self._prepare_raw is not None and not self._prepare():
+                return
             self._run_impl()
         finally:
             self._run_pending_post_hooks()
+
+    def _ask_confirm(self, title: str, paths: list[str]) -> bool:
+        request = _ConfirmRequest()
+        self.confirm_delete.emit(title, paths, request)
+        while not request.event.wait(0.2):
+            if self._cancel.is_set():
+                return False
+        return request.answer
+
+    def _prepare(self) -> bool:
+        raw, self._prepare_raw = self._prepare_raw or [], None
+        try:
+            self._hooks = self._extract_hooks(raw)
+            skip_titles = self._run_pre_hooks(raw) if not self._cancel.is_set() else set()
+            self._pre_hooks_done = True
+            if skip_titles:
+                raw = [t for t in raw if str(t[2]) not in skip_titles]
+        except Exception as exc:
+            logger.error("Pre-hooks failed: %s", exc, exc_info=True)
+            self.prepared.emit([], [DeleteError(path=tr("Preparing…"), title="", reason=str(exc))])
+            self.finished_work.emit(0, 0, 0, 0, False)
+            return False
+        if self._cancel.is_set():
+            self.finished_work.emit(0, 0, 0, 0, True)
+            return False
+        try:
+            result: AdvancedOptionsResult = apply_advanced_options(
+                raw,
+                confirm=self._ask_confirm if self._interactive else None,
+                is_restore=self._is_restore,
+                cancel=self._cancel,
+            )
+        except Exception as exc:
+            logger.error("Advanced options failed: %s", exc, exc_info=True)
+            self.prepared.emit([], [DeleteError(path=tr("Preparing…"), title="", reason=str(exc))])
+            self.finished_work.emit(0, 0, 0, 0, False)
+            return False
+        self.prepared.emit(result.deleted, result.errors)
+        if self._cancel.is_set():
+            self.finished_work.emit(0, 0, 0, 0, True)
+            return False
+        hooks = self._hooks
+        self._configure(result.tasks)
+        self._hooks = hooks
+        return True
 
     def _run_impl(self) -> None:
         pw: "_SecurePw | None" = None
@@ -793,15 +801,22 @@ class CopyWorker(QThread):
                 if smb_tool_missing:
                     logger.error("smbclient binary not found — SMB task(s) will be reported as errors")
 
+            space_warnings = _check_destination_space(self.tasks)
+            if space_warnings:
+                self.space_warnings.emit(space_warnings)
+
             self.scan_progress.emit(tr("Scanning"), 0)
 
             all_tasks = local_tasks + ssh_tasks + smb_tasks
-            skip_titles = self._run_pre_hooks(all_tasks) if not self._cancel.is_set() else set()
+            skip_titles = (self._run_pre_hooks(all_tasks)
+                           if not self._pre_hooks_done and not self._cancel.is_set() else set())
             if skip_titles:
                 local_tasks = [x for x in local_tasks if x[2] not in skip_titles]
                 ssh_tasks   = [x for x in ssh_tasks   if x[2] not in skip_titles]
                 smb_tasks   = [x for x in smb_tasks   if x[2] not in skip_titles]
                 all_tasks   = local_tasks + ssh_tasks + smb_tasks
+
+            self._started_titles = {t for _s, _d, t, _x in all_tasks if t}
 
             if not all_tasks:
                 self.scan_finished.emit(0)
@@ -921,7 +936,7 @@ class CopyWorker(QThread):
             except Exception as e:
                 logger.debug("Error during fallback cleanup: %s", e)
             self.finished_work.emit(flusher.copied, flusher.skipped, flusher.errors,
-                                    flusher.deleted, False)
+                                    flusher.deleted, self._cancel.is_set())
         finally:
             if pw is not None:
                 pw.clear()
@@ -985,25 +1000,16 @@ class CopyWorker(QThread):
 
         self.scan_progress.emit(f"rsync  {title or src}", 0)
 
-        rsync_src = _rsync_src_arg(src)
+        rsync_src = _rsync_src_arg(src, self._cancel)
         excludes_raw = list(extra[0]) if extra and extra[0] else None
         excludes = _rsync_excludes(rsync_src, excludes_raw)
-        mirror = title in self._mirror_titles
+        mirror = (src, dst) in self._mirror_pairs
 
-        if mirror and not is_ssh(src):
-            try:
-                if os.path.isdir(src):
-                    with os.scandir(src) as _it:
-                        src_empty = next(_it, None) is None
-                    if src_empty:
-                        logger.warning("mirror skipped: source '%s' is empty", src)
-                        flusher.push(er=[(src, tr("Source directory is empty — mirror deletion skipped "
-                                                  "to protect the destination"), 0)])
-                        _track(0, 0, 1)
-                        return
-            except OSError as exc:
-                logger.warning("mirror skipped: cannot read source '%s': %s", src, exc)
-                flusher.push(er=[(src, str(exc), 0)])
+        if mirror:
+            blocked = self._mirror_guard(src, rsync_src)
+            if blocked is not None:
+                logger.warning("mirror skipped for '%s': %s", src, blocked)
+                flusher.push(er=[(src, blocked, 0)])
                 _track(0, 0, 1)
                 return
 
@@ -1086,6 +1092,10 @@ class CopyWorker(QThread):
         finally:
             with _smb_procs_lock:
                 _smb_procs.pop(_tid, None)
+            try:
+                proc.stdout.close()
+            except OSError:
+                pass
 
         if deleted_this_task:
             flusher.push(de=deleted_this_task, force=True)
@@ -1107,6 +1117,21 @@ class CopyWorker(QThread):
             flusher.push(er=[(src, msg, 0)])
             _track(0, 0, 1, len(deleted_this_task))
             logger.error("rsync exit %d: %s → %s (%s)", proc.returncode, src, dst, detail or "no output captured")
+
+    def _mirror_guard(self, src: str, rsync_src: str) -> "str | None":
+        empty_msg = tr("Source directory is empty — mirror deletion skipped to protect the destination")
+        if is_ssh(src):
+            if rsync_src.endswith("/") and _ssh_dir_is_empty(rsync_src, self._cancel):
+                return empty_msg
+            return None
+        try:
+            if os.path.isdir(src):
+                with os.scandir(src) as it:
+                    if next(it, None) is None:
+                        return empty_msg
+        except OSError as exc:
+            return str(exc)
+        return None
 
     def _copy_ssh_tasks(
             self,
@@ -1151,6 +1176,8 @@ class CopyWorker(QThread):
         missing = [0]
         copy_params = [_LOCAL_BATCH, _SCAN_PIPE_BATCH]
         copy_params_lock = threading.Lock()
+        dir_attrs: list = []
+        dir_attrs_lock = threading.Lock()
 
         def _eq(item: tuple) -> None:
             with pend_lock:
@@ -1173,7 +1200,7 @@ class CopyWorker(QThread):
                     missing_counts.setdefault(title, [0, 0, 0, 0])[1] += 1
                 missing[0] += 1
             else:
-                _eq((src, dst, title, excludes))
+                _eq((src, dst, title, excludes, None))
 
         if missing_entries:
             flusher.push(sk=missing_entries)
@@ -1188,7 +1215,7 @@ class CopyWorker(QThread):
             batch: list = []
             while not cancel.is_set():
                 try:
-                    _src, _dst, _title, _excl = work_q.get(timeout=0.1)
+                    _src, _dst, _title, _excl, _dir_st = work_q.get(timeout=0.1)
                 except queue.Empty:
                     if dir_done.is_set():
                         break
@@ -1197,9 +1224,13 @@ class CopyWorker(QThread):
                 with copy_params_lock:
                     spb = copy_params[1]
                 try:
+                    if self._prepare_dst_dir(_src, _dst, _dir_st, dir_attrs, dir_attrs_lock) is None:
+                        _push_errors(flusher, tracker, [(_dst, tr("Directory could not be created"), _title)])
+                        local_n += 1
+                        continue
                     for is_dir, path, dst_path, entry_stat in _scan_dir_entries(_src, _dst, _excl, cancel):
                         if is_dir:
-                            _eq((path, dst_path, _title, _excl))
+                            _eq((path, dst_path, _title, _excl, entry_stat))
                         else:
                             batch.append((path, dst_path, _title, entry_stat))
                             local_n += 1
@@ -1226,25 +1257,27 @@ class CopyWorker(QThread):
                 except OSError as exc:
                     logger.warning("scan %s: %s", _src, exc)
                 finally:
-                    emit_cur = -1
-                    now = time.monotonic()
-                    with pend_lock:
-                        if now - last_emit[0] >= _SCAN_EMIT_SECS:
-                            found[0] += local_n
-                            local_n = 0
-                            last_emit[0] = now
-                            emit_cur = found[0]
-                    if emit_cur >= 0:
-                        cur_total = emit_cur + missing[0]
-                        self.scan_progress.emit(tr("Scanning"), cur_total)
-                        lb_new, ft_new, spb_new = _scale_params(cur_total)
-                        with copy_params_lock:
-                            copy_params[0] = lb_new
-                            copy_params[1] = spb_new
-                        flusher.set_flush_thresh(ft_new)
-                        if on_count_change is not None:
-                            on_count_change(cur_total)
-                    _dq()
+                    try:
+                        emit_cur = -1
+                        now = time.monotonic()
+                        with pend_lock:
+                            if now - last_emit[0] >= _SCAN_EMIT_SECS:
+                                found[0] += local_n
+                                local_n = 0
+                                last_emit[0] = now
+                                emit_cur = found[0]
+                        if emit_cur >= 0:
+                            cur_total = emit_cur + missing[0]
+                            self.scan_progress.emit(tr("Scanning"), cur_total)
+                            lb_new, ft_new, spb_new = _scale_params(cur_total)
+                            with copy_params_lock:
+                                copy_params[0] = lb_new
+                                copy_params[1] = spb_new
+                            flusher.set_flush_thresh(ft_new)
+                            if on_count_change is not None:
+                                on_count_change(cur_total)
+                    finally:
+                        _dq()
 
             if batch and not cancel.is_set():
                 while not cancel.is_set():
@@ -1347,8 +1380,21 @@ class CopyWorker(QThread):
             _run_futures(all_futs, cancel, "pipeline worker")
         finally:
             pool.shutdown(wait=True, cancel_futures=False)
+            _apply_dir_attrs(dir_attrs)
 
         return found[0] + missing[0]
+
+    @staticmethod
+    def _prepare_dst_dir(src: str, dst: str, dir_st, attrs: list, lock: threading.Lock) -> "bool | None":
+        if dir_st is None:
+            if os.path.isdir(src):
+                return True if _ensure_dir(dst) else None
+            return True
+        created = _make_new_dir(dst)
+        if created and stat.S_ISDIR(dir_st.st_mode):
+            with lock:
+                attrs.append((dst, dir_st.st_mode, dir_st.st_atime_ns, dir_st.st_mtime_ns))
+        return None if created is None else True
 
     def _probe_shares(self, smb_tasks, user, pw) -> tuple[set, set, bool]:
         unreachable: set[tuple[str, str]] = set()
