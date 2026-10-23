@@ -440,8 +440,15 @@ def _relativize_excludes(raw_excludes: "list | None", base_dir: str, *,
     return patterns
 
 
+def _rsync_ci_pattern(pattern: str) -> str:
+    return "".join(f"[{c.lower()}{c.upper()}]" if c.isascii() and c.isalpha() else c for c in pattern)
+
+
+_RSYNC_SKIP_PATTERNS: tuple[str, ...] = tuple(_rsync_ci_pattern(g) for g in _SKIP_GLOBS)
+
+
 def _rsync_excludes(src: str, raw_excludes: "list | None") -> "list | None":
-    skip = list(_SKIP_GLOBS)
+    skip = list(_RSYNC_SKIP_PATTERNS)
     if is_ssh(src):
         _prefix, remote_root = _ssh_split(src)
         base_dir = (remote_root.rstrip("/") if remote_root.endswith("/")

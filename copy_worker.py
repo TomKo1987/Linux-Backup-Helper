@@ -9,7 +9,8 @@ import stat
 import subprocess
 import threading
 import time
-from typing import TYPE_CHECKING, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -39,6 +40,9 @@ if TYPE_CHECKING:
 
 
 _NF_MARK = "\x1f"
+_RSYNC_ERR_HINT_RE = re.compile(
+    r"^(?:rsync|ssh)\b|error|failed|denied|refused|timed out|no such|cannot|unable|unreachable|not permitted|connection",
+    re.I)
 
 
 def _not_found_reason(title: str) -> str:
@@ -749,7 +753,7 @@ class CopyWorker(QThread):
             skip_titles = self._run_pre_hooks(raw) if not self._cancel.is_set() else set()
             self._pre_hooks_done = True
             if skip_titles:
-                raw = [t for t in raw if str(t[2]) not in skip_titles]
+                raw = [t for t in raw if (str(t[2]) if len(t) > 2 else "") not in skip_titles]
         except Exception as exc:
             logger.error("Pre-hooks failed: %s", exc, exc_info=True)
             self.prepared.emit([], [DeleteError(path=tr("Preparing…"), title="", reason=str(exc))])
@@ -960,12 +964,12 @@ class CopyWorker(QThread):
             _push_errors(flusher, tracker, errors)
             return
 
-        unreachable, auth_failed, guest = self._probe_shares(smb_tasks, user, pw)
-        dead = unreachable | auth_failed
+        unreachable, auth_failed, guest, no_share = self._probe_shares(smb_tasks, user, pw)
+        dead = unreachable | auth_failed | no_share
         alive_tasks = smb_tasks
         smb_errors: list[tuple[str, str, str]] = []
         if dead:
-            alive_tasks, pre_err = self._filter_dead_tasks(smb_tasks, dead, unreachable)
+            alive_tasks, pre_err = self._filter_dead_tasks(smb_tasks, dead, unreachable, no_share)
             smb_errors.extend(pre_err)
 
         expanded: list[_SmbJob] = []
@@ -1051,6 +1055,7 @@ class CopyWorker(QThread):
         last_pct = 0
         deleted_this_task: list = []
         error_lines: "collections.deque[str]" = collections.deque(maxlen=_RSYNC_ERROR_TAIL)
+        tail_lines: "collections.deque[str]" = collections.deque(maxlen=_RSYNC_ERROR_TAIL)
         _tid = threading.get_ident()
         with _smb_procs_lock:
             _smb_procs[_tid] = proc
@@ -1083,7 +1088,9 @@ class CopyWorker(QThread):
                         deleted_this_task.append((_ssh_join(dst, rel), tr("Mirror delete (remote)"), 0))
                     else:
                         logger.debug("rsync: %s", line)
-                        error_lines.append(line)
+                        tail_lines.append(line)
+                        if _RSYNC_ERR_HINT_RE.search(line):
+                            error_lines.append(line)
 
             except OSError as exc:
                 logger.warning("rsync read error for '%s': %s", src, exc)
@@ -1111,7 +1118,7 @@ class CopyWorker(QThread):
             _track(1, 0, 0, len(deleted_this_task))
             logger.info("rsync OK: %s → %s", src, dst)
         else:
-            detail = "; ".join(error_lines) if error_lines else None
+            detail = "; ".join(error_lines or tail_lines) or None
             msg = (tr("rsync exit {code}: {detail}", code=proc.returncode, detail=detail)
                    if detail else tr("rsync exit {code}", code=proc.returncode))
             flusher.push(er=[(src, msg, 0)])
@@ -1165,11 +1172,10 @@ class CopyWorker(QThread):
             return 0
 
         pipe_q: queue.Queue = queue.Queue(maxsize=_PIPE_MAXSIZE)
-        sentinel = object()
+        scan_done = threading.Event()
         work_q = queue.SimpleQueue()
         pend_lock = threading.Lock()
         pending = [0]
-        live_copiers = [0]
         dir_done = threading.Event()
         last_emit = [0.0]
         found = [0]
@@ -1296,8 +1302,6 @@ class CopyWorker(QThread):
                     found[0] += local_n
 
         def _copy_worker() -> None:
-            with pend_lock:
-                live_copiers[0] += 1
             buf = _BatchBuffer(flusher, tracker)
             last_fl_t = time.monotonic()
             _file_ctr = 0
@@ -1315,11 +1319,15 @@ class CopyWorker(QThread):
                     except queue.Empty:
                         if cancel.is_set():
                             break
-                        if (time.monotonic() - last_fl_t) >= _FLUSH_INTERVAL:
-                            _fl()
-                        continue
-                    if item is sentinel:
-                        break
+                        if scan_done.is_set():
+                            try:
+                                item = pipe_q.get_nowait()
+                            except queue.Empty:
+                                break
+                        else:
+                            if (time.monotonic() - last_fl_t) >= _FLUSH_INTERVAL:
+                                _fl()
+                            continue
                     if cancel.is_set():
                         continue
                     with copy_params_lock:
@@ -1335,11 +1343,7 @@ class CopyWorker(QThread):
                         ):
                             _fl()
             finally:
-                try:
-                    _fl()
-                finally:
-                    with pend_lock:
-                        live_copiers[0] -= 1
+                _fl()
 
         def _run_scan() -> None:
             try:
@@ -1356,23 +1360,9 @@ class CopyWorker(QThread):
                 if on_count_change is not None:
                     on_count_change(total)
             finally:
+                scan_done.set()
                 if on_scan_done is not None:
                     on_scan_done()
-                if cancel.is_set():
-                    while True:
-                        try:
-                            pipe_q.get_nowait()
-                        except queue.Empty:
-                            break
-                for _ in range(_WORKERS):
-                    while True:
-                        try:
-                            pipe_q.put(sentinel, timeout=0.1)
-                            break
-                        except queue.Full:
-                            with pend_lock:
-                                if live_copiers[0] <= 0:
-                                    break
 
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=1 + _WORKERS)
         try:
@@ -1385,20 +1375,22 @@ class CopyWorker(QThread):
         return found[0] + missing[0]
 
     @staticmethod
-    def _prepare_dst_dir(src: str, dst: str, dir_st, attrs: list, lock: threading.Lock) -> "bool | None":
+    def _prepare_dst_dir(src: str, dst: str, dir_st: "os.stat_result | None",
+                         attrs: list, lock: threading.Lock) -> "bool | None":
         if dir_st is None:
             if os.path.isdir(src):
                 return True if _ensure_dir(dst) else None
             return True
         created = _make_new_dir(dst)
-        if created and stat.S_ISDIR(dir_st.st_mode):
+        if created and dir_st is not None and stat.S_ISDIR(dir_st.st_mode):
             with lock:
                 attrs.append((dst, dir_st.st_mode, dir_st.st_atime_ns, dir_st.st_mtime_ns))
         return None if created is None else True
 
-    def _probe_shares(self, smb_tasks, user, pw) -> tuple[set, set, bool]:
+    def _probe_shares(self, smb_tasks, user, pw) -> tuple[set, set, bool, set]:
         unreachable: set[tuple[str, str]] = set()
         auth_failed: set[tuple[str, str]] = set()
+        no_share: set[tuple[str, str]] = set()
         guest = False
         seen: set[tuple[str, str]] = set()
         shares: list = []
@@ -1412,7 +1404,7 @@ class CopyWorker(QThread):
                 shares.append((h, sh))
 
         if not shares:
-            return unreachable, auth_failed, guest
+            return unreachable, auth_failed, guest, no_share
 
         lock = threading.Lock()
 
@@ -1426,6 +1418,8 @@ class CopyWorker(QThread):
                     unreachable.add((_h, _sh))
                 elif result == "auth":
                     auth_failed.add((_h, _sh))
+                elif result == "share":
+                    no_share.add((_h, _sh))
                 elif result == "guest":
                     guest = True
 
@@ -1434,17 +1428,25 @@ class CopyWorker(QThread):
             futs = [pool.submit(probe_one, h, sh) for h, sh in shares]
             _run_futures(futs, self._cancel, "probe")
 
-        return unreachable, auth_failed, guest
+        return unreachable, auth_failed, guest, no_share
 
     @staticmethod
-    def _filter_dead_tasks(smb_tasks, dead_shares, unreachable_shares) -> tuple[list, list]:
+    def _filter_dead_tasks(smb_tasks: list,
+                           dead_shares: "set | frozenset",
+                           unreachable_shares: "set | frozenset",
+                           missing_shares: "set | frozenset" = frozenset()) -> tuple[list, list]:
         alive: list = []
         errors: list = []
         for s, d, t, *rest in smb_tasks:
             excl = rest[0] if rest else frozenset()
             h, sh, _ = _parse_smb(s if is_smb(s) else d)
             if (h, sh) in dead_shares:
-                reason = ("NT_STATUS_HOST_UNREACHABLE" if (h, sh) in unreachable_shares else tr("Authentication failed"))
+                if (h, sh) in unreachable_shares:
+                    reason = "NT_STATUS_HOST_UNREACHABLE"
+                elif (h, sh) in missing_shares:
+                    reason = tr("Share not found")
+                else:
+                    reason = tr("Authentication failed")
                 errors.append((s if is_smb(s) else d, reason, t))
             else:
                 alive.append((s, d, t, excl))

@@ -10,7 +10,8 @@ from dataclasses import dataclass
 from functools import partial
 from itertools import groupby
 from pathlib import Path as _Path
-from typing import Callable, Protocol, TYPE_CHECKING
+from collections.abc import Callable
+from typing import Protocol, TYPE_CHECKING
 
 from drive_utils import is_smb
 from state import logger, frozen_safe_env
@@ -40,6 +41,8 @@ def _get_smb_credentials() -> tuple[str, "_SecurePw | None"]:
 
 
 _SMB_STATUS_RE = re.compile(r"NT_STATUS_[A-Z0-9_]+")
+_SMB_PROTO_RE = re.compile(
+    r"protocol negotiation failed|NT_STATUS_INVALID_NETWORK_RESPONSE|NT_STATUS_NOT_SUPPORTED", re.I)
 _SMB_MKDIR_LINE_RE = re.compile(r"making remote directory|mkdir failed on directory|creating remote directory", re.I)
 
 
@@ -302,7 +305,8 @@ class _SmbClient:
         proc, out, err = self._spawn(argv, input_data, timeout, wipe_fn=wipe_fn, cancel=cancel)
 
         failed = proc is None or proc.returncode != 0
-        if failed and not force_relaxed and (cancel is None or not cancel.is_set()) and _is_unreachable(err):
+        if (failed and not force_relaxed and (cancel is None or not cancel.is_set())
+                and (_is_unreachable(err) or _SMB_PROTO_RE.search(err))):
 
             argv2, tmp_dir2, cred_path2 = self._argv_with_creds(relaxed_protocol=True)
             if argv2 is None:
@@ -390,6 +394,9 @@ class _SmbClient:
             if _is_unreachable(err):
                 logger.warning("SMB unreachable //%s/%s: %s", self.host, self.share, err)
                 return "timeout"
+            if "NT_STATUS_BAD_NETWORK_NAME" in err.upper():
+                logger.warning("SMB share not found //%s/%s: %s", self.host, self.share, err)
+                return "share"
             logger.warning("SMB auth failed //%s/%s: %s", self.host, self.share, err)
             return "auth"
         ok, err = _SmbClient(self.host, self.share, "", None, guest=True).run("exit\n", _SMB_TIMEOUT)
@@ -399,6 +406,9 @@ class _SmbClient:
         if _is_unreachable(err):
             logger.warning("SMB unreachable //%s/%s: %s", self.host, self.share, err)
             return "timeout"
+        if "NT_STATUS_BAD_NETWORK_NAME" in err.upper():
+            logger.warning("SMB share not found //%s/%s: %s", self.host, self.share, err)
+            return "share"
         logger.warning("SMB auth failed //%s/%s: %s", self.host, self.share, err)
         return "auth"
 
@@ -450,6 +460,11 @@ class _SmbScanner:
                 tasks.append(partial(self._do_get, host, share, rpath, dst, title, expanded, errors, excludes))
             else:
                 if src in excludes:
+                    continue
+                if not os.path.exists(src):
+                    with self._result_lock:
+                        errors.append((src, tr("Path does not exist — skipping"), title))
+                    self._report(1)
                     continue
                 fn = self._do_put_file if os.path.isfile(src) else self._do_put_dir
                 tasks.append(partial(fn, src, host, share, rpath, title, expanded, excludes))
@@ -520,7 +535,7 @@ class _SmbScanner:
         if kind == "unreachable":
             lerr.append((src_url, "NT_STATUS_HOST_UNREACHABLE", title))
         elif kind == "missing":
-            lerr.append((src_url, "Path does not exist — skipping", title))
+            lerr.append((src_url, tr("Path does not exist — skipping"), title))
         elif kind == "file":
             if not _should_skip(os.path.basename(rpath)) and not _smb_path_excluded(src_url, excludes):
                 lexp.append(_SmbJob(src_url=src_url, dst_path=dst, kind="smb_get", host=host, share=share,
@@ -810,6 +825,8 @@ class _ShareProcessor:
 
             ok, err = self._client.run(build_fn(batch), self._batch_timeout(batch, is_get=is_get),
                                        cancel=self._cancel)
+            if self._cancel.is_set():
+                break
             if ok:
                 for j in batch:
                     src = self._job_src(j, is_get)

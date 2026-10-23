@@ -4740,6 +4740,8 @@ LANGUAGES: dict[str, dict[str, str]] = {
 
 
 LANGUAGES["Deutsch"].update({
+    'Share not found': 'Freigabe nicht gefunden',
+    'Copied to': 'Kopiert nach',
     "'rsync' not found — install it (package 'rsync') to enable SSH backups":
         "'rsync' nicht gefunden — bitte installieren (Paket 'rsync'), um SSH-Backups zu aktivieren",
     'Not a regular file (device, socket or pipe)':
@@ -4789,6 +4791,8 @@ LANGUAGES["Deutsch"].update({
 })
 
 LANGUAGES["Français"].update({
+    'Share not found': 'Partage introuvable',
+    'Copied to': 'Copié vers',
     "'rsync' not found — install it (package 'rsync') to enable SSH backups":
         "'rsync' introuvable — installez-le (paquet 'rsync') pour activer les sauvegardes SSH",
     'Not a regular file (device, socket or pipe)':
@@ -4838,6 +4842,8 @@ LANGUAGES["Français"].update({
 })
 
 LANGUAGES["Español"].update({
+    'Share not found': 'Recurso compartido no encontrado',
+    'Copied to': 'Copiado a',
     "'rsync' not found — install it (package 'rsync') to enable SSH backups":
         "No se encontró 'rsync': instálelo (paquete 'rsync') para habilitar las copias SSH",
     'Not a regular file (device, socket or pipe)':

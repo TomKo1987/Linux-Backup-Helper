@@ -394,7 +394,8 @@ class _SummaryWidget(QWidget):
             if err:     parts.append(f"<span style='{self._s_err}'>✗ {err:,}</span>")
 
             suffix = "&nbsp; ".join(parts) if parts else f"<span style='{self._s_dim}'></span>"
-            _html  = f"<span style='{self._s_title}'>{title}</span><br>{suffix}"
+            safe_title = html.escape(title).replace("&lt;br&gt;", "<br>")
+            _html  = f"<span style='{self._s_title}'>{safe_title}</span><br>{suffix}"
 
             lbl = labels.get(title)
             if lbl is None:
@@ -759,6 +760,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         self.copied = self.skipped = self.errors = self.deleted = 0
         self._done  = self._total = 0
         self._final_elapsed: int | None = None
+        self._finished = False
         self._pending_ok = deque()
         self._pending_sk = deque()
         self._pending_de = deque()
@@ -987,7 +989,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         self.tabs.setTabText(4, tr("✗ Errors ({n:,})", n=self._display_errors))
 
     @staticmethod
-    def _fmt_ok(s, d) -> str: return f"{apply_replacements(s)}\nCopied to  \n{apply_replacements(d)}"
+    def _fmt_ok(s, d) -> str: return f"{apply_replacements(s)}\n{tr('Copied to')} \uf4bb \n{apply_replacements(d)}"
 
     @staticmethod
     def _fmt_sk(p, r) -> str: return f"{apply_replacements(p)} ↷ {r}"
@@ -1025,6 +1027,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
 
     def _on_done(self, c, s, e, d, cancelled) -> None:
         self._tick.stop()
+        self._finished = True
         elapsed = self._final_elapsed = self.timer.elapsed() // 1000
         self._release_lock()
 
@@ -1131,7 +1134,11 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         if self.worker is None:
             super().closeEvent(a0)
             return
-        if self.worker.isRunning():
+        if self._finished:
+            self.worker.wait(5000)
+            self._release_lock()
+            super().closeEvent(a0)
+        elif self.worker.isRunning():
             self.worker.cancel()
             self.cancel_btn.setText(tr("⏹ Cancelling…"))
             self.cancel_btn.setEnabled(False)
