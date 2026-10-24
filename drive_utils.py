@@ -156,9 +156,13 @@ def _execute_drive_op(drive: dict, cmd_key: str, timeout: int) -> tuple[bool, st
         return False, str(e)
 
 
+def _norm_mount_path(path: str) -> str:
+    return path.rstrip("/") or path
+
+
 def is_mounted(opt: dict, mounts: list[tuple[str, str]] | None = None) -> bool:
     name = opt.get("drive_name", "")
-    mount_path = _str(opt.get("mount_path"))
+    mount_path = _norm_mount_path(_str(opt.get("mount_path")))
 
     if not _valid_drive_name(name) and not mount_path:
         return False
@@ -342,6 +346,19 @@ _RSYNC_SKIP_COMPRESS = (
 )
 
 
+@lru_cache(maxsize=1)
+def _rsync_supports_mkpath() -> bool:
+    try:
+        res = subprocess.run(["rsync", "--version"], capture_output=True, text=True,
+                             timeout=5, env=frozen_safe_env())
+    except (OSError, subprocess.SubprocessError):
+        return False
+    m = re.search(r"version\s+(\d+)\.(\d+)\.(\d+)", res.stdout or "")
+    if m is None:
+        return False
+    return tuple(int(x) for x in m.groups()) >= (3, 2, 3)
+
+
 def build_rsync_cmd(src: str, dst: str, *, delete: bool = False, exclude: list[str] | None = None,
                     dry_run: bool = False) -> list[str]:
     info = "progress2,del" if delete else "progress2"
@@ -359,6 +376,8 @@ def build_rsync_cmd(src: str, dst: str, *, delete: bool = False, exclude: list[s
         cmd.append("--delete")
     if dry_run:
         cmd.append("--dry-run")
+    elif _rsync_supports_mkpath():
+        cmd.append("--mkpath")
     for ex in (exclude or []):
         cmd += [f"--exclude={ex}"]
     cmd += ["--", src, dst]
@@ -375,6 +394,7 @@ def build_rsync_list_cmd(spec: str) -> list[str]:
 
 
 def check_drives_to_mount(paths: list[str]) -> list[dict]:
+    paths = [p if (is_smb(p) or is_ssh(p)) else abspath(expanduser(p)) for p in paths]
     mounts = get_mounts()
     needed = []
     for opt in S.mount_options:
@@ -400,8 +420,36 @@ def check_drives_to_mount(paths: list[str]) -> list[dict]:
     return needed
 
 
+def unmounted_drive_for_path(path: str, mounts: "list[tuple[str, str]] | None" = None) -> "str | None":
+    if not path or is_smb(path) or is_ssh(path):
+        return None
+    target = abspath(expanduser(path))
+    if mounts is None:
+        mounts = get_mounts()
+    for opt in S.mount_options:
+        if is_mounted(opt, mounts):
+            continue
+        name = opt.get("drive_name", "")
+        mount_path = _str(opt.get("mount_path"))
+        candidates = [mount_path] if mount_path else (_mount_paths(name) if _valid_drive_name(name) else ())
+        for candidate in candidates:
+            if candidate and not is_smb(candidate) and _is_subpath(abspath(expanduser(candidate)), target):
+                return str(name or mount_path)
+    return None
+
+
+def mount_drives_unattended(paths: list[str]) -> list[str]:
+    failed: list[str] = []
+    for opt in check_drives_to_mount(paths):
+        ok, msg = mount_drive(opt)
+        if not ok:
+            logger.error("Unattended mount failed: %s", msg)
+            failed.append(str(opt.get("drive_name") or opt.get("mount_path") or "?"))
+    return failed
+
+
 def has_managed_mount_path(opt: dict) -> bool:
-    mount_path = _str(opt.get("mount_path"))
+    mount_path = _norm_mount_path(_str(opt.get("mount_path")))
     return bool(mount_path and mount_path not in _mount_paths(opt.get("drive_name", "")))
 
 

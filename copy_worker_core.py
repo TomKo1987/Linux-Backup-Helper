@@ -1,21 +1,30 @@
 import concurrent.futures
+import ctypes
+import errno
 import os
 import re
 import shutil
 import subprocess
 import threading
 import time
+from collections.abc import Iterable
 from functools import lru_cache
 from urllib.parse import urlparse
 
 from drive_utils import is_smb, is_ssh, build_rsync_list_cmd, _SSH_USER_HOST_RE
-from state import logger, frozen_safe_env
+from state import logger, frozen_safe_env, _current_umask
 from themes import register_cache_invalidation_hook as _reg_cache_hook
 from translations import tr
+from translations_backup import register_backup_translations
 from ui_utils import format_size
+
+VERSION_INCOMPLETE_MARK = ".backup-helper-incomplete"
+
+register_backup_translations()
 
 _CHUNK           = 32 * 1024 * 1024
 _IO_BUF          =  8 * 1024 * 1024
+_SMALL_FILE_MAX  =  1 * 1024 * 1024
 _WORKERS         = min(12, max(4, os.cpu_count() or 4))
 _SMB_WORKERS     = 10
 _SMB_TIMEOUT     = 10
@@ -53,6 +62,7 @@ _SKIP_GLOBS: tuple[str, ...] = (
     "recovery.jsonlz4", "recovery.baklz4", "sessionstore-backups",
     "Thumbs.db", ".DS_Store", ".quota", ".user64", ".healthcheck", ".active-update",
     "GPUCache", "ShaderCache", "blob_storage",
+    VERSION_INCOMPLETE_MARK,
 )
 
 
@@ -301,6 +311,144 @@ def _fsync_parent_dir(path: str) -> None:
     _fsync_dir_once(os.path.dirname(path))
 
 
+_UMASK = _current_umask()
+
+_MTIME_UNITS_NS: tuple[int, ...] = (2_000_000_000, 1_000_000_000, 10_000_000, 1_000, 100)
+_MTIME_PROBE_NS = 1_700_000_001_123_456_789
+_MTIME_TOL_UNKNOWN = -1
+_mtime_tol_cache: dict[int, int] = {}
+_mtime_tol_lock = threading.Lock()
+
+
+def _heuristic_mtime_tolerance_ns(dst_ns: int) -> int:
+    for unit, tolerance in ((1_000_000_000, 2_000_000_000), (10_000_000, 10_000_000),
+                            (1_000, 1_000), (100, 100)):
+        if dst_ns % unit == 0:
+            return tolerance
+    return 0
+
+
+def _probe_mtime_tolerance_ns(directory: str) -> int:
+    probe = os.path.join(directory or ".", f".bh-probe.{_PID}.{threading.get_ident()}")
+    try:
+        fd = os.open(probe, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    except OSError:
+        return _MTIME_TOL_UNKNOWN
+    try:
+        os.utime(fd, ns=(_MTIME_PROBE_NS, _MTIME_PROBE_NS))
+        got = os.fstat(fd).st_mtime_ns
+    except OSError:
+        return _MTIME_TOL_UNKNOWN
+    finally:
+        os.close(fd)
+        _silent_unlink(probe)
+    if got == _MTIME_PROBE_NS:
+        return 0
+    for unit in _MTIME_UNITS_NS:
+        if got % unit == 0:
+            return unit
+    return 1_000_000_000
+
+
+def _mtime_tolerance_ns(dst: str, dst_st: "os.stat_result", *, probe: bool = True) -> int | None:
+    dev = dst_st.st_dev
+    with _mtime_tol_lock:
+        tol = _mtime_tol_cache.get(dev)
+    if tol is None and probe:
+        tol = _probe_mtime_tolerance_ns(os.path.dirname(dst))
+        if tol != _MTIME_TOL_UNKNOWN:
+            with _mtime_tol_lock:
+                tol = _mtime_tol_cache.setdefault(dev, tol)
+    if tol is None or tol == _MTIME_TOL_UNKNOWN:
+        return _heuristic_mtime_tolerance_ns(dst_st.st_mtime_ns)
+    return tol
+
+
+_syncfs_fn = None
+
+
+def _get_syncfs():
+    global _syncfs_fn
+    if _syncfs_fn is None:
+        try:
+            fn = ctypes.CDLL(None, use_errno=True).syncfs
+            fn.argtypes = [ctypes.c_int]
+            fn.restype = ctypes.c_int
+            _syncfs_fn = fn
+        except (OSError, AttributeError):
+            _syncfs_fn = False
+    return _syncfs_fn
+
+
+def sync_destinations(paths: "Iterable[str]") -> "list[tuple[str, str]]":
+    failures: list[tuple[str, str]] = []
+    seen_dev: set[int] = set()
+    fallback_needed = False
+    for raw in paths:
+        probe = raw
+        while probe and not os.path.isdir(probe):
+            parent = os.path.dirname(probe)
+            probe = "" if parent == probe else parent
+        if not probe:
+            continue
+        try:
+            fd = os.open(probe, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        except OSError:
+            continue
+        try:
+            dev = os.fstat(fd).st_dev
+            if dev in seen_dev:
+                continue
+            seen_dev.add(dev)
+            fn = _get_syncfs()
+            if not fn:
+                fallback_needed = True
+            elif fn(fd) != 0:
+                err = ctypes.get_errno()
+                if err in (errno.ENOSYS, errno.EINVAL, errno.EBADF, errno.EOPNOTSUPP):
+                    fallback_needed = True
+                else:
+                    failures.append((probe, os.strerror(err)))
+        except OSError:
+            pass
+        finally:
+            os.close(fd)
+    if fallback_needed:
+        try:
+            os.sync()
+        except OSError:
+            pass
+    return failures
+
+
+@lru_cache(maxsize=32)
+def _dev_rotational(dev: int) -> bool:
+    base = f"/sys/dev/block/{os.major(dev)}:{os.minor(dev)}"
+    for rel in ("queue/rotational", "../queue/rotational"):
+        try:
+            with open(f"{base}/{rel}", encoding="ascii") as fh:
+                return fh.read().strip() == "1"
+        except OSError:
+            continue
+    return False
+
+
+def _copy_workers_for(destinations: "Iterable[str]") -> int:
+    for dst in destinations:
+        probe = dst
+        while probe and not os.path.exists(probe):
+            parent = os.path.dirname(probe)
+            probe = "" if parent == probe else parent
+        if not probe:
+            continue
+        try:
+            if _dev_rotational(os.stat(probe).st_dev):
+                return 2
+        except OSError:
+            continue
+    return _WORKERS
+
+
 def _tmp_path(dst: str, suffix: str) -> str:
     parent, base = os.path.split(dst)
     tag = f".{_PID}.{threading.get_ident()}{suffix}"
@@ -359,8 +507,13 @@ def _remember_dir(path: str) -> None:
         _seen_dirs_global.add(path)
 
 
-def _apply_dir_attrs(entries: "list[tuple[str, int, int, int]]") -> None:
-    for path, mode, atime_ns, mtime_ns in sorted(entries, key=lambda e: e[0].count("/"), reverse=True):
+def _apply_dir_attrs(entries: "list[tuple[str, int, int, int, int, int]]") -> None:
+    for path, mode, atime_ns, mtime_ns, uid, gid in sorted(entries, key=lambda e: e[0].count("/"), reverse=True):
+        if _EUID == 0:
+            try:
+                os.chown(path, uid, gid, follow_symlinks=False)
+            except OSError as exc:
+                logger.debug("chown %s failed: %s", path, exc)
         try:
             os.chmod(path, (mode & 0o7777) | 0o700)
         except OSError as exc:

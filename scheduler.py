@@ -93,15 +93,18 @@ def get_next_run_time() -> str:
         pass
     return ""
 
-def _systemd_escape_percent(value: str) -> str:
-    return value.replace("%", "%%")
+def _systemd_quote(value: str) -> str:
+    escaped = (value.replace("\\", "\\\\").replace('"', '\\"')
+               .replace("$", "$$").replace("%", "%%"))
+    return f'"{escaped}"'
+
 
 def _exec_start_prefix() -> str:
-    python_exe = _systemd_escape_percent(sys.executable)
     if getattr(sys, "frozen", False):
-        return f'"{python_exe}"'
-    exe_path = _systemd_escape_percent(str(Path(__file__).resolve().parent / "main.py"))
-    return f'"{python_exe}" "{exe_path}"'
+        return _systemd_quote(sys.executable)
+    script = str(Path(__file__).resolve().parent / "main.py")
+    return f"{_systemd_quote(sys.executable)} {_systemd_quote(script)}"
+
 
 def install_timer(interval_key: str, backup_headers: list[str], *, on_calendar: str = "", only_on_ac: bool = False) -> tuple[bool, str]:
     if interval_key not in _INTERVALS:
@@ -127,12 +130,13 @@ def install_timer(interval_key: str, backup_headers: list[str], *, on_calendar: 
     service = (
         "[Unit]\n"
         "Description=Backup Helper Automatic Backup\n"
+        "Wants=network-online.target\n"
         "After=network-online.target graphical-session.target\n"
         f"{ac_condition}"
         "\n"
         "[Service]\n"
         "Type=oneshot\n"
-        f"ExecStart={exec_prefix} --headless-backup-b64 \"{headers_b64}\"\n"
+        f"ExecStart={exec_prefix} --headless-backup-b64 {_systemd_quote(headers_b64)}\n"
         "Nice=10\n"
         "IOSchedulingClass=idle\n"
     )

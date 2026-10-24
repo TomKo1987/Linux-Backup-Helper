@@ -708,6 +708,7 @@ class _LogWidget(QWidget):
 
 
 class CopyDialog(_StandardKeysMixin, QDialog):
+    active_workers: "set[CopyWorker]" = set()
 
     def __init__(self, parent, tasks, operation: str, *,
                 op_kind: "str | None" = None, headless: bool = False,
@@ -757,6 +758,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
 
         self._operation = operation
         self.worker     = CopyWorker(tasks, prepare=advanced, is_restore=is_restore, interactive=not headless)
+        CopyDialog.active_workers.add(self.worker)
         self.copied = self.skipped = self.errors = self.deleted = 0
         self._done  = self._total = 0
         self._final_elapsed: int | None = None
@@ -1027,6 +1029,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
 
     def _on_done(self, c, s, e, d, cancelled) -> None:
         self._tick.stop()
+        CopyDialog.active_workers.discard(self.worker)
         self._finished = True
         elapsed = self._final_elapsed = self.timer.elapsed() // 1000
         self._release_lock()

@@ -79,6 +79,29 @@ def _make_icon() -> QIcon:
         logger.debug("Icon could not be decoded: %s", e)
         return QIcon()
 
+_TERMINATED = False
+
+
+def _install_signal_handlers(app) -> None:
+    import signal
+    from copy_worker_gui import CopyDialog
+
+    def _handle(_signum, _frame) -> None:
+        global _TERMINATED
+        _TERMINATED = True
+        for worker in list(CopyDialog.active_workers):
+            worker.cancel()
+        for worker in list(CopyDialog.active_workers):
+            worker.wait(15000)
+        app.quit()
+
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, _handle)
+    wake = QTimer(app)
+    wake.timeout.connect(lambda: None)
+    wake.start(200)
+
+
 def _build_backup_tasks(headers: list[str] | None = None) -> list[tuple]:
     tasks = []
     for e in S.entries:
@@ -298,6 +321,13 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
         tasks = _build_backup_tasks([header] if header is not None else None)
         if not tasks:
             QMessageBox.information(None, tr("Quick Backup"), tr("No backup entries found for this group."))
+            return
+        from drive_utils import check_drives_to_mount, mount_required_drives
+        quick_paths = [p for src, dst, *_ in tasks
+                       for p in ([src] if isinstance(src, str) else list(src))
+                       + ([dst] if isinstance(dst, str) else list(dst))]
+        needed = check_drives_to_mount(quick_paths)
+        if needed and not mount_required_drives(needed, None):
             return
         label = header or tr("All groups")
         CopyDialog(None, tasks, f"{tr('Quick Backup')} — {label}",
@@ -529,6 +559,7 @@ def main():
     threading.excepthook = _thread_excepthook
 
     has_profile = startup_load()
+    _install_signal_handlers(app)
 
     if headless_run:
         headers = _parse_headless_headers(args.headless_b64, args.headless_headers)
@@ -544,10 +575,16 @@ def main():
         tasks = _build_backup_tasks(headers)
         exit_code = 0
         if tasks:
+            from drive_utils import mount_drives_unattended
+            mount_drives_unattended([p for src, dst, *_ in tasks
+                                     for p in ([src] if isinstance(src, str) else list(src))
+                                     + ([dst] if isinstance(dst, str) else list(dst))])
             dlg = CopyDialog(None, tasks, tr("Backup (scheduled)"), op_kind="backup",
                              headless=True, advanced=True)
             dlg.exec()
-            if getattr(dlg, "_lock_denied", False):
+            if _TERMINATED:
+                exit_code = 143
+            elif getattr(dlg, "_lock_denied", False):
                 exit_code = 75
             elif getattr(dlg, "_display_errors", 0):
                 exit_code = 1

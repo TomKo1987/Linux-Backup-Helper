@@ -10,14 +10,15 @@ from typing import Callable
 from drive_utils import is_smb, is_ssh, build_rsync_cmd
 from state import apply_replacements, logger
 from copy_worker_core import (
-    _should_skip, _RSYNC_DELETE_RE, _SMB_WORKERS, _run_futures, _run_capture,
+    VERSION_INCOMPLETE_MARK, _should_skip, _RSYNC_DELETE_RE, _SMB_WORKERS, _run_futures, _run_capture,
     _rsync_excludes, _rsync_src_arg, _ssh_join,
 )
 from translations import tr
 
 __all__ = [
-    "DeletedItem", "DeleteError", "AdvancedOptionsResult",
-    "make_versioned_path", "prune_old_versions", "find_extraneous_paths",
+    "DeletedItem", "DeleteError", "AdvancedOptionsResult", "VersionPlan",
+    "make_versioned_path", "begin_version", "finalize_version", "latest_version_path",
+    "resolve_restore_sources", "prune_old_versions", "find_extraneous_paths",
     "delete_paths", "apply_advanced_options", "restore_exclude_paths",
 ]
 
@@ -53,10 +54,19 @@ class DeleteError:
 
 
 @dataclass
+class VersionPlan:
+    base: str
+    path: str
+    keep: int
+    title: str
+
+
+@dataclass
 class AdvancedOptionsResult:
     tasks: list[tuple]
     deleted: list[DeletedItem] = field(default_factory=list)
     errors: list[DeleteError] = field(default_factory=list)
+    version_plans: list[VersionPlan] = field(default_factory=list)
 
 
 def _is_local(path: str) -> bool:
@@ -127,6 +137,10 @@ def _existing_versions(dst_abs: str) -> list[tuple[int, str]]:
     return versions
 
 
+def _is_complete_version(path: str) -> bool:
+    return not os.path.lexists(os.path.join(path, VERSION_INCOMPLETE_MARK))
+
+
 def make_versioned_path(dst_abs: str) -> str:
     versions = _existing_versions(dst_abs)
     n = (versions[-1][0] + 1) if versions else 1
@@ -134,17 +148,111 @@ def make_versioned_path(dst_abs: str) -> str:
     return os.path.join(dst_abs, f"{n:03d} - {ts}")
 
 
+def begin_version(dst_abs: str) -> str:
+    os.makedirs(dst_abs, exist_ok=True)
+    for _ in range(50):
+        path = make_versioned_path(dst_abs)
+        try:
+            os.mkdir(path)
+        except FileExistsError:
+            continue
+        mark = os.path.join(path, VERSION_INCOMPLETE_MARK)
+        try:
+            fd = os.open(mark, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            os.close(fd)
+        except OSError:
+            try:
+                os.rmdir(path)
+            except OSError:
+                pass
+            raise
+        return path
+    raise FileExistsError(dst_abs)
+
+
+def latest_version_path(base: str) -> "str | None":
+    versions = _existing_versions(base)
+    for _, path in reversed(versions):
+        if _is_complete_version(path):
+            return path
+    return None
+
+
+def _version_has_content(path: str) -> bool:
+    try:
+        with os.scandir(path) as it:
+            return any(e.name != VERSION_INCOMPLETE_MARK for e in it)
+    except OSError:
+        return False
+
+
+def finalize_version(plan: VersionPlan, success: bool,
+                     cancel: "threading.Event | None" = None) -> tuple[list[DeletedItem], list[DeleteError]]:
+    mark = os.path.join(plan.path, VERSION_INCOMPLETE_MARK)
+    if not os.path.isdir(plan.path):
+        return [], []
+    if not _version_has_content(plan.path):
+        for remove, target in ((os.unlink, mark), (os.rmdir, plan.path)):
+            try:
+                remove(target)
+            except OSError:
+                pass
+        return [], []
+    if not success:
+        logger.warning("Versioned archive [%s]: %r is incomplete and was kept for review",
+                       plan.title, apply_replacements(plan.path))
+        return [], []
+    try:
+        os.unlink(mark)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        logger.warning("Versioned archive [%s]: could not clear marker in %r: %s",
+                       plan.title, apply_replacements(plan.path), exc)
+        return [], []
+    return prune_old_versions(plan.base, plan.keep, title=plan.title, cancel=cancel)
+
+
+def resolve_restore_sources(src_list: list[str], excl: dict) -> tuple[list[str], dict]:
+    new_src: list[str] = []
+    new_excl: dict = dict(excl)
+    for s in src_list:
+        s_str = str(s)
+        if not _is_local(s_str):
+            new_src.append(s_str)
+            continue
+        base = os.path.abspath(os.path.expanduser(s_str))
+        versions = _existing_versions(base)
+        if not versions:
+            new_src.append(s_str)
+            continue
+        latest = latest_version_path(base) or versions[-1][1]
+        logger.info("Versioned archive: restoring %r from %r",
+                    apply_replacements(base), apply_replacements(latest))
+        new_src.append(latest)
+        names = excl.get(_exclude_key(s_str)) or excl.get(s_str) or excl.get(base) or []
+        if names:
+            new_excl[_exclude_key(latest)] = list(names)
+    return new_src, new_excl
+
+
 def prune_old_versions(dst_abs: str, keep: int, title: str = "",
                        cancel: "threading.Event | None" = None) -> tuple[list[DeletedItem], list[DeleteError]]:
-    if keep < 0:
+    if keep <= 0:
         return [], []
     versions = _existing_versions(dst_abs)
-    overflow = len(versions) - keep
-    if overflow <= 0:
+    complete = [v for v in versions if _is_complete_version(v[1])]
+    if not complete:
+        return [], []
+    newest_complete = complete[-1][0]
+    doomed = [v for v in complete[:max(len(complete) - keep, 0)]]
+    doomed += [v for v in versions if not _is_complete_version(v[1]) and v[0] < newest_complete]
+    doomed.sort(key=lambda v: v[0])
+    if not doomed:
         return [], []
     deleted: list[DeletedItem] = []
     errors: list[DeleteError] = []
-    for _, path in versions[:overflow]:
+    for _, path in doomed:
         if _is_cancelled(cancel):
             break
         try:
@@ -363,6 +471,7 @@ def apply_advanced_options(tasks: list[tuple], *, confirm: "ConfirmFn | None" = 
     result = []
     all_deleted: list[DeletedItem] = []
     all_errors: list[DeleteError] = []
+    version_plans: list[VersionPlan] = []
 
     for src_list, dst_list, title, excl, pre_hooks, post_hooks, details in tasks:
         if _is_cancelled(cancel):
@@ -373,9 +482,8 @@ def apply_advanced_options(tasks: list[tuple], *, confirm: "ConfirmFn | None" = 
         versioned = bool(details.get("versioned_archive")) and not is_restore
         mirror = bool(details.get("mirror_delete")) and not versioned and not is_restore
         if is_restore and details.get("versioned_archive"):
-            logger.info(
-                "Versioned archive [%s]: skipped during Restore (only applies to the "
-                "backup destination) — restoring directly instead", title)
+            src_list, excl = resolve_restore_sources(
+                [str(x) for x in src_list], excl if isinstance(excl, dict) else {})
         if is_restore and details.get("mirror_delete") and not details.get("versioned_archive"):
             logger.info(
                 "Mirror delete [%s]: skipped during Restore (only applies to the "
@@ -387,6 +495,7 @@ def apply_advanced_options(tasks: list[tuple], *, confirm: "ConfirmFn | None" = 
             max_versions = 0
 
         eff_dst = list(dst_list)
+        dropped: set[int] = set()
         mirror_remote = False
         ssh_mirror_pairs: list[tuple[str, str]] = []
 
@@ -408,17 +517,18 @@ def apply_advanced_options(tasks: list[tuple], *, confirm: "ConfirmFn | None" = 
                 if d_local:
                     d_abs = os.path.abspath(os.path.expanduser(d_str))
                     try:
-                        os.makedirs(d_abs, exist_ok=True)
-                        if max_versions > 0:
-                            pruned, prune_errs = prune_old_versions(d_abs, max_versions - 1, title=title,
-                                                                    cancel=cancel)
-                            all_deleted.extend(pruned)
-                            all_errors.extend(prune_errs)
-                        eff_dst[i] = make_versioned_path(d_abs)
+                        new_path = begin_version(d_abs)
+                        eff_dst[i] = new_path
+                        version_plans.append(VersionPlan(base=d_abs, path=new_path,
+                                                         keep=max_versions, title=title))
                     except OSError as exc:
                         logger.warning(
-                            "Versioned archive [%s]: could not prepare %r — keeping original destination (%s)",
+                            "Versioned archive [%s]: could not prepare %r — destination skipped "
+                            "so existing backups are never overwritten (%s)",
                             title, apply_replacements(d_abs), exc)
+                        dropped.add(i)
+                        all_errors.append(DeleteError(path=apply_replacements(d_abs), title=title,
+                                                      reason=str(exc)))
                 else:
                     logger.info(
                         "Versioned archive [%s]: destination %r is remote — skipped (local only)",
@@ -474,6 +584,13 @@ def apply_advanced_options(tasks: list[tuple], *, confirm: "ConfirmFn | None" = 
             mirror_remote = _resolve_ssh_mirror_delete(
                 ssh_mirror_pairs, excl, title, confirm, confirm_del, all_errors, cancel)
 
+        if dropped:
+            src_list = [x for j, x in enumerate(src_list) if j not in dropped]
+            eff_dst = [x for j, x in enumerate(eff_dst) if j not in dropped]
+            if not src_list:
+                continue
+
         result.append((src_list, eff_dst, title, excl, pre_hooks, post_hooks, mirror_remote))
 
-    return AdvancedOptionsResult(tasks=result, deleted=all_deleted, errors=all_errors)
+    return AdvancedOptionsResult(tasks=result, deleted=all_deleted, errors=all_errors,
+                                 version_plans=version_plans)

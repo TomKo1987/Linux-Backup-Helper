@@ -14,8 +14,10 @@ from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from advanced_copy import AdvancedOptionsResult, DeleteError, apply_advanced_options
-from drive_utils import is_smb, is_ssh, build_rsync_cmd
+from advanced_copy import (
+    AdvancedOptionsResult, DeleteError, VersionPlan, apply_advanced_options, finalize_version,
+)
+from drive_utils import is_smb, is_ssh, build_rsync_cmd, get_mounts, unmounted_drive_for_path
 from pre_post_hooks import run_hooks as _run_hooks
 from state import logger, frozen_safe_env
 from translations import tr
@@ -23,9 +25,10 @@ from translations import tr
 from copy_worker_core import (
     _CHUNK, _IO_BUF, _WORKERS, _FLUSH_THRESH, _FLUSH_INTERVAL, _SCAN_EMIT_SECS,
     _SCAN_PIPE_BATCH, _LOCAL_BATCH, _PIPE_MAXSIZE, _ENTRY_EMIT_SECS,
-    _SMB_WORKERS, _EUID, _O_NOATIME, _TIME_CHECK_EVERY,
+    _SMB_WORKERS, _EUID, _O_NOATIME, _TIME_CHECK_EVERY, _SMALL_FILE_MAX, _UMASK,
+    _mtime_tolerance_ns, sync_destinations,
     _smb_procs, _smb_procs_lock, _RSYNC_DELETE_RE, _RSYNC_ERROR_TAIL,
-    _scale_params, _scan_dir_entries, _check_destination_space,
+    _scale_params, _scan_dir_entries, _check_destination_space, _copy_workers_for,
     _ensure_dir, _make_new_dir, _apply_dir_attrs, _fsync_parent_dir, _tmp_path, _reset_dir_caches,
     _parse_smb, _run_futures, _silent_unlink,
     _ssh_join, _rsync_excludes, _rsync_src_arg, _ssh_dir_is_empty,
@@ -76,30 +79,16 @@ def _do_copy(entry, cancel: threading.Event, ok_l: list, sk_l: list, er_l: list,
         if title: _bump_count(tc, title, 2)
 
 
-_MTIME_GRANULARITY: tuple[tuple[int, int], ...] = (
-    (1_000_000_000, 2_000_000_000),
-    (10_000_000, 10_000_000),
-    (1_000, 1_000),
-    (100, 100),
-)
-
-
-def _mtime_tolerance_ns(dst_ns: int) -> int:
-    for unit, tolerance in _MTIME_GRANULARITY:
-        if dst_ns % unit == 0:
-            return tolerance
-    return 0
-
-
 def _is_up_to_date_local(dst: str, src_st: "os.stat_result",
-                          dst_st: "os.stat_result | None" = None) -> bool:
+                          dst_st: "os.stat_result | None" = None, *, probe: bool = True) -> bool:
     try:
         d = dst_st if dst_st is not None else os.lstat(dst)
     except OSError:
         return False
     if not stat.S_ISREG(d.st_mode) or d.st_size != src_st.st_size:
         return False
-    return abs(d.st_mtime_ns - src_st.st_mtime_ns) <= _mtime_tolerance_ns(d.st_mtime_ns)
+    diff = abs(d.st_mtime_ns - src_st.st_mtime_ns)
+    return diff == 0 or diff <= _mtime_tolerance_ns(dst, d, probe=probe)
 
 
 def _is_symlink_up_to_date(dst: str, target: str) -> bool:
@@ -155,6 +144,12 @@ def _copy_symlink(src: str, dst: str) -> tuple:
     try:
         _silent_unlink(tmp)
         os.symlink(target, tmp)
+        if _EUID == 0:
+            try:
+                link_st = os.lstat(src)
+                os.lchown(tmp, link_st.st_uid, link_st.st_gid)
+            except OSError as exc:
+                logger.debug("lchown %s failed: %s", tmp, exc)
         os.replace(tmp, dst)
         _fsync_parent_dir(dst)
         return "ok", dst, 0
@@ -166,6 +161,7 @@ def _copy_symlink(src: str, dst: str) -> tuple:
 
 _HAS_COPY_FILE_RANGE = hasattr(os, "copy_file_range")
 _HAS_SENDFILE = hasattr(os, "sendfile")
+_HAS_XATTR = hasattr(os, "listxattr") and hasattr(os, "setxattr") and hasattr(os, "getxattr")
 
 
 _CFR_FALLBACK_ERRNOS = frozenset({
@@ -250,6 +246,54 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> "tupl
     return total - rem, last_err
 
 
+_SPARSE_SLACK = 64 * 1024
+_HAS_SEEK_DATA = hasattr(os, "SEEK_DATA") and hasattr(os, "SEEK_HOLE")
+
+
+def _is_sparse(st: "os.stat_result") -> bool:
+    return (_HAS_SEEK_DATA and _HAS_COPY_FILE_RANGE and st.st_size > _SPARSE_SLACK
+            and st.st_blocks * 512 + _SPARSE_SLACK < st.st_size)
+
+
+def _copy_extents(rfd: int, wfd: int, size: int, cancel: threading.Event) -> None:
+    pos = 0
+    while pos < size:
+        try:
+            start = os.lseek(rfd, pos, os.SEEK_DATA)
+        except OSError as exc:
+            if exc.errno == errno.ENXIO:
+                break
+            raise
+        end = min(os.lseek(rfd, start, os.SEEK_HOLE), size)
+        while start < end:
+            if cancel.is_set():
+                raise InterruptedError
+            n = os.copy_file_range(rfd, wfd, min(end - start, _CHUNK), start, start)
+            if n == 0:
+                raise OSError(errno.EINVAL, "source shrank during copy")
+            start += n
+        pos = end
+    os.ftruncate(wfd, size)
+
+
+def _copy_sparse_or_dense(rfd: int, wfd: int, size: int, cancel: threading.Event) -> "tuple[int, OSError | None]":
+    try:
+        _copy_extents(rfd, wfd, size, cancel)
+        return size, None
+    except InterruptedError:
+        raise
+    except OSError as exc:
+        logger.debug("sparse copy not possible, copying densely: %s", exc)
+    try:
+        os.ftruncate(wfd, 0)
+        os.ftruncate(wfd, size)
+        os.lseek(rfd, 0, os.SEEK_SET)
+        os.lseek(wfd, 0, os.SEEK_SET)
+    except OSError:
+        pass
+    return _copy_loop(rfd, wfd, size, cancel)
+
+
 _FATAL_IO_ERRNOS = frozenset({errno.ENOSPC, errno.EDQUOT, errno.EIO, errno.EROFS})
 _FSYNC_UNSUPPORTED_ERRNOS = frozenset({errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP, errno.ENOSYS})
 _DROP_CACHE_MIN = 64 * 1024 * 1024
@@ -257,12 +301,26 @@ _DROP_CACHE_MIN = 64 * 1024 * 1024
 
 def _fsync_data(fd: int, path: str) -> None:
     try:
-        os.fsync(fd)
+        os.fdatasync(fd)
     except OSError as exc:
         if exc.errno in _FSYNC_UNSUPPORTED_ERRNOS:
             logger.debug("fsync not supported for %s: %s", path, exc)
             return
         raise
+
+
+def _copy_xattrs(rfd: int, wfd: int) -> None:
+    if not _HAS_XATTR:
+        return
+    try:
+        names = os.listxattr(rfd)
+    except OSError:
+        return
+    for name in names:
+        try:
+            os.setxattr(wfd, name, os.getxattr(rfd, name))
+        except OSError as exc:
+            logger.debug("xattr %s not copied: %s", name, exc)
 
 
 def _close_quiet(fd: "int | None") -> None:
@@ -331,23 +389,38 @@ def _copy_file(src, dst, cancel, cached_st=None):
             _silent_unlink(tmp)
             wfd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, st.st_mode & 0o777)
 
-            try:
-                os.fchmod(wfd, st.st_mode & 0o777)
-            except OSError as e:
-                logger.debug("Could not fchmod %s: %s", tmp, e)
+            if _EUID == 0:
+                try:
+                    os.fchown(wfd, st.st_uid, st.st_gid)
+                except OSError as e:
+                    logger.debug("Could not fchown %s: %s", tmp, e)
+                perm = st.st_mode & 0o7777
+                need_chmod = True
+            else:
+                perm = st.st_mode & 0o777
+                need_chmod = bool(perm & _UMASK)
+            if need_chmod:
+                try:
+                    os.fchmod(wfd, perm)
+                except OSError as e:
+                    logger.debug("Could not fchmod %s: %s", tmp, e)
 
             if st.st_size > 0:
-                try:
-                    os.ftruncate(wfd, st.st_size)
-                except OSError:
-                    pass
+                if st.st_size >= _SMALL_FILE_MAX:
+                    try:
+                        os.ftruncate(wfd, st.st_size)
+                    except OSError:
+                        pass
                 try:
                     os.posix_fadvise(rfd, 0, st.st_size, os.POSIX_FADV_SEQUENTIAL)
                     os.posix_fadvise(wfd, 0, st.st_size, os.POSIX_FADV_SEQUENTIAL)
                 except OSError:
                     pass
 
-            copied, copy_err = _copy_loop(rfd, wfd, st.st_size, cancel)
+            if _is_sparse(st):
+                copied, copy_err = _copy_sparse_or_dense(rfd, wfd, st.st_size, cancel)
+            else:
+                copied, copy_err = _copy_loop(rfd, wfd, st.st_size, cancel)
             if copied < st.st_size:
                 if copy_err is not None and copy_err.errno in _FATAL_IO_ERRNOS:
                     raise copy_err
@@ -356,7 +429,15 @@ def _copy_file(src, dst, cancel, cached_st=None):
                     f"Incomplete copy: {copied}/{st.st_size} bytes written{reason}"
                 )
 
-            _fsync_data(wfd, tmp)
+            _copy_xattrs(rfd, wfd)
+
+            try:
+                os.utime(wfd, ns=(st.st_atime_ns, st.st_mtime_ns))
+            except OSError as e:
+                logger.debug("Could not preserve timestamps for %s: %s", tmp, e)
+
+            if copied >= _SMALL_FILE_MAX:
+                _fsync_data(wfd, tmp)
             if copied >= _DROP_CACHE_MIN:
                 try:
                     os.posix_fadvise(rfd, 0, 0, os.POSIX_FADV_DONTNEED)
@@ -366,11 +447,6 @@ def _copy_file(src, dst, cancel, cached_st=None):
 
             closing_fd, wfd = wfd, None
             os.close(closing_fd)
-
-            try:
-                os.utime(tmp, ns=(st.st_atime_ns, st.st_mtime_ns))
-            except OSError as e:
-                logger.debug("Could not preserve timestamps for %s: %s", tmp, e)
 
             os.replace(tmp, dst)
             success = True
@@ -395,6 +471,12 @@ def _copy_file(src, dst, cancel, cached_st=None):
             if exc.errno == errno.EROFS:
                 logger.error("copy %s → %s: destination is read-only", src, dst)
                 return "error", tr("Destination filesystem is read-only"), 0
+            if exc.errno == errno.EACCES:
+                logger.error("copy %s → %s: permission denied", src, dst)
+                return "error", tr("Permission denied — file not readable"), 0
+            if exc.errno == errno.ENOENT and not os.path.lexists(src):
+                logger.warning("copy %s: source vanished during backup", src)
+                return "skip", tr("Source file vanished during backup"), 0
             if exc.errno == errno.EIO:
                 logger.error("copy %s → %s: I/O error", src, dst)
                 return "error", tr("I/O error — check the source or destination device"), 0
@@ -458,6 +540,11 @@ class _EntryTracker:
 
     def emit_final(self) -> None:
         self.emit_deltas(force=True)
+
+    def error_count(self, title: str) -> int:
+        with self._lock:
+            c = self._counts.get(title)
+            return c[2] if c else 0
 
 
 class _Flusher:
@@ -588,6 +675,8 @@ class CopyWorker(QThread):
         self._post_fired_titles: set[str] = set()
         self._started_titles: set[str] = set()
         self._pre_hooks_done = False
+        self._version_plans: list[VersionPlan] = []
+        self._hook_failures: list[str] = []
         if not prepare:
             self._configure(tasks)
 
@@ -676,6 +765,41 @@ class CopyWorker(QThread):
                 result.append((s_norm, d_norm, title, exc_set))
         return result
 
+    @staticmethod
+    def _guard_unmounted(tasks: list) -> "tuple[list, list[tuple[str, str, str]]]":
+        kept: list = []
+        errors: list[tuple[str, str, str]] = []
+        mounts = None
+        for t in tasks:
+            if not isinstance(t, (list, tuple)) or len(t) < 2:
+                kept.append(t)
+                continue
+            srcs = [t[0]] if isinstance(t[0], str) else list(t[0])
+            dsts = [t[1]] if isinstance(t[1], str) else list(t[1])
+            title = str(t[2]) if len(t) > 2 else ""
+            if len(srcs) != len(dsts):
+                kept.append(t)
+                continue
+            if mounts is None:
+                mounts = get_mounts(max_age=0.0)
+            ok_s: list = []
+            ok_d: list = []
+            for s_, d_ in zip(srcs, dsts, strict=True):
+                drive = unmounted_drive_for_path(str(d_), mounts) if d_ else None
+                if drive:
+                    errors.append((str(d_), tr("Destination drive '{drive}' is not mounted — entry skipped",
+                                               drive=drive), title))
+                    continue
+                ok_s.append(s_)
+                ok_d.append(d_)
+            if not ok_s:
+                continue
+            if len(ok_s) == len(srcs):
+                kept.append(t)
+                continue
+            kept.append((ok_s, ok_d, *t[2:]))
+        return kept, errors
+
     def cancel(self) -> None:
         self._cancel.set()
         with _smb_procs_lock:
@@ -707,6 +831,7 @@ class CopyWorker(QThread):
                     self._pre_fired_titles.add(_t)
                     if not self._fire_hooks(_t, "pre", _pre, abort=True):
                         skip_titles.add(_t)
+                        self._hook_failures.append(_t)
         return skip_titles
 
     def _run_post_hooks(self, tasks: list) -> None:
@@ -736,6 +861,7 @@ class CopyWorker(QThread):
                 return
             self._run_impl()
         finally:
+            self._finalize_versions(None, None)
             self._run_pending_post_hooks()
 
     def _ask_confirm(self, title: str, paths: list[str]) -> bool:
@@ -754,6 +880,7 @@ class CopyWorker(QThread):
             self._pre_hooks_done = True
             if skip_titles:
                 raw = [t for t in raw if (str(t[2]) if len(t) > 2 else "") not in skip_titles]
+            raw, guard_errors = self._guard_unmounted(raw)
         except Exception as exc:
             logger.error("Pre-hooks failed: %s", exc, exc_info=True)
             self.prepared.emit([], [DeleteError(path=tr("Preparing…"), title="", reason=str(exc))])
@@ -774,14 +901,50 @@ class CopyWorker(QThread):
             self.prepared.emit([], [DeleteError(path=tr("Preparing…"), title="", reason=str(exc))])
             self.finished_work.emit(0, 0, 0, 0, False)
             return False
-        self.prepared.emit(result.deleted, result.errors)
+        self._version_plans = list(result.version_plans)
+        hook_errors = [DeleteError(path=t, title=t, reason=tr("Pre-hook failed — entry skipped"))
+                       for t in self._hook_failures]
+        hook_errors += [DeleteError(path=p, title=t, reason=m) for p, m, t in guard_errors]
+        self._hook_failures.clear()
+        self.prepared.emit(result.deleted, hook_errors + list(result.errors))
         if self._cancel.is_set():
+            self._finalize_versions(None, None)
             self.finished_work.emit(0, 0, 0, 0, True)
             return False
         hooks = self._hooks
         self._configure(result.tasks)
         self._hooks = hooks
         return True
+
+    def _finalize_versions(self, flusher: "_Flusher | None", tracker: "_EntryTracker | None") -> None:
+        plans, self._version_plans = self._version_plans, []
+        if not plans:
+            return
+        cancelled = self._cancel.is_set()
+        removed: list = []
+        for plan in plans:
+            if cancelled or tracker is None:
+                ok = False
+            elif plan.title:
+                ok = tracker.error_count(plan.title) == 0
+            else:
+                ok = flusher is not None and flusher.errors == 0
+            deleted, errors = finalize_version(plan, ok)
+            removed.extend((d.path, d.reason, d.size) for d in deleted)
+            for err in errors:
+                logger.warning("Versioned archive [%s]: %s: %s", plan.title, err.path, err.reason)
+        if removed and flusher is not None:
+            flusher.push(de=removed, force=True)
+
+    def _sync_local_destinations(self, flusher: "_Flusher") -> None:
+        dests = sorted({d for _s, d, _t, _x in self.tasks if not is_smb(d) and not is_ssh(d)})
+        if not dests:
+            return
+        self.scan_progress.emit(tr("Writing data to disk…"), 100)
+        for path, err in sync_destinations(dests):
+            logger.error("syncfs %s: %s", path, err)
+            flusher.push(er=[(path, tr("Could not flush data to the destination device: {err}", err=err), 0)],
+                         force=True)
 
     def _run_impl(self) -> None:
         pw: "_SecurePw | None" = None
@@ -821,6 +984,10 @@ class CopyWorker(QThread):
                 all_tasks   = local_tasks + ssh_tasks + smb_tasks
 
             self._started_titles = {t for _s, _d, t, _x in all_tasks if t}
+
+            for failed_title in self._hook_failures:
+                flusher.push(er=[(failed_title, tr("Pre-hook failed — entry skipped"), 0)], force=True)
+            self._hook_failures.clear()
 
             if not all_tasks:
                 self.scan_finished.emit(0)
@@ -927,6 +1094,12 @@ class CopyWorker(QThread):
                 _apply_total(total)
                 self.scan_finished.emit(total)
 
+            flusher.flush()
+            tracker.emit_final()
+            if self._version_plans:
+                self._sync_local_destinations(flusher)
+            self._finalize_versions(flusher, tracker)
+            self._sync_local_destinations(flusher)
             self._run_post_hooks(all_tasks)
             flusher.flush()
             tracker.emit_final()
@@ -937,6 +1110,9 @@ class CopyWorker(QThread):
             try:
                 flusher.flush()
                 tracker.emit_final()
+                self._finalize_versions(flusher, tracker)
+                self._sync_local_destinations(flusher)
+                flusher.flush()
             except Exception as e:
                 logger.debug("Error during fallback cleanup: %s", e)
             self.finished_work.emit(flusher.copied, flusher.skipped, flusher.errors,
@@ -1198,8 +1374,16 @@ class CopyWorker(QThread):
 
         missing_entries: list = []
         missing_counts: dict = {}
+        guard_errors: list[tuple[str, str, str]] = []
+        mounts = get_mounts(max_age=0.0)
         for src, dst, title, *rest in tasks:
             excludes = rest[0] if rest else frozenset()
+            drive = unmounted_drive_for_path(dst, mounts)
+            if drive:
+                guard_errors.append((dst, tr("Destination drive '{drive}' is not mounted — entry skipped",
+                                             drive=drive), title))
+                missing[0] += 1
+                continue
             if not os.path.exists(src):
                 missing_entries.append((src, _not_found_reason(title), 0))
                 if title:
@@ -1211,6 +1395,8 @@ class CopyWorker(QThread):
         if missing_entries:
             flusher.push(sk=missing_entries)
             tracker.batch_update(missing_counts)
+        if guard_errors:
+            _push_errors(flusher, tracker, guard_errors)
 
         with pend_lock:
             if pending[0] == 0:
@@ -1262,6 +1448,8 @@ class CopyWorker(QThread):
                     local_n += 1
                 except OSError as exc:
                     logger.warning("scan %s: %s", _src, exc)
+                    _push_errors(flusher, tracker, [(_src, str(exc), _title)])
+                    local_n += 1
                 finally:
                     try:
                         emit_cur = -1
@@ -1364,9 +1552,10 @@ class CopyWorker(QThread):
                 if on_scan_done is not None:
                     on_scan_done()
 
-        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1 + _WORKERS)
+        n_copy = _copy_workers_for(t[1] for t in tasks)
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1 + n_copy)
         try:
-            all_futs = [pool.submit(_run_scan)] + [pool.submit(_copy_worker) for _ in range(_WORKERS)]
+            all_futs = [pool.submit(_run_scan)] + [pool.submit(_copy_worker) for _ in range(n_copy)]
             _run_futures(all_futs, cancel, "pipeline worker")
         finally:
             pool.shutdown(wait=True, cancel_futures=False)
@@ -1384,7 +1573,7 @@ class CopyWorker(QThread):
         created = _make_new_dir(dst)
         if created and dir_st is not None and stat.S_ISDIR(dir_st.st_mode):
             with lock:
-                attrs.append((dst, dir_st.st_mode, dir_st.st_atime_ns, dir_st.st_mtime_ns))
+                attrs.append((dst, dir_st.st_mode, dir_st.st_atime_ns, dir_st.st_mtime_ns, dir_st.st_uid, dir_st.st_gid))
         return None if created is None else True
 
     def _probe_shares(self, smb_tasks, user, pw) -> tuple[set, set, bool, set]:

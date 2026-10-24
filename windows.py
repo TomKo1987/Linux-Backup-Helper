@@ -315,6 +315,13 @@ class _CopyMixin:
         if not mount_required_drives(drives_to_mount, self):
             return
 
+        is_restore = bool(getattr(self, "_is_restore", False))
+        if is_restore and ask_yes_no(
+                self, tr("Restore"),
+                tr("Restore selected entries? Existing files with the same name will be overwritten."),
+                default_yes=False, icon=QMessageBox.Icon.Warning) != QMessageBox.StandardButton.Yes:
+            return
+
         dlg_copy = CopyDialog(self, selected, self._op_label,  # type: ignore[attr-defined]
                               op_kind="restore" if self._is_restore else "backup",  # type: ignore[attr-defined]
                               advanced=True, is_restore=self._is_restore)  # type: ignore[attr-defined]

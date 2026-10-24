@@ -211,7 +211,7 @@ class _DryRunWorker(QThread):
             to_copy.append((rel_name, "new"))
             return
 
-        if _is_up_to_date_local(dst_file_str, src_stat, dst_st=dst_st):
+        if _is_up_to_date_local(dst_file_str, src_stat, dst_st=dst_st, probe=False):
             to_skip.append(rel_name)
         else:
             to_copy.append((rel_name, "modified"))
@@ -255,7 +255,7 @@ class _DryRunWorker(QThread):
             to_copy.append((rel_name, "new"))
             return
 
-        if _is_up_to_date_local(str(dst_file), src_stat, dst_st=dst_st):
+        if _is_up_to_date_local(str(dst_file), src_stat, dst_st=dst_st, probe=False):
             to_skip.append(rel_name)
         else:
             to_copy.append((rel_name, "modified"))
@@ -832,7 +832,7 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         self._tabs.setCurrentIndex(1)
 
     def _start(self) -> None:
-        from advanced_copy import restore_exclude_paths
+        from advanced_copy import restore_exclude_paths, resolve_restore_sources
 
         tasks: list[tuple[list[str], list[str], str, dict]] = []
         is_restore = self._mode == "restore"
@@ -849,7 +849,11 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
                 dst = [dst]
             if src and dst:
                 if is_restore:
-                    tasks.append((dst, src, e.get("title", "?"), restore_exclude_paths(e)))
+                    r_src: list[str] = [str(x) for x in dst]
+                    r_excl: dict = restore_exclude_paths(e)
+                    if details.get("versioned_archive"):
+                        r_src, r_excl = resolve_restore_sources(r_src, r_excl)
+                    tasks.append((r_src, src, e.get("title", "?"), r_excl))
                 else:
                     tasks.append((src, dst, e.get("title", "?"), details.get("exclude_paths", {})))
 

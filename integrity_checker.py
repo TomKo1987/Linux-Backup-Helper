@@ -15,6 +15,7 @@ from themes import current_theme, font_sz
 from translations import tr
 from ui_utils import _StandardKeysMixin, format_size, build_dialog_shell, clear_layout, size_to_screen, stop_thread
 from drive_utils import is_smb, is_ssh
+from advanced_copy import latest_version_path
 from copy_worker_core import _SKIP_RE
 
 __all__ = ["IntegrityCheckerDialog"]
@@ -104,8 +105,14 @@ class _CheckWorker(QThread):
                     )
                     continue
 
+                check_dst = dst_raw
+                if entry.get("details", {}).get("versioned_archive"):
+                    latest = latest_version_path(os.path.abspath(os.path.expanduser(os.path.expandvars(dst_raw))))
+                    if latest:
+                        check_dst = latest
+
                 src_info = _quick_scan(src_raw)
-                dst_info = _quick_scan(dst_raw)
+                dst_info = _quick_scan(check_dst)
 
                 if src_info is None:
                     issues.append(tr("Source missing: {path}", path=src_raw))
