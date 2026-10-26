@@ -30,7 +30,7 @@ from copy_worker_core import (
     _smb_procs, _smb_procs_lock, _RSYNC_DELETE_RE, _RSYNC_ERROR_TAIL,
     _scale_params, _scan_dir_entries, _check_destination_space, _copy_workers_for,
     _ensure_dir, _make_new_dir, _apply_dir_attrs, _fsync_parent_dir, _tmp_path, _reset_dir_caches,
-    _parse_smb, _run_futures, _silent_unlink,
+    _parse_smb, _run_futures, _silent_unlink, _hardlink_lookup, _hardlink_register,
     _ssh_join, _rsync_excludes, _rsync_src_arg, _ssh_dir_is_empty,
 )
 from copy_worker_smb import (
@@ -336,6 +336,20 @@ class _IncompleteCopyError(OSError):
     pass
 
 
+def _link_existing(first: str, dst: str, tmp: str, size: int) -> bool:
+    try:
+        first_st = os.lstat(first)
+        if not stat.S_ISREG(first_st.st_mode) or first_st.st_size != size:
+            return False
+        _silent_unlink(tmp)
+        os.link(first, tmp)
+        os.replace(tmp, dst)
+    except OSError:
+        _silent_unlink(tmp)
+        return False
+    return True
+
+
 def _copy_file(src, dst, cancel, cached_st=None):
     if cached_st is True:
         return _copy_symlink(src, dst)
@@ -346,6 +360,8 @@ def _copy_file(src, dst, cancel, cached_st=None):
         tmp = _tmp_path(dst, ".part")
         rfd = wfd = None
         success = False
+        dst_side = False
+        link_key = None
         try:
             if cancel.is_set():
                 return "skip", tr("Cancelled"), 0
@@ -372,6 +388,13 @@ def _copy_file(src, dst, cancel, cached_st=None):
                     and not _clear_conflicting_dir(dst)):
                 return "error", tr("Destination is a non-empty directory and could not be replaced"), 0
 
+            if st.st_nlink > 1:
+                link_key = (st.st_dev, st.st_ino)
+                first = _hardlink_lookup(link_key)
+                if first and first != dst and _link_existing(first, dst, tmp, st.st_size):
+                    _fsync_parent_dir(dst)
+                    return "ok", dst, st.st_size
+
             _may_use_noatime = _EUID == 0 or st.st_uid == _EUID
             try:
                 rfd = os.open(src, os.O_RDONLY | (_O_NOATIME if _may_use_noatime else 0))
@@ -386,8 +409,13 @@ def _copy_file(src, dst, cancel, cached_st=None):
                     and (opened_st.st_size != st.st_size or opened_st.st_mtime_ns != st.st_mtime_ns)):
                 st = opened_st
 
-            _silent_unlink(tmp)
-            wfd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, st.st_mode & 0o777)
+            dst_side = True
+            tmp_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+            try:
+                wfd = os.open(tmp, tmp_flags, st.st_mode & 0o777)
+            except FileExistsError:
+                _silent_unlink(tmp)
+                wfd = os.open(tmp, tmp_flags, st.st_mode & 0o777)
 
             if _EUID == 0:
                 try:
@@ -405,12 +433,11 @@ def _copy_file(src, dst, cancel, cached_st=None):
                 except OSError as e:
                     logger.debug("Could not fchmod %s: %s", tmp, e)
 
-            if st.st_size > 0:
-                if st.st_size >= _SMALL_FILE_MAX:
-                    try:
-                        os.ftruncate(wfd, st.st_size)
-                    except OSError:
-                        pass
+            if st.st_size >= _SMALL_FILE_MAX:
+                try:
+                    os.ftruncate(wfd, st.st_size)
+                except OSError:
+                    pass
                 try:
                     os.posix_fadvise(rfd, 0, st.st_size, os.POSIX_FADV_SEQUENTIAL)
                     os.posix_fadvise(wfd, 0, st.st_size, os.POSIX_FADV_SEQUENTIAL)
@@ -450,6 +477,8 @@ def _copy_file(src, dst, cancel, cached_st=None):
 
             os.replace(tmp, dst)
             success = True
+            if link_key is not None:
+                _hardlink_register(link_key, dst)
             _fsync_parent_dir(dst)
             return "ok", dst, copied
 
@@ -472,7 +501,9 @@ def _copy_file(src, dst, cancel, cached_st=None):
                 logger.error("copy %s → %s: destination is read-only", src, dst)
                 return "error", tr("Destination filesystem is read-only"), 0
             if exc.errno == errno.EACCES:
-                logger.error("copy %s → %s: permission denied", src, dst)
+                logger.error("copy %s → %s: permission denied (%s)", src, dst, "destination" if dst_side else "source")
+                if dst_side:
+                    return "error", tr("Permission denied — destination not writable"), 0
                 return "error", tr("Permission denied — file not readable"), 0
             if exc.errno == errno.ENOENT and not os.path.lexists(src):
                 logger.warning("copy %s: source vanished during backup", src)
@@ -677,8 +708,13 @@ class CopyWorker(QThread):
         self._pre_hooks_done = False
         self._version_plans: list[VersionPlan] = []
         self._hook_failures: list[str] = []
+        self._finish_emitted = False
         if not prepare:
             self._configure(tasks)
+
+    def _emit_finished(self, copied: int, skipped: int, errors: int, deleted: int, cancelled: bool) -> None:
+        self._finish_emitted = True
+        self.finished_work.emit(copied, skipped, errors, deleted, cancelled)
 
     def _configure(self, tasks) -> None:
         self._hooks = self._extract_hooks(tasks)
@@ -856,13 +892,27 @@ class CopyWorker(QThread):
 
     def run(self) -> None:
         _reset_dir_caches()
+        failure: "Exception | None" = None
         try:
             if self._prepare_raw is not None and not self._prepare():
                 return
             self._run_impl()
+        except Exception as exc:
+            failure = exc
+            logger.error("CopyWorker aborted: %s", exc, exc_info=True)
         finally:
-            self._finalize_versions(None, None)
-            self._run_pending_post_hooks()
+            try:
+                self._finalize_versions(None, None)
+            except Exception as exc:
+                logger.error("Finalizing versioned archives failed: %s", exc, exc_info=True)
+            try:
+                self._run_pending_post_hooks()
+            except Exception as exc:
+                logger.error("Post-hooks failed: %s", exc, exc_info=True)
+            if not self._finish_emitted:
+                if failure is not None:
+                    self.prepared.emit([], [DeleteError(path=tr("Preparing…"), title="", reason=str(failure))])
+                self._emit_finished(0, 0, 0, 0, self._cancel.is_set())
 
     def _ask_confirm(self, title: str, paths: list[str]) -> bool:
         request = _ConfirmRequest()
@@ -884,10 +934,10 @@ class CopyWorker(QThread):
         except Exception as exc:
             logger.error("Pre-hooks failed: %s", exc, exc_info=True)
             self.prepared.emit([], [DeleteError(path=tr("Preparing…"), title="", reason=str(exc))])
-            self.finished_work.emit(0, 0, 0, 0, False)
+            self._emit_finished(0, 0, 0, 0, False)
             return False
         if self._cancel.is_set():
-            self.finished_work.emit(0, 0, 0, 0, True)
+            self._emit_finished(0, 0, 0, 0, True)
             return False
         try:
             result: AdvancedOptionsResult = apply_advanced_options(
@@ -899,7 +949,7 @@ class CopyWorker(QThread):
         except Exception as exc:
             logger.error("Advanced options failed: %s", exc, exc_info=True)
             self.prepared.emit([], [DeleteError(path=tr("Preparing…"), title="", reason=str(exc))])
-            self.finished_work.emit(0, 0, 0, 0, False)
+            self._emit_finished(0, 0, 0, 0, False)
             return False
         self._version_plans = list(result.version_plans)
         hook_errors = [DeleteError(path=t, title=t, reason=tr("Pre-hook failed — entry skipped"))
@@ -909,7 +959,7 @@ class CopyWorker(QThread):
         self.prepared.emit(result.deleted, hook_errors + list(result.errors))
         if self._cancel.is_set():
             self._finalize_versions(None, None)
-            self.finished_work.emit(0, 0, 0, 0, True)
+            self._emit_finished(0, 0, 0, 0, True)
             return False
         hooks = self._hooks
         self._configure(result.tasks)
@@ -991,7 +1041,7 @@ class CopyWorker(QThread):
 
             if not all_tasks:
                 self.scan_finished.emit(0)
-                self.finished_work.emit(0, 0, 0, 0, self._cancel.is_set())
+                self._emit_finished(0, 0, 0, 0, self._cancel.is_set())
                 return
 
             local_found  = [0]
@@ -1103,7 +1153,7 @@ class CopyWorker(QThread):
             self._run_post_hooks(all_tasks)
             flusher.flush()
             tracker.emit_final()
-            self.finished_work.emit(flusher.copied, flusher.skipped, flusher.errors,
+            self._emit_finished(flusher.copied, flusher.skipped, flusher.errors,
                                     flusher.deleted, self._cancel.is_set())
         except Exception as exc:
             logger.error("CopyWorker critical: %s", exc, exc_info=True)
@@ -1115,7 +1165,7 @@ class CopyWorker(QThread):
                 flusher.flush()
             except Exception as e:
                 logger.debug("Error during fallback cleanup: %s", e)
-            self.finished_work.emit(flusher.copied, flusher.skipped, flusher.errors,
+            self._emit_finished(flusher.copied, flusher.skipped, flusher.errors,
                                     flusher.deleted, self._cancel.is_set())
         finally:
             if pw is not None:
@@ -1571,7 +1621,7 @@ class CopyWorker(QThread):
                 return True if _ensure_dir(dst) else None
             return True
         created = _make_new_dir(dst)
-        if created and dir_st is not None and stat.S_ISDIR(dir_st.st_mode):
+        if created is not None and stat.S_ISDIR(dir_st.st_mode):
             with lock:
                 attrs.append((dst, dir_st.st_mode, dir_st.st_atime_ns, dir_st.st_mtime_ns, dir_st.st_uid, dir_st.st_gid))
         return None if created is None else True

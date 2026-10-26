@@ -310,10 +310,22 @@ def _ssh_supports_accept_new() -> bool:
     return (int(m.group(1)), int(m.group(2))) >= (7, 6)
 
 
+_SSH_UNSAFE_PATH_RE = re.compile(r"[\s'\"\\]")
+
+
+@lru_cache(maxsize=1)
+def _ssh_mux_opts() -> str:
+    runtime = os.environ.get("XDG_RUNTIME_DIR", "")
+    if (not runtime or len(runtime) > 40 or _SSH_UNSAFE_PATH_RE.search(runtime)
+            or not os.path.isdir(runtime) or not os.access(runtime, os.W_OK | os.X_OK)):
+        return ""
+    return f"-o ControlMaster=auto -o ControlPersist=30 -o ControlPath={runtime}/bh-ssh-%C "
+
+
 def _rsync_ssh_opts(port: "str | None" = None) -> str:
     strict = "-o StrictHostKeyChecking=accept-new " if _ssh_supports_accept_new() else ""
     port_opt = f"-p {port} " if port else ""
-    return (f"ssh {port_opt}{strict}"
+    return (f"ssh {port_opt}{strict}{_ssh_mux_opts()}"
             "-o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 "
             "-o BatchMode=yes -o Compression=no")
 
@@ -350,7 +362,7 @@ _RSYNC_SKIP_COMPRESS = (
 def _rsync_supports_mkpath() -> bool:
     try:
         res = subprocess.run(["rsync", "--version"], capture_output=True, text=True,
-                             timeout=5, env=frozen_safe_env())
+                             stdin=subprocess.DEVNULL, timeout=5, check=False, env=frozen_safe_env())
     except (OSError, subprocess.SubprocessError):
         return False
     m = re.search(r"version\s+(\d+)\.(\d+)\.(\d+)", res.stdout or "")
@@ -365,7 +377,7 @@ def build_rsync_cmd(src: str, dst: str, *, delete: bool = False, exclude: list[s
     src, src_port = _rsync_remote_spec(src)
     dst, dst_port = _rsync_remote_spec(dst)
     cmd = [
-        "rsync", "-azH", "--numeric-ids",
+        "rsync", "-azH8", "--numeric-ids",
         f"--skip-compress={_RSYNC_SKIP_COMPRESS}",
         "--partial", "--partial-dir=.rsync-partial",
         f"--info={info}", "-e", _rsync_ssh_opts(src_port or dst_port),

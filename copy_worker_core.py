@@ -4,6 +4,7 @@ import errno
 import os
 import re
 import shutil
+import stat
 import subprocess
 import threading
 import time
@@ -92,9 +93,7 @@ def _build_skip_matcher(globs: tuple[str, ...]):
     for g in globs:
         low = g.lower()
         body = low.strip("*")
-        if "?" in low or "*" in body or not body:
-            complex_globs.append(g)
-        elif low.startswith("*") and low.endswith("*"):
+        if "?" in low or "*" in body or not body or (low.startswith("*") and low.endswith("*")):
             complex_globs.append(g)
         elif low.startswith("*"):
             suffixes.append(body)
@@ -227,7 +226,7 @@ _TIME_CHECK_EVERY = 32
 _seen_dirs_global: set[str] = set()
 _seen_dirs_lock = threading.Lock()
 def _find_ram_dir() -> str | None:
-    for cand in ("/dev/shm", os.environ.get("XDG_RUNTIME_DIR", ""), f"/run/user/{os.getuid()}"):
+    for cand in (os.environ.get("XDG_RUNTIME_DIR", ""), f"/run/user/{os.getuid()}", "/dev/shm"):
         if cand and os.path.isdir(cand) and os.access(cand, os.W_OK | os.X_OK):
             return cand
     return None
@@ -280,11 +279,30 @@ _fsynced_dirs_lock = threading.Lock()
 _fsynced_dirs: set[str] = set()
 
 
+_hardlinks: dict[tuple[int, int], str] = {}
+_hardlinks_lock = threading.Lock()
+
+
+def _hardlink_lookup(key: tuple[int, int]) -> str:
+    with _hardlinks_lock:
+        return _hardlinks.get(key, "")
+
+
+def _hardlink_register(key: tuple[int, int], dst: str) -> None:
+    with _hardlinks_lock:
+        _hardlinks.setdefault(key, dst)
+
+
 def _reset_dir_caches() -> None:
     with _seen_dirs_lock:
         _seen_dirs_global.clear()
     with _fsynced_dirs_lock:
         _fsynced_dirs.clear()
+    with _hardlinks_lock:
+        _hardlinks.clear()
+    with _mtime_tol_lock:
+        _mtime_tol_cache.clear()
+    _dev_rotational.cache_clear()
 
 
 def _fsync_dir(path: str) -> None:
@@ -350,18 +368,18 @@ def _probe_mtime_tolerance_ns(directory: str) -> int:
     return 1_000_000_000
 
 
-def _mtime_tolerance_ns(dst: str, dst_st: "os.stat_result", *, probe: bool = True) -> int | None:
+def _mtime_tolerance_ns(dst: str, dst_st: "os.stat_result", *, probe: bool = True) -> int:
     dev = dst_st.st_dev
     with _mtime_tol_lock:
-        tol = _mtime_tol_cache.get(dev)
-    if tol is None and probe:
-        tol = _probe_mtime_tolerance_ns(os.path.dirname(dst))
-        if tol != _MTIME_TOL_UNKNOWN:
+        cached = _mtime_tol_cache.get(dev)
+    if cached is not None:
+        return cached
+    if probe:
+        probed = _probe_mtime_tolerance_ns(os.path.dirname(dst))
+        if probed != _MTIME_TOL_UNKNOWN:
             with _mtime_tol_lock:
-                tol = _mtime_tol_cache.setdefault(dev, tol)
-    if tol is None or tol == _MTIME_TOL_UNKNOWN:
-        return _heuristic_mtime_tolerance_ns(dst_st.st_mtime_ns)
-    return tol
+                return _mtime_tol_cache.setdefault(dev, probed)
+    return _heuristic_mtime_tolerance_ns(dst_st.st_mtime_ns)
 
 
 _syncfs_fn = None
@@ -484,14 +502,28 @@ def _ensure_dir(path: str) -> bool:
 
 
 def _make_new_dir(path: str) -> "bool | None":
-    for attempt in (0, 1):
+    for _attempt in range(4):
         try:
-            os.mkdir(path)
+            os.mkdir(path, 0o700)
         except FileExistsError:
-            return False if os.path.isdir(path) else None
+            try:
+                existing = os.lstat(path)
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                logger.error("lstat %s: %s", path, exc)
+                return None
+            if stat.S_ISDIR(existing.st_mode):
+                return False
+            try:
+                os.unlink(path)
+            except OSError as exc:
+                logger.error("cannot replace %s with a directory: %s", path, exc)
+                return None
+            continue
         except FileNotFoundError:
             parent = os.path.dirname(path.rstrip("/"))
-            if attempt or not parent or parent == path or not _ensure_dir(parent):
+            if not parent or parent == path or not _ensure_dir(parent):
                 return None
             continue
         except OSError as exc:

@@ -136,6 +136,7 @@ def install_timer(interval_key: str, backup_headers: list[str], *, on_calendar: 
         "\n"
         "[Service]\n"
         "Type=oneshot\n"
+        "SuccessExitStatus=75\n"
         f"ExecStart={exec_prefix} --headless-backup-b64 {_systemd_quote(headers_b64)}\n"
         "Nice=10\n"
         "IOSchedulingClass=idle\n"

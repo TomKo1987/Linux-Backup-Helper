@@ -21,8 +21,8 @@ from copy_worker_core import _SKIP_RE
 __all__ = ["IntegrityCheckerDialog"]
 
 
-def _quick_scan(path_str: str) -> dict | None:
-    root = Path(os.path.expanduser(os.path.expandvars(path_str)))
+def _quick_scan(path_str: str, excluded: "frozenset[str]" = frozenset()) -> dict | None:
+    root = Path(os.path.expanduser(path_str))
     try:
         root_st = root.stat()
     except OSError:
@@ -39,6 +39,8 @@ def _quick_scan(path_str: str) -> dict | None:
         with os.scandir(root) as it:
             for entry in it:
                 if _SKIP_RE.search(entry.name):
+                    continue
+                if excluded and os.path.abspath(entry.path) in excluded:
                     continue
                 names.add(entry.name)
                 try:
@@ -96,7 +98,7 @@ class _CheckWorker(QThread):
                 )
                 ok = False
 
-            for src_raw, dst_raw in zip(sources, dests):
+            for src_raw, dst_raw in zip(sources, dests, strict=False):
                 if is_smb(src_raw) or is_ssh(src_raw) or is_smb(dst_raw) or is_ssh(dst_raw):
                     remote = src_raw if (is_smb(src_raw) or is_ssh(src_raw)) else dst_raw
                     infos.append(
@@ -107,11 +109,18 @@ class _CheckWorker(QThread):
 
                 check_dst = dst_raw
                 if entry.get("details", {}).get("versioned_archive"):
-                    latest = latest_version_path(os.path.abspath(os.path.expanduser(os.path.expandvars(dst_raw))))
+                    latest = latest_version_path(os.path.abspath(os.path.expanduser(dst_raw)))
                     if latest:
                         check_dst = latest
 
-                src_info = _quick_scan(src_raw)
+                src_excluded: "frozenset[str]" = frozenset()
+                raw_excl = entry.get("details", {}).get("exclude_paths", {})
+                if isinstance(raw_excl, dict) and raw_excl:
+                    src_abs = os.path.abspath(os.path.expanduser(src_raw))
+                    excl_names = raw_excl.get(src_abs) or raw_excl.get(src_raw) or []
+                    src_excluded = frozenset(os.path.join(src_abs, n) for n in excl_names)
+
+                src_info = _quick_scan(src_raw, src_excluded)
                 dst_info = _quick_scan(check_dst)
 
                 if src_info is None:

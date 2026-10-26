@@ -5,7 +5,7 @@ import stat as _stat_mod
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Callable
+from collections.abc import Callable
 
 from drive_utils import is_smb, is_ssh, build_rsync_cmd
 from state import apply_replacements, logger
@@ -226,7 +226,11 @@ def resolve_restore_sources(src_list: list[str], excl: dict) -> tuple[list[str],
         if not versions:
             new_src.append(s_str)
             continue
-        latest = latest_version_path(base) or versions[-1][1]
+        latest = latest_version_path(base)
+        if latest is None:
+            latest = versions[-1][1]
+            logger.warning("Versioned archive: no complete version found for %r — restoring from the "
+                           "incomplete version %r", apply_replacements(base), apply_replacements(latest))
         logger.info("Versioned archive: restoring %r from %r",
                     apply_replacements(base), apply_replacements(latest))
         new_src.append(latest)
@@ -367,7 +371,7 @@ def restore_exclude_paths(entry: dict) -> dict:
         dst_paths = [dst_paths]
 
     remapped: dict = {}
-    for s, d in zip(src_paths, dst_paths):
+    for s, d in zip(src_paths, dst_paths, strict=False):
         if not s or not d:
             continue
         s_str = str(s)
@@ -408,8 +412,12 @@ def _resolve_ssh_mirror_delete(ssh_pairs: list[tuple[str, str]], excl, title: st
                                confirm: "ConfirmFn | None", confirm_del: bool,
                                errors: list[DeleteError],
                                cancel: "threading.Event | None") -> bool:
-    if not confirm_del or confirm is None:
+    if not confirm_del:
         return True
+    if confirm is None:
+        logger.warning("Mirror delete [%s]: confirmation required but no interactive session — "
+                       "remote deletions skipped", title)
+        return False
 
     def _unverifiable(_s_str: str, _d_str: str) -> bool:
         if _is_cancelled(cancel):
@@ -507,7 +515,7 @@ def apply_advanced_options(tasks: list[tuple], *, confirm: "ConfirmFn | None" = 
                 "this entry entirely",
                 title, len(src_list), len(dst_list), min(len(src_list), len(dst_list)))
 
-        for i, (s, d) in enumerate(zip(src_list, dst_list)):
+        for i, (s, d) in enumerate(zip(src_list, dst_list, strict=False)):
             if _is_cancelled(cancel):
                 break
             s_str, d_str = str(s), str(d)
@@ -563,8 +571,15 @@ def apply_advanced_options(tasks: list[tuple], *, confirm: "ConfirmFn | None" = 
                 if not extraneous or _is_cancelled(cancel):
                     continue
                 proceed = True
-                if confirm_del and confirm is not None:
-                    proceed = confirm(title, extraneous)
+                if confirm_del:
+                    if confirm is None:
+                        logger.warning("Mirror delete [%s]: %d item(s) pending but confirmation is required and "
+                                       "no interactive session is available — deletion skipped "
+                                       "(disable 'confirm before delete' for unattended mirroring)",
+                                       title, len(extraneous))
+                        proceed = False
+                    else:
+                        proceed = confirm(title, extraneous)
                 if proceed and not _is_cancelled(cancel):
                     items, errs = delete_paths(extraneous, title=title, reason=tr("Mirror delete"), cancel=cancel)
                     all_deleted.extend(items)

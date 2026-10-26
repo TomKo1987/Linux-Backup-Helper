@@ -84,10 +84,10 @@ def _smb_cred_file(user: str, pw: "_SecurePw") -> "tuple[str, str]":
             user = user.replace("\r", "").replace("\n", "")
             if "\\" in user:
                 domain, plain_user = user.split("\\", 1)
-                _write_all(fd, f"username = {plain_user}\n".encode("utf-8"))
-                _write_all(fd, f"domain = {domain}\n".encode("utf-8"))
+                _write_all(fd, f"username = {plain_user}\n".encode())
+                _write_all(fd, f"domain = {domain}\n".encode())
             else:
-                _write_all(fd, f"username = {user}\n".encode("utf-8"))
+                _write_all(fd, f"username = {user}\n".encode())
 
             pwd_bytes = pw.get_bytes()
             try:
@@ -330,18 +330,25 @@ class _SmbClient:
         if proc is None:
             return False, err
         if proc.returncode != 0:
-            return False, (err.strip() or f"exit {proc.returncode}")
+            return False, (err.strip() or _smb_output_problem(out, err) or f"exit {proc.returncode}")
         problem = _smb_output_problem(out, err)
         return (False, problem) if problem else (True, "")
 
     def ls_index(self, base: str) -> "dict | None":
+        return self.ls_index_ex(base)[0]
+
+    def ls_index_ex(self, base: str) -> "tuple[dict | None, str]":
         base = base.replace("\\", "/").rstrip("/")
         cmd = (f'recurse on\nprompt off\ncd "{_q(base)}"\nls\n' if base else "recurse on\nprompt off\nls\n")
         proc, stdout, stderr = self._run_with_creds(cmd, _SMB_LS_INDEX_TIMEOUT)
         if proc is None:
-            return None
+            return None, stderr
+        if proc.returncode != 0 and _is_unreachable(stderr):
+            return None, stderr
         if proc.returncode != 0:
-            return None if _is_unreachable(stderr) else {}
+            problem = (stderr.strip() or _smb_output_problem(stdout, stderr) or f"exit {proc.returncode}")
+        else:
+            problem = _smb_output_problem(stdout, stderr)
         index: dict = {}
         cur_dir = base
         for line in stdout.splitlines():
@@ -359,7 +366,7 @@ class _SmbClient:
                     continue
                 key = f"{cur_dir}/{name}".lstrip("/")
                 index[key] = (-1, _parse_smb_mtime(ts_s)) if "D" in flags else (int(size_s), _parse_smb_mtime(ts_s))
-        return index
+        return index, problem
 
     def stat_path(self, rpath: str) -> "tuple[str, int, int]":
         rpath = rpath.replace("\\", "/").strip("/")
@@ -488,14 +495,14 @@ class _SmbScanner:
 
         return ([], []) if self._cancel.is_set() else (expanded, errors)
 
-    def _cached_index(self, host: str, share: str, rpath: str) -> "dict | None":
+    def _cached_index(self, host: str, share: str, rpath: str) -> "tuple[dict | None, str]":
         ck = f"{host}:{share}:{rpath}"
         with self._cache_lock:
             if ck in self._ls_cache:
                 return self._ls_cache[ck]
         if self._cancel.is_set():
-            return None
-        idx = self._client(host, share).ls_index(rpath)
+            return None, ""
+        idx = self._client(host, share).ls_index_ex(rpath)
         with self._cache_lock:
             if ck not in self._ls_cache:
                 if len(self._ls_cache) >= self._CACHE_MAX:
@@ -541,10 +548,12 @@ class _SmbScanner:
                 lexp.append(_SmbJob(src_url=src_url, dst_path=dst, kind="smb_get", host=host, share=share,
                                     remote_path=rpath, remote_size=size, remote_mtime=mtime, title=title))
         else:
-            idx = self._cached_index(host, share, rpath)
+            idx, ls_problem = self._cached_index(host, share, rpath)
             if idx is None:
                 lerr.append((src_url, "NT_STATUS_HOST_UNREACHABLE", title))
-            elif idx:
+            else:
+                if ls_problem:
+                    lerr.append((src_url, tr("Directory listing incomplete: {err}", err=ls_problem), title))
                 prefix = rpath.rstrip("/") + "/" if rpath else None
                 for path, (sz, mt) in idx.items():
                     if self._cancel.is_set():

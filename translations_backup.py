@@ -13,6 +13,9 @@ _NEW: dict[str, dict[str, str]] = {
         "Restore selected entries? Existing files with the same name will be overwritten.": "Ausgewählte Einträge wiederherstellen? Vorhandene Dateien mit gleichem Namen werden überschrieben.",
         "Pre-hook failed — entry skipped": "Pre-Hook fehlgeschlagen – Eintrag übersprungen",
         "Could not flush data to the destination device: {err}": "Daten konnten nicht auf das Zielgerät geschrieben werden: {err}",
+        "Permission denied — destination not writable": "Zugriff verweigert – Ziel nicht beschreibbar",
+        "Directory listing incomplete: {err}": "Verzeichnisliste unvollständig: {err}",
+        "Mirror delete skipped: the remote deletions could not be previewed": "Spiegel-Löschung übersprungen: Die Löschungen auf dem Remote-Ziel konnten nicht vorab geprüft werden",
     },
     "Français": {
         "Permission denied — file not readable": "Permission refusée — fichier illisible",
@@ -26,6 +29,9 @@ _NEW: dict[str, dict[str, str]] = {
         "Restore selected entries? Existing files with the same name will be overwritten.": "Restaurer les entrées sélectionnées ? Les fichiers existants du même nom seront écrasés.",
         "Pre-hook failed — entry skipped": "Échec du pre-hook — entrée ignorée",
         "Could not flush data to the destination device: {err}": "Impossible d'écrire les données sur le périphérique de destination : {err}",
+        "Permission denied — destination not writable": "Permission refusée — destination non inscriptible",
+        "Directory listing incomplete: {err}": "Liste du répertoire incomplète : {err}",
+        "Mirror delete skipped: the remote deletions could not be previewed": "Suppression miroir ignorée : les suppressions distantes n'ont pas pu être prévisualisées",
     },
     "Español": {
         "Permission denied — file not readable": "Permiso denegado — archivo no legible",
@@ -39,6 +45,9 @@ _NEW: dict[str, dict[str, str]] = {
         "Restore selected entries? Existing files with the same name will be overwritten.": "¿Restaurar las entradas seleccionadas? Los archivos existentes con el mismo nombre se sobrescribirán.",
         "Pre-hook failed — entry skipped": "Pre-hook fallido — entrada omitida",
         "Could not flush data to the destination device: {err}": "No se pudieron escribir los datos en el dispositivo de destino: {err}",
+        "Permission denied — destination not writable": "Permiso denegado — destino no escribible",
+        "Directory listing incomplete: {err}": "Listado del directorio incompleto: {err}",
+        "Mirror delete skipped: the remote deletions could not be previewed": "Eliminación espejo omitida: no se pudieron previsualizar las eliminaciones remotas",
     },
 }
 

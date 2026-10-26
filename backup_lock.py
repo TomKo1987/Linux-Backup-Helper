@@ -11,9 +11,9 @@ from state import _CONFIG_DIR, _USER, logger
 
 def _runtime_dir() -> Path:
     for candidate in (
-        _CONFIG_DIR,
         os.environ.get("XDG_RUNTIME_DIR"),
         f"/run/user/{os.getuid()}" if os.path.isdir(f"/run/user/{os.getuid()}") else None,
+        _CONFIG_DIR,
         tempfile.gettempdir(),
     ):
         if not candidate:

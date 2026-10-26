@@ -2,7 +2,7 @@ import os
 import threading
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSortFilterProxyModel
+from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal, QSortFilterProxyModel
 from PyQt6.QtGui import QColor, QStandardItemModel, QStandardItem, QCloseEvent, QMouseEvent
 from PyQt6.QtWidgets import (
     QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
@@ -45,10 +45,24 @@ class _ChipStackMixin:
         _style_chip_tabs(self._chips, self._chip_colors, idx)
 
 
+_RETIRED_WORKERS: "set[QThread]" = set()
+
+
+def _retire_worker(worker: QThread) -> None:
+    _RETIRED_WORKERS.add(worker)
+
+    def _reap() -> None:
+        if worker.isRunning():
+            QTimer.singleShot(500, _reap)
+        else:
+            _RETIRED_WORKERS.discard(worker)
+
+    QTimer.singleShot(500, _reap)
+
+
 class _DryRunWorker(QThread):
     progress   = pyqtSignal(int, int)
     entry_done = pyqtSignal(dict)
-    finished   = pyqtSignal()
 
     def __init__(self, tasks: list[tuple[list[str], list[str], str, dict]]) -> None:
         super().__init__()
@@ -68,7 +82,6 @@ class _DryRunWorker(QThread):
             self.progress.emit(idx, total)
             self.entry_done.emit(self._analyse(sources, destinations, title, excludes))
         self.progress.emit(total, total)
-        self.finished.emit()
 
     def _analyse(self, sources: list[str], destinations: list[str], title: str, excludes: dict | set | frozenset | None = None) -> dict:
         to_copy: list[tuple[str, str]] = []
@@ -87,7 +100,7 @@ class _DryRunWorker(QThread):
                    n_src=len(sources), n_dst=len(destinations)),
             ))
 
-        for src_root, dst_root in zip(sources, destinations):
+        for src_root, dst_root in zip(sources, destinations, strict=False):
             if self._cancel.is_set():
                 break
             if not src_root or not dst_root:
@@ -111,7 +124,8 @@ class _DryRunWorker(QThread):
 
             src_abs = str(src_p.resolve())
             if isinstance(excludes, dict):
-                excl_names = excludes.get(src_abs) or excludes.get(src_root) or excludes.get(str(src_p)) or []
+                excl_names = (excludes.get(src_abs) or excludes.get(os.path.abspath(str(src_p)))
+                              or excludes.get(src_root) or excludes.get(str(src_p)) or [])
                 excl_set = {os.path.join(src_abs, n) for n in excl_names}
             elif isinstance(excludes, (set, frozenset, list, tuple)):
                 excl_set = set(excludes)
@@ -121,6 +135,13 @@ class _DryRunWorker(QThread):
             if src_p.is_file() or src_p.is_symlink():
                 self._classify_file(src_p, src_p.name, dst_p, to_copy, to_skip, errors)
                 continue
+
+            try:
+                dst_real = os.path.realpath(dst_p)
+                if dst_real != src_abs and os.path.commonpath([src_abs, dst_real]) == src_abs:
+                    excl_set.add(dst_real)
+            except (OSError, ValueError):
+                pass
 
             self._walk_dir(src_abs, str(dst_p), excl_set, to_copy, to_skip, errors)
 
@@ -263,7 +284,7 @@ class _DryRunWorker(QThread):
 
 def _style_chip_tabs(chips: list[QPushButton], colors: list[str], active_idx: int) -> None:
     t = current_theme()
-    for i, (btn, color) in enumerate(zip(chips, colors)):
+    for i, (btn, color) in enumerate(zip(chips, colors, strict=False)):
         if i == active_idx:
             btn.setStyleSheet(
                 f"QPushButton{{color:{color};font-size:{font_sz(-1)}px;font-weight:bold;"
@@ -325,7 +346,7 @@ class _SearchableList(QWidget):
         needle = text.strip().lower()
         self._list.clear()
         if needle:
-            hits = [s for s, s_lower in zip(self._all_items, self._all_items_lower)
+            hits = [s for s, s_lower in zip(self._all_items, self._all_items_lower, strict=True)
                      if needle in s_lower]
         else:
             hits = self._all_items
@@ -661,10 +682,20 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         self._total_copy = self._total_skip = self._total_error = 0
         self._build()
 
+    def _stop_worker(self) -> None:
+        worker = self._worker
+        if worker is None or not worker.isRunning():
+            return
+        worker.cancel()
+        if not worker.wait(3000):
+            _retire_worker(worker)
+
+    def done(self, a0: int) -> None:
+        self._stop_worker()
+        super().done(a0)
+
     def closeEvent(self, a0: QCloseEvent | None) -> None:
-        if self._worker and self._worker.isRunning():
-            self._worker.cancel()
-            self._worker.wait(3000)
+        self._stop_worker()
         if a0 is not None:
             a0.accept()
 
@@ -806,9 +837,7 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         lay.addLayout(btn_row)
 
     def _switch_mode(self) -> None:
-        if self._worker and self._worker.isRunning():
-            self._worker.cancel()
-            self._worker.wait(3000)
+        self._stop_worker()
         new_mode = "restore" if self._mode == "backup" else "backup"
         self.accept()
         _parent = self.parent()
@@ -890,6 +919,7 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         self._lbl_skip.setText("")
         self._lbl_error.setText("")
 
+        self._stop_worker()
         self._worker = _DryRunWorker(tasks)
         self._worker.progress.connect(self._on_progress)
         self._worker.entry_done.connect(self._on_entry_done)

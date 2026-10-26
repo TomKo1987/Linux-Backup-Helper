@@ -735,6 +735,18 @@ class CopyDialog(_StandardKeysMixin, QDialog):
             self.worker = None
             return
 
+        self.worker = None
+        try:
+            self._setup(tasks, operation, advanced, is_restore)
+        except BaseException:
+            if self.worker is not None and self.worker.isRunning():
+                self.worker.cancel()
+            else:
+                CopyDialog.active_workers.discard(self.worker)
+            self._release_lock()
+            raise
+
+    def _setup(self, tasks, operation: str, advanced: bool, is_restore: bool) -> None:
         self._t = current_theme()
         t       = self._t
 
@@ -757,7 +769,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
             self.resize(1400, 800)
 
         self._operation = operation
-        self.worker     = CopyWorker(tasks, prepare=advanced, is_restore=is_restore, interactive=not headless)
+        self.worker     = CopyWorker(tasks, prepare=advanced, is_restore=is_restore, interactive=not self._headless)
         CopyDialog.active_workers.add(self.worker)
         self.copied = self.skipped = self.errors = self.deleted = 0
         self._done  = self._total = 0
