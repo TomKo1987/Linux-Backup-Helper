@@ -160,9 +160,24 @@ def _norm_mount_path(path: str) -> str:
     return path.rstrip("/") or path
 
 
+def _opt_mount_path(opt: dict) -> str:
+    raw = _str(opt.get("mount_path"))
+    if not raw:
+        return ""
+    return _norm_mount_path(raw if raw.startswith(("smb://", "cifs://")) else abspath(expanduser(raw)))
+
+
+def _drive_roots(opt: dict) -> list[str]:
+    mount_path = _opt_mount_path(opt)
+    if mount_path:
+        return [mount_path]
+    name = opt.get("drive_name", "")
+    return list(_mount_paths(name)) if _valid_drive_name(name) else []
+
+
 def is_mounted(opt: dict, mounts: list[tuple[str, str]] | None = None) -> bool:
     name = opt.get("drive_name", "")
-    mount_path = _norm_mount_path(_str(opt.get("mount_path")))
+    mount_path = _opt_mount_path(opt)
 
     if not _valid_drive_name(name) and not mount_path:
         return False
@@ -412,23 +427,16 @@ def check_drives_to_mount(paths: list[str]) -> list[dict]:
     for opt in S.mount_options:
         if is_mounted(opt, mounts):
             continue
-        name       = opt.get("drive_name", "")
-        mount_path = _str(opt.get("mount_path"))
-
-        if not mount_path and not _valid_drive_name(name):
+        name = opt.get("drive_name", "")
+        roots = _drive_roots(opt)
+        if not roots:
             logger.warning(
                 "check_drives_to_mount: Drive %r does not have a valid name or a "
                 "mount_path — will be skipped. Please correct this in the settings.", name
             )
             continue
-
-        candidates = [mount_path] if mount_path else (_mount_paths(name) if _valid_drive_name(name) else ())
-        for candidate in candidates:
-            if not candidate:
-                continue
-            if any(_is_subpath(candidate, p) for p in paths):
-                needed.append(opt)
-                break
+        if any(_is_subpath(root, p) for root in roots for p in paths):
+            needed.append(opt)
     return needed
 
 
@@ -441,12 +449,9 @@ def unmounted_drive_for_path(path: str, mounts: "list[tuple[str, str]] | None" =
     for opt in S.mount_options:
         if is_mounted(opt, mounts):
             continue
-        name = opt.get("drive_name", "")
-        mount_path = _str(opt.get("mount_path"))
-        candidates = [mount_path] if mount_path else (_mount_paths(name) if _valid_drive_name(name) else ())
-        for candidate in candidates:
-            if candidate and not is_smb(candidate) and _is_subpath(abspath(expanduser(candidate)), target):
-                return str(name or mount_path)
+        for root in _drive_roots(opt):
+            if not is_smb(root) and _is_subpath(root, target):
+                return str(opt.get("drive_name") or root)
     return None
 
 
@@ -461,7 +466,7 @@ def mount_drives_unattended(paths: list[str]) -> list[str]:
 
 
 def has_managed_mount_path(opt: dict) -> bool:
-    mount_path = _norm_mount_path(_str(opt.get("mount_path")))
+    mount_path = _opt_mount_path(opt)
     return bool(mount_path and mount_path not in _mount_paths(opt.get("drive_name", "")))
 
 

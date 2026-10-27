@@ -2,6 +2,7 @@ import csv
 import html
 import io
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -38,9 +39,17 @@ def append_history(operation: str, copied: int, skipped: int, errors: int, durat
             try:
                 existing = json.loads(path.read_text(encoding="utf-8"))
                 if not isinstance(existing, list):
-                    existing = []
-            except (json.JSONDecodeError, OSError):
+                    raise ValueError("history file is not a JSON list")
+                existing = [e for e in existing if isinstance(e, dict)]
+            except (ValueError, OSError) as exc:
                 existing = []
+                try:
+                    os.replace(path, path.with_name(path.name + ".corrupt"))
+                    logger.warning(
+                        "append_history: unreadable history '%s' kept as .corrupt: %s",
+                        path.name, exc)
+                except OSError:
+                    pass
         entry = {"timestamp":  datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                  "operation":  operation,
                  "op_kind":    op_kind,
@@ -64,9 +73,9 @@ def load_history(profile_name: str) -> list[dict]:
         return []
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, list) else []
-    except (json.JSONDecodeError, OSError):
+    except (ValueError, OSError):
         return []
+    return [e for e in data if isinstance(e, dict)] if isinstance(data, list) else []
 
 
 def export_history_csv(profile_name: str) -> str:

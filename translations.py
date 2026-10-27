@@ -120,6 +120,8 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'Up to date': 'Aktuell',
         'Skipped: filename contains a double quote (") which smbclient cannot safely escape':
             'Übersprungen: Dateiname enthält ein Anführungszeichen ("), das smbclient nicht sicher maskieren kann',
+        'Skipped: filename contains a backslash (\\) which SMB cannot store':
+            'Übersprungen: Dateiname enthält einen Backslash (\\), den SMB nicht speichern kann',
         'Add Rule': 'Regel hinzufügen',
         'Edit Rule': 'Regel bearbeiten',
         'Invalid Source': 'Ungültige Quelle',
@@ -1696,6 +1698,8 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'Up to date': 'À jour',
         'Skipped: filename contains a double quote (") which smbclient cannot safely escape':
             'Omis : le nom de fichier contient un guillemet double (") que smbclient ne peut pas échapper en toute sécurité',
+        'Skipped: filename contains a backslash (\\) which SMB cannot store':
+            'Omis : le nom de fichier contient une barre oblique inverse (\\) que SMB ne peut pas stocker',
         'Add Rule': 'Ajouter une règle',
         'Edit Rule': 'Modifier la règle',
         'Invalid Source': 'Source invalide',
@@ -3274,6 +3278,8 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'Up to date': 'Actualizado',
         'Skipped: filename contains a double quote (") which smbclient cannot safely escape':
             'Omitido: el nombre de archivo contiene una comilla doble (") que smbclient no puede escapar de forma segura',
+        'Skipped: filename contains a backslash (\\) which SMB cannot store':
+            'Omitido: el nombre de archivo contiene una barra invertida (\\) que SMB no puede almacenar',
         'Add Rule': 'Añadir regla',
         'Edit Rule': 'Editar regla',
         'Invalid Source': 'Origen no válido',

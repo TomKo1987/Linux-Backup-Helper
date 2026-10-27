@@ -251,12 +251,13 @@ _HAS_SEEK_DATA = hasattr(os, "SEEK_DATA") and hasattr(os, "SEEK_HOLE")
 
 
 def _is_sparse(st: "os.stat_result") -> bool:
-    return (_HAS_SEEK_DATA and _HAS_COPY_FILE_RANGE and st.st_size > _SPARSE_SLACK
+    return (_HAS_SEEK_DATA and st.st_size > _SPARSE_SLACK
             and st.st_blocks * 512 + _SPARSE_SLACK < st.st_size)
 
 
 def _copy_extents(rfd: int, wfd: int, size: int, cancel: threading.Event) -> None:
     pos = 0
+    use_cfr = _HAS_COPY_FILE_RANGE
     while pos < size:
         try:
             start = os.lseek(rfd, pos, os.SEEK_DATA)
@@ -268,7 +269,25 @@ def _copy_extents(rfd: int, wfd: int, size: int, cancel: threading.Event) -> Non
         while start < end:
             if cancel.is_set():
                 raise InterruptedError
-            n = os.copy_file_range(rfd, wfd, min(end - start, _CHUNK), start, start)
+            if use_cfr:
+                try:
+                    n = os.copy_file_range(
+                        rfd, wfd, min(end - start, _CHUNK), start, start)
+                except OSError as exc:
+                    if exc.errno not in _CFR_FALLBACK_ERRNOS:
+                        raise
+                    logger.debug("copy_file_range not usable for extents: %s", exc)
+                    use_cfr = False
+                    continue
+            else:
+                buf = os.pread(rfd, min(end - start, _IO_BUF), start)
+                n = len(buf)
+                done = 0
+                while done < n:
+                    w = os.pwrite(wfd, buf[done:], start + done)
+                    if w == 0:
+                        raise OSError(errno.EIO, "os.pwrite returned 0")
+                    done += w
             if n == 0:
                 raise OSError(errno.EINVAL, "source shrank during copy")
             start += n
@@ -283,14 +302,18 @@ def _copy_sparse_or_dense(rfd: int, wfd: int, size: int, cancel: threading.Event
     except InterruptedError:
         raise
     except OSError as exc:
+        if exc.errno in _FATAL_IO_ERRNOS:
+            raise
         logger.debug("sparse copy not possible, copying densely: %s", exc)
+    for fd in (rfd, wfd):
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+        except OSError as exc:
+            return 0, exc
     try:
         os.ftruncate(wfd, 0)
-        os.ftruncate(wfd, size)
-        os.lseek(rfd, 0, os.SEEK_SET)
-        os.lseek(wfd, 0, os.SEEK_SET)
-    except OSError:
-        pass
+    except OSError as exc:
+        logger.debug("ftruncate before dense copy failed: %s", exc)
     return _copy_loop(rfd, wfd, size, cancel)
 
 

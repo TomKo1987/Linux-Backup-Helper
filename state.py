@@ -116,7 +116,8 @@ def _make_logger(name: str) -> logging.Logger:
     sh.setFormatter(fmt)
     log.addHandler(sh)
     try:
-        fh = RotatingFileHandler(_LOG_FILE, maxBytes=2 * 1024 * 1024, backupCount=5, encoding="utf-8")
+        fh = RotatingFileHandler(_LOG_FILE, maxBytes=2 * 1024 * 1024, backupCount=5, encoding="utf-8",
+                                 errors="backslashreplace")
         fh.setFormatter(fmt)
         log.addHandler(fh)
     except (OSError, PermissionError):

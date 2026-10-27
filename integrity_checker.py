@@ -29,7 +29,7 @@ def _quick_scan(path_str: str, excluded: "frozenset[str]" = frozenset()) -> dict
         return None
     if not stat.S_ISDIR(root_st.st_mode):
         return {"file_count": 1, "dir_count": 0, "total_size": root_st.st_size,
-                "mtime_newest": root_st.st_mtime, "names": {root.name}}
+                "mtime_newest": root_st.st_mtime, "names": set()}
 
     fc = dc = 0
     total = 0

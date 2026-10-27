@@ -213,10 +213,29 @@ def finalize_version(plan: VersionPlan, success: bool,
     return prune_old_versions(plan.base, plan.keep, title=plan.title, cancel=cancel)
 
 
-def resolve_restore_sources(src_list: list[str], excl: dict) -> tuple[list[str], dict]:
+def _version_file_source(version_path: str, dst: str) -> "str | None":
+    if not _is_local(dst):
+        return None
+    dst_abs = os.path.abspath(os.path.expanduser(dst))
+    name = os.path.basename(dst_abs)
+    candidate = os.path.join(version_path, name)
+    if not name or not os.path.lexists(candidate) or os.path.isdir(candidate):
+        return None
+    if os.path.lexists(dst_abs):
+        return None if os.path.isdir(dst_abs) else candidate
+    try:
+        with os.scandir(version_path) as it:
+            names = [e.name for e in it if e.name != VERSION_INCOMPLETE_MARK]
+    except OSError:
+        return None
+    return candidate if names == [name] else None
+
+
+def resolve_restore_sources(src_list: list[str], excl: dict,
+                            dst_list: "list[str] | None" = None) -> tuple[list[str], dict]:
     new_src: list[str] = []
     new_excl: dict = dict(excl)
-    for s in src_list:
+    for idx, s in enumerate(src_list):
         s_str = str(s)
         if not _is_local(s_str):
             new_src.append(s_str)
@@ -231,12 +250,15 @@ def resolve_restore_sources(src_list: list[str], excl: dict) -> tuple[list[str],
             latest = versions[-1][1]
             logger.warning("Versioned archive: no complete version found for %r — restoring from the "
                            "incomplete version %r", apply_replacements(base), apply_replacements(latest))
+        chosen = latest
+        if dst_list is not None and idx < len(dst_list):
+            chosen = _version_file_source(latest, str(dst_list[idx])) or latest
         logger.info("Versioned archive: restoring %r from %r",
-                    apply_replacements(base), apply_replacements(latest))
-        new_src.append(latest)
+                    apply_replacements(base), apply_replacements(chosen))
+        new_src.append(chosen)
         names = excl.get(_exclude_key(s_str)) or excl.get(s_str) or excl.get(base) or []
         if names:
-            new_excl[_exclude_key(latest)] = list(names)
+            new_excl[_exclude_key(chosen)] = list(names)
     return new_src, new_excl
 
 
@@ -249,7 +271,7 @@ def prune_old_versions(dst_abs: str, keep: int, title: str = "",
     if not complete:
         return [], []
     newest_complete = complete[-1][0]
-    doomed = [v for v in complete[:max(len(complete) - keep, 0)]]
+    doomed = list(complete[:max(len(complete) - keep, 0)])
     doomed += [v for v in versions if not _is_complete_version(v[1]) and v[0] < newest_complete]
     doomed.sort(key=lambda v: v[0])
     if not doomed:
@@ -491,7 +513,8 @@ def apply_advanced_options(tasks: list[tuple], *, confirm: "ConfirmFn | None" = 
         mirror = bool(details.get("mirror_delete")) and not versioned and not is_restore
         if is_restore and details.get("versioned_archive"):
             src_list, excl = resolve_restore_sources(
-                [str(x) for x in src_list], excl if isinstance(excl, dict) else {})
+                [str(x) for x in src_list], excl if isinstance(excl, dict) else {},
+                [str(x) for x in dst_list])
         if is_restore and details.get("mirror_delete") and not details.get("versioned_archive"):
             logger.info(
                 "Mirror delete [%s]: skipped during Restore (only applies to the "
@@ -527,6 +550,10 @@ def apply_advanced_options(tasks: list[tuple], *, confirm: "ConfirmFn | None" = 
                     try:
                         new_path = begin_version(d_abs)
                         eff_dst[i] = new_path
+                        if s_local:
+                            s_abs = os.path.abspath(os.path.expanduser(s_str))
+                            if os.path.lexists(s_abs) and not os.path.isdir(s_abs):
+                                eff_dst[i] = os.path.join(new_path, os.path.basename(s_abs))
                         version_plans.append(VersionPlan(base=d_abs, path=new_path,
                                                          keep=max_versions, title=title))
                     except OSError as exc:

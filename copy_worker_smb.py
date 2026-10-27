@@ -46,12 +46,26 @@ _SMB_PROTO_RE = re.compile(
 _SMB_MKDIR_LINE_RE = re.compile(r"making remote directory|mkdir failed on directory|creating remote directory", re.I)
 
 
+def _smb_ls_body(line: str) -> str:
+    line = line.rstrip()
+    return line[2:] if line.startswith("  ") else line.lstrip()
+
+
+_SMB_PLAIN_ERROR_RE = re.compile(
+    r"^(?:\S.* does not exist"
+    r"|chdir to .* failed"
+    r"|Error (?:opening|reading|writing) (?:local )?file\b.*)$"
+)
+
+
 def _smb_output_problem(stdout: str, stderr: str) -> str:
     for line in f"{stdout}\n{stderr}".splitlines():
         if "creating remote directory" in line:
             continue
         if line.startswith(("putting file ", "getting file ")):
             continue
+        if _SMB_PLAIN_ERROR_RE.match(line.rstrip()):
+            return line.strip()
         m = _SMB_STATUS_RE.search(line)
         if not m:
             continue
@@ -352,16 +366,16 @@ class _SmbClient:
         index: dict = {}
         cur_dir = base
         for line in stdout.splitlines():
-            line = line.strip()
-            if not line:
+            line = _smb_ls_body(line)
+            if not line.strip():
                 continue
             if line.startswith("\\"):
-                cur_dir = line.replace("\\", "/").strip("/")
+                cur_dir = line.strip().replace("\\", "/").strip("/")
                 continue
             m = _SMB_LINE_RE.match(line)
             if m:
                 name, flags, size_s, ts_s = m.groups()
-                name = name.strip()
+                name = name.rstrip()
                 if name in (".", ".."):
                     continue
                 key = f"{cur_dir}/{name}".lstrip("/")
@@ -381,13 +395,13 @@ class _SmbClient:
         if proc.returncode != 0:
             return ("unreachable", -1, -1) if _is_unreachable(stderr) else ("missing", -1, -1)
         for line in stdout.splitlines():
-            line = line.strip()
-            if not line or line.startswith("\\"):
+            line = _smb_ls_body(line)
+            if not line.strip() or line.startswith("\\"):
                 continue
             m = _SMB_LINE_RE.match(line)
             if m:
                 ent_name, flags, size_s, ts_s = m.groups()
-                if ent_name.strip() == name:
+                if ent_name.rstrip() == name:
                     if "D" in flags:
                         return "dir", -1, -1
                     return "file", int(size_s), _parse_smb_mtime(ts_s)
@@ -768,6 +782,9 @@ class _ShareProcessor:
                 url = f"smb://{j.host}/{j.share}/{j.remote_path}" if is_get else j.src_url
                 self._url_title[url] = (j.title, j.remote_size if is_get else max(j.local_size, 0))
                 errors.append((url, tr('Skipped: filename contains a double quote (") which smbclient cannot safely escape')))
+            elif not is_get and "\\" in j.src_url:
+                self._url_title[j.src_url] = (j.title, max(j.local_size, 0))
+                errors.append((j.src_url, tr('Skipped: filename contains a backslash (\\) which SMB cannot store')))
             else:
                 safe.append(j)
         return safe, errors

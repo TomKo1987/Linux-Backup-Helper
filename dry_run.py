@@ -132,7 +132,7 @@ class _DryRunWorker(QThread):
             else:
                 excl_set = set()
 
-            if src_p.is_file() or src_p.is_symlink():
+            if not src_p.is_dir():
                 self._classify_file(src_p, src_p.name, dst_p, to_copy, to_skip, errors)
                 continue
 
@@ -190,6 +190,8 @@ class _DryRunWorker(QThread):
                     self._classify_symlink(entry.path, rel, dst_path, to_copy, to_skip, errors)
                     continue
                 try:
+                    if not entry.is_file(follow_symlinks=False):
+                        continue
                     src_stat = entry.stat(follow_symlinks=False)
                 except OSError as e:
                     errors.append((rel, str(e)))
@@ -881,7 +883,7 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
                     r_src: list[str] = [str(x) for x in dst]
                     r_excl: dict = restore_exclude_paths(e)
                     if details.get("versioned_archive"):
-                        r_src, r_excl = resolve_restore_sources(r_src, r_excl)
+                        r_src, r_excl = resolve_restore_sources(r_src, r_excl, [str(x) for x in src])
                     tasks.append((r_src, src, e.get("title", "?"), r_excl))
                 else:
                     tasks.append((src, dst, e.get("title", "?"), details.get("exclude_paths", {})))

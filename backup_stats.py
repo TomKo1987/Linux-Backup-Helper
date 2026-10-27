@@ -294,7 +294,6 @@ class BackupStatsDialog(_StandardKeysMixin, QDialog):
         total       = len(entries)
         successful  = sum(1 for e in entries if not e.get("errors") and not e.get("cancelled"))
         failed      = sum(1 for e in entries if e.get("errors"))
-        cancelled   = sum(1 for e in entries if e.get("cancelled"))
         total_copied  = sum(e.get("copied", 0) for e in entries)
         total_skip    = sum(e.get("skipped", 0) for e in entries)
         total_deleted = sum(e.get("deleted", 0) for e in entries)
@@ -307,7 +306,7 @@ class BackupStatsDialog(_StandardKeysMixin, QDialog):
         for icon, val, label, col in [
             ("🗂", str(total),             tr("Total Runs"),       t["accent"]),
             ("✅", str(successful),         tr("Successful"),       t["success"]),
-            ("⚠️", str(failed + cancelled), tr("Failed/Cancelled"), t["warning"] if failed == 0 else t["error"]),
+            ("⚠️", str(total - successful), tr("Failed/Cancelled"), t["warning"] if failed == 0 else t["error"]),
             ("📁", f"{total_copied:,}", tr("Files Copied"),    t["info"]),
             ("⏭", str(total_skip),          tr("Files Skipped"),   t["accent2"]),
             ("🗑", f"{total_deleted:,}", tr("Files Deleted"),   t["deleted"]),
