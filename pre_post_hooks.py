@@ -1,4 +1,5 @@
 import shlex
+import threading
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
@@ -15,10 +16,11 @@ from ui_utils import ask_yes_no, _StandardKeysMixin, hdr_label, sep, size_to_scr
 __all__ = ["HooksDialog", "run_hooks"]
 
 _MAX_HOOKS = 20
-_HOOK_TIMEOUT = 120
+_HOOK_TIMEOUT = 3600
 
 
-def run_hooks(hooks: list[str], *, abort_on_error: bool = True, label: str = "") -> tuple[bool, list[str]]:
+def run_hooks(hooks: list[str], *, abort_on_error: bool = True, label: str = "",
+              cancel: "threading.Event | None" = None) -> tuple[bool, list[str]]:
     from privileged import run_user_command
 
     errors: list[str] = []
@@ -29,6 +31,8 @@ def run_hooks(hooks: list[str], *, abort_on_error: bool = True, label: str = "")
         return abort_on_error
 
     for raw_cmd in hooks:
+        if cancel is not None and cancel.is_set():
+            return False, errors
         cmd = raw_cmd.strip()
         if not cmd or cmd.startswith("#"):
             continue
@@ -41,7 +45,7 @@ def run_hooks(hooks: list[str], *, abort_on_error: bool = True, label: str = "")
 
         logger.info("run_hooks: [%s] %s", label or "hook", cmd)
         try:
-            result = run_user_command(tokens, timeout=_HOOK_TIMEOUT)
+            result = run_user_command(tokens, timeout=_HOOK_TIMEOUT, user_env=True, cancel=cancel)
             if result.returncode != 0:
                 stderr = (result.stderr or result.stdout or "").strip()
                 msg = (

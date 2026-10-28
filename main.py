@@ -93,6 +93,7 @@ def _install_signal_handlers(app) -> None:
             worker.cancel()
         for worker in list(CopyDialog.active_workers):
             worker.wait(15000)
+        app.processEvents()
         app.quit()
 
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):

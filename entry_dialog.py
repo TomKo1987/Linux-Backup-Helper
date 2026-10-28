@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QSizePolicy, QSpinBox, QSplitter, QVBoxLayout, QWidget,
 )
 
+from drive_utils import exclude_key, is_smb, is_ssh, list_directory
 from state import RESTART_DIALOG, S, _HOME, _norm_paths, apply_replacements, logger, save_profile
 from themes import apply_tooltip, current_theme, font_scale
 from translations import tr
@@ -115,7 +116,11 @@ class ExcludeDialog(QDialog):
 
         abs_current = os.path.join(self.src_abs, self._current_rel) if self._current_rel else self.src_abs
         try:
-            entries = sorted(os.scandir(abs_current), key=lambda e: (not e.is_dir(), e.name.lower()))
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                entries = sorted(list_directory(abs_current), key=lambda e: (not e[1], e[0].lower()))
+            finally:
+                QApplication.restoreOverrideCursor()
         except (PermissionError, FileNotFoundError, OSError) as exc:
             lbl = QLabel(tr("Cannot read directory: {error}", error=exc))
             lbl.setStyleSheet(f"color:{t['warning']};")
@@ -123,9 +128,7 @@ class ExcludeDialog(QDialog):
             self._scroll_layout.addStretch()
             return
 
-        for entry in entries:
-            is_dir   = entry.is_dir(follow_symlinks=False)
-            name: str = str(entry.name)
+        for name, is_dir in entries:
             rel_path: str = (self._current_rel + "/" + name) if self._current_rel else name
 
             is_checked = rel_path in self.selected_excludes
@@ -835,19 +838,9 @@ class EntryDialog(QDialog):
         if not (0 <= row < len(self.pairs)):
             QMessageBox.information(self, tr("Exclude"), tr("Please select a pair first."))
             return
-        from drive_utils import is_smb, is_ssh
-        src_raw = self.pairs[row][0]
-        if is_smb(src_raw) or is_ssh(src_raw):
-            QMessageBox.information(
-                self, tr("Exclude"),
-                tr("Exclusions can't be browsed for SMB or SSH sources — this dialog only "
-                  "browses the local filesystem.") + "\n\n" +
-                tr("Swap source/destination first if you "
-                  "want to exclude items from the local side of this pair instead.")
-            )
-            return
-        src_abs = os.path.abspath(os.path.expanduser(src_raw))
-        if not os.path.isdir(src_abs):
+        src_raw = self.pairs[row][0].strip()
+        src_abs = exclude_key(src_raw)
+        if not (is_smb(src_raw) or is_ssh(src_raw)) and not os.path.isdir(src_abs):
             QMessageBox.information(
                 self, tr("Exclude"),
                 tr("The source is not a directory.") + "\n" + tr("Exclusions can only be defined for directories.")
@@ -915,7 +908,7 @@ class EntryDialog(QDialog):
         if hdr not in S.headers:
             S.headers[hdr] = {"inactive": False, "color": "#ffffff"}
 
-        valid_srcs = {os.path.abspath(os.path.expanduser(s)) for s, _ in valid_pairs}
+        valid_srcs = {exclude_key(s) for s, _ in valid_pairs}
         clean_excludes = {k: v for k, v in self._pair_excludes.items() if k in valid_srcs and v}
 
         _existing_details = self._e.get("details", {})

@@ -26,6 +26,7 @@ from copy_worker_core import (
     _CHUNK, _IO_BUF, _WORKERS, _FLUSH_THRESH, _FLUSH_INTERVAL, _SCAN_EMIT_SECS,
     _SCAN_PIPE_BATCH, _LOCAL_BATCH, _PIPE_MAXSIZE, _ENTRY_EMIT_SECS,
     _SMB_WORKERS, _EUID, _O_NOATIME, _TIME_CHECK_EVERY, _SMALL_FILE_MAX, _UMASK,
+    _MODE_MASK, _CAP_MODE, _CAP_OWNER, _perm_caps_for, _drop_perm_caps,
     _mtime_tolerance_ns, sync_destinations,
     _smb_procs, _smb_procs_lock, _RSYNC_DELETE_RE, _RSYNC_ERROR_TAIL,
     _scale_params, _scan_dir_entries, _check_destination_space, _copy_workers_for,
@@ -79,16 +80,56 @@ def _do_copy(entry, cancel: threading.Event, ok_l: list, sk_l: list, er_l: list,
         if title: _bump_count(tc, title, 2)
 
 
+_META_SAME = 0
+_META_FIXED = 1
+_META_FAILED = 2
+
+
+def _content_matches(dst: str, src_st: "os.stat_result", d: "os.stat_result", *, probe: bool = True) -> bool:
+    if not stat.S_ISREG(d.st_mode) or d.st_size != src_st.st_size:
+        return False
+    diff = abs(d.st_mtime_ns - src_st.st_mtime_ns)
+    return diff == 0 or diff <= _mtime_tolerance_ns(dst, d, probe=probe)
+
+
+def _meta_diff(src_st: "os.stat_result", d: "os.stat_result") -> int:
+    flags = _CAP_MODE if (src_st.st_mode ^ d.st_mode) & _MODE_MASK else 0
+    if _EUID == 0 and (src_st.st_uid != d.st_uid or src_st.st_gid != d.st_gid):
+        flags |= _CAP_OWNER
+    return flags
+
+
+def _meta_pending(dst: str, src_st: "os.stat_result", d: "os.stat_result", *, probe: bool = True) -> int:
+    flags = _meta_diff(src_st, d)
+    if not flags:
+        return 0
+    return flags & _perm_caps_for(d.st_dev, dst, probe=probe)
+
+
+def _sync_meta(dst: str, src_st: "os.stat_result", d: "os.stat_result", flags: int) -> int:
+    try:
+        if flags & _CAP_OWNER:
+            os.lchown(dst, src_st.st_uid, src_st.st_gid)
+        if flags & _CAP_MODE:
+            os.chmod(dst, src_st.st_mode & _MODE_MASK)
+        after = os.lstat(dst)
+    except OSError as exc:
+        logger.debug("metadata sync %s failed: %s", dst, exc)
+        return _META_FAILED
+    ignored = _meta_diff(src_st, after) & flags
+    if ignored:
+        _drop_perm_caps(d.st_dev, ignored)
+        return _META_SAME
+    return _META_FIXED
+
+
 def _is_up_to_date_local(dst: str, src_st: "os.stat_result",
                           dst_st: "os.stat_result | None" = None, *, probe: bool = True) -> bool:
     try:
         d = dst_st if dst_st is not None else os.lstat(dst)
     except OSError:
         return False
-    if not stat.S_ISREG(d.st_mode) or d.st_size != src_st.st_size:
-        return False
-    diff = abs(d.st_mtime_ns - src_st.st_mtime_ns)
-    return diff == 0 or diff <= _mtime_tolerance_ns(dst, d, probe=probe)
+    return _content_matches(dst, src_st, d, probe=probe) and not _meta_pending(dst, src_st, d, probe=probe)
 
 
 def _is_symlink_up_to_date(dst: str, target: str) -> bool:
@@ -401,8 +442,15 @@ def _copy_file(src, dst, cancel, cached_st=None):
 
             dst_st = _lstat_or_none(dst)
 
-            if _attempt == 0 and dst_st is not None and _is_up_to_date_local(dst, st, dst_st):
-                return "skip", tr("Up to date"), st.st_size
+            if _attempt == 0 and dst_st is not None and _content_matches(dst, st, dst_st):
+                pending = _meta_pending(dst, st, dst_st)
+                if not pending:
+                    return "skip", tr("Up to date"), st.st_size
+                verdict = _sync_meta(dst, st, dst_st, pending)
+                if verdict == _META_FIXED:
+                    return "ok", dst, 0
+                if verdict == _META_SAME:
+                    return "skip", tr("Up to date"), st.st_size
 
             if not _ensure_dir(os.path.dirname(dst)):
                 return "error", tr("Directory could not be created"), 0
@@ -732,6 +780,7 @@ class CopyWorker(QThread):
         self._version_plans: list[VersionPlan] = []
         self._hook_failures: list[str] = []
         self._finish_emitted = False
+        self._sync_failed = False
         if not prepare:
             self._configure(tasks)
 
@@ -764,7 +813,7 @@ class CopyWorker(QThread):
     def _extract_mirror_pairs(cls, tasks) -> set[tuple[str, str]]:
         result: set[tuple[str, str]] = set()
         for t in tasks:
-            if not isinstance(t, (list, tuple)) or len(t) < 7 or not t[6]:
+            if not isinstance(t, (list, tuple)) or len(t) < 7 or t[6] is not True:
                 continue
             for _s, _d, s_norm, d_norm in cls._iter_pairs(t):
                 result.add((s_norm, d_norm))
@@ -869,10 +918,11 @@ class CopyWorker(QThread):
                     pass
 
     @staticmethod
-    def _fire_hooks(entry_title: str, phase: str, hooks: list[str], abort: bool) -> bool:
+    def _fire_hooks(entry_title: str, phase: str, hooks: list[str], abort: bool,
+                    cancel: "threading.Event | None" = None) -> bool:
         if not hooks:
             return True
-        ok, errors = _run_hooks(hooks, abort_on_error=abort, label=f"{entry_title}/{phase}")
+        ok, errors = _run_hooks(hooks, abort_on_error=abort, label=f"{entry_title}/{phase}", cancel=cancel)
         if errors:
             for err in errors:
                 logger.error("Hook error [%s]: %s", entry_title, err)
@@ -882,15 +932,18 @@ class CopyWorker(QThread):
         skip_titles: set[str] = set()
         seen: set[str] = set()
         for task in tasks:
+            if self._cancel.is_set():
+                break
             _t = str(task[2]) if len(task) > 2 else ""
             if _t and _t not in seen:
                 seen.add(_t)
                 _pre, _ = self._hooks.get(_t, ([], []))
                 if _pre:
                     self._pre_fired_titles.add(_t)
-                    if not self._fire_hooks(_t, "pre", _pre, abort=True):
+                    if not self._fire_hooks(_t, "pre", _pre, abort=True, cancel=self._cancel):
                         skip_titles.add(_t)
-                        self._hook_failures.append(_t)
+                        if not self._cancel.is_set():
+                            self._hook_failures.append(_t)
         return skip_titles
 
     def _run_post_hooks(self, tasks: list) -> None:
@@ -993,10 +1046,10 @@ class CopyWorker(QThread):
         plans, self._version_plans = self._version_plans, []
         if not plans:
             return
-        cancelled = self._cancel.is_set()
+        aborted = self._cancel.is_set() or self._sync_failed
         removed: list = []
         for plan in plans:
-            if cancelled or tracker is None:
+            if aborted or tracker is None:
                 ok = False
             elif plan.title:
                 ok = tracker.error_count(plan.title) == 0
@@ -1016,6 +1069,7 @@ class CopyWorker(QThread):
         self.scan_progress.emit(tr("Writing data to disk…"), 100)
         for path, err in sync_destinations(dests):
             logger.error("syncfs %s: %s", path, err)
+            self._sync_failed = True
             flusher.push(er=[(path, tr("Could not flush data to the destination device: {err}", err=err), 0)],
                          force=True)
 

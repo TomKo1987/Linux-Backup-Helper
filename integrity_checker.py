@@ -16,7 +16,7 @@ from translations import tr
 from ui_utils import _StandardKeysMixin, format_size, build_dialog_shell, clear_layout, size_to_screen, stop_thread
 from drive_utils import is_smb, is_ssh
 from advanced_copy import latest_version_path
-from copy_worker_core import _SKIP_RE
+from copy_worker_core import _should_skip
 
 __all__ = ["IntegrityCheckerDialog"]
 
@@ -38,7 +38,7 @@ def _quick_scan(path_str: str, excluded: "frozenset[str]" = frozenset()) -> dict
     try:
         with os.scandir(root) as it:
             for entry in it:
-                if _SKIP_RE.search(entry.name):
+                if _should_skip(entry.name):
                     continue
                 if excluded and os.path.abspath(entry.path) in excluded:
                     continue
@@ -85,6 +85,10 @@ class _CheckWorker(QThread):
             title   = entry.get("title", "?")
             sources = entry.get("source", [])
             dests   = entry.get("destination", [])
+            if isinstance(sources, str):
+                sources = [sources]
+            if isinstance(dests, str):
+                dests = [dests]
 
             issues: list[str] = []
             infos: list[str] = []

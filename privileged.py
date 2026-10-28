@@ -2,11 +2,13 @@ import os
 import secrets
 import shlex
 import shutil
+import signal
 import subprocess
 import threading
 import time
 from types import SimpleNamespace
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from state import logger, frozen_safe_env
 from translations import tr
@@ -21,13 +23,16 @@ __all__ = [
 _PROBE_TTL = 30.0
 _KEEPALIVE_INTERVAL = 240
 _VERIFY_TIMEOUT = 15
+_GROUP_POLL = 0.1
+_TERM_GRACE = 5.0
+_DRAIN_TIMEOUT = 2.0
 
 _probe_lock = threading.Lock()
 _probe_cache: tuple[float, bool] | None = None
 
 
 class AuthRequired(RuntimeError):
-    """Raised/returned when a command needs privileges we are not allowed to obtain."""
+    pass
 
 
 def auth_required_message() -> str:
@@ -310,7 +315,7 @@ def _build_argv(args: Sequence[str]) -> tuple[list[str] | None, Any]:
 
 
 def run_privileged(args: Sequence[str], *, timeout: int = 15, text: bool = True,
-                   cwd: str | None = None) -> subprocess.CompletedProcess | None:
+                   cwd: str | None = None, user_env: bool = False) -> subprocess.CompletedProcess | None:
 
     argv, pw = _build_argv(args)
     if argv is None:
@@ -322,8 +327,8 @@ def run_privileged(args: Sequence[str], *, timeout: int = 15, text: bool = True,
             argv,
             input=buf,
             stdin=None if buf is not None else subprocess.DEVNULL,
-            capture_output=True, env=clean_env(), timeout=timeout,
-            cwd=cwd, check=False)
+            capture_output=True, env=frozen_safe_env() if user_env else clean_env(),
+            timeout=timeout, cwd=cwd, check=False)
         if not text:
             return r
         return subprocess.CompletedProcess(
@@ -340,32 +345,96 @@ def run_privileged(args: Sequence[str], *, timeout: int = 15, text: bool = True,
         zero_buffer(buf)
 
 
-def run_user_command(tokens: Sequence[str], *, timeout: int = 30,
-                     cwd: str | None = None) -> SimpleNamespace:
+def _signal_group(pid: int, sig: int) -> None:
+    try:
+        os.killpg(pid, sig)
+    except OSError:
+        pass
 
-    argv = list(tokens)
+
+def _stop_group(proc: subprocess.Popen) -> None:
+    _signal_group(proc.pid, signal.SIGTERM)
+    try:
+        proc.wait(timeout=_TERM_GRACE)
+    except subprocess.TimeoutExpired:
+        _signal_group(proc.pid, signal.SIGKILL)
+        proc.wait()
+        return
+    _signal_group(proc.pid, signal.SIGKILL)
+
+
+def _run_group(argv: Sequence[str], *, input_data: "bytes | bytearray | None", env: dict,
+               cwd: str | None, timeout: float,
+               cancel: "threading.Event | None") -> "tuple[str, int, bytes, bytes]":
+    proc = subprocess.Popen(
+        list(argv),
+        stdin=subprocess.PIPE if input_data is not None else subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        env=env, cwd=cwd, start_new_session=True)
+    deadline = time.monotonic() + timeout
+    pending = input_data
+    state = "timeout"
+    while True:
+        try:
+            out, err = proc.communicate(input=pending, timeout=_GROUP_POLL)
+            return "done", proc.returncode, out or b"", err or b""
+        except subprocess.TimeoutExpired:
+            pending = None
+        if cancel is not None and cancel.is_set():
+            state = "cancelled"
+        elif time.monotonic() >= deadline:
+            state = "timeout"
+        else:
+            continue
+        break
+    _stop_group(proc)
+    try:
+        out, err = proc.communicate(timeout=_DRAIN_TIMEOUT)
+    except subprocess.TimeoutExpired as exc:
+        out, err = exc.stdout or b"", exc.stderr or b""
+        for pipe in (proc.stdout, proc.stderr, proc.stdin):
+            if pipe is not None:
+                try:
+                    pipe.close()
+                except OSError:
+                    pass
+    return state, proc.returncode, out or b"", err or b""
+
+
+def run_user_command(tokens: Sequence[str], *, timeout: int = 30,
+                     cwd: str | None = None, user_env: bool = False,
+                     cancel: "threading.Event | None" = None) -> SimpleNamespace:
+
+    argv: "list[str] | None" = list(tokens)
     if not argv:
         return SimpleNamespace(returncode=1, stdout="", stderr=tr("Empty command"))
 
-    needs_root = os.path.basename(argv[0]) in ("sudo", "doas")
-    if needs_root:
+    pw: Any = None
+    if os.path.basename(argv[0]) in ("sudo", "doas"):
         inner = split_sudo(argv)
         if not inner:
             return SimpleNamespace(returncode=1, stdout="", stderr=tr("sudo without a command"))
-        r = run_privileged(inner, timeout=timeout, cwd=cwd)
-        if r is None:
+        argv, pw = _build_argv(inner)
+        if argv is None:
             return SimpleNamespace(returncode=126, stdout="", stderr=auth_required_message())
-        return SimpleNamespace(returncode=r.returncode, stdout=r.stdout or "", stderr=r.stderr or "")
 
+    buf = pw_stdin(pw) if pw is not None else None
     try:
-        r = subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL,
-                           env=clean_env(), timeout=timeout, cwd=cwd, check=False)
-        return SimpleNamespace(returncode=r.returncode, stdout=r.stdout or "", stderr=r.stderr or "")
-    except subprocess.TimeoutExpired:
-        return SimpleNamespace(returncode=124, stdout="",
-                               stderr=tr("Timed out after {timeout}s", timeout=timeout))
+        state, code, out, err = _run_group(
+            argv, input_data=buf, env=frozen_safe_env() if user_env else clean_env(),
+            cwd=cwd, timeout=timeout, cancel=cancel)
     except (OSError, subprocess.SubprocessError) as exc:
         return SimpleNamespace(returncode=1, stdout="", stderr=str(exc))
+    finally:
+        zero_buffer(buf)
+
+    stdout = out.decode("utf-8", "replace")
+    if state == "cancelled":
+        return SimpleNamespace(returncode=130, stdout=stdout, stderr=tr("Cancelled"))
+    if state == "timeout":
+        return SimpleNamespace(returncode=124, stdout=stdout,
+                               stderr=tr("Timed out after {timeout}s", timeout=timeout))
+    return SimpleNamespace(returncode=code, stdout=stdout, stderr=err.decode("utf-8", "replace"))
 
 
 def release_session() -> None:

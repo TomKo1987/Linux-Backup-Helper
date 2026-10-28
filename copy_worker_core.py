@@ -302,6 +302,8 @@ def _reset_dir_caches() -> None:
         _hardlinks.clear()
     with _mtime_tol_lock:
         _mtime_tol_cache.clear()
+    with _perm_caps_lock:
+        _perm_caps.clear()
     _dev_rotational.cache_clear()
 
 
@@ -330,6 +332,24 @@ def _fsync_parent_dir(path: str) -> None:
 
 
 _UMASK = _current_umask()
+
+_MODE_MASK = 0o7777 if _EUID == 0 else 0o777
+_CAP_MODE = 1
+_CAP_OWNER = 2
+_CAP_ALL = _CAP_MODE | _CAP_OWNER
+_PROBE_MODES = (0o640, 0o604)
+_PROBE_OWNER_ID = 1
+
+_FS_WITHOUT_POSIX_MODE: dict[int, str] = {
+    0x4D44: "msdos", 0x2011BAB0: "exfat", 0x5346544E: "ntfs", 0x7366746E: "ntfs3",
+    0xFF534D42: "cifs", 0xFE534D42: "smb2", 0x517B: "smb", 0x4244: "hfs", 0x482B: "hfsplus",
+    0x15013346: "udf", 0x9660: "iso9660", 0x01021997: "9p", 0x786F4256: "vboxsf",
+}
+_STATFS_BUF_SIZE = 256
+
+_perm_caps: dict[int, int] = {}
+_perm_caps_lock = threading.Lock()
+_statfs_fn = None
 
 _MTIME_UNITS_NS: tuple[int, ...] = (2_000_000_000, 1_000_000_000, 10_000_000, 1_000, 100)
 _MTIME_PROBE_NS = 1_700_000_001_123_456_789
@@ -380,6 +400,88 @@ def _mtime_tolerance_ns(dst: str, dst_st: "os.stat_result", *, probe: bool = Tru
             with _mtime_tol_lock:
                 return _mtime_tol_cache.setdefault(dev, probed)
     return _heuristic_mtime_tolerance_ns(dst_st.st_mtime_ns)
+
+
+def _get_statfs():
+    global _statfs_fn
+    if _statfs_fn is None:
+        try:
+            fn = ctypes.CDLL(None, use_errno=True).statfs
+            fn.argtypes = [ctypes.c_char_p, ctypes.c_void_p]
+            fn.restype = ctypes.c_int
+            _statfs_fn = fn
+        except (OSError, AttributeError):
+            _statfs_fn = False
+    return _statfs_fn
+
+
+def _fs_magic(path: str) -> int:
+    fn = _get_statfs()
+    if not fn:
+        return -1
+    buf = ctypes.create_string_buffer(_STATFS_BUF_SIZE)
+    if fn(os.fsencode(path), buf) != 0:
+        return -1
+    return ctypes.c_long.from_buffer(buf).value & 0xFFFFFFFF
+
+
+def _fchmod_sticks(fd: int, mode: int) -> bool:
+    try:
+        os.fchmod(fd, mode)
+        return stat.S_IMODE(os.fstat(fd).st_mode) == mode
+    except OSError:
+        return False
+
+
+def _probe_perm_caps(directory: str) -> int:
+    probe = os.path.join(directory or ".", f".bh-probe.{_PID}.{threading.get_ident()}.p")
+    try:
+        fd = os.open(probe, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    except OSError:
+        return -1
+    caps = 0
+    try:
+        if all(_fchmod_sticks(fd, mode) for mode in _PROBE_MODES):
+            caps |= _CAP_MODE
+        if _EUID != 0:
+            caps |= _CAP_OWNER
+        else:
+            try:
+                os.fchown(fd, _PROBE_OWNER_ID, _PROBE_OWNER_ID)
+                st = os.fstat(fd)
+                if st.st_uid == _PROBE_OWNER_ID and st.st_gid == _PROBE_OWNER_ID:
+                    caps |= _CAP_OWNER
+            except OSError:
+                pass
+    finally:
+        os.close(fd)
+        _silent_unlink(probe)
+    return caps
+
+
+def _perm_caps_for(dev: int, path: str, *, probe: bool = True) -> int:
+    caps = _perm_caps.get(dev)
+    if caps is not None:
+        return caps
+    name = _FS_WITHOUT_POSIX_MODE.get(_fs_magic(path))
+    if name is not None:
+        caps = 0
+        logger.debug("filesystem %s does not store POSIX permissions — permission sync disabled", name)
+    else:
+        caps = _CAP_ALL
+        if probe:
+            probed = _probe_perm_caps(os.path.dirname(path))
+            if probed >= 0:
+                caps = probed
+                if caps != _CAP_ALL:
+                    logger.debug("destination of %s keeps no mode/owner changes (caps=%d)", path, caps)
+    with _perm_caps_lock:
+        return _perm_caps.setdefault(dev, caps)
+
+
+def _drop_perm_caps(dev: int, lost: int) -> None:
+    with _perm_caps_lock:
+        _perm_caps[dev] = _perm_caps.get(dev, _CAP_ALL) & ~lost
 
 
 _syncfs_fn = None

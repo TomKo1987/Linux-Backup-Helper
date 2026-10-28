@@ -24,7 +24,7 @@ from copy_worker_core import (
     _SMB_WORKERS, _SMB_TIMEOUT, _SMB_LS_INDEX_TIMEOUT, _SMB_FILE_SECS, _SMB_CHUNK, _SMB_MIN_BYTES_PER_SEC,
     _SHM_DIR, _smb_procs, _smb_procs_lock, _SMB_LINE_RE, _should_skip, _CACHE_MISS,
     _is_unreachable, _parse_smb, _q, _run_futures, _ensure_dir, _silent_unlink,
-    _parse_smb_mtime, _SMB_MTIME_TOLERANCE, _tmp_path, _fsync_parent_dir
+    _parse_smb_mtime, _SMB_MTIME_TOLERANCE, _tmp_path
 )
 
 
@@ -252,7 +252,7 @@ class _SmbClient:
     def _spawn(self, argv: list[str], input_data: str, timeout: int, wipe_fn=None,
                cancel: "threading.Event | None" = None) -> "tuple[subprocess.Popen | None, str, str]":
         tid = threading.get_ident()
-        env = frozen_safe_env({"LC_ALL": "C", "LANG": "C"})
+        env = frozen_safe_env({"LC_ALL": "C.UTF-8", "LANG": "C.UTF-8", "LANGUAGE": "C"})
         try:
             proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                     text=True, encoding="utf-8", errors="replace", env=env)
@@ -406,6 +406,10 @@ class _SmbClient:
                         return "dir", -1, -1
                     return "file", int(size_s), _parse_smb_mtime(ts_s)
         return "missing", -1, -1
+
+    def ls_dir(self, rpath: str) -> "tuple[subprocess.Popen | None, str, str]":
+        cmd = f'cd "/{_q(rpath)}"\nls\n' if rpath else "ls\n"
+        return self._run_with_creds(cmd, _SMB_TIMEOUT)
 
     def probe(self) -> str:
         if self._user and self._pw:
@@ -568,7 +572,8 @@ class _SmbScanner:
             else:
                 if ls_problem:
                     lerr.append((src_url, tr("Directory listing incomplete: {err}", err=ls_problem), title))
-                prefix = rpath.rstrip("/") + "/" if rpath else None
+                prefix = rpath.rstrip("/") + "/" if rpath else ""
+                prefix_len = len(prefix)
                 for path, (sz, mt) in idx.items():
                     if self._cancel.is_set():
                         break
@@ -580,7 +585,7 @@ class _SmbScanner:
                     if not rpath:
                         rel = path
                     elif prefix and path.startswith(prefix):
-                        rel = os.path.relpath(path, rpath)
+                        rel = path[prefix_len:]
                     else:
                         rel = os.path.basename(path)
                     dst_path = str(_Path(dst) / str(rel))
@@ -614,6 +619,7 @@ class _SmbScanner:
     def _do_put_dir(self, src, host, share, rpath, title, expanded, excludes: frozenset = frozenset()) -> None:
         lexp: list = []
         stack: list = [src]
+        src_prefix_len = len(src) if src.endswith(os.sep) else len(src) + 1
 
         try:
             st = os.stat(src)
@@ -641,7 +647,7 @@ class _SmbScanner:
                             seen_inos.add(ino)
                             stack.append(e.path)
                         elif _stat_mod.S_ISREG(e_st.st_mode):
-                            rel = os.path.relpath(e.path, src)
+                            rel = e.path[src_prefix_len:]
                             rp = f"{rpath}/{rel}".replace(os.sep, "/").lstrip("/")
                             lexp.append(_SmbJob(e.path, "", "smb_put", host, share, rp, title=title,
                                                 local_size=e_st.st_size, local_mtime=int(e_st.st_mtime)))
@@ -896,16 +902,10 @@ class _ShareProcessor:
                 logger.debug("could not set mtime on %s: %s", tmp, exc)
         if tmp != job.dst_path:
             try:
-                fd = os.open(tmp, os.O_RDONLY)
-                try:
-                    os.fsync(fd)
-                finally:
-                    os.close(fd)
                 os.replace(tmp, job.dst_path)
             except OSError as exc:
                 _silent_unlink(tmp)
                 return str(exc)
-            _fsync_parent_dir(job.dst_path)
         return ""
 
     def _record(self, ok_c: list, sk_c: list, er_c: list) -> None:

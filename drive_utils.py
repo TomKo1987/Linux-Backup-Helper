@@ -266,6 +266,44 @@ def is_ssh(path: str) -> bool:
     return path.startswith("ssh://") or _SSH_USER_HOST_RE.match(path) is not None
 
 
+def exclude_key(path: str) -> str:
+    p = (path or "").strip()
+    return p if (is_smb(p) or is_ssh(p)) else abspath(expanduser(p))
+
+
+def list_directory(path: str) -> list[tuple[str, bool]]:
+    if is_smb(path):
+        from copy_worker_core import _SMB_LINE_RE, _parse_smb
+        from copy_worker_smb import _SmbClient, _get_smb_credentials, _smb_ls_body, _smb_output_problem
+        host, share, rpath = _parse_smb(path)
+        user, pw = _get_smb_credentials()
+        proc, out, err = _SmbClient(host, share, user, pw).ls_dir(rpath)
+        if proc is None or proc.returncode != 0:
+            raise OSError(err.strip() or _smb_output_problem(out, err) or "SMB")
+        entries: list[tuple[str, bool]] = []
+        for line in out.splitlines():
+            line = _smb_ls_body(line)
+            if not line.strip() or line.startswith("\\"):
+                continue
+            m = _SMB_LINE_RE.match(line)
+            if m:
+                name = m.group(1).rstrip()
+                if name not in (".", ".."):
+                    entries.append((name, "D" in m.group(2)))
+        problem = _smb_output_problem(out, err)
+        if problem and not entries:
+            raise OSError(problem)
+        return entries
+    if is_ssh(path):
+        from copy_worker_core import _rsync_list
+        listed = _rsync_list(path.rstrip("/") + "/")
+        if listed is None:
+            raise OSError(tr("Cannot read directory: {error}", error=path))
+        return [(name, kind == "d") for kind, name in listed if name != "."]
+    with os.scandir(abspath(expanduser(path))) as it:
+        return [(e.name, e.is_dir(follow_symlinks=False)) for e in it]
+
+
 def to_browsable_uri(path: str) -> str:
     p = (path or "").strip()
     if not p:

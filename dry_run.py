@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QStackedWidget,
 )
 
-from copy_worker_core import _SKIP_RE
+from copy_worker_core import _should_skip
 from copy_worker import _is_up_to_date_local, _is_symlink_up_to_date
 from drive_utils import is_smb, is_ssh
 from state import S
@@ -157,6 +157,7 @@ class _DryRunWorker(QThread):
                   to_copy: list, to_skip: list, errors: list) -> None:
 
         stack = [(src_abs, dst_abs)]
+        prefix_len = len(src_abs) if src_abs.endswith(os.sep) else len(src_abs) + 1
         while stack:
             if self._cancel.is_set():
                 return
@@ -171,7 +172,7 @@ class _DryRunWorker(QThread):
             for entry in entries:
                 if self._cancel.is_set():
                     return
-                if entry.path in excl_set or _SKIP_RE.search(entry.name):
+                if entry.path in excl_set or _should_skip(entry.name):
                     continue
                 dst_path = os.path.join(cur_dst, entry.name)
                 try:
@@ -185,7 +186,7 @@ class _DryRunWorker(QThread):
                     stack.append((entry.path, dst_path))
                     continue
 
-                rel = os.path.relpath(entry.path, src_abs)
+                rel = str(entry.path)[prefix_len:]
                 if is_symlink:
                     self._classify_symlink(entry.path, rel, dst_path, to_copy, to_skip, errors)
                     continue
@@ -885,6 +886,9 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
                     if details.get("versioned_archive"):
                         r_src, r_excl = resolve_restore_sources(r_src, r_excl, [str(x) for x in src])
                     tasks.append((r_src, src, e.get("title", "?"), r_excl))
+                elif details.get("versioned_archive"):
+                    tasks.append((src, [os.path.join(str(d), ".new-version") for d in dst],
+                                  e.get("title", "?"), details.get("exclude_paths", {})))
                 else:
                     tasks.append((src, dst, e.get("title", "?"), details.get("exclude_paths", {})))
 

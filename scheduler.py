@@ -130,8 +130,7 @@ def install_timer(interval_key: str, backup_headers: list[str], *, on_calendar: 
     service = (
         "[Unit]\n"
         "Description=Backup Helper Automatic Backup\n"
-        "Wants=network-online.target\n"
-        "After=network-online.target graphical-session.target\n"
+        "After=graphical-session.target\n"
         f"{ac_condition}"
         "\n"
         "[Service]\n"
