@@ -313,12 +313,13 @@ class _SummaryWidget(QWidget):
             self._progress_bar.setFormat(tr("Cancelled"))
             return
         if total > 0:
-            pct = min(100, int(done * 100 / total))
+            done_clamped = max(0, min(done, total))
+            pct = int(done_clamped * 100 / total)
             if self._progress_bar.maximum() != total:
                 self._progress_bar.setRange(0, total)
-            self._progress_bar.setValue(min(done, total))
+            self._progress_bar.setValue(done_clamped)
             self._prog_pct.setText(f"{pct}%")
-            self._progress_bar.setFormat(tr("{pct}%  —  {done:,} / {total:,} files", pct=pct, done=done, total=total))
+            self._progress_bar.setFormat(tr("{pct}%  —  {done:,} / {total:,} files", pct=pct, done=done_clamped, total=total))
         else:
             if finished:
                 self._progress_bar.setRange(0, 1)

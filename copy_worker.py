@@ -705,7 +705,7 @@ class _Flusher:
             payload_sk, self._sk = self._sk, []
             payload_er, self._er = self._er, []
             payload_de, self._de = self._de, []
-            self.done    += len(payload_ok) + len(payload_sk) + len(payload_er)
+            self.done    += len(payload_ok) + len(payload_sk) + len(payload_er) + len(payload_de)
             self.copied  += len(payload_ok)
             self.skipped += len(payload_sk)
             self.errors  += len(payload_er)
@@ -715,7 +715,8 @@ class _Flusher:
             self._last_flush_t = now
         self._signal.emit(payload_ok, payload_sk, payload_er, payload_de, done_snap, total_snap)
 
-    def flush(self) -> None: self.push(force=True)
+    def flush(self) -> None:
+        self.push(force=True)
 
 
 def _push_errors(flusher: "_Flusher", tracker: "_EntryTracker",
