@@ -86,7 +86,7 @@ _META_FAILED = 2
 
 
 def _content_matches(src: "str | None", dst: str, src_st: "os.stat_result", d: "os.stat_result", *,
-                     probe: bool = True) -> bool:
+                      probe: bool = True) -> bool:
     if not stat.S_ISREG(d.st_mode) or d.st_size != src_st.st_size:
         return False
     diff = abs(d.st_mtime_ns - src_st.st_mtime_ns)
@@ -1258,7 +1258,7 @@ class CopyWorker(QThread):
             flusher.flush()
             tracker.emit_final()
             self._emit_finished(flusher.copied, flusher.skipped, flusher.errors,
-                                    flusher.deleted, self._cancel.is_set())
+                                flusher.deleted, self._cancel.is_set())
         except Exception as exc:
             logger.error("CopyWorker critical: %s", exc, exc_info=True)
             try:
@@ -1270,7 +1270,7 @@ class CopyWorker(QThread):
             except Exception as e:
                 logger.debug("Error during fallback cleanup: %s", e)
             self._emit_finished(flusher.copied, flusher.skipped, flusher.errors,
-                                    flusher.deleted, self._cancel.is_set())
+                                flusher.deleted, self._cancel.is_set())
         finally:
             if pw is not None:
                 pw.clear()
@@ -1454,6 +1454,7 @@ class CopyWorker(QThread):
             flusher.push(er=[(src, msg, 0)])
             _track(0, 0, 1, len(deleted_this_task))
             logger.error("rsync exit %d: %s → %s (%s)", proc.returncode, src, dst, detail or "no output captured")
+
 
     def _mirror_guard(self, src: str, rsync_src: str) -> "str | None":
         empty_msg = tr("Source directory is empty — mirror deletion skipped to protect the destination")

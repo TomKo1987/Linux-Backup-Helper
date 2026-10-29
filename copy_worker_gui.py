@@ -712,8 +712,8 @@ class CopyDialog(_StandardKeysMixin, QDialog):
     active_workers: "set[CopyWorker]" = set()
 
     def __init__(self, parent, tasks, operation: str, *,
-                op_kind: "str | None" = None, headless: bool = False,
-                advanced: bool = False, is_restore: bool = False) -> None:
+                 op_kind: "str | None" = None, headless: bool = False,
+                 advanced: bool = False, is_restore: bool = False) -> None:
         super().__init__(parent)
         self.setWindowTitle(operation)
         self._op_kind = op_kind
@@ -776,6 +776,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         self._done  = self._total = 0
         self._final_elapsed: int | None = None
         self._finished = False
+        self._scan_complete = False
         self._pending_ok = deque()
         self._pending_sk = deque()
         self._pending_de = deque()
@@ -962,11 +963,14 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         self._set_status_scanning(phase, scanned)
 
     def _on_scan_finished(self, total: int) -> None:
+        self._scan_complete = True
         self._total = total
         suffix = tr("file") if total == 1 else tr("files")
         self._summary.set_status_html(self._status_badge("📂", tr("Scan complete — {total:,} {suffix} found", total=total, suffix=suffix), self._t["accent"]))
         if total > 0:
             self._summary.update_progress_bar(self._done, total)
+        else:
+            self._summary.update_progress_bar(0, 0)
 
     def _drain_pending(self) -> int:
         max_per = 750
@@ -993,7 +997,8 @@ class CopyDialog(_StandardKeysMixin, QDialog):
             self._update_tab_labels()
         if self._done > 0:
             self._set_status_copying()
-        self._summary.update_stats(self._operation, self._done, self._total, self.copied, self.skipped,
+        display_total = self._total if self._scan_complete else 0
+        self._summary.update_stats(self._operation, self._done, display_total, self.copied, self.skipped,
                                    self._display_errors, self._display_deleted, elapsed,
                                    self._size_copied, self._size_skipped, self._display_size_deleted, finished=False)
 
@@ -1017,7 +1022,10 @@ class CopyDialog(_StandardKeysMixin, QDialog):
 
     def _on_batch(self, ok, sk, er, de, done, total) -> None:
         self._done = max(self._done, done)
-        self._total = total
+        if self._scan_complete:
+            self._total = total
+        else:
+            self._total = 0
         self.copied  += len(ok)
         self.skipped += len(sk)
         self.errors  += len(er)
@@ -1037,7 +1045,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
             self._pending_de.append((p, r))
         self._pending_er.extend((s, m) for s, m, _ in er)
 
-        if total > 0 or done > 0:
+        if self._scan_complete and total > 0:
             self._summary.update_progress_bar(done, total)
 
     def _on_done(self, c, s, e, d, cancelled) -> None:
@@ -1131,7 +1139,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         elif self._not_found_paths and not cancelled:
             n = len(self._not_found_paths)
             paths_text = "\n".join(
-                f"  \u2022 {p} ({t})" if t else f"  \u2022 {p}"
+                f"  • {p} ({t})" if t else f"  • {p}"
                 for p, t in self._not_found_paths
             )
             path_word = tr("path was") if n == 1 else tr("paths were")
