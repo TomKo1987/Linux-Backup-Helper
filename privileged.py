@@ -405,7 +405,7 @@ def run_user_command(tokens: Sequence[str], *, timeout: int = 30,
                      cwd: str | None = None, user_env: bool = False,
                      cancel: "threading.Event | None" = None) -> SimpleNamespace:
 
-    argv: "list[str] | None" = list(tokens)
+    argv: list[str] | None = list(tokens)
     if not argv:
         return SimpleNamespace(returncode=1, stdout="", stderr=tr("Empty command"))
 

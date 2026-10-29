@@ -460,7 +460,7 @@ def _resolve_ssh_mirror_delete(ssh_pairs: list[tuple[str, str]], excl, title: st
             return _unverifiable(s_str, d_str)
         all_deleted = preview
     else:
-        results: dict[int, "list[str] | None"] = {}
+        results: dict[int, list[str] | None] = {}
         results_lock = threading.Lock()
         stop = threading.Event()
 

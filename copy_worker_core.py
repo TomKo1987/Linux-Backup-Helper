@@ -8,11 +8,11 @@ import stat
 import subprocess
 import threading
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from functools import lru_cache
 from urllib.parse import urlparse
 
-from drive_utils import is_smb, is_ssh, build_rsync_list_cmd, _SSH_USER_HOST_RE
+from drive_utils import is_smb, is_ssh, build_rsync_list_cmd, get_mounts, _SSH_USER_HOST_RE
 from state import logger, frozen_safe_env, _current_umask
 from themes import register_cache_invalidation_hook as _reg_cache_hook
 from translations import tr
@@ -41,6 +41,7 @@ _SCAN_PIPE_BATCH = 128
 _LOCAL_BATCH     = 256
 _PIPE_MAXSIZE    = 1024
 _MIN_FREE        = 500 * 1024 * 1024
+_HDD_WORKERS     = 2
 
 
 def _scale_params(total: int) -> tuple[int, int, int]:
@@ -77,12 +78,6 @@ def _glob_to_regex(pattern: str) -> str:
         else:
             out.append(re.escape(ch))
     return "".join(out)
-
-
-_SKIP_RE = re.compile(
-    "|".join(f"^{_glob_to_regex(p)}\\Z" for p in _SKIP_GLOBS),
-    re.I | re.S,
-)
 
 
 def _build_skip_matcher(globs: tuple[str, ...]):
@@ -186,23 +181,28 @@ def _notify(title: str, body: str, urgency: str = "normal") -> None:
     threading.Thread(target=proc.wait, name="notify-reaper", daemon=True).start()
 
 
+def _nearest_existing(path: str) -> str:
+    probe = path
+    while probe and not os.path.exists(probe):
+        parent = os.path.dirname(probe)
+        probe = "" if parent == probe else parent
+    return probe
+
+
 def _check_destination_space(tasks: list[tuple]) -> list[str]:
     checked: set[str] = set()
     warnings: list[str] = []
     for _src, dst_raw, _title, *_ in tasks:
         dsts = dst_raw if isinstance(dst_raw, (list, tuple)) else (dst_raw,)
-        for dst in dsts:
-            dst = str(dst).strip()
+        for raw in dsts:
+            dst = str(raw).strip()
             if not dst or is_smb(dst) or is_ssh(dst):
                 continue
-            dst = os.path.abspath(os.path.expanduser(dst))
-            if dst in checked:
+            path = os.path.abspath(os.path.expanduser(dst))
+            if path in checked:
                 continue
-            checked.add(dst)
-            probe = dst
-            while probe and not os.path.exists(probe):
-                parent = os.path.dirname(probe)
-                probe = "" if parent == probe else parent
+            checked.add(path)
+            probe = _nearest_existing(path)
             if not probe:
                 continue
             try:
@@ -210,10 +210,10 @@ def _check_destination_space(tasks: list[tuple]) -> list[str]:
                 if usage.free < _MIN_FREE:
                     free_mb = usage.free // (1024 * 1024)
                     warnings.append(
-                        tr("• {dst!r}  —  only {free_mb:,} MB free", dst=dst, free_mb=free_mb)
+                        tr("• {dst!r}  —  only {free_mb:,} MB free", dst=path, free_mb=free_mb)
                     )
             except OSError as exc:
-                logger.debug("_check_destination_space: cannot check %r: %s", dst, exc)
+                logger.debug("_check_destination_space: cannot check %r: %s", path, exc)
     return warnings
 
 
@@ -302,6 +302,7 @@ def _reset_dir_caches() -> None:
         _hardlinks.clear()
     with _mtime_tol_lock:
         _mtime_tol_cache.clear()
+        _src_tol_cache.clear()
     with _perm_caps_lock:
         _perm_caps.clear()
     _dev_rotational.cache_clear()
@@ -349,13 +350,25 @@ _STATFS_BUF_SIZE = 256
 
 _perm_caps: dict[int, int] = {}
 _perm_caps_lock = threading.Lock()
-_statfs_fn = None
+_statfs_fn: Callable[..., int] | bool | None = None
 
 _MTIME_UNITS_NS: tuple[int, ...] = (2_000_000_000, 1_000_000_000, 10_000_000, 1_000, 100)
 _MTIME_PROBE_NS = 1_700_000_001_123_456_789
 _MTIME_TOL_UNKNOWN = -1
 _mtime_tol_cache: dict[int, int] = {}
+_src_tol_cache: dict[int, int] = {}
 _mtime_tol_lock = threading.Lock()
+
+_FS_MTIME_TOLERANCE_NS: dict[int, int] = {
+    0x4D44: 2_000_000_000, 0x2011BAB0: 10_000_000, 0x5346544E: 100, 0x7366746E: 100,
+    0x482B: 1_000_000_000,
+}
+
+_NETWORK_FS_MAGIC = frozenset({
+    0x6969, 0xFF534D42, 0xFE534D42, 0x517B, 0x65735546, 0x01021997, 0x786F4256,
+    0x00C36400, 0x5346414F, 0x0BD00BD0, 0x47504653, 0x564C, 0x73757245, 0x7461636F,
+    0x01161970,
+})
 
 
 def _heuristic_mtime_tolerance_ns(dst_ns: int) -> int:
@@ -400,6 +413,16 @@ def _mtime_tolerance_ns(dst: str, dst_st: "os.stat_result", *, probe: bool = Tru
             with _mtime_tol_lock:
                 return _mtime_tol_cache.setdefault(dev, probed)
     return _heuristic_mtime_tolerance_ns(dst_st.st_mtime_ns)
+
+
+def _source_tolerance_ns(src: str, dev: int) -> int:
+    with _mtime_tol_lock:
+        cached = _src_tol_cache.get(dev)
+    if cached is not None:
+        return cached
+    tolerance = _FS_MTIME_TOLERANCE_NS.get(_fs_magic(src), 0)
+    with _mtime_tol_lock:
+        return _src_tol_cache.setdefault(dev, tolerance)
 
 
 def _get_statfs():
@@ -484,7 +507,7 @@ def _drop_perm_caps(dev: int, lost: int) -> None:
         _perm_caps[dev] = _perm_caps.get(dev, _CAP_ALL) & ~lost
 
 
-_syncfs_fn = None
+_syncfs_fn: Callable[..., int] | bool | None = None
 
 
 def _get_syncfs():
@@ -500,7 +523,7 @@ def _get_syncfs():
     return _syncfs_fn
 
 
-def sync_destinations(paths: "Iterable[str]") -> "list[tuple[str, str]]":
+def sync_destinations(paths: Iterable[str]) -> list[tuple[str, str]]:
     failures: list[tuple[str, str]] = []
     seen_dev: set[int] = set()
     fallback_needed = False
@@ -543,6 +566,8 @@ def sync_destinations(paths: "Iterable[str]") -> "list[tuple[str, str]]":
 
 @lru_cache(maxsize=32)
 def _dev_rotational(dev: int) -> bool:
+    if os.major(dev) == 0:
+        return False
     base = f"/sys/dev/block/{os.major(dev)}:{os.minor(dev)}"
     for rel in ("queue/rotational", "../queue/rotational"):
         try:
@@ -553,20 +578,53 @@ def _dev_rotational(dev: int) -> bool:
     return False
 
 
-def _copy_workers_for(destinations: "Iterable[str]") -> int:
-    for dst in destinations:
-        probe = dst
-        while probe and not os.path.exists(probe):
-            parent = os.path.dirname(probe)
-            probe = "" if parent == probe else parent
+def _block_dev_for(path: str, st_dev: int) -> int:
+    if os.major(st_dev) != 0:
+        return st_dev
+    real = os.path.realpath(path)
+    best_len = -1
+    source = ""
+    for device, mount in get_mounts():
+        root = mount.rstrip("/")
+        if (real == mount or real.startswith(root + "/")) and len(root) > best_len:
+            best_len = len(root)
+            source = device
+    if not source.startswith("/dev/"):
+        return 0
+    try:
+        return os.stat(source).st_rdev
+    except OSError:
+        return 0
+
+
+def _copy_workers_for(paths: Iterable[str]) -> int:
+    checked: set[int] = set()
+    for path in paths:
+        probe = _nearest_existing(path)
         if not probe:
             continue
         try:
-            if _dev_rotational(os.stat(probe).st_dev):
-                return 2
+            st_dev = os.stat(probe).st_dev
         except OSError:
             continue
+        if st_dev in checked:
+            continue
+        checked.add(st_dev)
+        if _dev_rotational(_block_dev_for(probe, st_dev)):
+            return _HDD_WORKERS
     return _WORKERS
+
+
+def _scan_workers_for(paths: Iterable[str]) -> int:
+    checked: set[str] = set()
+    for path in paths:
+        probe = _nearest_existing(path)
+        if not probe or probe in checked:
+            continue
+        checked.add(probe)
+        if _fs_magic(probe) in _NETWORK_FS_MAGIC:
+            return _WORKERS
+    return 1
 
 
 def _tmp_path(dst: str, suffix: str) -> str:
@@ -616,6 +674,11 @@ def _make_new_dir(path: str) -> "bool | None":
                 logger.error("lstat %s: %s", path, exc)
                 return None
             if stat.S_ISDIR(existing.st_mode):
+                if existing.st_mode & 0o700 != 0o700:
+                    try:
+                        os.chmod(path, stat.S_IMODE(existing.st_mode) | 0o700)
+                    except OSError as exc:
+                        logger.debug("chmod %s failed: %s", path, exc)
                 return False
             try:
                 os.unlink(path)
@@ -641,21 +704,31 @@ def _remember_dir(path: str) -> None:
         _seen_dirs_global.add(path)
 
 
-def _apply_dir_attrs(entries: "list[tuple[str, int, int, int, int, int]]") -> None:
+def _apply_dir_attrs(entries: list[tuple[str, int, int, int, int, int]]) -> None:
     for path, mode, atime_ns, mtime_ns, uid, gid in sorted(entries, key=lambda e: e[0].count("/"), reverse=True):
-        if _EUID == 0:
+        try:
+            current = os.lstat(path)
+        except OSError as exc:
+            logger.debug("lstat %s failed: %s", path, exc)
+            continue
+        chowned = False
+        if _EUID == 0 and (current.st_uid != uid or current.st_gid != gid):
             try:
                 os.chown(path, uid, gid, follow_symlinks=False)
+                chowned = True
             except OSError as exc:
                 logger.debug("chown %s failed: %s", path, exc)
-        try:
-            os.chmod(path, (mode & 0o7777) | 0o700)
-        except OSError as exc:
-            logger.debug("chmod %s failed: %s", path, exc)
-        try:
-            os.utime(path, ns=(atime_ns, mtime_ns))
-        except OSError as exc:
-            logger.debug("utime %s failed: %s", path, exc)
+        want_mode = mode & 0o7777
+        if chowned or stat.S_IMODE(current.st_mode) != want_mode:
+            try:
+                os.chmod(path, want_mode)
+            except OSError as exc:
+                logger.debug("chmod %s failed: %s", path, exc)
+        if current.st_mtime_ns != mtime_ns:
+            try:
+                os.utime(path, ns=(atime_ns, mtime_ns))
+            except OSError as exc:
+                logger.debug("utime %s failed: %s", path, exc)
 
 
 @lru_cache(maxsize=256)

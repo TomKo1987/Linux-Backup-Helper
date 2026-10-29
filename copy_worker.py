@@ -23,13 +23,13 @@ from state import logger, frozen_safe_env
 from translations import tr
 
 from copy_worker_core import (
-    _CHUNK, _IO_BUF, _WORKERS, _FLUSH_THRESH, _FLUSH_INTERVAL, _SCAN_EMIT_SECS,
+    _CHUNK, _IO_BUF, _FLUSH_THRESH, _FLUSH_INTERVAL, _SCAN_EMIT_SECS,
     _SCAN_PIPE_BATCH, _LOCAL_BATCH, _PIPE_MAXSIZE, _ENTRY_EMIT_SECS,
     _SMB_WORKERS, _EUID, _O_NOATIME, _TIME_CHECK_EVERY, _SMALL_FILE_MAX, _UMASK,
     _MODE_MASK, _CAP_MODE, _CAP_OWNER, _perm_caps_for, _drop_perm_caps,
-    _mtime_tolerance_ns, sync_destinations,
+    _mtime_tolerance_ns, _source_tolerance_ns, sync_destinations,
     _smb_procs, _smb_procs_lock, _RSYNC_DELETE_RE, _RSYNC_ERROR_TAIL,
-    _scale_params, _scan_dir_entries, _check_destination_space, _copy_workers_for,
+    _scale_params, _scan_dir_entries, _check_destination_space, _copy_workers_for, _scan_workers_for,
     _ensure_dir, _make_new_dir, _apply_dir_attrs, _fsync_parent_dir, _tmp_path, _reset_dir_caches,
     _parse_smb, _run_futures, _silent_unlink, _hardlink_lookup, _hardlink_register,
     _ssh_join, _rsync_excludes, _rsync_src_arg, _ssh_dir_is_empty,
@@ -85,11 +85,17 @@ _META_FIXED = 1
 _META_FAILED = 2
 
 
-def _content_matches(dst: str, src_st: "os.stat_result", d: "os.stat_result", *, probe: bool = True) -> bool:
+def _content_matches(src: "str | None", dst: str, src_st: "os.stat_result", d: "os.stat_result", *,
+                     probe: bool = True) -> bool:
     if not stat.S_ISREG(d.st_mode) or d.st_size != src_st.st_size:
         return False
     diff = abs(d.st_mtime_ns - src_st.st_mtime_ns)
-    return diff == 0 or diff <= _mtime_tolerance_ns(dst, d, probe=probe)
+    if diff == 0:
+        return True
+    tolerance = _mtime_tolerance_ns(dst, d, probe=probe)
+    if src is not None:
+        tolerance = max(tolerance, _source_tolerance_ns(src, src_st.st_dev))
+    return diff <= tolerance
 
 
 def _meta_diff(src_st: "os.stat_result", d: "os.stat_result") -> int:
@@ -124,12 +130,21 @@ def _sync_meta(dst: str, src_st: "os.stat_result", d: "os.stat_result", flags: i
 
 
 def _is_up_to_date_local(dst: str, src_st: "os.stat_result",
-                          dst_st: "os.stat_result | None" = None, *, probe: bool = True) -> bool:
+                          dst_st: "os.stat_result | None" = None, *, probe: bool = True,
+                          src: "str | None" = None) -> bool:
     try:
         d = dst_st if dst_st is not None else os.lstat(dst)
     except OSError:
         return False
-    return _content_matches(dst, src_st, d, probe=probe) and not _meta_pending(dst, src_st, d, probe=probe)
+    return _content_matches(src, dst, src_st, d, probe=probe) and not _meta_pending(dst, src_st, d, probe=probe)
+
+
+def _unchanged(src: str, dst: str, src_st: "os.stat_result") -> bool:
+    try:
+        d = os.lstat(dst)
+    except OSError:
+        return False
+    return _content_matches(src, dst, src_st, d) and not _meta_pending(dst, src_st, d)
 
 
 def _is_symlink_up_to_date(dst: str, target: str) -> bool:
@@ -421,7 +436,7 @@ def _copy_file(src, dst, cancel, cached_st=None):
         return _copy_symlink(src, dst)
 
     for _attempt in range(2):
-        tmp = _tmp_path(dst, ".part")
+        tmp = ""
         rfd = wfd = None
         success = False
         dst_side = False
@@ -442,7 +457,7 @@ def _copy_file(src, dst, cancel, cached_st=None):
 
             dst_st = _lstat_or_none(dst)
 
-            if _attempt == 0 and dst_st is not None and _content_matches(dst, st, dst_st):
+            if _attempt == 0 and dst_st is not None and _content_matches(src, dst, st, dst_st):
                 pending = _meta_pending(dst, st, dst_st)
                 if not pending:
                     return "skip", tr("Up to date"), st.st_size
@@ -459,10 +474,13 @@ def _copy_file(src, dst, cancel, cached_st=None):
                     and not _clear_conflicting_dir(dst)):
                 return "error", tr("Destination is a non-empty directory and could not be replaced"), 0
 
+            tmp = _tmp_path(dst, ".part")
+
             if st.st_nlink > 1:
                 link_key = (st.st_dev, st.st_ino)
                 first = _hardlink_lookup(link_key)
                 if first and first != dst and _link_existing(first, dst, tmp, st.st_size):
+                    success = True
                     _fsync_parent_dir(dst)
                     return "ok", dst, st.st_size
 
@@ -587,7 +605,7 @@ def _copy_file(src, dst, cancel, cached_st=None):
         finally:
             _close_quiet(rfd)
             _close_quiet(wfd)
-            if not success:
+            if tmp and not success:
                 _silent_unlink(tmp)
     return "error", tr("Copy failed after retries"), 0
 
@@ -730,6 +748,12 @@ class _BatchBuffer:
         _do_copy(entry, cancel, self.ok, self.sk, self.er, self.tc)
         self.pending += 1
 
+    def record_skip(self, src: str, size: int, title: str, reason: str) -> None:
+        self.sk.append((src, reason, size))
+        if title:
+            _bump_count(self.tc, title, 1)
+        self.pending += 1
+
     def flush(self) -> None:
         if self.ok or self.sk or self.er:
             self._flusher.push(ok=self.ok, sk=self.sk, er=self.er)
@@ -767,7 +791,7 @@ class CopyWorker(QThread):
                  interactive: bool = True) -> None:
         super().__init__()
         self._cancel = threading.Event()
-        self._prepare_raw: "list | None" = list(tasks) if prepare else None
+        self._prepare_raw: list | None = list(tasks) if prepare else None
         self._is_restore = is_restore
         self._interactive = interactive
         self._hooks: dict[str, tuple[list, list]] = {}
@@ -779,14 +803,14 @@ class CopyWorker(QThread):
         self._pre_hooks_done = False
         self._version_plans: list[VersionPlan] = []
         self._hook_failures: list[str] = []
-        self._finish_emitted = False
+        self._finish_args: tuple[int, int, int, int, bool] | None = None
         self._sync_failed = False
         if not prepare:
             self._configure(tasks)
 
     def _emit_finished(self, copied: int, skipped: int, errors: int, deleted: int, cancelled: bool) -> None:
-        self._finish_emitted = True
-        self.finished_work.emit(copied, skipped, errors, deleted, cancelled)
+        if self._finish_args is None:
+            self._finish_args = (copied, skipped, errors, deleted, cancelled)
 
     def _configure(self, tasks) -> None:
         self._hooks = self._extract_hooks(tasks)
@@ -968,7 +992,7 @@ class CopyWorker(QThread):
 
     def run(self) -> None:
         _reset_dir_caches()
-        failure: "Exception | None" = None
+        failure: Exception | None = None
         try:
             if self._prepare_raw is not None and not self._prepare():
                 return
@@ -985,10 +1009,12 @@ class CopyWorker(QThread):
                 self._run_pending_post_hooks()
             except Exception as exc:
                 logger.error("Post-hooks failed: %s", exc, exc_info=True)
-            if not self._finish_emitted:
+            finish_args = self._finish_args
+            if finish_args is None:
                 if failure is not None:
                     self.prepared.emit([], [DeleteError(path=tr("Preparing…"), title="", reason=str(failure))])
-                self._emit_finished(0, 0, 0, 0, self._cancel.is_set())
+                finish_args = (0, 0, 0, 0, self._cancel.is_set())
+            self.finished_work.emit(*finish_args)
 
     def _ask_confirm(self, title: str, paths: list[str]) -> bool:
         request = _ConfirmRequest()
@@ -1074,7 +1100,7 @@ class CopyWorker(QThread):
                          force=True)
 
     def _run_impl(self) -> None:
-        pw: "_SecurePw | None" = None
+        pw: _SecurePw | None = None
         flusher = _Flusher(self.batch_update, 0)
         tracker = _EntryTracker(self.entry_status)
         try:
@@ -1357,8 +1383,8 @@ class CopyWorker(QThread):
 
         last_pct = 0
         deleted_this_task: list = []
-        error_lines: "collections.deque[str]" = collections.deque(maxlen=_RSYNC_ERROR_TAIL)
-        tail_lines: "collections.deque[str]" = collections.deque(maxlen=_RSYNC_ERROR_TAIL)
+        error_lines: collections.deque[str] = collections.deque(maxlen=_RSYNC_ERROR_TAIL)
+        tail_lines: collections.deque[str] = collections.deque(maxlen=_RSYNC_ERROR_TAIL)
         _tid = threading.get_ident()
         with _smb_procs_lock:
             _smb_procs[_tid] = proc
@@ -1474,9 +1500,10 @@ class CopyWorker(QThread):
                 on_scan_done()
             return 0
 
+        up_to_date = tr("Up to date")
         pipe_q: queue.Queue = queue.Queue(maxsize=_PIPE_MAXSIZE)
         scan_done = threading.Event()
-        work_q = queue.SimpleQueue()
+        work_q: queue.SimpleQueue = queue.SimpleQueue()
         pend_lock = threading.Lock()
         pending = [0]
         dir_done = threading.Event()
@@ -1529,9 +1556,10 @@ class CopyWorker(QThread):
             if pending[0] == 0:
                 dir_done.set()
 
-        def _scan_worker() -> None:
+        def _scan_loop(sbuf: "_BatchBuffer") -> None:
             local_n = 0
             batch: list = []
+            last_sfl = time.monotonic()
             while not cancel.is_set():
                 try:
                     _src, _dst, _title, _excl, _dir_st = work_q.get(timeout=0.1)
@@ -1541,7 +1569,7 @@ class CopyWorker(QThread):
                     continue
 
                 with copy_params_lock:
-                    spb = copy_params[1]
+                    lb_now, spb = copy_params
                 try:
                     if self._prepare_dst_dir(_src, _dst, _dir_st, dir_attrs, dir_attrs_lock) is None:
                         _push_errors(flusher, tracker, [(_dst, tr("Directory could not be created"), _title)])
@@ -1550,6 +1578,13 @@ class CopyWorker(QThread):
                     for is_dir, path, dst_path, entry_stat in _scan_dir_entries(_src, _dst, _excl, cancel):
                         if is_dir:
                             _eq((path, dst_path, _title, _excl, entry_stat))
+                        elif (entry_stat is not None and entry_stat is not True
+                              and _unchanged(path, dst_path, entry_stat)):
+                            sbuf.record_skip(path, entry_stat.st_size, _title, up_to_date)
+                            local_n += 1
+                            if sbuf.pending >= lb_now:
+                                sbuf.flush()
+                                last_sfl = time.monotonic()
                         else:
                             batch.append((path, dst_path, _title, entry_stat))
                             local_n += 1
@@ -1578,6 +1613,9 @@ class CopyWorker(QThread):
                     _push_errors(flusher, tracker, [(_src, str(exc), _title)])
                     local_n += 1
                 finally:
+                    if sbuf.pending and time.monotonic() - last_sfl >= _FLUSH_INTERVAL:
+                        sbuf.flush()
+                        last_sfl = time.monotonic()
                     try:
                         emit_cur = -1
                         now = time.monotonic()
@@ -1615,6 +1653,13 @@ class CopyWorker(QThread):
             if local_n > 0:
                 with pend_lock:
                     found[0] += local_n
+
+        def _scan_worker() -> None:
+            sbuf = _BatchBuffer(flusher, tracker)
+            try:
+                _scan_loop(sbuf)
+            finally:
+                sbuf.flush()
 
         def _copy_worker() -> None:
             buf = _BatchBuffer(flusher, tracker)
@@ -1662,8 +1707,8 @@ class CopyWorker(QThread):
 
         def _run_scan() -> None:
             try:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=_WORKERS) as sp:
-                    futs = [sp.submit(_scan_worker) for _ in range(_WORKERS)]
+                with concurrent.futures.ThreadPoolExecutor(max_workers=scan_n) as sp:
+                    futs = [sp.submit(_scan_worker) for _ in range(scan_n)]
                     _run_futures(futs, cancel, "scan worker")
                 total = found[0] + missing[0]
                 self.scan_progress.emit(tr("Scanning"), total)
@@ -1679,7 +1724,9 @@ class CopyWorker(QThread):
                 if on_scan_done is not None:
                     on_scan_done()
 
-        n_copy = _copy_workers_for(t[1] for t in tasks)
+        io_paths = [p for t in tasks for p in (t[0], t[1])]
+        n_copy = _copy_workers_for(io_paths)
+        scan_n = _scan_workers_for(io_paths)
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=1 + n_copy)
         try:
             all_futs = [pool.submit(_run_scan)] + [pool.submit(_copy_worker) for _ in range(n_copy)]

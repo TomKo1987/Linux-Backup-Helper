@@ -1126,7 +1126,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         if self._headless:
             for p, t_ in self._not_found_paths:
                 logger.warning("Headless backup: configured path not found: %s%s", p, f" ({t_})" if t_ else "")
-            QTimer.singleShot(500, self.accept)
+            QTimer.singleShot(0, self._finish_headless)
         elif self._not_found_paths and not cancelled:
             n = len(self._not_found_paths)
             paths_text = "\n".join(
@@ -1144,6 +1144,11 @@ class CopyDialog(_StandardKeysMixin, QDialog):
                 )
 
             QTimer.singleShot(0, _show_popup)
+
+    def _finish_headless(self) -> None:
+        if self.worker is not None:
+            self.worker.wait(5000)
+        self.accept()
 
     def closeEvent(self, a0: QCloseEvent | None) -> None:
         if self.worker is None:

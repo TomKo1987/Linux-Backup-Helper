@@ -129,7 +129,7 @@ def _make_logger(name: str) -> logging.Logger:
 logger = _make_logger("backup_helper")
 
 def _build_text_replacements() -> tuple[tuple["re.Pattern[str]", str], ...]:
-    repl: list[tuple["re.Pattern[str]", str]] = []
+    repl: list[tuple[re.Pattern[str], str]] = []
     home = _HOME.as_posix().rstrip("/")
     if home:
         repl.append((re.compile(r"(?<!\w)" + re.escape(home) + r"(?![\w.\-])"), "~"))

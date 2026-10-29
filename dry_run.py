@@ -89,8 +89,8 @@ class _DryRunWorker(QThread):
         errors: list[tuple[str, str]] = []
 
         if not sources or not destinations:
-            return dict(title=title, to_copy=to_copy,
-                        to_skip=to_skip, errors=errors, src_total=0)
+            return {"title": title, "to_copy": to_copy,
+                    "to_skip": to_skip, "errors": errors, "src_total": 0}
 
         if len(sources) != len(destinations):
             errors.append((
@@ -145,13 +145,13 @@ class _DryRunWorker(QThread):
 
             self._walk_dir(src_abs, str(dst_p), excl_set, to_copy, to_skip, errors)
 
-        return dict(
-            title=title,
-            to_copy=to_copy,
-            to_skip=to_skip,
-            errors=errors,
-            src_total=len(to_copy) + len(to_skip),
-        )
+        return {
+            "title": title,
+            "to_copy": to_copy,
+            "to_skip": to_skip,
+            "errors": errors,
+            "src_total": len(to_copy) + len(to_skip),
+        }
 
     def _walk_dir(self, src_abs: str, dst_abs: str, excl_set: set,
                   to_copy: list, to_skip: list, errors: list) -> None:
@@ -197,7 +197,7 @@ class _DryRunWorker(QThread):
                 except OSError as e:
                     errors.append((rel, str(e)))
                     continue
-                self._classify_stat(rel, dst_path, src_stat, to_copy, to_skip)
+                self._classify_stat(rel, entry.path, dst_path, src_stat, to_copy, to_skip)
 
     @staticmethod
     def _classify_symlink(
@@ -224,6 +224,7 @@ class _DryRunWorker(QThread):
     @staticmethod
     def _classify_stat(
             rel_name: str,
+        src_file_str: str,
         dst_file_str: str,
         src_stat: "os.stat_result",
         to_copy: list[tuple[str, str]],
@@ -235,7 +236,7 @@ class _DryRunWorker(QThread):
             to_copy.append((rel_name, "new"))
             return
 
-        if _is_up_to_date_local(dst_file_str, src_stat, dst_st=dst_st, probe=False):
+        if _is_up_to_date_local(dst_file_str, src_stat, dst_st=dst_st, probe=False, src=src_file_str):
             to_skip.append(rel_name)
         else:
             to_copy.append((rel_name, "modified"))
@@ -279,7 +280,7 @@ class _DryRunWorker(QThread):
             to_copy.append((rel_name, "new"))
             return
 
-        if _is_up_to_date_local(str(dst_file), src_stat, dst_st=dst_st, probe=False):
+        if _is_up_to_date_local(str(dst_file), src_stat, dst_st=dst_st, probe=False, src=src_file_str):
             to_skip.append(rel_name)
         else:
             to_copy.append((rel_name, "modified"))
@@ -977,16 +978,17 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         self._tabs.addTab(widget, title)
         idx = self._tabs.count() - 1
 
+        tab_bar = self._tabs.tabBar()
         if n_err:
-            self._tabs.tabBar().setTabTextColor(idx, QColor(t["error"]))   # type: ignore[attr-defined]
+            tab_bar.setTabTextColor(idx, QColor(t["error"]))
         elif n_copy:
-            self._tabs.tabBar().setTabTextColor(idx, QColor(t["info"]))    # type: ignore[attr-defined]
+            tab_bar.setTabTextColor(idx, QColor(t["info"]))
         else:
-            self._tabs.tabBar().setTabTextColor(idx, QColor(t["success"])) # type: ignore[attr-defined]
+            tab_bar.setTabTextColor(idx, QColor(t["success"]))
 
         tip = tr("{n_copy:,} to copy  |  {n_skip:,} up-to-date  |  {n_err:,} errors",
                  n_copy=n_copy, n_skip=n_skip, n_err=n_err)
-        self._tabs.tabBar().setTabToolTip(idx, tip)
+        tab_bar.setTabToolTip(idx, tip)
 
     def _update_totals(self) -> None:
         t = current_theme()

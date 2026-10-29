@@ -621,11 +621,12 @@ class _SmbScanner:
         stack: list = [src]
         src_prefix_len = len(src) if src.endswith(os.sep) else len(src) + 1
 
+        seen_inos: set = set()
         try:
             st = os.stat(src)
-            seen_inos: set = {(st.st_dev, st.st_ino)}
+            seen_inos.add((st.st_dev, st.st_ino))
         except OSError:
-            seen_inos: set = set()
+            pass
 
         while stack:
             if self._cancel.is_set():

@@ -117,7 +117,7 @@ class _CheckWorker(QThread):
                     if latest:
                         check_dst = latest
 
-                src_excluded: "frozenset[str]" = frozenset()
+                src_excluded: frozenset[str] = frozenset()
                 raw_excl = entry.get("details", {}).get("exclude_paths", {})
                 if isinstance(raw_excl, dict) and raw_excl:
                     src_abs = os.path.abspath(os.path.expanduser(src_raw))
