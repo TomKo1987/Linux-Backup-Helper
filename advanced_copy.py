@@ -13,6 +13,7 @@ from copy_worker_core import (
     VERSION_INCOMPLETE_MARK, _should_skip, _RSYNC_DELETE_RE, _SMB_WORKERS, _run_futures, _run_capture,
     _rsync_excludes, _rsync_src_arg, _ssh_join,
 )
+from copy_progress import STEP_COMPARE, STEP_DELETE, STEP_VERSIONS
 from translations import tr
 
 __all__ = [
@@ -28,6 +29,7 @@ _SSH_PREVIEW_TIMEOUT_S = 300
 _CONFIRM_PREVIEW_MAX = 200
 
 ConfirmFn = Callable[[str, "list[str]"], bool]
+ProgressFn = Callable[[str, int, int], None]
 
 
 class _Cancelled(Exception):
@@ -82,9 +84,64 @@ def _make_traversable(p: str) -> None:
         pass
 
 
-def _rmtree_with_size(p: str, cancel: "threading.Event | None" = None) -> int:
+def _count_units(paths: "list[str]", cancel: "threading.Event | None" = None) -> int:
+    total = 0
+    for p in paths:
+        if _is_cancelled(cancel):
+            break
+        if os.path.islink(p) or not os.path.isdir(p):
+            total += 1
+            continue
+        stack = [p]
+        while stack:
+            if _is_cancelled(cancel):
+                return total
+            current = stack.pop()
+            total += 1
+            try:
+                with os.scandir(current) as it:
+                    for e in it:
+                        try:
+                            is_dir = e.is_dir(follow_symlinks=False)
+                        except OSError:
+                            is_dir = False
+                        if is_dir:
+                            stack.append(e.path)
+                        else:
+                            total += 1
+            except OSError:
+                continue
+    return total
+
+
+class _UnitCounter:
+    __slots__ = ("_done", "_progress", "_step", "_total")
+
+    def __init__(self, progress: "ProgressFn | None", step: str, paths: "list[str]",
+                 cancel: "threading.Event | None") -> None:
+        self._progress = progress
+        self._step = step
+        self._done = 0
+        self._total = 0
+        if progress is not None:
+            progress(step, 0, 0)
+            self._total = _count_units(paths, cancel)
+            progress(step, 0, self._total)
+
+    def __call__(self) -> None:
+        progress = self._progress
+        if progress is None:
+            return
+        self._done += 1
+        progress(self._step, self._done, max(self._total, self._done))
+
+
+def _rmtree_with_size(p: str, cancel: "threading.Event | None" = None,
+                      tick: "Callable[[], None] | None" = None) -> int:
     if os.path.islink(p):
         os.remove(p)
+        if tick is not None:
+            tick()
         return 0
     if not os.path.isdir(p):
         try:
@@ -92,6 +149,8 @@ def _rmtree_with_size(p: str, cancel: "threading.Event | None" = None) -> int:
         except OSError:
             sz = 0
         os.remove(p)
+        if tick is not None:
+            tick()
         return sz
 
     total = 0
@@ -100,6 +159,8 @@ def _rmtree_with_size(p: str, cancel: "threading.Event | None" = None) -> int:
         current, emptied = stack.pop()
         if emptied:
             os.rmdir(current)
+            if tick is not None:
+                tick()
             continue
         if _is_cancelled(cancel):
             raise _Cancelled
@@ -110,6 +171,8 @@ def _rmtree_with_size(p: str, cancel: "threading.Event | None" = None) -> int:
         for e in entries:
             if e.is_symlink():
                 os.remove(e.path)
+                if tick is not None:
+                    tick()
             elif e.is_dir(follow_symlinks=False):
                 stack.append((e.path, False))
             else:
@@ -118,6 +181,8 @@ def _rmtree_with_size(p: str, cancel: "threading.Event | None" = None) -> int:
                 except OSError:
                     pass
                 os.remove(e.path)
+                if tick is not None:
+                    tick()
     return total
 
 
@@ -187,7 +252,8 @@ def _version_has_content(path: str) -> bool:
 
 
 def finalize_version(plan: VersionPlan, success: bool,
-                     cancel: "threading.Event | None" = None) -> tuple[list[DeletedItem], list[DeleteError]]:
+                     cancel: "threading.Event | None" = None,
+                     progress: "ProgressFn | None" = None) -> tuple[list[DeletedItem], list[DeleteError]]:
     mark = os.path.join(plan.path, VERSION_INCOMPLETE_MARK)
     if not os.path.isdir(plan.path):
         return [], []
@@ -210,7 +276,7 @@ def finalize_version(plan: VersionPlan, success: bool,
         logger.warning("Versioned archive [%s]: could not clear marker in %r: %s",
                        plan.title, apply_replacements(plan.path), exc)
         return [], []
-    return prune_old_versions(plan.base, plan.keep, title=plan.title, cancel=cancel)
+    return prune_old_versions(plan.base, plan.keep, title=plan.title, cancel=cancel, progress=progress)
 
 
 def _version_file_source(version_path: str, dst: str) -> "str | None":
@@ -263,7 +329,8 @@ def resolve_restore_sources(src_list: list[str], excl: dict,
 
 
 def prune_old_versions(dst_abs: str, keep: int, title: str = "",
-                       cancel: "threading.Event | None" = None) -> tuple[list[DeletedItem], list[DeleteError]]:
+                       cancel: "threading.Event | None" = None,
+                       progress: "ProgressFn | None" = None) -> tuple[list[DeletedItem], list[DeleteError]]:
     if keep <= 0:
         return [], []
     versions = _existing_versions(dst_abs)
@@ -278,11 +345,12 @@ def prune_old_versions(dst_abs: str, keep: int, title: str = "",
         return [], []
     deleted: list[DeletedItem] = []
     errors: list[DeleteError] = []
+    counter = _UnitCounter(progress, STEP_VERSIONS, [path for _, path in doomed], cancel)
     for _, path in doomed:
         if _is_cancelled(cancel):
             break
         try:
-            sz = _rmtree_with_size(path, cancel)
+            sz = _rmtree_with_size(path, cancel, counter if progress is not None else None)
             deleted.append(DeletedItem(path=path, title=title, reason=tr("Pruned old version"), size=sz))
         except _Cancelled:
             break
@@ -293,13 +361,17 @@ def prune_old_versions(dst_abs: str, keep: int, title: str = "",
 
 
 def find_extraneous_paths(src_abs: str, dst_abs: str, excludes: frozenset,
-                          cancel: "threading.Event | None" = None) -> list[str]:
+                          cancel: "threading.Event | None" = None,
+                          progress: "ProgressFn | None" = None) -> list[str]:
     extraneous: list[str] = []
     if not os.path.isdir(src_abs) or not os.path.isdir(dst_abs):
         return extraneous
 
     join = os.path.join
     stack: list[str] = [""]
+    checked = 0
+    if progress is not None:
+        progress(STEP_COMPARE, 0, 0)
     while stack:
         if _is_cancelled(cancel):
             break
@@ -310,6 +382,9 @@ def find_extraneous_paths(src_abs: str, dst_abs: str, excludes: frozenset,
                 entries = list(it)
         except OSError:
             continue
+        checked += len(entries)
+        if progress is not None:
+            progress(STEP_COMPARE, checked, 0)
         for e in entries:
             if _should_skip(e.name):
                 continue
@@ -340,23 +415,27 @@ def find_extraneous_paths(src_abs: str, dst_abs: str, excludes: frozenset,
 
 
 def delete_paths(paths: list[str], title: str = "", reason: str | None = None,
-                 cancel: "threading.Event | None" = None) -> tuple[list[DeletedItem], list[DeleteError]]:
+                 cancel: "threading.Event | None" = None,
+                 progress: "ProgressFn | None" = None) -> tuple[list[DeletedItem], list[DeleteError]]:
     if reason is None:
         reason = tr("Mirror delete")
     deleted: list[DeletedItem] = []
     errors: list[DeleteError] = []
+    counter = _UnitCounter(progress, STEP_DELETE, paths, cancel)
     for p in paths:
         if _is_cancelled(cancel):
             break
         try:
             if os.path.islink(p):
                 os.remove(p)
+                counter()
                 sz = 0
             elif os.path.isfile(p):
                 sz = os.path.getsize(p)
                 os.remove(p)
+                counter()
             elif os.path.isdir(p):
-                sz = _rmtree_with_size(p, cancel)
+                sz = _rmtree_with_size(p, cancel, counter if progress is not None else None)
             else:
                 continue
             deleted.append(DeletedItem(path=p, title=title, reason=reason, size=sz))
@@ -497,7 +576,8 @@ def _resolve_ssh_mirror_delete(ssh_pairs: list[tuple[str, str]], excl, title: st
 
 def apply_advanced_options(tasks: list[tuple], *, confirm: "ConfirmFn | None" = None,
                            is_restore: bool = False,
-                           cancel: "threading.Event | None" = None) -> AdvancedOptionsResult:
+                           cancel: "threading.Event | None" = None,
+                           progress: "ProgressFn | None" = None) -> AdvancedOptionsResult:
     result = []
     all_deleted: list[DeletedItem] = []
     all_errors: list[DeleteError] = []
@@ -594,7 +674,7 @@ def apply_advanced_options(tasks: list[tuple], *, confirm: "ConfirmFn | None" = 
                                    "skipping cleanup for safety", title, apply_replacements(s_abs))
                     continue
                 excludes = _abs_excludes(excl, s_abs, s_str)
-                extraneous = find_extraneous_paths(s_abs, d_abs, excludes, cancel)
+                extraneous = find_extraneous_paths(s_abs, d_abs, excludes, cancel, progress)
                 if not extraneous or _is_cancelled(cancel):
                     continue
                 proceed = True
@@ -608,7 +688,8 @@ def apply_advanced_options(tasks: list[tuple], *, confirm: "ConfirmFn | None" = 
                     else:
                         proceed = confirm(title, extraneous)
                 if proceed and not _is_cancelled(cancel):
-                    items, errs = delete_paths(extraneous, title=title, reason=tr("Mirror delete"), cancel=cancel)
+                    items, errs = delete_paths(extraneous, title=title, reason=tr("Mirror delete"),
+                                               cancel=cancel, progress=progress)
                     all_deleted.extend(items)
                     all_errors.extend(errs)
                     logger.info("Mirror delete [%s]: removed %d item(s) from %r",
@@ -623,6 +704,8 @@ def apply_advanced_options(tasks: list[tuple], *, confirm: "ConfirmFn | None" = 
                 logger.info("Mirror delete [%s]: SMB destinations are not supported — skipped", title)
 
         if ssh_mirror_pairs and not _is_cancelled(cancel):
+            if progress is not None:
+                progress(STEP_COMPARE, 0, 0)
             mirror_remote = _resolve_ssh_mirror_delete(
                 ssh_mirror_pairs, excl, title, confirm, confirm_del, all_errors, cancel)
 

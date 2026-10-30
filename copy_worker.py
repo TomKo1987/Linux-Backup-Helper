@@ -18,6 +18,10 @@ from advanced_copy import (
     AdvancedOptionsResult, DeleteError, VersionPlan, apply_advanced_options, finalize_version,
 )
 from drive_utils import is_smb, is_ssh, build_rsync_cmd, get_mounts, unmounted_drive_for_path
+from copy_progress import (
+    COST_FILE, COST_REMOTE_TASK, COST_SKIP, STEP_CONFIRM, STEP_HOOKS, STEP_PREPARE, STEP_SCAN, STEP_SYNC,
+    ProgressMeter, file_cost, set_stream_sink, stream_sink,
+)
 from pre_post_hooks import run_hooks as _run_hooks
 from state import logger, frozen_safe_env
 from translations import tr
@@ -44,6 +48,7 @@ if TYPE_CHECKING:
 
 
 _NF_MARK = "\x1f"
+_FLUSH_AFTER_BYTES = 8 * 1024 * 1024
 _RSYNC_ERR_HINT_RE = re.compile(
     r"^(?:rsync|ssh)\b|error|failed|denied|refused|timed out|no such|cannot|unable|unreachable|not permitted|connection",
     re.I)
@@ -52,6 +57,10 @@ _RSYNC_ERR_HINT_RE = re.compile(
 def _not_found_reason(title: str) -> str:
     base = tr("Path does not exist — skipping")
     return f"{base}{_NF_MARK}{title}" if title else base
+
+
+def _entry_size(st) -> int:
+    return st.st_size if isinstance(st, os.stat_result) else 0
 
 
 def _bump_count(tc: dict, title: str, idx: int) -> None:
@@ -229,6 +238,7 @@ _CFR_FALLBACK_ERRNOS = frozenset({
 def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> "tuple[int, OSError | None]":
     rem = total
     last_err: OSError | None = None
+    sink = stream_sink()
     try:
         if not _HAS_COPY_FILE_RANGE:
             raise OSError(errno.ENOSYS, "copy_file_range unavailable")
@@ -239,6 +249,8 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> "tupl
             if n == 0:
                 break
             rem -= n
+            if sink is not None:
+                sink(n)
     except InterruptedError:
         raise
     except OSError as exc:
@@ -269,6 +281,8 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> "tupl
                     break
                 rem -= n
                 offset += n
+                if sink is not None:
+                    sink(n)
         except InterruptedError:
             raise
         except OSError as exc:
@@ -294,6 +308,8 @@ def _copy_loop(rfd: int, wfd: int, total: int, cancel: threading.Event) -> "tupl
                         raise OSError("os.write returned 0")
                     written += n
                 rem -= len(buf)
+                if sink is not None:
+                    sink(len(buf))
         except InterruptedError:
             raise
         except OSError as exc:
@@ -314,6 +330,7 @@ def _is_sparse(st: "os.stat_result") -> bool:
 def _copy_extents(rfd: int, wfd: int, size: int, cancel: threading.Event) -> None:
     pos = 0
     use_cfr = _HAS_COPY_FILE_RANGE
+    sink = stream_sink()
     while pos < size:
         try:
             start = os.lseek(rfd, pos, os.SEEK_DATA)
@@ -347,6 +364,8 @@ def _copy_extents(rfd: int, wfd: int, size: int, cancel: threading.Event) -> Non
             if n == 0:
                 raise OSError(errno.EINVAL, "source shrank during copy")
             start += n
+            if sink is not None:
+                sink(n)
         pos = end
     os.ftruncate(wfd, size)
 
@@ -668,27 +687,31 @@ class _EntryTracker:
 
 
 class _Flusher:
-    __slots__ = ("_de", "_er", "_flush_thresh", "_last_flush_t", "_lock", "_ok", "_signal", "_sk", "_total", "copied", "deleted", "done", "errors", "skipped")
+    __slots__ = ("_de", "_er", "_flush_thresh", "_last_flush_t", "_lock", "_meter", "_ok", "_signal", "_sk")
 
-    def __init__(self, signal, total: int, flush_thresh: int = _FLUSH_THRESH) -> None:
+    def __init__(self, signal, meter: ProgressMeter, flush_thresh: int = _FLUSH_THRESH) -> None:
         self._signal       = signal
-        self._total        = total
+        self._meter        = meter
         self._flush_thresh = flush_thresh
         self._lock         = threading.Lock()
         self._ok: list     = []
         self._sk: list     = []
         self._er: list     = []
         self._de: list     = []
-        self.done = self.copied = self.skipped = self.errors = self.deleted = 0
         self._last_flush_t = time.monotonic()
 
-    def set_total(self, total: int) -> None:
-        with self._lock: self._total = total
+    def counts(self) -> tuple[int, int, int, int]:
+        return self._meter.counts()
 
     def set_flush_thresh(self, thresh: int) -> None:
         with self._lock: self._flush_thresh = thresh
 
-    def push(self, ok=(), sk=(), er=(), de=(), *, force: bool = False) -> None:
+    def push(self, ok=(), sk=(), er=(), de=(), *, work: "int | None" = None,
+             release_work: int = 0, release_size: int = 0, force: bool = False) -> None:
+        if ok or sk or er or de or release_work or release_size:
+            if work is None:
+                work = COST_FILE * (len(ok) + len(sk) + len(er))
+            self._meter.record(ok, sk, er, de, work=work, release_work=release_work, release_size=release_size)
         now = time.monotonic()
         with self._lock:
             if ok: self._ok.extend(ok)
@@ -705,15 +728,8 @@ class _Flusher:
             payload_sk, self._sk = self._sk, []
             payload_er, self._er = self._er, []
             payload_de, self._de = self._de, []
-            self.done    += len(payload_ok) + len(payload_sk) + len(payload_er) + len(payload_de)
-            self.copied  += len(payload_ok)
-            self.skipped += len(payload_sk)
-            self.errors  += len(payload_er)
-            self.deleted += len(payload_de)
-            done_snap  = self.done
-            total_snap = self._total
             self._last_flush_t = now
-        self._signal.emit(payload_ok, payload_sk, payload_er, payload_de, done_snap, total_snap)
+        self._signal.emit(payload_ok, payload_sk, payload_er, payload_de)
 
     def flush(self) -> None:
         self.push(force=True)
@@ -734,33 +750,56 @@ def _push_errors(flusher: "_Flusher", tracker: "_EntryTracker",
 
 
 class _BatchBuffer:
-    __slots__ = ("_flusher", "_tracker", "er", "ok", "pending", "sk", "tc")
+    __slots__ = ("_cap", "_cur", "_flusher", "_meter", "_tracker", "er", "ok", "partial", "pending", "sk", "tc", "work")
 
-    def __init__(self, flusher: "_Flusher", tracker: "_EntryTracker") -> None:
+    def __init__(self, flusher: "_Flusher", tracker: "_EntryTracker", meter: ProgressMeter) -> None:
         self._flusher = flusher
         self._tracker = tracker
+        self._meter = meter
         self.ok: list = []
         self.sk: list = []
         self.er: list = []
         self.tc: dict = {}
         self.pending = 0
+        self.work = 0
+        self.partial = 0
+        self._cap = 0
+        self._cur = 0
+
+    def stream(self, n: int) -> None:
+        room = self._cap - self._cur
+        if room <= 0:
+            return
+        if n > room:
+            n = room
+        self._cur += n
+        self.partial += n
+        self._meter.add_inflight(n, n)
 
     def record(self, entry, cancel: threading.Event) -> None:
+        size = _entry_size(entry[3])
+        self._cap = size
+        self._cur = 0
         _do_copy(entry, cancel, self.ok, self.sk, self.er, self.tc)
+        self.work += file_cost(size)
         self.pending += 1
 
     def record_skip(self, src: str, size: int, title: str, reason: str) -> None:
         self.sk.append((src, reason, size))
         if title:
             _bump_count(self.tc, title, 1)
+        self.work += COST_SKIP
         self.pending += 1
 
     def flush(self) -> None:
         if self.ok or self.sk or self.er:
-            self._flusher.push(ok=self.ok, sk=self.sk, er=self.er)
+            self._flusher.push(ok=self.ok, sk=self.sk, er=self.er, work=self.work,
+                               release_work=self.partial, release_size=self.partial)
             self.ok.clear()
             self.sk.clear()
             self.er.clear()
+            self.work = 0
+            self.partial = 0
         if self.tc:
             self._tracker.batch_update(self.tc)
             self.tc.clear()
@@ -776,12 +815,10 @@ class _ConfirmRequest:
 
 
 class CopyWorker(QThread):
-    batch_update = pyqtSignal(list, list, list, list, int, int)
+    batch_update = pyqtSignal(object, object, object, object)
     finished_work = pyqtSignal(int, int, int, int, bool)
-    scan_progress = pyqtSignal(str, int)
     entry_status = pyqtSignal(str, int, int, int, int)
-    scan_finished = pyqtSignal(int)
-    prepared = pyqtSignal(list, list)
+    prepared = pyqtSignal(object, object)
     confirm_delete = pyqtSignal(str, list, object)
     space_warnings = pyqtSignal(list)
     _RSYNC_PROGRESS_RE = re.compile(
@@ -791,6 +828,7 @@ class CopyWorker(QThread):
     def __init__(self, tasks, *, prepare: bool = False, is_restore: bool = False,
                  interactive: bool = True) -> None:
         super().__init__()
+        self.meter = ProgressMeter()
         self._cancel = threading.Event()
         self._prepare_raw: list | None = list(tasks) if prepare else None
         self._is_restore = is_restore
@@ -964,6 +1002,7 @@ class CopyWorker(QThread):
                 seen.add(_t)
                 _pre, _ = self._hooks.get(_t, ([], []))
                 if _pre:
+                    self.meter.set_step(STEP_HOOKS)
                     self._pre_fired_titles.add(_t)
                     if not self._fire_hooks(_t, "pre", _pre, abort=True, cancel=self._cancel):
                         skip_titles.add(_t)
@@ -984,6 +1023,7 @@ class CopyWorker(QThread):
         self._post_fired_titles.add(title)
         _, _post = self._hooks.get(title, ([], []))
         if _post:
+            self.meter.set_step(STEP_HOOKS)
             self._fire_hooks(title, "post", _post, abort=False)
 
     def _run_pending_post_hooks(self) -> None:
@@ -1019,18 +1059,25 @@ class CopyWorker(QThread):
 
     def _ask_confirm(self, title: str, paths: list[str]) -> bool:
         request = _ConfirmRequest()
-        self.confirm_delete.emit(title, paths, request)
-        while not request.event.wait(0.2):
-            if self._cancel.is_set():
-                return False
-        return request.answer
+        previous = self.meter.current_step()
+        self.meter.set_step(STEP_CONFIRM)
+        try:
+            self.confirm_delete.emit(title, paths, request)
+            while not request.event.wait(0.2):
+                if self._cancel.is_set():
+                    return False
+            return request.answer
+        finally:
+            self.meter.set_step(previous)
 
     def _prepare(self) -> bool:
         raw, self._prepare_raw = self._prepare_raw or [], None
+        self.meter.set_step(STEP_PREPARE)
         try:
             self._hooks = self._extract_hooks(raw)
             skip_titles = self._run_pre_hooks(raw) if not self._cancel.is_set() else set()
             self._pre_hooks_done = True
+            self.meter.set_step(STEP_PREPARE)
             if skip_titles:
                 raw = [t for t in raw if (str(t[2]) if len(t) > 2 else "") not in skip_titles]
             raw, guard_errors = self._guard_unmounted(raw)
@@ -1048,6 +1095,7 @@ class CopyWorker(QThread):
                 confirm=self._ask_confirm if self._interactive else None,
                 is_restore=self._is_restore,
                 cancel=self._cancel,
+                progress=self.meter.step_progress,
             )
         except Exception as exc:
             logger.error("Advanced options failed: %s", exc, exc_info=True)
@@ -1055,6 +1103,8 @@ class CopyWorker(QThread):
             self._emit_finished(0, 0, 0, 0, False)
             return False
         self._version_plans = list(result.version_plans)
+        if self._version_plans:
+            self.meter.reserve_tail()
         hook_errors = [DeleteError(path=t, title=t, reason=tr("Pre-hook failed — entry skipped"))
                        for t in self._hook_failures]
         hook_errors += [DeleteError(path=p, title=t, reason=m) for p, m, t in guard_errors]
@@ -1081,8 +1131,8 @@ class CopyWorker(QThread):
             elif plan.title:
                 ok = tracker.error_count(plan.title) == 0
             else:
-                ok = flusher is not None and flusher.errors == 0
-            deleted, errors = finalize_version(plan, ok)
+                ok = flusher is not None and flusher.counts()[2] == 0
+            deleted, errors = finalize_version(plan, ok, self._cancel, self.meter.step_progress)
             removed.extend((d.path, d.reason, d.size) for d in deleted)
             for err in errors:
                 logger.warning("Versioned archive [%s]: %s: %s", plan.title, err.path, err.reason)
@@ -1093,7 +1143,7 @@ class CopyWorker(QThread):
         dests = sorted({d for _s, d, _t, _x in self.tasks if not is_smb(d) and not is_ssh(d)})
         if not dests:
             return
-        self.scan_progress.emit(tr("Writing data to disk…"), 100)
+        self.meter.set_step(STEP_SYNC)
         for path, err in sync_destinations(dests):
             logger.error("syncfs %s: %s", path, err)
             self._sync_failed = True
@@ -1102,7 +1152,8 @@ class CopyWorker(QThread):
 
     def _run_impl(self) -> None:
         pw: _SecurePw | None = None
-        flusher = _Flusher(self.batch_update, 0)
+        meter = self.meter
+        flusher = _Flusher(self.batch_update, meter)
         tracker = _EntryTracker(self.entry_status)
         try:
             smb_tasks, ssh_tasks, local_tasks = [], [], []
@@ -1126,8 +1177,6 @@ class CopyWorker(QThread):
             if space_warnings:
                 self.space_warnings.emit(space_warnings)
 
-            self.scan_progress.emit(tr("Scanning"), 0)
-
             all_tasks = local_tasks + ssh_tasks + smb_tasks
             skip_titles = (self._run_pre_hooks(all_tasks)
                            if not self._pre_hooks_done and not self._cancel.is_set() else set())
@@ -1139,54 +1188,49 @@ class CopyWorker(QThread):
 
             self._started_titles = {t for _s, _d, t, _x in all_tasks if t}
 
-            for failed_title in self._hook_failures:
-                flusher.push(er=[(failed_title, tr("Pre-hook failed — entry skipped"), 0)], force=True)
+            meter.set_step(STEP_SCAN)
+
+            if self._hook_failures:
+                failed = list(self._hook_failures)
+                meter.plan("hooks", len(failed), len(failed) * COST_FILE)
+                for failed_title in failed:
+                    flusher.push(er=[(failed_title, tr("Pre-hook failed — entry skipped"), 0)], force=True)
             self._hook_failures.clear()
 
             if not all_tasks:
-                self.scan_finished.emit(0)
+                meter.finish_scan()
                 self._emit_finished(0, 0, 0, 0, self._cancel.is_set())
                 return
 
-            local_found  = [0]
-            smb_found    = [0]
             ssh_units    = len(ssh_tasks)
-            total_lock   = threading.Lock()
+            scan_lock    = threading.Lock()
             scan_pending = [(1 if local_tasks else 0) + (1 if smb_tasks else 0) + (1 if ssh_tasks else 0)]
             scan_emitted = [False]
 
-            def _apply_total(_total: int) -> None:
-                flusher.set_total(_total)
-                _, ft_new, _ = _scale_params(_total)
-                flusher.set_flush_thresh(ft_new)
+            if ssh_units:
+                meter.plan("ssh", ssh_units, ssh_units * COST_REMOTE_TASK)
 
-            def _update_total() -> None:
-                with total_lock:
-                    _total = local_found[0] + smb_found[0] + ssh_units
-                _apply_total(_total)
+            def _rescale() -> None:
+                flusher.set_flush_thresh(_scale_params(meter.files_total())[1])
 
-            def _on_local_count(n: int) -> None:
-                with total_lock:
-                    local_found[0] = n
-                _update_total()
+            def _on_local_plan(files: int, work: int, size: int) -> None:
+                meter.plan("local", files, work, size)
+                _rescale()
 
-            def _on_smb_progress(n: int) -> None:
-                self.scan_progress.emit(tr("Scanning SMB"), n)
-                with total_lock:
-                    smb_found[0] = n
-                _update_total()
+            def _on_smb_found(n: int) -> None:
+                meter.plan("smb", n, n * COST_FILE)
+                _rescale()
 
             def _scan_phase_done() -> None:
-                with total_lock:
+                with scan_lock:
                     scan_pending[0] -= 1
                     ready = scan_pending[0] <= 0 and not scan_emitted[0]
                     if ready:
                         scan_emitted[0] = True
-                    _total = local_found[0] + smb_found[0] + ssh_units
                 if ready:
-                    _apply_total(_total)
+                    _rescale()
                     if not self._cancel.is_set():
-                        self.scan_finished.emit(_total)
+                        meter.finish_scan()
 
             def _phase_marker() -> "Callable[[], None]":
                 fired = [False]
@@ -1199,8 +1243,6 @@ class CopyWorker(QThread):
 
                 return _mark
 
-            _update_total()
-
             local_mark = _phase_marker()
             smb_mark = _phase_marker()
 
@@ -1209,7 +1251,7 @@ class CopyWorker(QThread):
                     if not self._cancel.is_set():
                         self._scan_copy_local_pipelined(
                             local_tasks, flusher, tracker,
-                            on_count_change=_on_local_count,
+                            on_plan_change=_on_local_plan,
                             on_scan_done=local_mark,
                         )
                 finally:
@@ -1224,8 +1266,7 @@ class CopyWorker(QThread):
                 try:
                     self._run_smb_pipeline(
                         smb_tasks, user, pw, smb_tool_missing,
-                        flusher, tracker, _on_smb_progress,
-                        smb_found, total_lock, _update_total, smb_mark,
+                        flusher, tracker, _on_smb_found, smb_mark,
                     )
                 finally:
                     smb_mark()
@@ -1243,10 +1284,8 @@ class CopyWorker(QThread):
                 _run_futures(futs, self._cancel, "backend pipeline")
 
             if not scan_emitted[0] and not self._cancel.is_set():
-                with total_lock:
-                    total = local_found[0] + smb_found[0] + ssh_units
-                _apply_total(total)
-                self.scan_finished.emit(total)
+                _rescale()
+                meter.finish_scan()
 
             flusher.flush()
             tracker.emit_final()
@@ -1257,8 +1296,7 @@ class CopyWorker(QThread):
             self._run_post_hooks(all_tasks)
             flusher.flush()
             tracker.emit_final()
-            self._emit_finished(flusher.copied, flusher.skipped, flusher.errors,
-                                flusher.deleted, self._cancel.is_set())
+            self._emit_finished(*flusher.counts(), self._cancel.is_set())
         except Exception as exc:
             logger.error("CopyWorker critical: %s", exc, exc_info=True)
             try:
@@ -1269,16 +1307,14 @@ class CopyWorker(QThread):
                 flusher.flush()
             except Exception as e:
                 logger.debug("Error during fallback cleanup: %s", e)
-            self._emit_finished(flusher.copied, flusher.skipped, flusher.errors,
-                                flusher.deleted, self._cancel.is_set())
+            self._emit_finished(*flusher.counts(), self._cancel.is_set())
         finally:
             if pw is not None:
                 pw.clear()
 
     def _run_smb_pipeline(self, smb_tasks: list, user: str, pw: "_SecurePw | None",
                           smb_tool_missing: bool, flusher: "_Flusher", tracker: "_EntryTracker",
-                          on_progress, smb_found: list, total_lock: threading.Lock,
-                          update_total, scan_phase_done) -> None:
+                          on_found, scan_phase_done) -> None:
         if self._cancel.is_set():
             scan_phase_done()
             return
@@ -1287,9 +1323,7 @@ class CopyWorker(QThread):
             msg = tr("'smbclient' not found — install the Samba client tools (e.g. package "
                      "'smbclient' / 'samba-client') to enable SMB backups")
             errors = [(s_ if is_smb(s_) else d_, msg, t_) for s_, d_, t_, *_ in smb_tasks]
-            with total_lock:
-                smb_found[0] = len(errors)
-            update_total()
+            on_found(len(errors))
             scan_phase_done()
             _push_errors(flusher, tracker, errors)
             return
@@ -1305,13 +1339,11 @@ class CopyWorker(QThread):
         expanded: list[_SmbJob] = []
         scan_errors: list = []
         if alive_tasks and not self._cancel.is_set():
-            scanner = _SmbScanner(user, pw, guest, self._cancel, on_progress)
+            scanner = _SmbScanner(user, pw, guest, self._cancel, on_found)
             expanded, scan_errors = scanner.resolve(alive_tasks)
         smb_errors.extend(scan_errors)
 
-        with total_lock:
-            smb_found[0] = len(expanded) + len(smb_errors)
-        update_total()
+        on_found(len(expanded) + len(smb_errors))
         scan_phase_done()
 
         if self._cancel.is_set():
@@ -1332,8 +1364,6 @@ class CopyWorker(QThread):
         if self._cancel.is_set():
             return
 
-        self.scan_progress.emit(f"rsync  {title or src}", 0)
-
         rsync_src = _rsync_src_arg(src, self._cancel)
         excludes_raw = list(extra[0]) if extra and extra[0] else None
         excludes = _rsync_excludes(rsync_src, excludes_raw)
@@ -1343,13 +1373,14 @@ class CopyWorker(QThread):
             blocked = self._mirror_guard(src, rsync_src)
             if blocked is not None:
                 logger.warning("mirror skipped for '%s': %s", src, blocked)
-                flusher.push(er=[(src, blocked, 0)])
+                flusher.push(er=[(src, blocked, 0)], work=COST_REMOTE_TASK)
                 _track(0, 0, 1)
                 return
 
         if shutil.which("rsync") is None:
             logger.error("rsync binary not found — remote task '%s' reported as error", title or src)
-            flusher.push(er=[(src, tr("'rsync' not found — install it (package 'rsync') to enable SSH backups"), 0)])
+            flusher.push(er=[(src, tr("'rsync' not found — install it (package 'rsync') to enable SSH backups"), 0)],
+                         work=COST_REMOTE_TASK)
             _track(0, 0, 1)
             return
 
@@ -1370,7 +1401,7 @@ class CopyWorker(QThread):
             )
         except OSError as exc:
             logger.error("rsync launch failed for '%s': %s", src, exc)
-            flusher.push(er=[(src, str(exc), 0)])
+            flusher.push(er=[(src, str(exc), 0)], work=COST_REMOTE_TASK)
             _track(0, 0, 1)
             return
 
@@ -1378,11 +1409,12 @@ class CopyWorker(QThread):
             logger.error("rsync stdout is None for '%s'", src)
             proc.kill()
             proc.wait()
-            flusher.push(er=[(src, tr("rsync stdout unavailable"), 0)])
+            flusher.push(er=[(src, tr("rsync stdout unavailable"), 0)], work=COST_REMOTE_TASK)
             _track(0, 0, 1)
             return
 
         last_pct = 0
+        credit = 0
         deleted_this_task: list = []
         error_lines: collections.deque[str] = collections.deque(maxlen=_RSYNC_ERROR_TAIL)
         tail_lines: collections.deque[str] = collections.deque(maxlen=_RSYNC_ERROR_TAIL)
@@ -1408,10 +1440,10 @@ class CopyWorker(QThread):
                         pct = int(m.group(2))
                         if pct != last_pct:
                             last_pct = pct
-                            self.scan_progress.emit(
-                                f"rsync  {title or src}  {pct}%  {m.group(3)}",
-                                pct,
-                            )
+                            target = COST_REMOTE_TASK * min(pct, 99) // 100
+                            if target > credit:
+                                self.meter.add_inflight(target - credit)
+                                credit = target
                         continue
                     if mirror and (dm := _RSYNC_DELETE_RE.match(line)):
                         rel = dm.group(1).strip()
@@ -1444,14 +1476,14 @@ class CopyWorker(QThread):
         if proc.returncode in (0, 24):
             if proc.returncode == 24:
                 logger.warning("rsync: some source files vanished during transfer (exit 24): %s", src)
-            flusher.push(ok=[(src, dst, 0)])
+            flusher.push(ok=[(src, dst, 0)], work=COST_REMOTE_TASK, release_work=credit)
             _track(1, 0, 0, len(deleted_this_task))
             logger.info("rsync OK: %s → %s", src, dst)
         else:
             detail = "; ".join(error_lines or tail_lines) or None
             msg = (tr("rsync exit {code}: {detail}", code=proc.returncode, detail=detail)
                    if detail else tr("rsync exit {code}", code=proc.returncode))
-            flusher.push(er=[(src, msg, 0)])
+            flusher.push(er=[(src, msg, 0)], work=COST_REMOTE_TASK, release_work=credit)
             _track(0, 0, 1, len(deleted_this_task))
             logger.error("rsync exit %d: %s → %s (%s)", proc.returncode, src, dst, detail or "no output captured")
 
@@ -1493,10 +1525,11 @@ class CopyWorker(QThread):
             _run_futures(futs, self._cancel, "rsync task")
 
     def _scan_copy_local_pipelined(self, tasks: list, flusher: "_Flusher", tracker: "_EntryTracker", *,
-                                    on_count_change: "Callable[[int], None] | None" = None,
+                                    on_plan_change: "Callable[[int, int, int], None] | None" = None,
                                     on_scan_done: "Callable[[], None] | None" = None) -> int:
 
         cancel = self._cancel
+        meter = self.meter
         if not tasks:
             if on_scan_done is not None:
                 on_scan_done()
@@ -1510,7 +1543,7 @@ class CopyWorker(QThread):
         pending = [0]
         dir_done = threading.Event()
         last_emit = [0.0]
-        found = [0]
+        found = [0, 0, 0]
         missing = [0]
         copy_params = [_LOCAL_BATCH, _SCAN_PIPE_BATCH]
         copy_params_lock = threading.Lock()
@@ -1548,6 +1581,8 @@ class CopyWorker(QThread):
             else:
                 _eq((src, dst, title, excludes, None))
 
+        if missing[0] and on_plan_change is not None:
+            on_plan_change(missing[0], missing[0] * COST_FILE, 0)
         if missing_entries:
             flusher.push(sk=missing_entries)
             tracker.batch_update(missing_counts)
@@ -1558,9 +1593,31 @@ class CopyWorker(QThread):
             if pending[0] == 0:
                 dir_done.set()
 
+        def _put_batch(batch: list) -> bool:
+            while not cancel.is_set():
+                try:
+                    pipe_q.put(batch, timeout=0.25)
+                    return True
+                except queue.Full:
+                    continue
+            return False
+
+        def _single_file_stat(path: str) -> "os.stat_result | None":
+            try:
+                if os.path.islink(path):
+                    return None
+                st = os.stat(path)
+            except OSError:
+                return None
+            return st if stat.S_ISREG(st.st_mode) else None
+
         def _scan_loop(sbuf: "_BatchBuffer") -> None:
             local_n = 0
+            local_work = 0
+            local_size = 0
             batch: list = []
+            batch_work = 0
+            batch_size = 0
             last_sfl = time.monotonic()
             while not cancel.is_set():
                 try:
@@ -1576,95 +1633,115 @@ class CopyWorker(QThread):
                     if self._prepare_dst_dir(_src, _dst, _dir_st, dir_attrs, dir_attrs_lock) is None:
                         _push_errors(flusher, tracker, [(_dst, tr("Directory could not be created"), _title)])
                         local_n += 1
+                        local_work += COST_FILE
                         continue
                     for is_dir, path, dst_path, entry_stat in _scan_dir_entries(_src, _dst, _excl, cancel):
                         if is_dir:
                             _eq((path, dst_path, _title, _excl, entry_stat))
                         elif (entry_stat is not None and entry_stat is not True
                               and _unchanged(path, dst_path, entry_stat)):
-                            sbuf.record_skip(path, entry_stat.st_size, _title, up_to_date)
+                            size = entry_stat.st_size
+                            sbuf.record_skip(path, size, _title, up_to_date)
                             local_n += 1
+                            local_work += COST_SKIP
+                            local_size += size
                             if sbuf.pending >= lb_now:
                                 sbuf.flush()
                                 last_sfl = time.monotonic()
                         else:
+                            size = _entry_size(entry_stat)
+                            cost = file_cost(size)
                             batch.append((path, dst_path, _title, entry_stat))
+                            batch_work += cost
+                            batch_size += size
                             local_n += 1
+                            local_work += cost
+                            local_size += size
                             if len(batch) >= spb:
-                                while not cancel.is_set():
-                                    try:
-                                        pipe_q.put(batch, timeout=0.25)
-                                        batch = []
-                                        break
-                                    except queue.Full:
-                                        continue
-                                if batch:
+                                if not _put_batch(batch):
                                     local_n -= len(batch)
-                                    batch = []
+                                    local_work -= batch_work
+                                    local_size -= batch_size
+                                batch = []
+                                batch_work = 0
+                                batch_size = 0
                 except NotADirectoryError:
-                    batch.append((_src, _dst, _title, None))
+                    single_st = _single_file_stat(_src)
+                    size = _entry_size(single_st)
+                    cost = file_cost(size)
+                    batch.append((_src, _dst, _title, single_st))
+                    batch_work += cost
+                    batch_size += size
                     local_n += 1
+                    local_work += cost
+                    local_size += size
                 except FileNotFoundError:
                     pass
                 except PermissionError:
                     logger.warning("scan %s: permission denied", _src)
                     _push_errors(flusher, tracker, [(_src, tr("Permission denied — directory not readable"), _title)])
                     local_n += 1
+                    local_work += COST_FILE
                 except OSError as exc:
                     logger.warning("scan %s: %s", _src, exc)
                     _push_errors(flusher, tracker, [(_src, str(exc), _title)])
                     local_n += 1
+                    local_work += COST_FILE
                 finally:
                     if sbuf.pending and time.monotonic() - last_sfl >= _FLUSH_INTERVAL:
                         sbuf.flush()
                         last_sfl = time.monotonic()
                     try:
-                        emit_cur = -1
+                        emit = False
                         now = time.monotonic()
                         with pend_lock:
                             if now - last_emit[0] >= _SCAN_EMIT_SECS:
                                 found[0] += local_n
+                                found[1] += local_work
+                                found[2] += local_size
                                 local_n = 0
+                                local_work = 0
+                                local_size = 0
                                 last_emit[0] = now
-                                emit_cur = found[0]
-                        if emit_cur >= 0:
-                            cur_total = emit_cur + missing[0]
-                            self.scan_progress.emit(tr("Scanning"), cur_total)
-                            lb_new, ft_new, spb_new = _scale_params(cur_total)
+                                emit_files, emit_work, emit_size = found
+                                emit = True
+                        if emit:
+                            cur_files = emit_files + missing[0]
+                            lb_new, ft_new, spb_new = _scale_params(cur_files)
                             with copy_params_lock:
                                 copy_params[0] = lb_new
                                 copy_params[1] = spb_new
                             flusher.set_flush_thresh(ft_new)
-                            if on_count_change is not None:
-                                on_count_change(cur_total)
+                            if on_plan_change is not None:
+                                on_plan_change(cur_files, emit_work + missing[0] * COST_FILE, emit_size)
                     finally:
                         _dq()
 
             if batch and not cancel.is_set():
-                while not cancel.is_set():
-                    try:
-                        pipe_q.put(batch, timeout=0.25)
-                        batch = []
-                        break
-                    except queue.Full:
-                        continue
+                if _put_batch(batch):
+                    batch = []
 
             if batch:
                 local_n -= len(batch)
+                local_work -= batch_work
+                local_size -= batch_size
 
-            if local_n > 0:
+            if local_n > 0 or local_work > 0:
                 with pend_lock:
                     found[0] += local_n
+                    found[1] += local_work
+                    found[2] += local_size
 
         def _scan_worker() -> None:
-            sbuf = _BatchBuffer(flusher, tracker)
+            sbuf = _BatchBuffer(flusher, tracker, meter)
             try:
                 _scan_loop(sbuf)
             finally:
                 sbuf.flush()
 
         def _copy_worker() -> None:
-            buf = _BatchBuffer(flusher, tracker)
+            buf = _BatchBuffer(flusher, tracker, meter)
+            set_stream_sink(buf.stream)
             last_fl_t = time.monotonic()
             _file_ctr = 0
 
@@ -1697,30 +1774,33 @@ class CopyWorker(QThread):
                     for entry in item:
                         if cancel.is_set():
                             break
+                        big = _entry_size(entry[3]) >= _FLUSH_AFTER_BYTES
+                        if big and buf.pending:
+                            _fl()
                         buf.record(entry, cancel)
                         _file_ctr += 1
-                        if buf.pending >= lb or (
+                        if big or buf.pending >= lb or (
                             _file_ctr >= _TIME_CHECK_EVERY
                             and (time.monotonic() - last_fl_t) >= _FLUSH_INTERVAL
                         ):
                             _fl()
             finally:
                 _fl()
+                set_stream_sink(None)
 
         def _run_scan() -> None:
             try:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=scan_n) as sp:
                     futs = [sp.submit(_scan_worker) for _ in range(scan_n)]
                     _run_futures(futs, cancel, "scan worker")
-                total = found[0] + missing[0]
-                self.scan_progress.emit(tr("Scanning"), total)
-                lb, ft, spb = _scale_params(total)
+                total_files = found[0] + missing[0]
+                lb, ft, spb = _scale_params(total_files)
                 with copy_params_lock:
                     copy_params[0] = lb
                     copy_params[1] = spb
                 flusher.set_flush_thresh(ft)
-                if on_count_change is not None:
-                    on_count_change(total)
+                if on_plan_change is not None:
+                    on_plan_change(total_files, found[1] + missing[0] * COST_FILE, found[2])
             finally:
                 scan_done.set()
                 if on_scan_done is not None:

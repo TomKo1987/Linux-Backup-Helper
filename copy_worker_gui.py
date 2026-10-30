@@ -1,14 +1,14 @@
 import html
 import re
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass
-from itertools import islice
 
-from PyQt6.QtCore import Qt, QElapsedTimer, QTimer, pyqtSignal
-from PyQt6.QtGui import QResizeEvent, QCloseEvent
+from PyQt6.QtCore import Qt, QElapsedTimer, QRectF, QTimer, pyqtSignal
+from PyQt6.QtGui import QBrush, QColor, QIntValidator, QLinearGradient, QPainter, QPainterPath, QPen, QResizeEvent, QCloseEvent
 from PyQt6.QtWidgets import (
-    QProgressBar, QPushButton, QScrollArea, QTabWidget, QVBoxLayout, QApplication, QWidget, QSpinBox,
+    QPushButton, QScrollArea, QTabWidget, QVBoxLayout, QApplication, QWidget,
     QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QSizePolicy, QTextEdit,
 )
 
@@ -18,11 +18,187 @@ from translations import tr
 from ui_utils import card_frame_style, _StandardKeysMixin, show_scrollable_message, ask_yes_no_scrollable
 
 from backup_lock import acquire_backup_lock, backup_lock_holder_pid, release_backup_lock
+from copy_progress import (
+    BAR_RANGE, STEP_COMPARE, STEP_CONFIRM, STEP_COPY, STEP_DELETE, STEP_HOOKS, STEP_SCAN,
+    STEP_SYNC, STEP_VERSIONS, ProgressModel, ProgressView, Snapshot, format_duration,
+)
 from copy_worker_core import _format_unit, _cached_mono_style, _notify
 from copy_worker import CopyWorker, _NF_MARK, _ConfirmRequest
 
 _SEARCH_CACHE_MAX = 24
 _CONFIRM_PREVIEW_MAX = 200
+_UI_TICK_MS = 100
+_DRAIN_TICK_MS = 25
+_LIVE_DRAIN_BUDGET_S = 0.008
+_FINAL_DRAIN_BUDGET_S = 0.015
+_DRAIN_CHUNK = 400
+_LOG_REFRESH_EVERY = 5
+
+
+def _luminance(c: QColor) -> float:
+    def lin(v: float) -> float:
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+    return 0.2126 * lin(c.redF()) + 0.7152 * lin(c.greenF()) + 0.0722 * lin(c.blueF())
+
+
+def _contrast_text(bg: QColor) -> QColor:
+    lum = _luminance(bg)
+    dark, light = QColor("#101218"), QColor("#ffffff")
+    ratio_dark = (lum + 0.05) / (_luminance(dark) + 0.05)
+    ratio_light = 1.05 / (lum + 0.05)
+    return dark if ratio_dark >= ratio_light else light
+
+
+def _mix(a: QColor, b: QColor, f: float) -> QColor:
+    f = max(0.0, min(1.0, f))
+    return QColor(round(a.red() + (b.red() - a.red()) * f),
+                  round(a.green() + (b.green() - a.green()) * f),
+                  round(a.blue() + (b.blue() - a.blue()) * f))
+
+
+class _ContrastBar(QWidget):
+    _FRAME_MS = 16
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._c1 = QColor("#89b4fa")
+        self._c2 = QColor("#cba6f7")
+        self._track = QColor("#101218")
+        self._border = QColor("#333333")
+        self._label = ""
+        self._mode = "idle"
+        self._target = 0.0
+        self._shown = 0.0
+        self._phase = 0.0
+        self._timer = QTimer(self)
+        self._timer.setInterval(self._FRAME_MS)
+        self._timer.timeout.connect(self._step)
+        self.setMinimumHeight(46)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    def apply_colors(self, c1: str, c2: str, track: str, border: str, size: int) -> None:
+        self._c1, self._c2, self._track, self._border = QColor(c1), QColor(c2), QColor(track), QColor(border)
+        font = self.font()
+        font.setBold(True)
+        font.setPixelSize(max(9, size))
+        self.setFont(font)
+        self.update()
+
+    def set_label(self, text: str) -> None:
+        if text != self._label:
+            self._label = text
+            self.update()
+
+    def set_fraction(self, fraction: float) -> None:
+        fraction = max(0.0, min(1.0, fraction))
+        if self._mode != "range":
+            self._mode = "range"
+            self._shown = 0.0
+        if fraction < self._shown:
+            self._shown = fraction
+        self._target = fraction
+        self._kick()
+
+    def set_busy(self) -> None:
+        if self._mode != "busy":
+            self._mode = "busy"
+            self._phase = 0.0
+        self._kick()
+
+    def set_idle(self) -> None:
+        self._mode = "idle"
+        self._target = 0.0
+        self._shown = 0.0
+        self._timer.stop()
+        self.update()
+
+    def _kick(self) -> None:
+        if not self._timer.isActive():
+            self._timer.start()
+        self.update()
+
+    def _step(self) -> None:
+        if not self.isVisible():
+            self._timer.stop()
+            return
+        if self._mode == "busy":
+            self._phase = (self._phase + 0.0022) % 1.0
+        elif self._mode == "range":
+            diff = self._target - self._shown
+            if abs(diff) < 0.0004:
+                self._shown = self._target
+                self._timer.stop()
+            else:
+                self._shown += diff * 0.06
+        else:
+            self._timer.stop()
+        self.update()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if self._mode != "idle" and not self._timer.isActive():
+            self._timer.start()
+
+    def _geometry_paths(self):
+        rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        radius = rect.height() / 2
+        track = QPainterPath()
+        track.addRoundedRect(rect, radius, radius)
+        fill = QPainterPath()
+        fill_rect = QRectF()
+        if self._mode == "range" and self._shown > 0:
+            width = max(rect.height(), rect.width() * self._shown)
+            fill_rect = QRectF(rect.left(), rect.top(), min(rect.width(), width), rect.height())
+        elif self._mode == "busy":
+            seg = rect.width() * 0.3
+            travel = rect.width() + seg
+            left = rect.left() - seg + travel * self._phase
+            fill_rect = QRectF(left, rect.top(), seg, rect.height()).intersected(rect)
+        if not fill_rect.isNull() and fill_rect.width() > 0:
+            fill.addRoundedRect(fill_rect, radius, radius)
+        return rect, track, fill, fill_rect
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect, track, fill, fill_rect = self._geometry_paths()
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(self._track)
+        painter.drawPath(track)
+        if not fill.isEmpty():
+            grad = QLinearGradient(fill_rect.left(), 0, fill_rect.right(), 0)
+            grad.setColorAt(0.0, self._c1)
+            grad.setColorAt(1.0, self._c2)
+            painter.setBrush(QBrush(grad))
+            painter.drawPath(fill.intersected(track))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(self._border, 1))
+        painter.drawPath(track)
+        if self._label:
+            self._paint_text(painter, rect, track, fill, fill_rect)
+        painter.end()
+
+    def _paint_text(self, painter: QPainter, rect: QRectF, track: QPainterPath, fill: QPainterPath, fill_rect: QRectF) -> None:
+        painter.setFont(self.font())
+        text_rect = rect.adjusted(12, 0, -12, 0)
+        flags = int(Qt.AlignmentFlag.AlignCenter)
+        track_col = _contrast_text(self._track)
+        if fill.isEmpty():
+            painter.setPen(track_col)
+            painter.drawText(text_rect, flags, self._label)
+            return
+        center = rect.center().x()
+        if fill_rect.left() <= center <= fill_rect.right() and fill_rect.width() > 0:
+            fill_col = _contrast_text(_mix(self._c1, self._c2, (center - fill_rect.left()) / fill_rect.width()))
+        else:
+            fill_col = _contrast_text(_mix(self._c1, self._c2, 0.5))
+        painter.setClipPath(fill.intersected(track))
+        painter.setPen(fill_col)
+        painter.drawText(text_rect, flags, self._label)
+        painter.setClipPath(track.subtracted(fill))
+        painter.setPen(track_col)
+        painter.drawText(text_rect, flags, self._label)
+        painter.setClipping(False)
 
 
 @dataclass
@@ -151,22 +327,20 @@ class _SummaryWidget(QWidget):
         prog_lay.setSpacing(8)
 
         prog_hdr = QHBoxLayout()
-        _w = QLabel(tr("Progress"))
-        _w.setStyleSheet(_cached_mono_style(font_sz(2), t["text_dim"], extra="border:none;"))
-        prog_hdr.addWidget(_w)
+        self._prog_title = QLabel(tr("Progress"))
+        self._prog_title.setStyleSheet(_cached_mono_style(font_sz(2), t["text_dim"], extra="border:none;"))
+        prog_hdr.addWidget(self._prog_title)
         prog_hdr.addStretch()
 
-        self._prog_pct = QLabel("0%")
+        self._prog_pct = QLabel("…")
         self._prog_pct.setFixedWidth(60)
         self._prog_pct.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self._prog_pct.setStyleSheet(_cached_mono_style(font_sz(2), t["text"], bold=True, extra="border:none;"))
         prog_hdr.addWidget(self._prog_pct)
 
-        self._progress_bar = QProgressBar()
-        self._progress_bar.setRange(0, 0)
-        self._progress_bar.setTextVisible(True)
-        self._progress_bar.setFormat(tr("0%  —  0 / 0 files"))
-        self._progress_bar.setMinimumHeight(30)
+        self._progress_bar = _ContrastBar()
+        self._progress_bar.set_busy()
+        self._progress_bar.apply_colors(t["accent"], t["accent2"], t["bg"], t["header_sep"], font_sz(7))
 
         prog_lay.addLayout(prog_hdr)
         prog_lay.addWidget(self._progress_bar)
@@ -272,10 +446,9 @@ class _SummaryWidget(QWidget):
 
     def set_status_html(self, _html: str) -> None: self._status_center_lbl.setText(_html)
 
-    def update_progress_bar(self, done: int, total: int) -> None: self._update_progress(done, total)
-
-    def update_stats(self, operation: str, done: int, total: int, copied: int, skipped: int, errors: int, deleted: int,
-                     elapsed_s: int, size_copied: int, size_skipped: int, size_deleted: int,
+    def update_stats(self, operation: str, view: ProgressView, title: str, bar_text: str,
+                     copied: int, skipped: int, errors: int, deleted: int, elapsed_s: int,
+                     size_copied: int, size_skipped: int, size_deleted: int, size_total: int,
                      finished: bool = False, cancelled: bool = False) -> None:
         self.op_lbl.setText(operation)
         self.card_copied.set_val(f"{copied:,}")
@@ -285,11 +458,12 @@ class _SummaryWidget(QWidget):
         self.card_deleted.set_val(f"{deleted:,}")
         self.card_deleted.set_size(_format_unit(size_deleted))
         self.card_errors.set_val(f"{errors:,}")
-        size_str = _format_unit(size_copied + size_skipped)
-        self.total_lbl.setText(tr("{total:,} files / {size}", total=total, size=size_str) if total > 0 else "")
-        self._update_progress(done, total, finished, cancelled)
+        self.total_lbl.setText(
+            tr("{total:,} files / {size}", total=view.files_total, size=_format_unit(size_total))
+            if view.files_total > 0 else "")
+        self._update_progress(view, title, bar_text, finished)
         self._update_segments(copied, skipped, deleted, errors)
-        self._update_timing(elapsed_s, done, total, finished, cancelled, size_copied=size_copied)
+        self._update_timing(view, elapsed_s, size_copied, finished, cancelled)
 
     def on_entry_status(self, title: str, ok: int, skip: int, err: int, deleted: int = 0) -> None:
         ec = self._entry_results.setdefault(title, [0, 0, 0, 0])
@@ -305,32 +479,19 @@ class _SummaryWidget(QWidget):
         self._entry_refresh_pending = False
         self._refresh_entry_labels()
 
-    def _update_progress(self, done: int, total: int, finished: bool = False, cancelled: bool = False) -> None:
-        if finished and cancelled:
-            self._progress_bar.setRange(0, 1)
-            self._progress_bar.setValue(0)
+    def _update_progress(self, view: ProgressView, title: str, bar_text: str, finished: bool) -> None:
+        bar = self._progress_bar
+        self._prog_title.setText(title)
+        if view.determinate:
+            bar.set_fraction(max(0, min(BAR_RANGE, view.value)) / BAR_RANGE)
+            self._prog_pct.setText(f"{view.pct}%" if view.pct is not None else "…")
+        elif finished:
+            bar.set_idle()
             self._prog_pct.setText("—")
-            self._progress_bar.setFormat(tr("Cancelled"))
-            return
-        if total > 0:
-            done_clamped = max(0, min(done, total))
-            pct = int(done_clamped * 100 / total)
-            if self._progress_bar.maximum() != total:
-                self._progress_bar.setRange(0, total)
-            self._progress_bar.setValue(done_clamped)
-            self._prog_pct.setText(f"{pct}%")
-            self._progress_bar.setFormat(tr("{pct}%  —  {done:,} / {total:,} files", pct=pct, done=done_clamped, total=total))
         else:
-            if finished:
-                self._progress_bar.setRange(0, 1)
-                self._progress_bar.setValue(1)
-                self._prog_pct.setText("100%")
-                self._progress_bar.setFormat(tr("100%  —  0 / 0 files"))
-            else:
-                self._progress_bar.setRange(0, 0)
-                self._progress_bar.setValue(0)
-                self._prog_pct.setText("…")
-                self._progress_bar.setFormat(tr("Copying… ({done:,} done)", done=done) if done > 0 else tr("Scanning…"))
+            bar.set_busy()
+            self._prog_pct.setText("…")
+        bar.set_label(bar_text)
 
     def _update_segments(self, copied: int, skipped: int, deleted: int, errors: int) -> None:
         counts = (copied, skipped, deleted, errors)
@@ -348,26 +509,37 @@ class _SummaryWidget(QWidget):
         for seg, count in zip(segs, counts, strict=True):
             seg.setFixedWidth(max(0, int(avail * count / total)))
 
-    def _update_timing(self, elapsed_s: int, done: int, total: int, finished: bool, cancelled: bool,
-                       size_copied: int = 0) -> None:
-        mins, secs = divmod(elapsed_s, 60)
+    def _update_timing(self, view: ProgressView, elapsed_s: int, size_copied: int, finished: bool, cancelled: bool) -> None:
         speed_str = "---"
         eta_str = "--:--"
         if finished:
             eta_str = tr("Cancelled") if cancelled else tr("Done")
-        if elapsed_s > 0 and done > 0:
-            rate = done / elapsed_s
-            if size_copied > 0:
-                mb_rate = size_copied / elapsed_s / (1024 * 1024)
-                speed_str = tr("{rate:.1f} MB/s", rate=mb_rate)
-            else:
-                speed_str = (tr("{rate:,.1f} files/s", rate=rate) if rate >= 1 else tr("1 file/{s:.1f}s", s=1 / rate))
-            if not finished and total > done:
-                eta_s = int((total - done) / rate)
-                eta_str = f"{eta_s // 60:02d}:{eta_s % 60:02d}"
-        self._card_elapsed.set_val(f"{mins:02d}:{secs:02d}")
+            if elapsed_s > 0:
+                if size_copied > 0:
+                    speed_str = self._fmt_bytes_rate(size_copied / elapsed_s)
+                elif view.files_done > 0:
+                    speed_str = self._fmt_files_rate(view.files_done / elapsed_s)
+        else:
+            if view.speed_bps:
+                speed_str = self._fmt_bytes_rate(view.speed_bps)
+            elif view.files_per_s:
+                speed_str = self._fmt_files_rate(view.files_per_s)
+            if view.eta_s is not None:
+                eta_str = format_duration(view.eta_s)
+        self._card_elapsed.set_val(format_duration(elapsed_s))
         self._card_speed.set_val(speed_str)
         self._card_eta.set_val(eta_str)
+
+    @staticmethod
+    def _fmt_bytes_rate(bps: float) -> str:
+        mb = bps / (1024 * 1024)
+        if mb >= 0.1:
+            return tr("{rate:.1f} MB/s", rate=mb)
+        return f"{_format_unit(int(bps))}/s"
+
+    @staticmethod
+    def _fmt_files_rate(rate: float) -> str:
+        return tr("{rate:,.1f} files/s", rate=rate) if rate >= 1 else tr("1 file/{s:.1f}s", s=1 / rate)
 
     def _recalculate_grid(self) -> bool:
         new_cols = max(1, (self._entry_card.width() - 40) // 280)
@@ -439,7 +611,7 @@ class _LogWidget(QWidget):
     _PAGE    = 500
     _LOG_MAX = 150_000
     _NATURAL_SORT_RE = re.compile(r"([0-9]+)")
-    _sorted_ready = pyqtSignal(list, list)
+    _sorted_ready = pyqtSignal(object, object)
 
     def __init__(self, color: str) -> None:
         super().__init__()
@@ -450,6 +622,7 @@ class _LogWidget(QWidget):
         self._page          = 0
         self._finalized     = False
         self._truncated     = False
+        self._dirty         = False
         self._last_rendered = ""
         self._search_cache: dict[str, list[str]] = {}
         self._sorted_ready.connect(self._apply_sorted)
@@ -458,9 +631,9 @@ class _LogWidget(QWidget):
                         f"color:{color}; background:transparent; border:none;")
         style_search = (f"QLineEdit {{ background:{t['bg3']}; border:1px solid {t['header_sep']}; "
                         f"border-radius:6px; padding:0 10px; color:{t['text']}; }}")
-        style_spin   = (f"QSpinBox{{border:1px solid {t['header_sep']}; border-radius:4px; "
-                        f"padding:2px 5px; background:{t['bg3']}; color:{t['text']}; font-weight:bold}}"
-                        f"QSpinBox:focus{{border:1px solid {t['accent']}; background:{t['bg2']}}}")
+        style_spin   = (f"QLineEdit{{border:1px solid {t['header_sep']}; border-radius:4px; "
+                        f"padding:0 6px; background:{t['bg3']}; color:{t['text']}; font-weight:bold}}"
+                        f"QLineEdit:focus{{border:1px solid {t['accent']}; background:{t['bg2']}}}")
         style_muted  = f"color:{t['muted']}; font-size:{font_sz()}px; margin-left:10px;"
         style_btn = (f"QPushButton {{ background:{t['bg3']}; border:1px solid {t['header_sep']}; "
                      f"border-radius:4px; padding:2px 8px; color:{t['text']}; }}"
@@ -490,13 +663,13 @@ class _LogWidget(QWidget):
             btn.setMinimumHeight(28)
             btn.setStyleSheet(style_btn)
 
-        self._spin = QSpinBox()
-        self._spin.setMinimum(1)
-        self._spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        self._spin = QLineEdit("1")
+        self._spin.setValidator(QIntValidator(1, 99_999_999, self))
         self._spin.setStyleSheet(style_spin)
         self._spin.setMinimumHeight(28)
+        self._spin.setFixedWidth(84)
         self._spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._spin.editingFinished.connect(self._spin_changed)
+        self._spin.returnPressed.connect(self._spin_changed)
 
         self._page_lbl  = QLabel("")
         self._page_lbl.setStyleSheet(f"color:{t['text']};")
@@ -596,12 +769,25 @@ class _LogWidget(QWidget):
         self._render()
 
     def _spin_changed(self) -> None:
-        target = self._spin.value() - 1
+        try:
+            target = int(self._spin.text()) - 1
+        except ValueError:
+            target = self._page
         if target != self._page:
             self._go(target)
+        else:
+            self._spin.setText(str(self._page + 1))
 
     def _render(self) -> None:
-        pages = self._pages()
+        self._render_page()
+        self._update_nav()
+
+    def refresh_live(self) -> None:
+        if self._dirty and not self._finalized and self.isVisible():
+            self._dirty = False
+            self._render()
+
+    def _render_page(self) -> None:
         start = self._page * self._PAGE
         chunk = self._filtered[start: start + self._PAGE]
         parts = [self._html_prefix]
@@ -616,17 +802,20 @@ class _LogWidget(QWidget):
 
         new_html = "".join(parts)
         if new_html != self._last_rendered:
+            bar = self._view.verticalScrollBar()
+            keep = bar.value() if bar is not None else 0
             self._view.setHtml(new_html)
+            if bar is not None:
+                bar.setValue(keep)
             self._last_rendered = new_html
 
+    def _update_nav(self) -> None:
+        pages = self._pages()
         total = len(self._filtered)
         self._page_lbl.setText(f"<b>{pages}</b>")
         self._total_lbl.setText(tr("({total:,} {word})", total=total, word=tr("entry") if total == 1 else tr("entries")))
 
-        self._spin.blockSignals(True)
-        self._spin.setMaximum(pages)
-        self._spin.setValue(self._page + 1)
-        self._spin.blockSignals(False)
+        self._spin.setText(str(self._page + 1))
 
         can_back = self._page > 0
         can_fwd  = self._page < pages - 1
@@ -647,6 +836,7 @@ class _LogWidget(QWidget):
         self._items.extend(entries)
         self._items_lower.extend(entries_lower)
         if not self._finalized:
+            self._dirty = True
             if needle:
                 self._filtered.extend(e for e, el in zip(entries, entries_lower, strict=True) if needle in el)
             else:
@@ -773,10 +963,15 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         self.worker     = CopyWorker(tasks, prepare=advanced, is_restore=is_restore, interactive=not self._headless)
         CopyDialog.active_workers.add(self.worker)
         self.copied = self.skipped = self.errors = self.deleted = 0
-        self._done  = self._total = 0
         self._final_elapsed: int | None = None
         self._finished = False
-        self._scan_complete = False
+        self._cancelling = False
+        self._draining = False
+        self._final_title = ""
+        self._tick_count = 0
+        self._model = ProgressModel()
+        self._last_status = ""
+        self._last_tab_counts: tuple[int, int, int, int] = (-1, -1, -1, -1)
         self._pending_ok = deque()
         self._pending_sk = deque()
         self._pending_de = deque()
@@ -799,6 +994,12 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         self._w_skipped = _LogWidget(self.c_sk)
         self._w_deleted = _LogWidget(self.c_de)
         self._w_errors  = _LogWidget(self.c_er)
+        self._log_groups = (
+            (self._pending_ok, self._w_copied,  self._fmt_ok),
+            (self._pending_sk, self._w_skipped, self._fmt_sk),
+            (self._pending_de, self._w_deleted, self._fmt_de),
+            (self._pending_er, self._w_errors,  self._fmt_er),
+        )
 
         summary_page = QWidget()
         sl = QVBoxLayout(summary_page)
@@ -808,7 +1009,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
 
         self.tabs = QTabWidget()
         self.tabs.addTab(summary_page, tr("📋 Summary"))
-        self.tabs.addTab(self._w_copied, tr("  Copied (0)"))
+        self.tabs.addTab(self._w_copied, tr("\uf4bb  Copied (0)"))
         self.tabs.addTab(self._w_skipped, tr("↷ Skipped (0)"))
         self.tabs.addTab(self._w_deleted, tr("🗑 Deleted (0)"))
         self.tabs.addTab(self._w_errors, tr("✗ Errors (0)"))
@@ -817,6 +1018,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         self.tabs.setElideMode(Qt.TextElideMode.ElideNone)
         self.tabs.setUsesScrollButtons(True)
         self.tabs.setSizePolicy(QSizePolicy.Policy.Expanding, self.tabs.sizePolicy().verticalPolicy())
+        self.tabs.currentChanged.connect(self._on_tab_changed)
 
         self.cancel_btn = QPushButton(tr("⏹ Cancel"))
         self.cancel_btn.setMinimumHeight(50)
@@ -828,7 +1030,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
             f"QPushButton:pressed {{background: {t['bg']}; border-color: {t['accent2']}; color: {t['accent2']};}}")
         self._cancel_connected = True
         self._accept_connected = False
-        self.cancel_btn.clicked.connect(self.worker.cancel)
+        self.cancel_btn.clicked.connect(self._request_cancel)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(3)
@@ -837,30 +1039,33 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         layout.addWidget(self.tabs)
         layout.addWidget(self.cancel_btn)
 
-        if advanced:
-            self._set_status_preparing()
-        else:
-            self._set_status_running()
         self.timer = QElapsedTimer()
         self.timer.start()
 
         self._tick = QTimer(self)
         self._tick.timeout.connect(self._update_ui_tick)
-        self._tick.start(500)
 
-        self.worker.scan_finished.connect(self._on_scan_finished)
         self.worker.batch_update.connect(self._on_batch)
         self.worker.finished_work.connect(self._on_done)
-        self.worker.scan_progress.connect(self._on_scan_progress)
         self.worker.entry_status.connect(self._summary.on_entry_status)
         self.worker.prepared.connect(self._on_prepared)
         self.worker.confirm_delete.connect(self._on_confirm_delete)
         self.worker.space_warnings.connect(self._on_space_warnings)
 
+        self._render_progress()
         self.worker.start()
-        self._summary.update_stats(self._operation, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, False)
+        self._tick.start(_UI_TICK_MS)
 
     def _elapsed_s(self) -> int: return self._final_elapsed if self._final_elapsed is not None else self.timer.elapsed() // 1000
+
+    def _request_cancel(self) -> None:
+        if self._finished or self._cancelling or self.worker is None:
+            return
+        self._cancelling = True
+        self.cancel_btn.setText(tr("⏹ Cancelling…"))
+        self.cancel_btn.setEnabled(False)
+        self.worker.cancel()
+        self._render_progress()
 
     def _seed_deleted(self, items: "list | None") -> None:
         if not items:
@@ -896,11 +1101,10 @@ class CopyDialog(_StandardKeysMixin, QDialog):
                 f"font-family:monospace; color:{color};background:{self._t['bg2']}; border-left:5px solid {border}; "
                 f"border-radius:7px;padding:6px 18px;'>{icon}&thinsp;{label}</span>")
 
-    def _set_status_running(self) -> None:
-        self._summary.set_status_html(self._status_badge("⏳", tr("{op} running…", op=self._operation), self._t["cyan"], self._t["accent"]))
-
-    def _set_status_preparing(self) -> None:
-        self._summary.set_status_html(self._status_badge("⏳", tr("Preparing…"), self._t["cyan"], self._t["accent"]))
+    def _set_status_html(self, html_text: str) -> None:
+        if html_text != self._last_status:
+            self._last_status = html_text
+            self._summary.set_status_html(html_text)
 
     def _release_lock(self) -> None:
         if self._owns_lock:
@@ -912,7 +1116,6 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         self._seed_errors(errors)
         if deleted or errors:
             self._update_tab_labels()
-        self._set_status_running()
 
     def _on_confirm_delete(self, title: str, paths: list, request: _ConfirmRequest) -> None:
         try:
@@ -945,68 +1148,171 @@ class CopyDialog(_StandardKeysMixin, QDialog):
             "\n".join(lines) + "\n\n" + tr("The backup will still proceed."),
         )
 
-    def _set_status_scanning(self, phase: str, scanned: int) -> None:
-        self._summary.set_status_html(self._status_badge("🔍", tr("{phase}… ({n:,} found)", phase=phase, n=scanned), self._t["accent2"]))
+    def _step_title(self, step: str) -> str:
+        if step == STEP_COPY:
+            return tr("{op}…", op=self._operation)
+        if step == STEP_SCAN:
+            return tr("Scanning…")
+        if step == STEP_COMPARE:
+            return tr("Comparing destination…")
+        if step == STEP_DELETE:
+            return tr("Deleting…")
+        if step == STEP_VERSIONS:
+            return tr("Pruning old versions…")
+        if step == STEP_HOOKS:
+            return tr("Running hooks…")
+        if step == STEP_CONFIRM:
+            return tr("Waiting for confirmation…")
+        if step == STEP_SYNC:
+            return tr("Writing data to disk…")
+        return tr("Preparing…")
 
-    def _set_status_copying(self) -> None:
-        self._summary.set_status_html(self._status_badge(
-            "📦", tr("{op}… ({done:,} / {total:,} files)", op=self._operation, done=self._done, total=self._total)
-            if self._total > 0 else tr("{op}…", op=self._operation),
-            self._t["accent"],
-        ))
+    def _describe(self, view: ProgressView) -> "tuple[str, str, str, str, str, str]":
+        t = self._t
+        step = view.step
+        title = self._step_title(step)
+        pct = view.pct if view.pct is not None else 0
+        if self._cancelling:
+            cancelling = tr("⏹ Cancelling…")
+            return cancelling, "⏹", cancelling, t["warning"], t["warning"], cancelling
+        if step == STEP_COPY:
+            if view.determinate:
+                badge = tr("{op}… {pct}%  ({done:,} / {total:,} files)", op=self._operation, pct=pct,
+                           done=view.files_done, total=view.files_total)
+                bar = tr("{pct}%  —  {done:,} / {total:,} files", pct=pct, done=view.files_done, total=view.files_total)
+            else:
+                badge, bar = title, title
+            return title, "📦", badge, t["accent"], t["accent"], bar
+        if step == STEP_SCAN:
+            if view.files_done > 0:
+                badge = tr("Scanning… ({found:,} found, {done:,} processed)", found=view.files_total, done=view.files_done)
+            else:
+                badge = tr("Scanning… ({found:,} found)", found=view.files_total)
+            return title, "🔍", badge, t["accent2"], t["accent2"], badge
+        if step == STEP_COMPARE:
+            badge = (tr("Comparing destination… ({n:,} checked)", n=view.step_done)
+                     if view.step_done > 0 else title)
+            return title, "🔍", badge, t["accent2"], t["accent2"], badge
+        if step in (STEP_DELETE, STEP_VERSIONS):
+            if view.step_total > 0:
+                badge = tr("{name} ({done:,} / {total:,})", name=title, done=view.step_done, total=view.step_total)
+                bar = tr("{name}  {pct}%  —  {done:,} / {total:,} items", name=title, pct=pct,
+                         done=view.step_done, total=view.step_total)
+            else:
+                badge, bar = title, title
+            return title, "🗑", badge, t["deleted"], t["deleted"], bar
+        icon = "💾" if step == STEP_SYNC else "⏳"
+        return title, icon, title, t["cyan"], t["accent"], title
 
-    def _set_status_finished(self, icon: str, label: str, color: str) -> None: self._summary.set_status_html(self._status_badge(icon, label, color))
+    def _snapshot(self) -> Snapshot:
+        return self.worker.meter.snapshot()
 
-    def _on_scan_progress(self, phase: str, scanned: int) -> None:
-        if self._done > 0:
+    def _absorb(self, snap: Snapshot) -> None:
+        self.copied, self.skipped, self.errors, self.deleted = snap.copied, snap.skipped, snap.errors, snap.deleted
+        self._size_copied = snap.size_copied
+        self._size_skipped = snap.size_skipped
+        self._size_deleted = snap.size_deleted
+
+    def _render_progress(self, snap: "Snapshot | None" = None, *, finished: bool = False, cancelled: bool = False) -> None:
+        if self.worker is None:
             return
-        self._set_status_scanning(phase, scanned)
+        if snap is None:
+            snap = self._snapshot()
+        self._absorb(snap)
+        view = self._model.update(snap, time.monotonic(), finished=finished, cancelled=cancelled)
+        elapsed = self._elapsed_s()
+        if finished:
+            self._summary.update_stats(
+                self._operation, view, self._final_title, self._final_bar_text(view, cancelled),
+                self.copied, self.skipped, self._display_errors, self._display_deleted, elapsed,
+                self._size_copied, self._size_skipped, self._display_size_deleted,
+                self._size_total(snap), finished=True, cancelled=cancelled)
+            return
+        title, icon, badge, color, border, bar = self._describe(view)
+        self._set_status_html(self._status_badge(icon, badge, color, border))
+        self._summary.update_stats(
+            self._operation, view, title, bar,
+            self.copied, self.skipped, self._display_errors, self._display_deleted, elapsed,
+            self._size_copied, self._size_skipped, self._display_size_deleted,
+            self._size_total(snap))
 
-    def _on_scan_finished(self, total: int) -> None:
-        self._scan_complete = True
-        self._total = total
-        suffix = tr("file") if total == 1 else tr("files")
-        self._summary.set_status_html(self._status_badge("📂", tr("Scan complete — {total:,} {suffix} found", total=total, suffix=suffix), self._t["accent"]))
-        if total > 0:
-            self._summary.update_progress_bar(self._done, total)
-        else:
-            self._summary.update_progress_bar(0, 0)
+    @staticmethod
+    def _size_total(snap: Snapshot) -> int:
+        return snap.bytes_total if snap.bytes_total > 0 else snap.size_copied + snap.size_skipped
 
-    def _drain_pending(self) -> int:
-        max_per = 750
+    @staticmethod
+    def _final_bar_text(view: ProgressView, cancelled: bool) -> str:
+        if cancelled:
+            if view.determinate and view.pct is not None:
+                return tr("Cancelled — {pct}%  —  {done:,} / {total:,} files", pct=view.pct,
+                          done=view.files_done, total=view.files_total)
+            return tr("Cancelled")
+        total = view.files_total
+        return tr("{pct}%  —  {done:,} / {total:,} files", pct=100, done=total, total=total)
 
-        def process_batch(pending, widget, fmt):
+    @staticmethod
+    def _enqueue(pending: deque, widget: "_LogWidget", items: list) -> None:
+        if not items or widget.is_truncated:
+            return
+        room = widget.log_max + 1 - widget.item_count - len(pending)
+        if room <= 0:
+            return
+        pending.extend(items if len(items) <= room else items[:room])
+
+    def _drain_pending(self, budget_s: float) -> int:
+        processed = 0
+        share = budget_s / len(self._log_groups)
+        for pending, widget, fmt in self._log_groups:
             if not pending:
-                return 0
+                continue
             if widget.is_truncated:
-                n = len(pending)
+                processed += len(pending)
                 pending.clear()
-                return n
-            n     = min(max_per, len(pending))
-            batch = [pending.popleft() for _ in range(n)]
-            widget.bulk_add([fmt(*args) for args in batch])
-            return n
+                continue
+            deadline = time.monotonic() + share
+            while pending:
+                n = min(_DRAIN_CHUNK, len(pending))
+                batch = [pending.popleft() for _ in range(n)]
+                widget.bulk_add([fmt(*args) for args in batch])
+                processed += n
+                if widget.is_truncated:
+                    processed += len(pending)
+                    pending.clear()
+                    break
+                if time.monotonic() >= deadline:
+                    break
+        return processed
 
-        return (process_batch(self._pending_ok, self._w_copied,  self._fmt_ok) + process_batch(self._pending_sk, self._w_skipped, self._fmt_sk)
-                + process_batch(self._pending_de, self._w_deleted, self._fmt_de) + process_batch(self._pending_er, self._w_errors,  self._fmt_er))
+    def _has_pending(self) -> bool:
+        return any(group[0] for group in self._log_groups)
+
+    def _refresh_visible_log(self) -> None:
+        current = self.tabs.currentWidget()
+        if isinstance(current, _LogWidget):
+            current.refresh_live()
+
+    def _on_tab_changed(self, _index: int) -> None:
+        self._refresh_visible_log()
 
     def _update_ui_tick(self) -> None:
-        elapsed   = self._elapsed_s()
-        processed = self._drain_pending()
-        if processed:
-            self._update_tab_labels()
-        if self._done > 0:
-            self._set_status_copying()
-        display_total = self._total if self._scan_complete else 0
-        self._summary.update_stats(self._operation, self._done, display_total, self.copied, self.skipped,
-                                   self._display_errors, self._display_deleted, elapsed,
-                                   self._size_copied, self._size_skipped, self._display_size_deleted, finished=False)
+        if self._finished:
+            return
+        self._tick_count += 1
+        self._drain_pending(_LIVE_DRAIN_BUDGET_S)
+        self._render_progress()
+        self._update_tab_labels()
+        if self._tick_count % _LOG_REFRESH_EVERY == 0:
+            self._refresh_visible_log()
 
     def _update_tab_labels(self) -> None:
-        self.tabs.setTabText(1, tr("  Copied ({n:,})", n=self.copied))
-        self.tabs.setTabText(2, tr("↷ Skipped ({n:,})", n=self.skipped))
-        self.tabs.setTabText(3, tr("🗑 Deleted ({n:,})", n=self._display_deleted))
-        self.tabs.setTabText(4, tr("✗ Errors ({n:,})", n=self._display_errors))
+        counts = (self.copied, self.skipped, self._display_deleted, self._display_errors)
+        if counts == self._last_tab_counts:
+            return
+        self._last_tab_counts = counts
+        self.tabs.setTabText(1, tr("\uf4bb  Copied ({n:,})", n=counts[0]))
+        self.tabs.setTabText(2, tr("↷ Skipped ({n:,})", n=counts[1]))
+        self.tabs.setTabText(3, tr("🗑 Deleted ({n:,})", n=counts[2]))
+        self.tabs.setTabText(4, tr("✗ Errors ({n:,})", n=counts[3]))
 
     @staticmethod
     def _fmt_ok(s, d) -> str: return f"{apply_replacements(s)}\n{tr('Copied to')} \uf4bb \n{apply_replacements(d)}"
@@ -1020,33 +1326,23 @@ class CopyDialog(_StandardKeysMixin, QDialog):
     @staticmethod
     def _fmt_er(p, m) -> str: return f"{apply_replacements(p)} ❌ {m}"
 
-    def _on_batch(self, ok, sk, er, de, done, total) -> None:
-        self._done = max(self._done, done)
-        if self._scan_complete:
-            self._total = total
-        else:
-            self._total = 0
-        self.copied  += len(ok)
-        self.skipped += len(sk)
-        self.errors  += len(er)
-        self.deleted += len(de)
-
-        for s, d, sz in ok:
-            self._size_copied += sz
-            self._pending_ok.append((s, d))
-        for s, r, sz in sk:
-            self._size_skipped += sz
+    def _on_batch(self, ok, sk, er, de) -> None:
+        if self._headless:
+            for s, r, _sz in sk:
+                if _NF_MARK in r:
+                    _r, _, nf_title = r.partition(_NF_MARK)
+                    self._not_found_paths.append((apply_replacements(s), nf_title))
+            return
+        self._enqueue(self._pending_ok, self._w_copied, [(s, d) for s, d, _sz in ok])
+        skipped_items = []
+        for s, r, _sz in sk:
             if _NF_MARK in r:
                 r, _, nf_title = r.partition(_NF_MARK)
                 self._not_found_paths.append((apply_replacements(s), nf_title))
-            self._pending_sk.append((s, r))
-        for p, r, sz in de:
-            self._size_deleted += sz
-            self._pending_de.append((p, r))
-        self._pending_er.extend((s, m) for s, m, _ in er)
-
-        if self._scan_complete and total > 0:
-            self._summary.update_progress_bar(done, total)
+            skipped_items.append((s, r))
+        self._enqueue(self._pending_sk, self._w_skipped, skipped_items)
+        self._enqueue(self._pending_de, self._w_deleted, [(p, r) for p, r, _sz in de])
+        self._enqueue(self._pending_er, self._w_errors, [(s, m) for s, m, _sz in er])
 
     def _on_done(self, c, s, e, d, cancelled) -> None:
         self._tick.stop()
@@ -1055,8 +1351,9 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         elapsed = self._final_elapsed = self.timer.elapsed() // 1000
         self._release_lock()
 
+        snap = self._snapshot()
+        self._absorb(snap)
         self.copied, self.skipped, self.errors, self.deleted = c, s, e, d
-        self._done = self._total
 
         try:
             from history import append_history
@@ -1066,15 +1363,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         except Exception as exc:
             logger.debug("append_history failed: %s", exc)
 
-        for pending, widget, fmt in zip((self._pending_ok, self._pending_sk, self._pending_de, self._pending_er),
-                                        (self._w_copied, self._w_skipped, self._w_deleted, self._w_errors),
-                                        (self._fmt_ok, self._fmt_sk, self._fmt_de, self._fmt_er), strict=True):
-            if pending:
-                cap = max(0, widget.log_max - widget.item_count)
-                widget.bulk_add([fmt(*args) for args in islice(pending, cap + 1)])
-                pending.clear()
-
-        tstr = f"{elapsed // 60:02d}:{elapsed % 60:02d}"
+        tstr = format_duration(elapsed)
 
         if cancelled:
             icon, label, col = "⏹", tr("Cancelled after {t}", t=tstr), self.c_sk
@@ -1083,20 +1372,15 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         else:
             icon, label, col = "✓", tr("Done — {t}", t=tstr), self.c_ok
 
-        self._set_status_finished(icon, label, col)
-        self._summary.update_stats(self._operation, self._done, self._total, self.copied, self.skipped,
-                                   self._display_errors, self._display_deleted, elapsed,
-                                   self._size_copied, self._size_skipped, self._display_size_deleted,
-                                   finished=True, cancelled=cancelled)
+        self._final_title = tr("Cancelled") if cancelled else tr("Done")
+        self._set_status_html(self._status_badge(icon, label, col))
+        self._render_progress(snap, finished=True, cancelled=cancelled)
         self._update_tab_labels()
-
-        for w in (self._w_copied, self._w_skipped, self._w_deleted, self._w_errors):
-            w.flush_final()
 
         if self._cancel_connected and self.worker is not None:
             try:
-                self.cancel_btn.clicked.disconnect(self.worker.cancel)
-            except RuntimeError:
+                self.cancel_btn.clicked.disconnect(self._request_cancel)
+            except (RuntimeError, TypeError):
                 pass
             self._cancel_connected = False
 
@@ -1136,7 +1420,14 @@ class CopyDialog(_StandardKeysMixin, QDialog):
             for p, t_ in self._not_found_paths:
                 logger.warning("Headless backup: configured path not found: %s%s", p, f" ({t_})" if t_ else "")
             QTimer.singleShot(0, self._finish_headless)
-        elif self._not_found_paths and not cancelled:
+            return
+
+        self._draining = True
+        self._tick.timeout.disconnect(self._update_ui_tick)
+        self._tick.timeout.connect(self._drain_tick)
+        self._tick.start(_DRAIN_TICK_MS)
+
+        if self._not_found_paths and not cancelled:
             n = len(self._not_found_paths)
             paths_text = "\n".join(
                 f"  • {p} ({t})" if t else f"  • {p}"
@@ -1154,6 +1445,15 @@ class CopyDialog(_StandardKeysMixin, QDialog):
 
             QTimer.singleShot(0, _show_popup)
 
+    def _drain_tick(self) -> None:
+        self._drain_pending(_FINAL_DRAIN_BUDGET_S)
+        if self._has_pending():
+            return
+        self._tick.stop()
+        self._draining = False
+        for w in (self._w_copied, self._w_skipped, self._w_deleted, self._w_errors):
+            w.flush_final()
+
     def _finish_headless(self) -> None:
         if self.worker is not None:
             self.worker.wait(5000)
@@ -1168,9 +1468,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
             self._release_lock()
             super().closeEvent(a0)
         elif self.worker.isRunning():
-            self.worker.cancel()
-            self.cancel_btn.setText(tr("⏹ Cancelling…"))
-            self.cancel_btn.setEnabled(False)
+            self._request_cancel()
             if a0 is not None:
                 a0.ignore()
         else:

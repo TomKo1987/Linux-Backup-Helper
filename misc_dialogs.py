@@ -19,7 +19,7 @@ class LogViewer(_TextViewDialog):
 
     def __init__(self, parent):
         t = current_theme()
-        super().__init__(parent, tr("Log Viewer"), (1350, 950),
+        super().__init__(parent, tr("Log Viewer"), (1500, 1050),
                          extra_buttons=[(tr("🔄 Refresh"), self._load), (tr("🗑 Clear"), self._clear)])
         top = QWidget()
         top.setStyleSheet(header_bar_style(t['bg2'], t['header_sep']))
