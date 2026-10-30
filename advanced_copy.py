@@ -21,6 +21,7 @@ __all__ = [
     "make_versioned_path", "begin_version", "finalize_version", "latest_version_path",
     "resolve_restore_sources", "prune_old_versions", "find_extraneous_paths",
     "delete_paths", "apply_advanced_options", "restore_exclude_paths",
+    "previous_version_target",
 ]
 
 
@@ -69,6 +70,7 @@ class AdvancedOptionsResult:
     deleted: list[DeletedItem] = field(default_factory=list)
     errors: list[DeleteError] = field(default_factory=list)
     version_plans: list[VersionPlan] = field(default_factory=list)
+    link_dests: dict[str, str] = field(default_factory=dict)
 
 
 def _is_local(path: str) -> bool:
@@ -145,7 +147,8 @@ def _rmtree_with_size(p: str, cancel: "threading.Event | None" = None,
         return 0
     if not os.path.isdir(p):
         try:
-            sz = os.lstat(p).st_size
+            fst = os.lstat(p)
+            sz = fst.st_size if fst.st_nlink <= 1 else 0
         except OSError:
             sz = 0
         os.remove(p)
@@ -177,7 +180,9 @@ def _rmtree_with_size(p: str, cancel: "threading.Event | None" = None,
                 stack.append((e.path, False))
             else:
                 try:
-                    total += e.stat(follow_symlinks=False).st_size
+                    fst = e.stat(follow_symlinks=False)
+                    if fst.st_nlink <= 1:
+                        total += fst.st_size
                 except OSError:
                     pass
                 os.remove(e.path)
@@ -241,6 +246,19 @@ def latest_version_path(base: str) -> "str | None":
         if _is_complete_version(path):
             return path
     return None
+
+
+def previous_version_target(src: str, dst: str) -> "str | None":
+    if not _is_local(dst):
+        return None
+    latest = latest_version_path(os.path.abspath(os.path.expanduser(dst)))
+    if latest is None:
+        return None
+    if src and _is_local(src):
+        s_abs = os.path.abspath(os.path.expanduser(src))
+        if os.path.lexists(s_abs) and not os.path.isdir(s_abs):
+            return os.path.join(latest, os.path.basename(s_abs))
+    return latest
 
 
 def _version_has_content(path: str) -> bool:
@@ -582,6 +600,7 @@ def apply_advanced_options(tasks: list[tuple], *, confirm: "ConfirmFn | None" = 
     all_deleted: list[DeletedItem] = []
     all_errors: list[DeleteError] = []
     version_plans: list[VersionPlan] = []
+    link_dests: dict[str, str] = {}
 
     for src_list, dst_list, title, excl, pre_hooks, post_hooks, details in tasks:
         if _is_cancelled(cancel):
@@ -628,12 +647,18 @@ def apply_advanced_options(tasks: list[tuple], *, confirm: "ConfirmFn | None" = 
                 if d_local:
                     d_abs = os.path.abspath(os.path.expanduser(d_str))
                     try:
+                        previous = latest_version_path(d_abs)
                         new_path = begin_version(d_abs)
                         eff_dst[i] = new_path
+                        prev_root = previous
                         if s_local:
                             s_abs = os.path.abspath(os.path.expanduser(s_str))
                             if os.path.lexists(s_abs) and not os.path.isdir(s_abs):
                                 eff_dst[i] = os.path.join(new_path, os.path.basename(s_abs))
+                                if previous is not None:
+                                    prev_root = os.path.join(previous, os.path.basename(s_abs))
+                        if prev_root is not None:
+                            link_dests[eff_dst[i]] = prev_root
                         version_plans.append(VersionPlan(base=d_abs, path=new_path,
                                                          keep=max_versions, title=title))
                     except OSError as exc:
@@ -718,4 +743,4 @@ def apply_advanced_options(tasks: list[tuple], *, confirm: "ConfirmFn | None" = 
         result.append((src_list, eff_dst, title, excl, pre_hooks, post_hooks, mirror_remote))
 
     return AdvancedOptionsResult(tasks=result, deleted=all_deleted, errors=all_errors,
-                                 version_plans=version_plans)
+                                 version_plans=version_plans, link_dests=link_dests)

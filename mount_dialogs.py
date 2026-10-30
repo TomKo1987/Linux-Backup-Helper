@@ -9,6 +9,7 @@ from themes import apply_tooltip, current_theme
 from translations import tr
 from ui_utils import ask_yes_no, _StandardKeysMixin, hdr_label, ok_cancel_buttons, sep
 
+
 class MountDialog(_StandardKeysMixin, QDialog):
 
     def __init__(self, parent, opt: dict | None):
@@ -87,6 +88,7 @@ class MountDialog(_StandardKeysMixin, QDialog):
         self.result = {"drive_name": name, "mount_path": self.mount_path.text().strip(),
                        "mount_command": self.mount.text().strip(), "unmount_command": self.unmnt.text().strip()}
         self.accept()
+
 
 class MountsDialog(_ListDialog):
 

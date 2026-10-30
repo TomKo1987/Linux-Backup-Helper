@@ -55,12 +55,12 @@ def _scale_params(total: int) -> tuple[int, int, int]:
 _RSYNC_DELETE_RE = re.compile(r"^deleting\s+(.+)$")
 
 _SKIP_GLOBS: tuple[str, ...] = (
-    "lock", ".lock", "lockfile", ".lck", ".parentlock", "Singleton*",
-    "cache", "Network Cache", "startupCache", "jumpListCache",
-    "*.sqlite-wal", "*.sqlite-shm", "*.journal", "*-journal", "*_journal",
+    ".lock", "lockfile", ".lck", ".parentlock", "Singleton*",
+    "Network Cache", "startupCache", "jumpListCache",
+    "*.sqlite-wal", "*.sqlite-shm", "*-journal", "*_journal",
     "*.db-wal", "*.db-shm",
-    "idb", "WebStorage", "Session Storage", "Local Storage", "leveldb", "*.ldb",
-    "temp", "tmp", "*.tmp", "*.baklz4",
+    "WebStorage", "Session Storage", "Local Storage", "leveldb", "*.ldb",
+    "*.tmp", "*.baklz4",
     "recovery.jsonlz4", "recovery.baklz4", "sessionstore-backups",
     "Thumbs.db", ".DS_Store", ".quota", ".user64", ".healthcheck", ".active-update",
     "GPUCache", "ShaderCache", "blob_storage",
@@ -291,6 +291,29 @@ def _hardlink_lookup(key: tuple[int, int]) -> str:
 def _hardlink_register(key: tuple[int, int], dst: str) -> None:
     with _hardlinks_lock:
         _hardlinks.setdefault(key, dst)
+
+
+_link_dests: dict[str, str] = {}
+_link_dests_lock = threading.Lock()
+
+
+def set_link_dests(mapping: "dict[str, str] | None") -> None:
+    with _link_dests_lock:
+        _link_dests.clear()
+        if mapping:
+            _link_dests.update(mapping)
+
+
+def link_dest_candidate(dst: str) -> "str | None":
+    if not _link_dests:
+        return None
+    with _link_dests_lock:
+        for root, prev in _link_dests.items():
+            if dst == root:
+                return prev
+            if dst.startswith(root + os.sep):
+                return os.path.join(prev, dst[len(root) + 1:])
+    return None
 
 
 def _reset_dir_caches() -> None:

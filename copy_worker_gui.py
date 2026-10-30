@@ -1344,7 +1344,7 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         self._enqueue(self._pending_de, self._w_deleted, [(p, r) for p, r, _sz in de])
         self._enqueue(self._pending_er, self._w_errors, [(s, m) for s, m, _sz in er])
 
-    def _on_done(self, c, s, e, d, cancelled) -> None:
+    def _on_done(self, c, s, _e, _d, cancelled) -> None:
         self._tick.stop()
         CopyDialog.active_workers.discard(self.worker)
         self._finished = True
@@ -1353,7 +1353,6 @@ class CopyDialog(_StandardKeysMixin, QDialog):
 
         snap = self._snapshot()
         self._absorb(snap)
-        self.copied, self.skipped, self.errors, self.deleted = c, s, e, d
 
         try:
             from history import append_history

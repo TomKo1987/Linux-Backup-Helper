@@ -323,11 +323,8 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
         if not tasks:
             QMessageBox.information(None, tr("Quick Backup"), tr("No backup entries found for this group."))
             return
-        from drive_utils import check_drives_to_mount, mount_required_drives
-        quick_paths = [p for src, dst, *_ in tasks
-                       for p in ([src] if isinstance(src, str) else list(src))
-                       + ([dst] if isinstance(dst, str) else list(dst))]
-        needed = check_drives_to_mount(quick_paths)
+        from drive_utils import check_drives_to_mount, mount_required_drives, task_paths
+        needed = check_drives_to_mount(task_paths(tasks))
         if needed and not mount_required_drives(needed, None):
             return
         label = header or tr("All groups")
@@ -576,10 +573,8 @@ def main():
         tasks = _build_backup_tasks(headers)
         exit_code = 0
         if tasks:
-            from drive_utils import mount_drives_unattended
-            mount_drives_unattended([p for src, dst, *_ in tasks
-                                     for p in ([src] if isinstance(src, str) else list(src))
-                                     + ([dst] if isinstance(dst, str) else list(dst))])
+            from drive_utils import mount_drives_unattended, task_paths
+            mount_drives_unattended(task_paths(tasks))
             dlg = CopyDialog(None, tasks, tr("Backup (scheduled)"), op_kind="backup",
                              headless=True, advanced=True)
             dlg.exec()

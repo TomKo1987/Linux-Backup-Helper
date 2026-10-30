@@ -865,7 +865,7 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         self._tabs.setCurrentIndex(1)
 
     def _start(self) -> None:
-        from advanced_copy import restore_exclude_paths, resolve_restore_sources
+        from advanced_copy import previous_version_target, restore_exclude_paths, resolve_restore_sources
 
         tasks: list[tuple[list[str], list[str], str, dict]] = []
         is_restore = self._mode == "restore"
@@ -888,7 +888,12 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
                         r_src, r_excl = resolve_restore_sources(r_src, r_excl, [str(x) for x in src])
                     tasks.append((r_src, src, e.get("title", "?"), r_excl))
                 elif details.get("versioned_archive"):
-                    tasks.append((src, [os.path.join(str(d), ".new-version") for d in dst],
+                    compare_dst = [
+                        (previous_version_target(str(src[i]) if i < len(src) else "", str(d))
+                         or os.path.join(str(d), ".new-version"))
+                        for i, d in enumerate(dst)
+                    ]
+                    tasks.append((src, compare_dst,
                                   e.get("title", "?"), details.get("exclude_paths", {})))
                 else:
                     tasks.append((src, dst, e.get("title", "?"), details.get("exclude_paths", {})))
@@ -898,12 +903,8 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
             QMessageBox.information(self, tr("Dry Run"), tr("No {label} entries configured.", label=label))
             return
 
-        from drive_utils import check_drives_to_mount, mount_required_drives
-        all_paths: list[str] = []
-        for src_list, dst_list, _title, _excl in tasks:
-            all_paths.extend(src_list)
-            all_paths.extend(dst_list)
-        needed = check_drives_to_mount(all_paths)
+        from drive_utils import check_drives_to_mount, mount_required_drives, task_paths
+        needed = check_drives_to_mount(task_paths(tasks))
         if needed and not mount_required_drives(needed, parent=self):
             return
 

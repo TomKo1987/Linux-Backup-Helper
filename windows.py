@@ -292,7 +292,7 @@ class _CopyMixin:
 
     def _start_copy(self: "_BaseCheckboxWindow") -> None:
         from copy_worker_gui import CopyDialog
-        from drive_utils import check_drives_to_mount, mount_required_drives
+        from drive_utils import check_drives_to_mount, mount_required_drives, task_paths
         from advanced_copy import restore_exclude_paths
 
         selected = []
@@ -307,19 +307,14 @@ class _CopyMixin:
             QMessageBox.information(self, tr("Note"), tr("Nothing selected."))
             return
 
-        def _as_list(v) -> list:
-            return [v] if isinstance(v, str) else list(v)
-
-        paths = [p for src, dst, _title, *_ in selected for p in _as_list(src) + _as_list(dst)]
-        drives_to_mount = check_drives_to_mount(paths)
-        if not mount_required_drives(drives_to_mount, self):
-            return
-
         is_restore = bool(getattr(self, "_is_restore", False))
         if is_restore and ask_yes_no(
                 self, tr("Restore"),
                 tr("Restore selected entries? Existing files with the same name will be overwritten."),
                 default_yes=False, icon=QMessageBox.Icon.Warning) != QMessageBox.StandardButton.Yes:
+            return
+
+        if not mount_required_drives(check_drives_to_mount(task_paths(selected)), self):
             return
 
         dlg_copy = CopyDialog(self, selected, self._op_label,  # type: ignore[attr-defined]

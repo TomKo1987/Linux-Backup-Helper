@@ -37,6 +37,7 @@ from copy_worker_core import (
     _ensure_dir, _make_new_dir, _apply_dir_attrs, _fsync_parent_dir, _tmp_path, _reset_dir_caches,
     _parse_smb, _run_futures, _silent_unlink, _hardlink_lookup, _hardlink_register,
     _ssh_join, _rsync_excludes, _rsync_src_arg, _ssh_dir_is_empty,
+    link_dest_candidate, set_link_dests,
 )
 from copy_worker_smb import (
     _get_smb_credentials,
@@ -48,6 +49,9 @@ if TYPE_CHECKING:
 
 
 _NF_MARK = "\x1f"
+_LINK_UNSUPPORTED_ERRNOS = frozenset({
+    errno.EPERM, errno.EOPNOTSUPP, errno.ENOTSUP, errno.ENOSYS, errno.EXDEV,
+})
 _FLUSH_AFTER_BYTES = 8 * 1024 * 1024
 _RSYNC_ERR_HINT_RE = re.compile(
     r"^(?:rsync|ssh)\b|error|failed|denied|refused|timed out|no such|cannot|unable|unreachable|not permitted|connection",
@@ -434,6 +438,26 @@ class _IncompleteCopyError(OSError):
     pass
 
 
+def _link_previous(src: str, dst: str, tmp: str, src_st: "os.stat_result") -> bool:
+    prev = link_dest_candidate(dst)
+    if prev is None:
+        return False
+    try:
+        prev_st = os.lstat(prev)
+        if not _content_matches(src, prev, src_st, prev_st) or _meta_diff(src_st, prev_st):
+            return False
+        _silent_unlink(tmp)
+        os.link(prev, tmp)
+        os.replace(tmp, dst)
+    except OSError as exc:
+        _silent_unlink(tmp)
+        if exc.errno in _LINK_UNSUPPORTED_ERRNOS:
+            logger.info("hard links to the previous version are not supported here: %s", exc)
+            set_link_dests(None)
+        return False
+    return True
+
+
 def _link_existing(first: str, dst: str, tmp: str, size: int) -> bool:
     try:
         first_st = os.lstat(first)
@@ -494,6 +518,11 @@ def _copy_file(src, dst, cancel, cached_st=None):
                 return "error", tr("Destination is a non-empty directory and could not be replaced"), 0
 
             tmp = _tmp_path(dst, ".part")
+
+            if _link_previous(src, dst, tmp, st):
+                success = True
+                _fsync_parent_dir(dst)
+                return "skip", tr("Unchanged — linked to the previous version"), st.st_size
 
             if st.st_nlink > 1:
                 link_key = (st.st_dev, st.st_ino)
@@ -844,6 +873,7 @@ class CopyWorker(QThread):
         self._hook_failures: list[str] = []
         self._finish_args: tuple[int, int, int, int, bool] | None = None
         self._sync_failed = False
+        self._mounts_guarded = False
         if not prepare:
             self._configure(tasks)
 
@@ -1042,6 +1072,7 @@ class CopyWorker(QThread):
             failure = exc
             logger.error("CopyWorker aborted: %s", exc, exc_info=True)
         finally:
+            set_link_dests(None)
             try:
                 self._finalize_versions(None, None)
             except Exception as exc:
@@ -1081,6 +1112,7 @@ class CopyWorker(QThread):
             if skip_titles:
                 raw = [t for t in raw if (str(t[2]) if len(t) > 2 else "") not in skip_titles]
             raw, guard_errors = self._guard_unmounted(raw)
+            self._mounts_guarded = True
         except Exception as exc:
             logger.error("Pre-hooks failed: %s", exc, exc_info=True)
             self.prepared.emit([], [DeleteError(path=tr("Preparing…"), title="", reason=str(exc))])
@@ -1103,6 +1135,7 @@ class CopyWorker(QThread):
             self._emit_finished(0, 0, 0, 0, False)
             return False
         self._version_plans = list(result.version_plans)
+        set_link_dests(result.link_dests)
         if self._version_plans:
             self.meter.reserve_tail()
         hook_errors = [DeleteError(path=t, title=t, reason=tr("Pre-hook failed — entry skipped"))
@@ -1564,10 +1597,10 @@ class CopyWorker(QThread):
         missing_entries: list = []
         missing_counts: dict = {}
         guard_errors: list[tuple[str, str, str]] = []
-        mounts = get_mounts(max_age=0.0)
+        mounts = None if self._mounts_guarded else get_mounts(max_age=0.0)
         for src, dst, title, *rest in tasks:
             excludes = rest[0] if rest else frozenset()
-            drive = unmounted_drive_for_path(dst, mounts)
+            drive = unmounted_drive_for_path(dst, mounts) if mounts is not None else None
             if drive:
                 guard_errors.append((dst, tr("Destination drive '{drive}' is not mounted — entry skipped",
                                              drive=drive), title))

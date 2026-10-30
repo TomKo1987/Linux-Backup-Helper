@@ -458,6 +458,17 @@ def build_rsync_list_cmd(spec: str) -> list[str]:
     return cmd
 
 
+def task_paths(tasks) -> list[str]:
+    paths: list[str] = []
+    for task in tasks:
+        for part in (task[0], task[1]):
+            if isinstance(part, str):
+                paths.append(part)
+            else:
+                paths.extend(str(p) for p in part)
+    return paths
+
+
 def check_drives_to_mount(paths: list[str]) -> list[dict]:
     paths = [p if (is_smb(p) or is_ssh(p)) else abspath(expanduser(p)) for p in paths]
     mounts = get_mounts()

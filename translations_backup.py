@@ -28,6 +28,7 @@ _NEW: dict[str, dict[str, str]] = {
         "Permission denied — destination not writable": "Zugriff verweigert – Ziel nicht beschreibbar",
         "Directory listing incomplete: {err}": "Verzeichnisliste unvollständig: {err}",
         "Mirror delete skipped: the remote deletions could not be previewed": "Spiegel-Löschung übersprungen: Die Löschungen auf dem Remote-Ziel konnten nicht vorab geprüft werden",
+        "Unchanged — linked to the previous version": "Unverändert – mit vorheriger Version verknüpft",
     },
     "Français": {
         "Scanning… ({found:,} found)": "Analyse… ({found:,} trouvés)",
@@ -56,6 +57,7 @@ _NEW: dict[str, dict[str, str]] = {
         "Permission denied — destination not writable": "Permission refusée — destination non inscriptible",
         "Directory listing incomplete: {err}": "Liste du répertoire incomplète : {err}",
         "Mirror delete skipped: the remote deletions could not be previewed": "Suppression miroir ignorée : les suppressions distantes n'ont pas pu être prévisualisées",
+        "Unchanged — linked to the previous version": "Inchangé — lié à la version précédente",
     },
     "Español": {
         "Scanning… ({found:,} found)": "Escaneando… ({found:,} encontrados)",
@@ -84,6 +86,7 @@ _NEW: dict[str, dict[str, str]] = {
         "Permission denied — destination not writable": "Permiso denegado — destino no escribible",
         "Directory listing incomplete: {err}": "Listado del directorio incompleto: {err}",
         "Mirror delete skipped: the remote deletions could not be previewed": "Eliminación espejo omitida: no se pudieron previsualizar las eliminaciones remotas",
+        "Unchanged — linked to the previous version": "Sin cambios — enlazado a la versión anterior",
     },
 }
 
