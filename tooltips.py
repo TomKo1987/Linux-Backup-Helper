@@ -117,6 +117,10 @@ def _specific_pkgs_tooltip_html(sp_active: list, session: str | None, t: dict, f
     header = (f"<tr><td colspan='{cols}' style='padding:4px 5px 2px;font-size:{font_sz_fn(-1)}px;font-weight:bold;"
               f"color:{t['accent2']};border-bottom:1px solid {t['header_sep']};'>{tr('Specific Packages')} "
               f"{tr('for {session}', session=_html.escape(session or tr('current session')))} ({len(sp_active)})</td></tr>")
+    if not session:
+        rows.insert(0, f"<tr><td colspan='{cols}' style='padding:4px 5px;font-size:{font_sz_fn(-2)}px;"
+                       f"color:{t['warning']};border-bottom:1px solid {t['header_sep']};'>"
+                       f"{_html.escape(tr("The desktop session could not be detected — specific packages will be skipped."))}</td></tr>")
     return (f"<table style='font-family:monospace;font-size:{font_sz_fn(-2)}px; white-space:nowrap'>"
             f"{header}{''.join(rows)}</table>")
 
@@ -187,85 +191,71 @@ def generate_tooltip() -> tuple[dict, dict, dict | None] | tuple[dict[Any, str],
 
 def copy_logic_tooltip() -> str:
     t = current_theme()
-    return tr(
-        "<b>Copy &amp; Skip Logic</b><br><br>"
-        "<b>Local File Logic:</b><br>"
-        "- A file is <b>copied</b> if the destination is missing, the <b>size differs</b>, "
-        "or its modification time differs from the source by more than a 2-second tolerance "
-        "(in <b>either</b> direction).<br>"
-        "- A file is <b>skipped</b> only if the size matches <b>and</b> the modification time "
-        "is within that 2-second tolerance of the source.<br>"
-        "- <b>Symlinks</b> are <b>preserved as symlinks</b> (same behavior as <code>rsync</code>/<code>cp -a</code>): "
-        "the link itself is recreated at the destination, its target is <b>not</b> followed or copied as file content. "
-        "Broken (dangling) links are replicated as-is rather than causing an error.<br><br>"
-        "<b>Samba (SMB) Logic:</b><br>"
-        "- A file is <b>copied</b> if it's missing on the target, its <b>size differs</b>, "
-        "or — when the remote timestamp can be read — its modification time differs "
-        "from the source by more than a 2-second tolerance (in <b>either</b> direction).<br>"
-        "- A file is <b>skipped</b> only if the size matches <b>and</b> (whenever a remote "
-        "timestamp is available) the modification time is within that tolerance too. "
-        "Same size alone is <b>not</b> enough — a same-size in-place edit is still detected "
-        "and re-copied.<br>"
-        "- If the remote timestamp can't be read for some reason, the check safely falls "
-        "back to size-only, the same as before.<br>"
-        "- SMB shares cannot store symlinks, so when uploading to SMB, symlinked files are "
-        "<b>dereferenced</b> (their content is uploaded); symlinked directories are followed with "
-        "loop protection to prevent infinite recursion on self-referencing links.<br>"
-        "- Remote paths <b>must</b> follow the pattern: <code>'smb://host-or-ip/share/path'</code>.<br>"
-        "- <b>Local requirement:</b> <code>smbclient</code> must be installed on <b>this machine</b>.<br>"
-        "- <b>Remote requirement:</b> Samba must be configured on the <b>target system</b>; "
-        "Port must be open (default Port = 445).<br><br>"
-        "<b>SSH (rsync) Logic:</b><br>"
-        "- Transfers use <code>rsync -az</code>; rsync's own quick-check (size + modification "
-        "time) decides what needs copying — files that already match are skipped without "
-        "re-reading their content.<br>"
-        "- Remote paths accept both <code>'user@host:/path'</code> and the bare rsync form "
-        "<code>'host:/path'</code> (no explicit user). <code>'ssh://user@host/path'</code> works too.<br>"
-        "- New SSH host keys are trusted automatically on first connection "
-        "(<code>StrictHostKeyChecking=accept-new</code>); if a host's key later "
-        "<b>changes</b>, the connection is refused rather than silently accepted.<br>"
-        "- Mirror mode uses rsync's <code>--delete</code> flag; with confirmation enabled, "
-        "deletions are always previewed first via a harmless <code>--dry-run</code> pass.<br><br>"
-        "<b>Junk / Cache Skip-List</b> — applied consistently across "
-        "<b>Local, SMB, and SSH</b> transfers alike:<br>"
-        "- <b>Locks &amp; Handles:</b> <code>lock</code>, <code>.lock</code>, <code>lockfile</code>, <code>.lck</code>, <code>.parentlock</code>, <code>Singleton*</code><br>"
-        "- <b>Browser Caches:</b> <code>cache/</code>, <code>Network Cache/</code>, <code>startupCache/</code>, <code>jumpListCache/</code>, "
-        "<code>GPUCache/</code>, <code>ShaderCache/</code>, <code>blob_storage/</code>, <code>prefs.js</code><br>"
-        "- <b>Active DB states:</b> <code>.sqlite-wal/-shm</code>, <code>.db-wal/-shm</code>, <code>.journal</code>, "
-        "<code>-journal</code>/<code>_journal</code>, <code>.ldb</code><br>"
-        "- <b>Web Storage:</b> <code>idb/</code> (IndexedDB), <code>WebStorage/</code>, <code>Session Storage</code>, <code>Local Storage</code>, <code>leveldb/</code><br>"
-        "- <b>System &amp; Temp:</b> <code>Thumbs.db</code>, <code>.DS_Store</code>, <code>temp/</code>, <code>tmp/</code>, "
-        "<code>.bak</code>, <code>.tmp</code>, <code>.baklz4</code>, <code>recovery.jsonlz4</code>, "
-        "<code>recovery.baklz4</code>, <code>sessionstore-backups/</code><br>"
-        "- <b>Hidden system markers:</b> <code>.quota</code>, <code>.user64</code>, <code>.healthcheck</code>, <code>.active-update</code><br>"
-        "<i>Note: For Local and SMB this matching is case-insensitive (‘Temperature.txt’ is still copied safely). "
-        "For SSH/rsync the same list is applied using each item's canonical casing, since rsync itself has no "
-        "case-insensitive exclude option.</i><br><br>"
-        "<b>Status Colors:</b><br>"
-        "- <span style='color:{success};'>Green</span> = Copied, "
-        "<span style='color:{warning};'>Yellow</span> = Skipped, "
-        "<span style='color:{error};'>Red</span> = Error.<br><br><br>"
-        "<b>Samba Credentials &amp; Keyring</b><br><br>"
-        "- Passwords are <b>never stored in plain text</b>. The system uses a priority chain:<br>"
-        "  1. <b>KDE KWallet:</b> Looks for <code>'smb-[username]'</code> in the <code>'kdewallet'</code> folder.<br>"
-        "  2. <b>System Keyring:</b> Fallback via <code>libsecret</code> (service: <code>'backup-helper-samba'</code>).<br>"
-        "  3. <b>Guest:</b> If no credentials exist, an anonymous connection is attempted.<br><br><br>"
-        "<b>Execution Security (Hardened)</b><br><br>"
-        "- <b>Zero Visibility:</b> Passwords are <b>never</b> passed via command-line arguments to prevent exposure in process lists.<br>"
-        "- <b>RAM-Only Storage:</b> Credentials are stored in <code>/dev/shm</code> (RAM disk). If <code>/dev/shm</code> is unavailable, "
-        "no credential file is created and the connection is <b>aborted</b> — it never silently falls back to an anonymous session.<br>"
-        "- <b>Race-Condition Protection:</b> Every <code>smbclient</code> call gets its own private credential file (mode <code>0600</code>), "
-        "which exists only while that single call runs and is deleted immediately after the process ends.<br>"
-        "- <b>Secure Erasure:</b> Before deletion, the credential file is <b>overwritten with zeros</b> (Wipe) and synced.<br>"
-        "- <b>Guest Only Without Credentials:</b> An anonymous connection is used only if no credentials are stored at all. "
-        "If credentials exist but cannot be handled securely, the connection is aborted instead.<br>"
-        "- <b>Memory Safety:</b> The core password buffer (<code>SecureString</code>) is a mutable <code>bytearray</code> that is <b>manually zeroed</b> after use. "
-        "During the credential-file write step the <code>bytearray</code> is written to <code>/dev/shm</code> directly through a <code>memoryview</code> — "
-        "no additional immutable <code>bytes</code> copy is created — and the working copy is <b>zeroed byte-by-byte</b> immediately afterwards in a "
-        "<code>finally</code> block, before the file itself is wiped and deleted. "
-        "<i>Note:</i> When a password is typed in or read from KWallet or the keyring, the toolkit and the storage backend inevitably "
-        "hand it over as a short-lived <code>str</code> that Python cannot overwrite.",
-        success=t['success'], warning=t['warning'], error=t['error']
+    return (
+        tr(
+            "<b>Copy &amp; Skip Logic</b><br><br>"
+            "<b>Local File Logic:</b><br>"
+            "- A file is <b>copied</b> if the destination is missing, the <b>size differs</b>, or its modification time differs from the source by more than the timestamp precision of the file systems involved (in <b>either</b> direction). The comparison is exact on modern file systems such as ext4, btrfs or XFS; coarser ones (e.g. FAT with 2 seconds) get a matching tolerance.<br>"
+            "- A file is <b>skipped</b> only if the size matches <b>and</b> the modification time is within that tolerance. If only the permissions (or, when running as root, the owner) differ, the content is not copied again — the metadata is updated in place and the file is counted as <b>copied</b>.<br>"
+            "- <b>Symlinks</b> are <b>preserved as symlinks</b> (same behavior as <code>rsync</code>/<code>cp -a</code>): the link itself is recreated at the destination, its target is <b>not</b> followed or copied as file content. Broken (dangling) links are replicated as-is rather than causing an error.<br>"
+            "- <b>Hardlinks</b> between files copied in the same run are recreated as hardlinks.<br><br>"
+        )
+        +
+        tr(
+            "<b>Samba (SMB) Logic:</b><br>"
+            "- A file is <b>copied</b> if it's missing on the target or its <b>size differs</b>. If the sizes match and the remote timestamp can be read, the modification time decides as well.<br>"
+            "- <b>Upload</b> (local → SMB): the file is <b>skipped</b> if the remote copy is not more than 2 seconds older than the source — a newer remote file is left untouched. Otherwise it is copied again. Same size alone is <b>not</b> enough — a same-size in-place edit is still detected and re-copied.<br>"
+            "- <b>Download</b> (SMB → local): the file is only <b>skipped</b> if the size matches <b>and</b> the modification times are within 2 seconds of each other (in <b>either</b> direction).<br>"
+            "- If the remote timestamp can't be read for some reason, the check safely falls back to size-only.<br>"
+            "- SMB shares cannot store symlinks, so when uploading to SMB, symlinked files are <b>dereferenced</b> (their content is uploaded); symlinked directories are followed with loop protection to prevent infinite recursion on self-referencing links.<br>"
+            "- Remote paths <b>must</b> follow the pattern: <code>'smb://host-or-ip/share/path'</code> (<code>cifs://</code> is accepted too; a port in the URL is ignored).<br>"
+            "- <b>Local requirement:</b> <code>smbclient</code> must be installed on <b>this machine</b>.<br>"
+            "- <b>Remote requirement:</b> Samba must be configured on the <b>target system</b>; the default SMB port (445) must be reachable.<br><br>"
+        )
+        +
+        tr(
+            "<b>SSH (rsync) Logic:</b><br>"
+            "- Transfers use <code>rsync -azH8</code>; rsync's own quick-check (size + modification time) decides what needs copying — files that already match are skipped without re-reading their content.<br>"
+            "- Remote paths accept both <code>'user@host:/path'</code> and the bare rsync form <code>'host:/path'</code> (no explicit user). <code>'ssh://user@host/path'</code> works too.<br>"
+            "- Connections run non-interactively (<code>BatchMode</code>), so key-based authentication must already be set up.<br>"
+            "- New SSH host keys are trusted automatically on first connection (<code>StrictHostKeyChecking=accept-new</code>, if the installed OpenSSH supports it); if a host's key later <b>changes</b>, the connection is refused rather than silently accepted.<br>"
+            "- Mirror mode uses rsync's <code>--delete</code> flag; with confirmation enabled, deletions are always previewed first via a harmless <code>--dry-run</code> pass.<br><br>"
+        )
+        +
+        tr(
+            "<b>Junk / Cache Skip-List</b> — applied consistently across <b>Local, SMB, and SSH</b> transfers alike. Entries are matched by name, as files or folders at any depth:<br>"
+            "- <b>Locks &amp; Handles:</b> <code>.lock</code>, <code>lockfile</code>, <code>.lck</code>, <code>.parentlock</code>, <code>Singleton*</code><br>"
+            "- <b>Browser Caches:</b> <code>Network Cache</code>, <code>startupCache</code>, <code>jumpListCache</code>, <code>GPUCache</code>, <code>ShaderCache</code>, <code>blob_storage</code><br>"
+            "- <b>Active DB states:</b> <code>*.sqlite-wal</code>, <code>*.sqlite-shm</code>, <code>*.db-wal</code>, <code>*.db-shm</code>, <code>*-journal</code>, <code>*_journal</code>, <code>*.ldb</code><br>"
+            "- <b>Web Storage:</b> <code>WebStorage</code>, <code>Session Storage</code>, <code>Local Storage</code>, <code>leveldb</code><br>"
+            "- <b>System &amp; Temp:</b> <code>Thumbs.db</code>, <code>.DS_Store</code>, <code>*.tmp</code>, <code>*.baklz4</code>, <code>recovery.jsonlz4</code>, <code>recovery.baklz4</code>, <code>sessionstore-backups</code><br>"
+            "- <b>Hidden system markers:</b> <code>.quota</code>, <code>.user64</code>, <code>.healthcheck</code>, <code>.active-update</code><br>"
+            "<i>Note: The matching is case-insensitive for Local, SMB and SSH alike (‘THUMBS.DB’ is skipped just like ‘Thumbs.db’).</i><br><br>"
+        )
+        +
+        tr(
+            "<b>Status Colors:</b><br>"
+            "- <span style='color:{success};'>Copied</span>, <span style='color:{warning};'>Skipped</span>, <span style='color:{deleted};'>Deleted</span>, <span style='color:{error};'>Error</span> — each status is shown in its own theme color.<br><br><br>",
+            success=t['success'], warning=t['warning'], deleted=t['deleted'], error=t['error']
+        )
+        +
+        tr(
+            "<b>Samba Credentials &amp; Keyring</b><br><br>"
+            "- Passwords are <b>never stored in plain text</b>. The system uses a priority chain:<br>"
+            "  1. <b>KDE KWallet:</b> Uses the first entry whose name starts with <code>'smb-'</code> in the wallet <code>'kdewallet'</code> (via <code>kwallet-query</code>).<br>"
+            "  2. <b>System Keyring:</b> Fallback via Secret Service / <code>libsecret</code> (service: <code>'backup-helper-samba'</code>).<br>"
+            "  3. <b>Guest:</b> If no credentials exist, an anonymous connection is attempted.<br><br><br>"
+        )
+        +
+        tr(
+            "<b>Execution Security (Hardened)</b><br><br>"
+            "- <b>Zero Visibility:</b> Passwords are <b>never</b> passed via command-line arguments to prevent exposure in process lists.<br>"
+            "- <b>RAM-Only Storage:</b> Credentials are stored in a private directory on a RAM-backed file system (<code>$XDG_RUNTIME_DIR</code>, <code>/run/user/&lt;uid&gt;</code> or <code>/dev/shm</code> — whichever is available first). If none is available, no credential file is created and the connection is <b>aborted</b> — it never silently falls back to an anonymous session.<br>"
+            "- <b>Race-Condition Protection:</b> Every <code>smbclient</code> call gets its own private credential file (mode <code>0600</code>), which exists only while that single call runs and is deleted immediately after the process ends.<br>"
+            "- <b>Secure Erasure:</b> Before deletion, the credential file is <b>overwritten with zeros</b> (Wipe) and synced.<br>"
+            "- <b>Guest Only Without Credentials:</b> An anonymous connection is used only if no credentials are stored at all. If credentials exist but cannot be handled securely, the connection is aborted instead.<br>"
+            "- <b>Memory Safety:</b> The core password buffer (<code>SecureString</code>) is a mutable <code>bytearray</code> that is <b>manually zeroed</b> after use. During the credential-file write step the <code>bytearray</code> is written to the credential file directly through a <code>memoryview</code> — no additional immutable <code>bytes</code> copy is created — and the working copy is <b>zeroed byte-by-byte</b> immediately afterwards in a <code>finally</code> block, before the file itself is wiped and deleted. <i>Note:</i> When a password is typed in or read from KWallet or the keyring, the toolkit and the storage backend inevitably hand it over as a short-lived <code>str</code> that Python cannot overwrite."
+        )
     )
 
 

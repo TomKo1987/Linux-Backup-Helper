@@ -93,10 +93,10 @@ def _make_backup(dst: Path) -> None:
 
 
 def _colored_diff_html(src_lines: list[str], dst_lines: list[str], theme: dict) -> str:
-    add_col = theme.get("success", "#4ec994")
-    rem_col = theme.get("error",   "#f7768e")
-    ctx_col = theme.get("text_dim","#565f89")
-    bg      = theme.get("bg",     "#1a1b26")
+    add_col = theme["success"]
+    rem_col = theme["error"]
+    ctx_col = theme["text_dim"]
+    bg      = theme["bg"]
     fs      = font_sz(-1)
 
     diff = list(difflib.unified_diff(dst_lines, src_lines, lineterm="",
@@ -121,7 +121,7 @@ def _colored_diff_html(src_lines: list[str], dst_lines: list[str], theme: dict) 
         elif raw.startswith("@@"):
             color = ctx_col
         else:
-            color = theme.get("text", "#c0caf5")
+            color = theme["text"]
         rows.append(f"<p style='margin:0;color:{color};font-family:monospace;font-size:{fs}px;"
                     f"white-space:pre;'>{esc}</p>")
 
@@ -576,9 +576,9 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
         self._set_status(f"≠ {tr('Different')}", t['warning'])
 
         rows = []
-        add_col = t.get("success", "#4ec994")
-        rem_col = t.get("error",   "#f7768e")
-        ctx_col = t.get("text_dim", "#565f89")
+        add_col = t["success"]
+        rem_col = t["error"]
+        ctx_col = t["text_dim"]
         for p in only_src:
             rows.append(f"<p style='margin:0;color:{add_col};font-family:monospace;"
                         f"font-size:{font_sz(-1)}px;white-space:pre;'>+ {_html.escape(p)}</p>")
@@ -591,7 +591,7 @@ class DotfilesManagerDialog(_StandardKeysMixin, QDialog):
 
         legend = (f"<p style='color:{ctx_col};font-family:monospace;font-size:{font_sz(-1)}px;'>"
                  f"+ {tr('new/missing on system')}   ≠ {tr('different')}   - {tr('only on system (not in profile)')}</p>")
-        bg = t.get("bg", "#1a1b26")
+        bg = t["bg"]
         html = legend + f"<div style='background:{bg};padding:8px;border-radius:4px;'>" + "\n".join(rows) + "</div>"
         self._diff_view.setHtml(html)
 

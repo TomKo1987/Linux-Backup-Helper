@@ -751,7 +751,7 @@ class SystemManagerLauncher(_AurHelperCacheMixin):
         self.failed_attempts += 1
         if self.parent:
             self.parent.sm_failed_attempts = self.failed_attempts
-        dialog.on_output(f"<p style='color:{t['error']};font-size:17px;font-weight:bold;'>"
+        dialog.on_output(f"<p style='color:{t['error']};font-size:{font_sz(3)}px;font-weight:bold;'>"
                          + tr("Authentication failed. Cancelled to prevent account lockout.") + "<br>"
                          + tr("Possible causes: incorrect password, user not in sudoers.") + "</p>", "info")
         dialog.mark_done(failed_count=self.failed_attempts)

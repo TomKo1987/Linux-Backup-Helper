@@ -6,6 +6,7 @@ import stat as _stat_mod
 import subprocess
 import tempfile
 import threading
+import time
 from dataclasses import dataclass
 from functools import partial
 from itertools import groupby
@@ -574,20 +575,25 @@ class _SmbScanner:
                     lerr.append((src_url, tr("Directory listing incomplete: {err}", err=ls_problem), title))
                 prefix = rpath.rstrip("/") + "/" if rpath else ""
                 prefix_len = len(prefix)
+                dir_skip: dict[str, bool] = {"": False}
                 for path, (sz, mt) in idx.items():
                     if self._cancel.is_set():
                         break
-                    if _should_skip(os.path.basename(path)):
-                        continue
-                    full_url = f"smb://{host}/{share}/{path}"
-                    if _smb_path_excluded(full_url, excludes):
-                        continue
                     if not rpath:
                         rel = path
                     elif prefix and path.startswith(prefix):
                         rel = path[prefix_len:]
                     else:
                         rel = os.path.basename(path)
+                    parent_rel = rel.rpartition("/")[0]
+                    skipped_dir = dir_skip.get(parent_rel)
+                    if skipped_dir is None:
+                        skipped_dir = dir_skip[parent_rel] = any(_should_skip(part) for part in parent_rel.split("/"))
+                    if skipped_dir or _should_skip(rel.rpartition("/")[2]):
+                        continue
+                    full_url = f"smb://{host}/{share}/{path}"
+                    if _smb_path_excluded(full_url, excludes):
+                        continue
                     dst_path = str(_Path(dst) / str(rel))
                     if sz < 0:
                         _ensure_dir(dst_path)
@@ -841,6 +847,7 @@ class _ShareProcessor:
         ok_list: list = []
         er_list: list = []
         stack   = [list(jobs)]
+        started = time.time() - 2
         if is_get:
             for j in jobs:
                 if not j.tmp_path:
@@ -876,14 +883,40 @@ class _ShareProcessor:
             elif len(batch) == 1:
                 er_list.append((self._job_src(batch[0], is_get), err))
             else:
-                mid = len(batch) // 2
-                stack.append(batch[mid:])
-                stack.append(batch[:mid])
+                if is_get:
+                    batch = self._salvage_downloads(batch, ok_list, er_list, started)
+                if len(batch) == 1:
+                    er_list.append((self._job_src(batch[0], is_get), err))
+                elif batch:
+                    mid = len(batch) // 2
+                    stack.append(batch[mid:])
+                    stack.append(batch[:mid])
 
         if is_get:
             for j in jobs:
                 _silent_unlink(j.tmp_path)
         return ok_list, er_list
+
+    def _salvage_downloads(self, batch: list, ok_list: list, er_list: list, started: float) -> list:
+        pending: list = []
+        for j in batch:
+            if j.remote_size < 0:
+                pending.append(j)
+                continue
+            try:
+                st = os.stat(j.tmp_path)
+            except OSError:
+                pending.append(j)
+                continue
+            if st.st_size != j.remote_size or st.st_ctime < started:
+                pending.append(j)
+                continue
+            problem = self._finalize_download(j)
+            if problem:
+                er_list.append((self._job_src(j, True), problem))
+            else:
+                ok_list.append((self._job_src(j, True), j.dst_path))
+        return pending
 
     @staticmethod
     def _finalize_download(job: "_SmbJob") -> str:

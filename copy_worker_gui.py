@@ -6,7 +6,7 @@ from collections import deque
 from dataclasses import dataclass
 
 from PyQt6.QtCore import Qt, QElapsedTimer, QRectF, QTimer, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor, QIntValidator, QLinearGradient, QPainter, QPainterPath, QPen, QResizeEvent, QCloseEvent
+from PyQt6.QtGui import QBrush, QColor, QFont, QIntValidator, QLinearGradient, QPainter, QPainterPath, QPen, QResizeEvent, QCloseEvent
 from PyQt6.QtWidgets import (
     QPushButton, QScrollArea, QTabWidget, QVBoxLayout, QApplication, QWidget,
     QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QSizePolicy, QTextEdit,
@@ -41,6 +41,18 @@ def _luminance(c: QColor) -> float:
     return 0.2126 * lin(c.redF()) + 0.7152 * lin(c.greenF()) + 0.0722 * lin(c.blueF())
 
 
+def _contrast_ratio(a: QColor, b: QColor) -> float:
+    la, lb = _luminance(a), _luminance(b)
+    hi, lo = max(la, lb), min(la, lb)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def _pick_text(preferred: QColor, bg: QColor) -> QColor:
+    if _contrast_ratio(preferred, bg) >= 4.5:
+        return preferred
+    return _contrast_text(bg)
+
+
 def _contrast_text(bg: QColor) -> QColor:
     lum = _luminance(bg)
     dark, light = QColor("#101218"), QColor("#ffffff")
@@ -65,6 +77,8 @@ class _ContrastBar(QWidget):
         self._c2 = QColor("#cba6f7")
         self._track = QColor("#101218")
         self._border = QColor("#333333")
+        self._text = QColor("#ffffff")
+        self._px = 14
         self._label = ""
         self._mode = "idle"
         self._target = 0.0
@@ -76,13 +90,19 @@ class _ContrastBar(QWidget):
         self.setMinimumHeight(46)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-    def apply_colors(self, c1: str, c2: str, track: str, border: str, size: int) -> None:
+    def apply_colors(self, c1: str, c2: str, track: str, border: str, text: str, size: int) -> None:
         self._c1, self._c2, self._track, self._border = QColor(c1), QColor(c2), QColor(track), QColor(border)
-        font = self.font()
-        font.setBold(True)
-        font.setPixelSize(max(9, size))
-        self.setFont(font)
+        self._text = QColor(text)
+        self._px = max(9, size)
+        self.setMinimumHeight(max(46, self._px * 2 + 4))
+        self.updateGeometry()
         self.update()
+
+    def _label_font(self) -> QFont:
+        font = QFont(self.font().family())
+        font.setBold(True)
+        font.setPixelSize(self._px)
+        return font
 
     def set_label(self, text: str) -> None:
         if text != self._label:
@@ -179,19 +199,19 @@ class _ContrastBar(QWidget):
         painter.end()
 
     def _paint_text(self, painter: QPainter, rect: QRectF, track: QPainterPath, fill: QPainterPath, fill_rect: QRectF) -> None:
-        painter.setFont(self.font())
+        painter.setFont(self._label_font())
         text_rect = rect.adjusted(12, 0, -12, 0)
         flags = int(Qt.AlignmentFlag.AlignCenter)
-        track_col = _contrast_text(self._track)
+        track_col = _pick_text(self._text, self._track)
         if fill.isEmpty():
             painter.setPen(track_col)
             painter.drawText(text_rect, flags, self._label)
             return
         center = rect.center().x()
         if fill_rect.left() <= center <= fill_rect.right() and fill_rect.width() > 0:
-            fill_col = _contrast_text(_mix(self._c1, self._c2, (center - fill_rect.left()) / fill_rect.width()))
+            fill_col = _pick_text(self._text, _mix(self._c1, self._c2, (center - fill_rect.left()) / fill_rect.width()))
         else:
-            fill_col = _contrast_text(_mix(self._c1, self._c2, 0.5))
+            fill_col = _pick_text(self._text, _mix(self._c1, self._c2, 0.5))
         painter.setClipPath(fill.intersected(track))
         painter.setPen(fill_col)
         painter.drawText(text_rect, flags, self._label)
@@ -340,7 +360,7 @@ class _SummaryWidget(QWidget):
 
         self._progress_bar = _ContrastBar()
         self._progress_bar.set_busy()
-        self._progress_bar.apply_colors(t["accent"], t["accent2"], t["bg"], t["header_sep"], font_sz(7))
+        self._progress_bar.apply_colors(t["pb_chunk"], t["pb_chunk2"], t["pb_bg"], t["accent"], t["pb_text"], font_sz(8))
 
         prog_lay.addLayout(prog_hdr)
         prog_lay.addWidget(self._progress_bar)

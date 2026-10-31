@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QStackedWidget,
 )
 
-from copy_worker_core import _should_skip
+from copy_worker_core import _is_skipped_name
 from copy_worker import _is_up_to_date_local, _is_symlink_up_to_date
 from drive_utils import is_smb, is_ssh
 from state import S
@@ -172,7 +172,7 @@ class _DryRunWorker(QThread):
             for entry in entries:
                 if self._cancel.is_set():
                     return
-                if entry.path in excl_set or _should_skip(entry.name):
+                if entry.path in excl_set or _is_skipped_name(entry.name):
                     continue
                 dst_path = os.path.join(cur_dst, entry.name)
                 try:
@@ -1030,7 +1030,7 @@ class _ModeCard(QWidget):
 
         icon_lbl = QLabel(icon)
         icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_lbl.setStyleSheet("font-size:36px;background:transparent;border:none;")
+        icon_lbl.setStyleSheet(f"font-size:{font_sz(22)}px;background:transparent;border:none;")
         inner.addWidget(icon_lbl)
 
         title_lbl = QLabel(title)

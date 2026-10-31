@@ -309,9 +309,11 @@ class SchedulerDialog(_StandardKeysMixin, QDialog):
         self._time_edit.setDisplayFormat("HH:mm")
         self._time_edit.setTime(QTime(2, 0))
         self._time_edit.setToolTip(
-            tr("Time of day for daily/weekly backups.\n"
-               "For Hourly this is ignored.\n"
-               "For 'Custom time …' you can pick any hour:minute.")
+            tr(
+                "Time of day for daily, every-2-days, weekly (Mondays) and monthly (1st) backups.\n"
+                "'Custom time …' runs every day at the chosen time.\n"
+                "Hourly runs at the start of every hour and has no start time."
+            )
         )
         igrid.addWidget(self._time_label, 0, 2)
         igrid.addWidget(self._time_edit, 0, 3)

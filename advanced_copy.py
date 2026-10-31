@@ -444,18 +444,16 @@ def delete_paths(paths: list[str], title: str = "", reason: str | None = None,
         if _is_cancelled(cancel):
             break
         try:
-            if os.path.islink(p):
-                os.remove(p)
-                counter()
-                sz = 0
-            elif os.path.isfile(p):
-                sz = os.path.getsize(p)
-                os.remove(p)
-                counter()
-            elif os.path.isdir(p):
+            try:
+                p_st = os.lstat(p)
+            except FileNotFoundError:
+                continue
+            if _stat_mod.S_ISDIR(p_st.st_mode):
                 sz = _rmtree_with_size(p, cancel, counter if progress is not None else None)
             else:
-                continue
+                sz = 0 if _stat_mod.S_ISLNK(p_st.st_mode) else p_st.st_size
+                os.remove(p)
+                counter()
             deleted.append(DeletedItem(path=p, title=title, reason=reason, size=sz))
         except _Cancelled:
             break

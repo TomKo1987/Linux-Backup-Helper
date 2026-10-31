@@ -39,7 +39,7 @@ _ENTRY_EMIT_SECS = 0.5
 _SCAN_EMIT_SECS  = 0.5
 _SCAN_PIPE_BATCH = 128
 _LOCAL_BATCH     = 256
-_PIPE_MAXSIZE    = 1024
+_PIPE_MAX_ENTRIES = 200_000
 _MIN_FREE        = 500 * 1024 * 1024
 _HDD_WORKERS     = 2
 
@@ -53,6 +53,7 @@ def _scale_params(total: int) -> tuple[int, int, int]:
 
 
 _RSYNC_DELETE_RE = re.compile(r"^deleting\s+(.+)$")
+_TMP_NAME_RE = re.compile(r"\.\d+\.\d+(?:\.lnk|\.smb)?\.part\Z")
 
 _SKIP_GLOBS: tuple[str, ...] = (
     ".lock", "lockfile", ".lck", ".parentlock", "Singleton*",
@@ -120,6 +121,10 @@ def _build_skip_matcher(globs: tuple[str, ...]):
 
 
 _should_skip = _build_skip_matcher(_SKIP_GLOBS)
+
+
+def _is_skipped_name(name: str) -> bool:
+    return _should_skip(name) or (name.endswith(".part") and _TMP_NAME_RE.search(name) is not None)
 
 _SMB_LINE_RE = re.compile(
     r"^(.+?)\s+([ADRHNSV]*)\s*(?:\(.*?\)\s*)?(\d+)"
@@ -243,12 +248,13 @@ def _scan_dir_entries(src: str, dst: str, excl: frozenset, cancel: threading.Eve
     skip     = _should_skip
     is_set   = cancel.is_set
     has_excl = bool(excl)
+    tmp_re   = _TMP_NAME_RE
     with os.scandir(src) as it:
         for e in it:
             if is_set():
                 break
             name = e.name
-            if skip(name):
+            if skip(name) or (name.endswith(".part") and tmp_re.search(name)):
                 continue
             path = e.path
             if has_excl and path in excl:
@@ -273,10 +279,6 @@ def _scan_dir_entries(src: str, dst: str, excl: frozenset, cancel: threading.Eve
             except OSError:
                 continue
             yield False, path, join(dst, name), st
-
-
-_fsynced_dirs_lock = threading.Lock()
-_fsynced_dirs: set[str] = set()
 
 
 _hardlinks: dict[tuple[int, int], str] = {}
@@ -319,8 +321,6 @@ def link_dest_candidate(dst: str) -> "str | None":
 def _reset_dir_caches() -> None:
     with _seen_dirs_lock:
         _seen_dirs_global.clear()
-    with _fsynced_dirs_lock:
-        _fsynced_dirs.clear()
     with _hardlinks_lock:
         _hardlinks.clear()
     with _mtime_tol_lock:
@@ -329,30 +329,6 @@ def _reset_dir_caches() -> None:
     with _perm_caps_lock:
         _perm_caps.clear()
     _dev_rotational.cache_clear()
-
-
-def _fsync_dir(path: str) -> None:
-    try:
-        dfd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-        try:
-            os.fsync(dfd)
-        finally:
-            os.close(dfd)
-    except OSError as exc:
-        logger.debug("fsync dir %s failed: %s", path, exc)
-
-
-def _fsync_dir_once(path: str) -> None:
-    d = path or "."
-    with _fsynced_dirs_lock:
-        if d in _fsynced_dirs:
-            return
-        _fsynced_dirs.add(d)
-    _fsync_dir(d)
-
-
-def _fsync_parent_dir(path: str) -> None:
-    _fsync_dir_once(os.path.dirname(path))
 
 
 _UMASK = _current_umask()

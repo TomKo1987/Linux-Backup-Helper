@@ -16,7 +16,7 @@ from translations import tr
 from ui_utils import _StandardKeysMixin, format_size, build_dialog_shell, clear_layout, size_to_screen, stop_thread
 from drive_utils import is_smb, is_ssh
 from advanced_copy import latest_version_path
-from copy_worker_core import _should_skip
+from copy_worker_core import _is_skipped_name
 
 __all__ = ["IntegrityCheckerDialog"]
 
@@ -38,7 +38,7 @@ def _quick_scan(path_str: str, excluded: "frozenset[str]" = frozenset()) -> dict
     try:
         with os.scandir(root) as it:
             for entry in it:
-                if _should_skip(entry.name):
+                if _is_skipped_name(entry.name):
                     continue
                 if excluded and os.path.abspath(entry.path) in excluded:
                     continue
@@ -299,8 +299,8 @@ class IntegrityCheckerDialog(_StandardKeysMixin, QDialog):
         self._progress.setTextVisible(False)
         self._progress.hide()
         self._progress.setStyleSheet(
-            f"QProgressBar{{background:{t['bg3']};border:none;}}"
-            f"QProgressBar::chunk{{background:{t['accent']};}}"
+            f"QProgressBar{{background:{t['pb_bg']};border:none;}}"
+            f"QProgressBar::chunk{{background:{t['pb_chunk']};}}"
         )
         lay.insertWidget(1, self._progress)
 

@@ -43,26 +43,26 @@ class MountDialog(_StandardKeysMixin, QDialog):
         form.addRow(self.name)
         self.mount_path = _field("mount_path", tr("e.g. smb://192.168.0.122/Backup Drive/"))
         form.addRow(_info_label(tr("󰔨 Mount path (optional)"),
-                                tr("<u>Mount Path (optional)</u><br><br>"
-                                "Only needed if this drive cannot be detected automatically.<br><br>"
-                                "<i>Leave empty</i> for standard USB/SATA drives — Backup Helper finds them "
-                                "automatically under <code>/run/media/&lt;user&gt;/&lt;name&gt;</code>, "
-                                "<code>/media/&lt;user&gt;/&lt;name&gt;</code> or <code>/mnt/&lt;name&gt;</code>"
-                                " using the name from above.<br><br>"
-                                "<i>Fill in</i> when the drive is mounted elsewhere (sshfs, KDE Connect, etc.).")))
+                                tr(
+                                    "<u>Mount Path (optional)</u><br><br>"
+                                    "Only needed if this drive cannot be detected automatically.<br><br>"
+                                    "<i>Leave empty</i> for standard USB/SATA drives — Backup Helper finds them automatically under <code>/run/media/&lt;user&gt;/&lt;name&gt;</code>, <code>/media/&lt;user&gt;/&lt;name&gt;</code>, <code>/mnt/&lt;name&gt;</code>, <code>/media/&lt;name&gt;</code> or <code>/run/media/&lt;name&gt;</code> using the name from above.<br><br>"
+                                    "<i>Fill in</i> when the drive is mounted elsewhere (sshfs, KDE Connect, etc.)."
+                                    )))
         form.addRow(self.mount_path)
         self.mount = _field("mount_command", "udisksctl mount --block-device /dev/sdX1")
         form.addRow(_info_label(tr("󰔨 Mount command:"),
-                                tr("<u>Mount Command</u><br><br>"
-                                "The command is executed non-interactively — <b>no password prompt will appear</b>."
-                                "<br><br><b>sshfs:</b> SSH connections must use key-based authentication.<br>"
-                                "Set up a key pair first:<br>"
-                                "<code>ssh-keygen -t ed25519 &amp;&amp; ssh-copy-id user@host</code><br><br>"
-                                "Example: <code>sshfs user@host:/remote/path ~/local/mountpoint</code><br><br>"
-                                "<b>udisksctl / mount:</b> Work as usual for local drives.<br>"
-                                "<b>kdeconnect-cli:</b> The device must already be paired and reachable.<br><br>"
-                                "<small>Allowed commands: mount, umount, mount.cifs, udisksctl, kdeconnect-cli, "
-                                "sshfs, fusermount3, fusermount</small>")))
+                                tr(
+                                    "<u>Mount Command</u><br><br>"
+                                    "The command is executed non-interactively — <b>no password prompt will appear</b>. Shell operators (<code>&amp;&amp;</code>, <code>|</code>, <code>;</code>, …) are not allowed; mounting times out after 15 seconds, unmounting after 30 seconds.<br><br>"
+                                    "<b>sshfs:</b> SSH connections must use key-based authentication.<br>"
+                                    "Set up a key pair first:<br>"
+                                    "<code>ssh-keygen -t ed25519 &amp;&amp; ssh-copy-id user@host</code><br><br>"
+                                    "Example: <code>sshfs user@host:/remote/path ~/local/mountpoint</code><br><br>"
+                                    "<b>udisksctl / mount:</b> Work as usual for local drives.<br>"
+                                    "<b>kdeconnect-cli:</b> The device must already be paired and reachable.<br><br>"
+                                    "<small>Allowed commands: mount, umount, mount.cifs, udisksctl, kdeconnect-cli, sshfs, fusermount3, fusermount</small>"
+                                    )))
         form.addRow(self.mount)
         self.unmnt    = _field("unmount_command", "udisksctl unmount --block-device /dev/sdX1")
         lbl_unmnt     = QLabel(tr("Unmount command:"))

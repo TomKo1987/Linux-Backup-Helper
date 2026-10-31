@@ -225,28 +225,25 @@ class AdvancedOptionsDialog(QDialog):
         self._mirror_cb.setChecked(bool(self._opt.get("mirror_delete", False)))
         apply_tooltip(
             self._mirror_cb,
-            tr("After copying, any file or folder that exists in the destination but "
-              "no longer exists in the source will be <b>deleted</b>.<br><br>"
-              "This guarantees that source and destination are <b>exactly identical</b> "
-              "once the operation finishes.<br><br>"
-              "<i>Supported for local-to-local paths and for pairs involving an SSH "
-              "source or destination (via rsync <code>--delete</code>). Not supported "
-              "whenever SMB is involved on either side (source or destination).</i>"),
+            tr(
+                "Before copying starts, any file or folder that exists in the destination but no longer exists in the source is <b>deleted</b> (for SSH, rsync deletes during the transfer).<br><br>"
+                "This makes the destination match the source — except for excluded items and files on the junk/cache skip-list, which are left untouched.<br><br>"
+                "<i>Only applies to Backup (never Restore) and is ignored while versioned archive folders are enabled. Supported for local-to-local paths and for pairs involving an SSH source or destination (via rsync <code>--delete</code>). Not supported whenever SMB is involved on either side (source or destination). For safety, nothing is deleted if a local source folder is missing, empty or unreadable.</i>"
+            ),
         )
         lay.addWidget(self._mirror_cb)
-        lay.addWidget(_note(tr("Makes the destination match the source exactly by removing "
-                            "anything the source no longer has.")))
+        lay.addWidget(_note(tr(
+            "Makes the destination match the source by removing anything the source no longer has (excluded items are kept)."
+        )))
 
         self._confirm_cb = QCheckBox(tr("Ask for confirmation before deleting anything"))
         self._confirm_cb.setChecked(bool(self._opt.get("confirm_before_delete", True)))
         apply_tooltip(
             self._confirm_cb,
-            tr("Shows a confirmation dialog listing every item that would be deleted "
-              "before mirror mode removes anything — for local paths as well as SSH "
-              "destinations (previewed via a harmless rsync dry-run beforehand). "
-              "Recommended to keep enabled.<br><br>"
-              "<i>If the SSH preview can't be determined (e.g. the host is unreachable), "
-              "remote deletion is skipped entirely for that backup entry, for safety.</i>"),
+            tr(
+                "Shows a confirmation dialog listing every item that would be deleted before mirror mode removes anything — for local paths as well as SSH pairs (previewed via a harmless rsync dry-run beforehand). Recommended to keep enabled.<br><br>"
+                "<i>If the SSH preview can't be determined (e.g. the host is unreachable), remote deletion is skipped entirely for that backup entry, for safety. Without an interactive session (e.g. scheduled runs), nothing is deleted while this option is enabled — disable it for unattended mirroring.</i>"
+            ),
         )
         lay.addWidget(self._confirm_cb)
 
@@ -256,13 +253,10 @@ class AdvancedOptionsDialog(QDialog):
         self._versioned_cb.setChecked(bool(self._opt.get("versioned_archive", False)))
         apply_tooltip(
             self._versioned_cb,
-            tr("Instead of overwriting files at the destination, every run creates a "
-              "<b>brand-new subfolder</b> named <code>&lt;number&gt; - &lt;date&gt; &lt;time&gt;</code> "
-              "(e.g. <code>001 - 2026-07-21 18-42-05</code>, then <code>002 - …</code>, and so on) "
-              "and copies the source into it, so every previous version stays fully intact.<br><br>"
-              "<i>Only applies to local destination paths, and only for Backup — "
-              "Restore always writes directly to the original location and never "
-              "creates a versioned subfolder there.</i>"),
+            tr(
+                "Instead of overwriting files at the destination, every run creates a <b>brand-new subfolder</b> named <code>&lt;number&gt; - &lt;date&gt; &lt;time&gt;</code> (e.g. <code>001 - 2026-07-21 18-42-05</code>, then <code>002 - …</code>, and so on) and copies the source into it, so every previous version stays fully intact. Files that haven't changed since the previous version are hardlinked to it instead of being copied again, so they take no additional space (if the file system supports hardlinks).<br><br>"
+                "<i>Only applies to local destination paths and only for Backup — Restore reads from the newest complete version and writes directly to the original location, never creating a versioned subfolder there. A run that ends with errors is kept as an incomplete version for review. Mirror mode is ignored while this option is enabled.</i>"
+            ),
         )
         lay.addWidget(self._versioned_cb)
         lay.addWidget(_note(tr("Every run adds a brand-new, self-contained snapshot — nothing "
@@ -278,9 +272,9 @@ class AdvancedOptionsDialog(QDialog):
         self._max_spin.setSuffix(f" {tr('version(s)')}")
         apply_tooltip(
             self._max_spin,
-            tr("When more versions than this already exist, the oldest ones are "
-              "automatically deleted to make room for the new one. "
-              "Set to 0 to keep every version forever."),
+            tr(
+                "After a successful run, the oldest versions are deleted so that at most this many remain (including the new one). Older incomplete versions are cleaned up as well. Set to 0 to keep every version forever."
+            ),
         )
         max_row.addWidget(self._max_spin)
         max_row.addStretch(1)

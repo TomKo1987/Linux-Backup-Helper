@@ -28,13 +28,13 @@ from translations import tr
 
 from copy_worker_core import (
     _CHUNK, _IO_BUF, _FLUSH_THRESH, _FLUSH_INTERVAL, _SCAN_EMIT_SECS,
-    _SCAN_PIPE_BATCH, _LOCAL_BATCH, _PIPE_MAXSIZE, _ENTRY_EMIT_SECS,
+    _SCAN_PIPE_BATCH, _LOCAL_BATCH, _PIPE_MAX_ENTRIES, _ENTRY_EMIT_SECS,
     _SMB_WORKERS, _EUID, _O_NOATIME, _TIME_CHECK_EVERY, _SMALL_FILE_MAX, _UMASK,
     _MODE_MASK, _CAP_MODE, _CAP_OWNER, _perm_caps_for, _drop_perm_caps,
     _mtime_tolerance_ns, _source_tolerance_ns, sync_destinations,
     _smb_procs, _smb_procs_lock, _RSYNC_DELETE_RE, _RSYNC_ERROR_TAIL,
     _scale_params, _scan_dir_entries, _check_destination_space, _copy_workers_for, _scan_workers_for,
-    _ensure_dir, _make_new_dir, _apply_dir_attrs, _fsync_parent_dir, _tmp_path, _reset_dir_caches,
+    _ensure_dir, _make_new_dir, _apply_dir_attrs, _tmp_path, _reset_dir_caches,
     _parse_smb, _run_futures, _silent_unlink, _hardlink_lookup, _hardlink_register,
     _ssh_join, _rsync_excludes, _rsync_src_arg, _ssh_dir_is_empty,
     link_dest_candidate, set_link_dests,
@@ -220,7 +220,6 @@ def _copy_symlink(src: str, dst: str) -> tuple:
             except OSError as exc:
                 logger.debug("lchown %s failed: %s", tmp, exc)
         os.replace(tmp, dst)
-        _fsync_parent_dir(dst)
         return "ok", dst, 0
     except OSError as exc:
         _silent_unlink(tmp)
@@ -438,7 +437,7 @@ class _IncompleteCopyError(OSError):
     pass
 
 
-def _link_previous(src: str, dst: str, tmp: str, src_st: "os.stat_result") -> bool:
+def _link_previous(src: str, dst: str, tmp: str, src_st: "os.stat_result", dst_present: bool) -> bool:
     prev = link_dest_candidate(dst)
     if prev is None:
         return False
@@ -446,6 +445,12 @@ def _link_previous(src: str, dst: str, tmp: str, src_st: "os.stat_result") -> bo
         prev_st = os.lstat(prev)
         if not _content_matches(src, prev, src_st, prev_st) or _meta_diff(src_st, prev_st):
             return False
+        if not dst_present:
+            try:
+                os.link(prev, dst)
+                return True
+            except FileExistsError:
+                pass
         _silent_unlink(tmp)
         os.link(prev, tmp)
         os.replace(tmp, dst)
@@ -519,9 +524,8 @@ def _copy_file(src, dst, cancel, cached_st=None):
 
             tmp = _tmp_path(dst, ".part")
 
-            if _link_previous(src, dst, tmp, st):
+            if _link_previous(src, dst, tmp, st, dst_st is not None):
                 success = True
-                _fsync_parent_dir(dst)
                 return "skip", tr("Unchanged — linked to the previous version"), st.st_size
 
             if st.st_nlink > 1:
@@ -529,7 +533,6 @@ def _copy_file(src, dst, cancel, cached_st=None):
                 first = _hardlink_lookup(link_key)
                 if first and first != dst and _link_existing(first, dst, tmp, st.st_size):
                     success = True
-                    _fsync_parent_dir(dst)
                     return "ok", dst, st.st_size
 
             _may_use_noatime = _EUID == 0 or st.st_uid == _EUID
@@ -616,7 +619,6 @@ def _copy_file(src, dst, cancel, cached_st=None):
             success = True
             if link_key is not None:
                 _hardlink_register(link_key, dst)
-            _fsync_parent_dir(dst)
             return "ok", dst, copied
 
         except InterruptedError:
@@ -1569,9 +1571,11 @@ class CopyWorker(QThread):
             return 0
 
         up_to_date = tr("Up to date")
-        pipe_q: queue.Queue = queue.Queue(maxsize=_PIPE_MAXSIZE)
+        pipe_q: queue.Queue = queue.Queue()
+        pipe_room = threading.Condition()
+        pipe_queued = [0]
         scan_done = threading.Event()
-        work_q: queue.SimpleQueue = queue.SimpleQueue()
+        work_q: queue.Queue = queue.Queue()
         pend_lock = threading.Lock()
         pending = [0]
         dir_done = threading.Event()
@@ -1627,13 +1631,21 @@ class CopyWorker(QThread):
                 dir_done.set()
 
         def _put_batch(batch: list) -> bool:
-            while not cancel.is_set():
-                try:
-                    pipe_q.put(batch, timeout=0.25)
-                    return True
-                except queue.Full:
-                    continue
-            return False
+            with pipe_room:
+                while pipe_queued[0] >= _PIPE_MAX_ENTRIES:
+                    if cancel.is_set():
+                        return False
+                    pipe_room.wait(0.25)
+                if cancel.is_set():
+                    return False
+                pipe_queued[0] += len(batch)
+            pipe_q.put(batch)
+            return True
+
+        def _release_batch(batch: list) -> None:
+            with pipe_room:
+                pipe_queued[0] -= len(batch)
+                pipe_room.notify_all()
 
         def _single_file_stat(path: str) -> "os.stat_result | None":
             try:
@@ -1800,6 +1812,7 @@ class CopyWorker(QThread):
                             if (time.monotonic() - last_fl_t) >= _FLUSH_INTERVAL:
                                 _fl()
                             continue
+                    _release_batch(item)
                     if cancel.is_set():
                         continue
                     with copy_params_lock:
@@ -1856,8 +1869,21 @@ class CopyWorker(QThread):
     def _prepare_dst_dir(src: str, dst: str, dir_st: "os.stat_result | None",
                          attrs: list, lock: threading.Lock) -> "bool | None":
         if dir_st is None:
-            if os.path.isdir(src):
+            try:
+                root_st = os.stat(src)
+            except OSError:
+                return True
+            if not stat.S_ISDIR(root_st.st_mode):
+                return True
+            if os.path.lexists(dst):
                 return True if _ensure_dir(dst) else None
+            created = _make_new_dir(dst)
+            if created is None:
+                return None
+            if created:
+                with lock:
+                    attrs.append((dst, root_st.st_mode, root_st.st_atime_ns, root_st.st_mtime_ns,
+                                  root_st.st_uid, root_st.st_gid))
             return True
         created = _make_new_dir(dst)
         if created is not None and stat.S_ISDIR(dir_st.st_mode):
