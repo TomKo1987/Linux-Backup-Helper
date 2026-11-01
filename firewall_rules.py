@@ -1,5 +1,4 @@
 import html
-import importlib
 import ipaddress
 import os
 import re
@@ -16,6 +15,7 @@ from PyQt6.QtWidgets import (
     QTableWidgetItem, QVBoxLayout,
 )
 
+from firewall_translations import register_firewall_translations
 from linux_distro_helper import LinuxDistroHelper
 from privileged import auth_required_message, run_privileged
 from state import S, save_profile
@@ -23,7 +23,7 @@ from themes import current_theme
 from translations import tr
 from ui_utils import ok_cancel_buttons
 
-importlib.import_module("firewall_translations")
+register_firewall_translations()
 
 VALID_ACTIONS = ("allow", "deny", "reject", "limit")
 VALID_DEFAULT_ACTIONS = ("default allow", "default deny", "default reject")

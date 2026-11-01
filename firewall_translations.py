@@ -120,5 +120,6 @@ _NEW: dict[str, dict[str, str]] = {
     },
 }
 
-for _lang, _entries in _NEW.items():
-    LANGUAGES.setdefault(_lang, {}).update(_entries)
+def register_firewall_translations() -> None:
+    for lang, entries in _NEW.items():
+        LANGUAGES.setdefault(lang, {}).update(entries)
