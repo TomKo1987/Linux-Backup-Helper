@@ -530,6 +530,13 @@ class SystemManagerOptions(_AurHelperCacheMixin, _OpsEditorMixin, _DotfilesEdito
                                         tr("All packages are valid and available in the repositories!"))
                 return
 
+            if not _valid and len(invalid) >= 3:
+                QMessageBox.warning(parent_dlg, tr("Verification Complete"),
+                                    tr("None of the packages could be found. The package lists of this system are "
+                                       "probably empty or outdated — refresh them (or run a system update) and "
+                                       "verify again. Nothing was removed."))
+                return
+
             msg = tr("{n} invalid or missing package(s) detected:\n\n", n=len(invalid)) + "\n".join(
                 f"  • {p}" for p in invalid[:15])
             if len(invalid) > 15:

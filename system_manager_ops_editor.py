@@ -60,7 +60,7 @@ class _OpsEditorMixin(_OpsMixinBase):
         _installed_kernels = self._distro.detect_installed_kernel_variants()
         _installed_kernels.add(current_variant)
 
-        if self._distro.family() == "arch":
+        if self._distro.arch_kernel_names():
             _variants_with_headers: set[str] = {v for v, pkgs in ARCH_KERNEL_VARIANTS.items()
                                                 if len(pkgs) >= 2 and self._distro.package_is_installed(pkgs[1])}
         else:
@@ -163,6 +163,10 @@ class _OpsEditorMixin(_OpsMixinBase):
 
                 is_arch = key in arch_only
                 unsupported = (is_arch and self._distro.family() != "arch") or \
+                              (key in ("install_kernels", "set_default_kernel")
+                               and not self._distro.arch_kernel_names()) or \
+                              (key == "install_snap" and not self._distro.get_snap_packages()) or \
+                              (key == "install_ucode" and not self._distro.get_ucode_package()) or \
                               (key == "enable_firewall" and not self._distro.firewall_supported()) or \
                               (key == "enable_ntp_sync" and not self._distro.ntp_supported()) or \
                               (key == "enable_fstrim_timer" and not self._distro.systemd_running()) or \
@@ -305,7 +309,7 @@ class _OpsEditorMixin(_OpsMixinBase):
                     )
                 _dyn_status["kernels_all_installed"] = not any(
                     v for v in currently_selected if v not in _installed_kernels)
-                if self._distro.family() == "arch":
+                if self._distro.arch_kernel_names():
                     _future = _installed_kernels | set(currently_selected)
                     _dyn_status["kernel_headers_installed"] = not any(
                         ARCH_KERNEL_VARIANTS.get(v) and len(

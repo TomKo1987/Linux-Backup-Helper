@@ -214,7 +214,7 @@ class _DeployWorker(QThread):
                     _priv(["mkdir", "-p", str(dst.parent)], 15)
 
                     if is_dir:
-                        r = _priv(["cp", "-a", "-T", str(src), str(dst)], 60)
+                        r = _priv(["cp", "-r", "-P", "-T", str(src), str(dst)], 60)
                     else:
                         r = _priv(["cp", str(src), str(dst)], 30)
 

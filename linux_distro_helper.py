@@ -166,8 +166,14 @@ def _solus_check(p: str) -> list[str]:
     return ["sh", "-c", "eopkg list-installed -N 2>/dev/null | grep -qE -- " + shlex.quote(pattern)]
 
 
+_GENTOO_CHECK_SCRIPT = (
+    'case "$1" in */*) c=${1%/*}; n=${1#*/};; *) c="*"; n=$1;; esac; '
+    'for d in /var/db/pkg/$c/$n-[0-9]*; do [ -d "$d" ] && exit 0; done; exit 1'
+)
+
+
 def _gentoo_check(p: str) -> list[str]:
-    return ["sh", "-c", f"qlist -Ie -- {shlex.quote(p)} 2>/dev/null | grep -q ."]
+    return ["sh", "-c", _GENTOO_CHECK_SCRIPT, "sh", p]
 
 
 def _alpine_check(p: str) -> list[str]:
@@ -230,14 +236,14 @@ _PKG: dict[str, dict[str, Any]] = {
         "install": "sudo xbps-install -Sy {p}",
         "update": "sudo xbps-install -Sy xbps && sudo xbps-install -Syu",
         "remove": "sudo xbps-remove -y {p}",
-        "clean": "sudo xbps-remove -Oo",
+        "clean": "sudo xbps-remove -O",
         "orphans": "xbps-query -O",
         "has_aur": False,
         "kernel": "linux-headers",
     },
     "gentoo": {
         "check": _gentoo_check,
-        "install": "sudo emerge --ask=n {p}",
+        "install": "sudo emerge --ask=n --noreplace {p}",
         "update": "sudo emerge --sync && sudo emerge -uDU @world",
         "remove": "sudo emerge --depclean {p}",
         "clean": "sudo eclean-dist --deep",
@@ -474,12 +480,12 @@ _UCODE_PKGS: dict[str, dict[str, str]] = {
     "amd": {
         "arch":     "amd-ucode",
         "debian":   "amd64-microcode",
-        "fedora":   "microcode_ctl",
-        "amazon2":  "microcode_ctl",
+        "fedora":   "linux-firmware",
+        "amazon2":  "linux-firmware",
         "suse":     "ucode-amd",
         "suse-immutable": "ucode-amd",
         "void":     "linux-firmware-amd",
-        "alpine":   "linux-firmware-amd",
+        "alpine":   "amd-ucode",
         "gentoo":   "sys-firmware/linux-firmware",
         "nixos":    "hardware.cpu.amd.updateMicrocode",
         "fedora-atomic": "", "slackware": "", "solus": "", "unknown": "",
@@ -815,6 +821,7 @@ class LinuxDistroHelper:
         "solus": "sudo eopkg remove-orphans -y",
         "fedora": "sudo dnf autoremove -y",
         "void": "sudo xbps-remove -oy",
+        "gentoo": "sudo emerge --ask=n --depclean",
     }
 
     def get_direct_orphan_removal_cmd(self) -> str:
@@ -883,12 +890,19 @@ class LinuxDistroHelper:
             kv  = os.uname().release
             fam = self.family()
             if fam == "arch":
+                if not self.arch_kernel_names() and self.distro_id_raw.startswith(("manjaro", "biglinux")):
+                    m = re.match(r"(\d+)\.(\d+)", kv)
+                    if m:
+                        return f"linux{m.group(1)}{m.group(2)}-headers"
                 tag = _kernel_tag(kv)
                 return f"linux-{tag}-headers" if tag in ("hardened", "lts", "zen", "rt", "xanmod", "cachyos") \
                     else "linux-headers"
             if fam == "debian":  return f"linux-headers-{kv}"
             if fam in ("fedora", "amazon2", "fedora-atomic"): return f"kernel-devel-{kv}"
-            if fam in ("suse", "suse-immutable"): return "kernel-default-devel"
+            if fam in ("suse", "suse-immutable"):
+                flavor = kv.rsplit("-", 1)[-1]
+                return f"kernel-{flavor}-devel" if flavor in ("default", "azure", "rt", "64kb", "longterm") \
+                    else "kernel-default-devel"
             if fam == "void":
                 m = re.match(r"(\d+)\.(\d+)", kv)
                 return f"linux{m.group(1)}.{m.group(2)}-headers" if m else "linux-headers"
@@ -916,7 +930,14 @@ class LinuxDistroHelper:
         return [p for p in dict.fromkeys(out) if p != primary]
 
     def kernel_headers_supported(self) -> bool:
-        return self.family() not in ("nixos", "unknown")
+        return self.pkg_mgmt_supported() and self.family() != "nixos"
+
+    _CUSTOM_KERNEL_DISTROS = ("manjaro", "biglinux", "steamos", "parabola", "hyperbola", "archarm")
+
+    def arch_kernel_names(self) -> bool:
+        if self.family() != "arch":
+            return False
+        return not any(self.distro_id_raw.startswith(d) for d in self._CUSTOM_KERNEL_DISTROS)
 
     def get_explicitly_installed_packages(self) -> tuple[list[str], list[str]]:
         fam = self.family()
@@ -1522,7 +1543,7 @@ class LinuxDistroHelper:
         return "linux"
 
     def detect_installed_kernel_variants(self) -> set[str]:
-        if self.family() != "arch":
+        if not self.arch_kernel_names():
             return set()
         names = self.installed_names()
         if names is not None:

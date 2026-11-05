@@ -4845,6 +4845,132 @@ LANGUAGES["Español"].update({
 })
 
 
+LANGUAGES["Deutsch"].update({
+    'None of the packages could be found. The package lists of this system are probably empty or outdated — refresh them (or run a system update) and verify again. Nothing was removed.':
+        'Keines der Pakete wurde gefunden. Die Paketlisten dieses Systems sind vermutlich leer oder veraltet — bitte aktualisieren (oder ein Systemupdate ausführen) und erneut prüfen. Es wurde nichts entfernt.',
+    "'doas' cannot take a password from this application — add 'permit nopass {user}' to /etc/doas.conf or install 'sudo'.":
+        "'doas' kann kein Passwort von dieser Anwendung entgegennehmen — 'permit nopass {user}' in /etc/doas.conf ergänzen oder 'sudo' installieren.",
+    'Refreshing package lists…':
+        'Paketlisten werden aktualisiert…',
+    "'{helper}' is available in the configured repositories — installing it from there.":
+        "'{helper}' ist in den konfigurierten Repositories verfügbar — wird von dort installiert.",
+    "'{image}' was not found in {esp} — please add it to your boot entries manually.":
+        "'{image}' wurde in {esp} nicht gefunden — bitte manuell zu den Boot-Einträgen hinzufügen.",
+    'AUR Helper':
+        'AUR-Helper',
+    'AUR packages cannot be built as root — start the application as a normal user.':
+        'AUR-Pakete können nicht als root gebaut werden — bitte die Anwendung als normaler Benutzer starten.',
+    "Added '{image}' to {entry}":
+        "'{image}' zu {entry} hinzugefügt",
+    "Bootloader '{bl}': boot entries for new kernels are not created automatically — please add them manually.":
+        "Bootloader '{bl}': Boot-Einträge für neue Kernel werden nicht automatisch erstellt — bitte manuell hinzufügen.",
+    "Bootloader '{bl}': please make sure '{image}' is loaded as the first initrd.":
+        "Bootloader '{bl}': bitte sicherstellen, dass '{image}' als erstes initrd geladen wird.",
+    'Cannot install Specific Packages: package management is not supported for {pm}.':
+        'Spezifische Pakete können nicht installiert werden: Paketverwaltung wird für {pm} nicht unterstützt.',
+    'Copy error: {exc}':
+        'Kopierfehler: {exc}',
+    'Creating /snap symlink for classic snaps…':
+        'Symlink /snap für Classic-Snaps wird erstellt…',
+    'Firewall command failed: {cmd}':
+        'Firewall-Befehl fehlgeschlagen: {cmd}',
+    'Mirror update failed — the existing mirror list was kept.':
+        'Spiegelserver-Aktualisierung fehlgeschlagen — die vorhandene Mirrorliste wurde beibehalten.',
+    "NixOS manages user shells declaratively — please set 'users.users.{user}.shell' in your configuration.nix.":
+        "NixOS verwaltet Benutzer-Shells deklarativ — bitte 'users.users.{user}.shell' in der configuration.nix setzen.",
+    "Time synchronisation is already provided by '{unit}' — nothing to do":
+        "Zeitsynchronisation wird bereits von '{unit}' bereitgestellt — nichts zu tun",
+    'Updating Snap apps…':
+        'Snap-Apps werden aktualisiert…',
+    '{service} is not available on this system — skipping':
+        '{service} ist auf diesem System nicht verfügbar — wird übersprungen',
+})
+
+
+LANGUAGES["Français"].update({
+    'None of the packages could be found. The package lists of this system are probably empty or outdated — refresh them (or run a system update) and verify again. Nothing was removed.':
+        "Aucun des paquets n'a été trouvé. Les listes de paquets de ce système sont probablement vides ou obsolètes — actualisez-les (ou lancez une mise à jour du système) puis relancez la vérification. Rien n'a été supprimé.",
+    "'doas' cannot take a password from this application — add 'permit nopass {user}' to /etc/doas.conf or install 'sudo'.":
+        "'doas' ne peut pas recevoir de mot de passe de cette application — ajoutez 'permit nopass {user}' à /etc/doas.conf ou installez 'sudo'.",
+    'Refreshing package lists…':
+        'Actualisation des listes de paquets…',
+    "'{helper}' is available in the configured repositories — installing it from there.":
+        "'{helper}' est disponible dans les dépôts configurés — installation depuis ceux-ci.",
+    "'{image}' was not found in {esp} — please add it to your boot entries manually.":
+        "'{image}' est introuvable dans {esp} — veuillez l'ajouter manuellement aux entrées de démarrage.",
+    'AUR Helper':
+        'Assistant AUR',
+    'AUR packages cannot be built as root — start the application as a normal user.':
+        "Les paquets AUR ne peuvent pas être compilés en tant que root — lancez l'application en tant qu'utilisateur normal.",
+    "Added '{image}' to {entry}":
+        "'{image}' ajouté à {entry}",
+    "Bootloader '{bl}': boot entries for new kernels are not created automatically — please add them manually.":
+        "Chargeur d'amorçage '{bl}' : les entrées pour les nouveaux noyaux ne sont pas créées automatiquement — veuillez les ajouter manuellement.",
+    "Bootloader '{bl}': please make sure '{image}' is loaded as the first initrd.":
+        "Chargeur d'amorçage '{bl}' : assurez-vous que '{image}' est chargé comme premier initrd.",
+    'Cannot install Specific Packages: package management is not supported for {pm}.':
+        "Impossible d'installer les paquets spécifiques : la gestion des paquets n'est pas prise en charge pour {pm}.",
+    'Copy error: {exc}':
+        'Erreur de copie : {exc}',
+    'Creating /snap symlink for classic snaps…':
+        'Création du lien symbolique /snap pour les snaps classiques…',
+    'Firewall command failed: {cmd}':
+        'Échec de la commande du pare-feu : {cmd}',
+    'Mirror update failed — the existing mirror list was kept.':
+        'Échec de la mise à jour des miroirs — la liste de miroirs existante a été conservée.',
+    "NixOS manages user shells declaratively — please set 'users.users.{user}.shell' in your configuration.nix.":
+        "NixOS gère les shells des utilisateurs de façon déclarative — veuillez définir 'users.users.{user}.shell' dans configuration.nix.",
+    "Time synchronisation is already provided by '{unit}' — nothing to do":
+        "La synchronisation de l'heure est déjà assurée par '{unit}' — rien à faire",
+    'Updating Snap apps…':
+        'Mise à jour des applications Snap…',
+    '{service} is not available on this system — skipping':
+        "{service} n'est pas disponible sur ce système — ignoré",
+})
+
+
+LANGUAGES["Español"].update({
+    'None of the packages could be found. The package lists of this system are probably empty or outdated — refresh them (or run a system update) and verify again. Nothing was removed.':
+        'No se encontró ninguno de los paquetes. Las listas de paquetes de este sistema probablemente están vacías u obsoletas — actualícelas (o ejecute una actualización del sistema) y vuelva a verificar. No se eliminó nada.',
+    "'doas' cannot take a password from this application — add 'permit nopass {user}' to /etc/doas.conf or install 'sudo'.":
+        "'doas' no puede recibir una contraseña de esta aplicación — añada 'permit nopass {user}' a /etc/doas.conf o instale 'sudo'.",
+    'Refreshing package lists…':
+        'Actualizando las listas de paquetes…',
+    "'{helper}' is available in the configured repositories — installing it from there.":
+        "'{helper}' está disponible en los repositorios configurados — se instala desde allí.",
+    "'{image}' was not found in {esp} — please add it to your boot entries manually.":
+        "'{image}' no se encontró en {esp} — añádalo manualmente a las entradas de arranque.",
+    'AUR Helper':
+        'Ayudante de AUR',
+    'AUR packages cannot be built as root — start the application as a normal user.':
+        'Los paquetes de AUR no se pueden compilar como root — inicie la aplicación como usuario normal.',
+    "Added '{image}' to {entry}":
+        "'{image}' añadido a {entry}",
+    "Bootloader '{bl}': boot entries for new kernels are not created automatically — please add them manually.":
+        "Gestor de arranque '{bl}': las entradas para nuevos kernels no se crean automáticamente — añádalas manualmente.",
+    "Bootloader '{bl}': please make sure '{image}' is loaded as the first initrd.":
+        "Gestor de arranque '{bl}': asegúrese de que '{image}' se cargue como primer initrd.",
+    'Cannot install Specific Packages: package management is not supported for {pm}.':
+        'No se pueden instalar paquetes específicos: la gestión de paquetes no es compatible con {pm}.',
+    'Copy error: {exc}':
+        'Error de copia: {exc}',
+    'Creating /snap symlink for classic snaps…':
+        'Creando enlace simbólico /snap para snaps clásicos…',
+    'Firewall command failed: {cmd}':
+        'Error en el comando del cortafuegos: {cmd}',
+    'Mirror update failed — the existing mirror list was kept.':
+        'Error al actualizar los espejos — se conservó la lista de espejos existente.',
+    "NixOS manages user shells declaratively — please set 'users.users.{user}.shell' in your configuration.nix.":
+        "NixOS gestiona los shells de usuario de forma declarativa — establezca 'users.users.{user}.shell' en configuration.nix.",
+    "Time synchronisation is already provided by '{unit}' — nothing to do":
+        "La sincronización horaria ya la proporciona '{unit}' — nada que hacer",
+    'Updating Snap apps…':
+        'Actualizando aplicaciones Snap…',
+    '{service} is not available on this system — skipping':
+        '{service} no está disponible en este sistema — se omite',
+})
+
+
 def current_language() -> str:
     from state import S
     lang = S.ui.get("language", "English")

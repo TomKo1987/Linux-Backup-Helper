@@ -210,7 +210,7 @@ def _compute_op_status(distro: LinuxDistroHelper, aur_helper_installed: bool, sy
     status["kernels_all_installed"] = (
             not targets_kti or all(v in _ik for v in targets_kti if v in ARCH_KERNEL_VARIANTS))
 
-    if distro.family() == "arch":
+    if distro.arch_kernel_names():
         future_kernels = _ik.union(set(targets_kti))
 
         def _header_ok(v: str) -> bool:
@@ -300,7 +300,7 @@ def _build_op_text(distro: LinuxDistroHelper, session: str | None = None, aur_he
         kernels_text = tr("Install kernel(s): {kernels_list}{done}", kernels_list=kernels_list,
                           done=_done('kernels_all_installed'))
 
-    if distro.family() == "arch":
+    if distro.arch_kernel_names():
         _future_hdr = set(_ik) | set(kti)
         _missing_hdrs = [
             ARCH_KERNEL_VARIANTS[v][1]
@@ -544,6 +544,8 @@ class PackageVerifierThread(QThread):
             return
 
         if self.pkg_type == "aur_packages":
+            from system_manager import SystemManagerThread
+            ssl_ctx = SystemManagerThread.ssl_context()
             batch_size = 100
             for i in range(0, total, batch_size):
                 if self._is_cancelled: break
@@ -553,7 +555,7 @@ class PackageVerifierThread(QThread):
 
                 try:
                     req = urllib.request.Request(url, headers={'User-Agent': 'BackupHelper-Verifier'})
-                    with urllib.request.urlopen(req, timeout=10) as r:
+                    with urllib.request.urlopen(req, timeout=10, context=ssl_ctx) as r:
                         data = json.loads(r.read().decode("utf-8"))
                         found = {res.get("Name") for res in data.get("results", [])}
                         for p in batch:
@@ -576,7 +578,8 @@ class PackageVerifierThread(QThread):
                 fam = self.distro_family
 
                 if fam == "arch":
-                    cmd = ["pacman", "-Si", _pkg]
+                    cmd = ["sh", "-c", 'pacman -Si -- "$1" >/dev/null 2>&1 || pacman -Sg -- "$1" 2>/dev/null | grep -q .',
+                           "sh", _pkg]
                 elif fam == "debian":
                     cmd = ["apt-cache", "show", _pkg]
                 elif fam == "fedora":

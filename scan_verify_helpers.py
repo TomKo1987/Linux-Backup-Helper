@@ -249,7 +249,7 @@ def _unit_name(name: str) -> str:
 def _service_is_active(name: str) -> bool:
     if not os.path.isdir("/run/systemd/system"):
         base = name.split(".", 1)[0]
-        for cmd in (["rc-service", base, "status"], ["sv", "status", base]):
+        for cmd in (["rc-service", base, "status"], ["sv", "status", base], ["dinitctl", "is-started", base]):
             if shutil.which(cmd[0]) is None:
                 continue
             try:
@@ -260,6 +260,8 @@ def _service_is_active(name: str) -> bool:
             out = r.stdout.lower()
             if cmd[0] == "sv":
                 return r.returncode == 0 and out.startswith("run")
+            if cmd[0] == "dinitctl":
+                return r.returncode == 0
             return r.returncode == 0 and "started" in out
         return False
     try:
