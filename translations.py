@@ -1,4 +1,8 @@
 import threading as _threading
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from PyQt6.QtCore import QTranslator
 
 LANGUAGES: dict[str, dict[str, str]] = {
     "English": {},
@@ -1157,6 +1161,8 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'Tips:': 'Tipps:',
         'Use': 'Verwenden Sie',
         'Select All New': 'Alle neuen auswählen',
+        'Skipped — other session  ({k})': 'Überspringen — andere Sitzung  ({k})',
+        'Could not read the list of installed packages ({pm}).': 'Die Liste der installierten Pakete konnte nicht gelesen werden ({pm}).',
         'to add all packages at once, then deselect what you don':
             'um alle Pakete auf einmal hinzuzufügen, und heben Sie dann die Auswahl auf, was Sie',
         'need (e.g. temporary build tools).': 'nicht benötigen (z. B. temporäre Build-Tools).',
@@ -2719,6 +2725,8 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'Tips:': 'Astuces :',
         'Use': 'Utilisez',
         'Select All New': 'Tout sélectionner (nouveaux)',
+        'Skipped — other session  ({k})': 'Ignoré — autre session  ({k})',
+        'Could not read the list of installed packages ({pm}).': 'Impossible de lire la liste des paquets installés ({pm}).',
         'to add all packages at once, then deselect what you don':
             "pour ajouter tous les paquets d'un coup, puis désélectionnez ce dont vous n'",
         'need (e.g. temporary build tools).': 'avez pas besoin (par ex. outils de compilation temporaires).',
@@ -4284,6 +4292,8 @@ LANGUAGES: dict[str, dict[str, str]] = {
         'Tips:': 'Consejos:',
         'Use': 'Use',
         'Select All New': 'Seleccionar todos los nuevos',
+        'Skipped — other session  ({k})': 'Omitido — otra sesión  ({k})',
+        'Could not read the list of installed packages ({pm}).': 'No se pudo leer la lista de paquetes instalados ({pm}).',
         'to add all packages at once, then deselect what you don':
             'para añadir todos los paquetes a la vez y luego deseleccione lo que no',
         'need (e.g. temporary build tools).': 'necesite (por ejemplo, herramientas de compilación temporales).',
@@ -4987,7 +4997,7 @@ _QT_LOCALE_CODES: dict[str, str] = {
     "Español": "es",
 }
 
-_qt_base_translator = None
+_qt_base_translator: "QTranslator | None" = None
 
 def install_qt_base_translator(app) -> None:
     global _qt_base_translator

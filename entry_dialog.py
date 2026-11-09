@@ -697,13 +697,13 @@ class EntryDialog(QDialog):
             title = tr("Add Entry")
         scr       = QApplication.primaryScreen()
         screen    = scr.availableGeometry() if scr else None
-        dlg_w     = max(700, min((screen.width() - 80) if screen else 900, 1200))
-        dlg_max_h = (screen.height() - 80) if screen else 800
+        dlg_w     = max(700, min((screen.width() - 80) if screen is not None else 900, 1200))
+        dlg_max_h = (screen.height() - 80) if screen is not None else 800
 
         dlg = QDialog(self)
         dlg.setWindowTitle(title)
         dlg.setMinimumWidth(dlg_w)
-        if screen:
+        if screen is not None:
             dlg.setMaximumSize(screen.width() - 40, dlg_max_h)
 
         mono   = QFont("monospace", 13)

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QThread
+from PyQt6.QtCore import Qt, QThread, QTimer
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
     QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea, QSizePolicy,
@@ -8,13 +8,13 @@ from PyQt6.QtWidgets import (
 )
 
 from linux_distro_helper import LinuxDistroHelper, SESSIONS
-from state import S, _HOME, save_profile, all_profile_pkg_names, sort_pkg_list, sort_specific_pkg_list, apply_replacements
+from state import S, _HOME, save_profile, all_profile_pkg_names, sort_specific_pkg_list, apply_replacements
 from themes import current_theme, font_sz
 from translations import tr
 from ui_utils import color_style, sep
 
 from scan_verify_helpers import (
-    _ensure_drives_mounted, _get_arch_de_deps, _get_sm_managed_packages,
+    _add_pkgs_to_profile, _ensure_drives_mounted, _family_noise, _get_arch_de_deps, _get_sm_managed_packages,
     _make_progress_widget, _CaptureWorker, _IGNORE_EXACT, _IGNORE_PREFIXES, _unit_name
 )
 
@@ -29,9 +29,9 @@ class _CaptureTab(QWidget):
         self._sm_pkgs = _get_sm_managed_packages(helper)
         self._de_deps = _get_arch_de_deps(helper)
         self._current_session = helper.detect_session() or SESSIONS[0]
-        self._build_ui()
         self._spec_sess_cb: QComboBox | None = None
-        self._spec_cbs: list = []
+        self._spec_cbs: list[tuple[QCheckBox, str]] = []
+        self._build_ui()
         self._start()
 
     def _build_ui(self) -> None:
@@ -82,6 +82,9 @@ class _CaptureTab(QWidget):
         if isinstance(self._worker, QThread) and self._worker.isRunning():
             return
         self._prog_widget.show()
+        self._prog_bar.show()
+        self._prog_label.setStyleSheet("")
+        self._prog_label.setText(tr("Scanning…"))
         self._scroll.hide()
         self._btns.hide()
 
@@ -97,6 +100,27 @@ class _CaptureTab(QWidget):
         worker.done.connect(self._on_done)
         worker.start()
         self._worker = worker
+
+    def _excluded_for(self, res: dict) -> frozenset:
+        names = list(res.get("basic", [])) + list(res.get("aur", []))
+        return self._sm_pkgs | _IGNORE_EXACT | self._de_deps | _family_noise(self._helper, names)
+
+    def _rerender(self) -> None:
+        QTimer.singleShot(0, self._rerender_now)
+
+    def _rerender_now(self) -> None:
+        if not self._last_result:
+            return
+        bar = self._scroll.verticalScrollBar()
+        pos = bar.value() if bar is not None else 0
+        self._on_done(self._last_result)
+
+        def _restore() -> None:
+            current = self._scroll.verticalScrollBar()
+            if current is not None:
+                current.setValue(pos)
+
+        QTimer.singleShot(0, _restore)
 
     def _on_done(self, res: dict) -> None:
         t = current_theme()
@@ -114,7 +138,7 @@ class _CaptureTab(QWidget):
         self._spec_sess_cb = None
 
         profile_all = all_profile_pkg_names()
-        _excluded = self._sm_pkgs | _IGNORE_EXACT | self._de_deps
+        _excluded = self._excluded_for(res)
         new_basic = [p for p in res["basic"]
                      if p not in profile_all and p not in _excluded
                      and not any(p.startswith(pfx) for pfx in _IGNORE_PREFIXES)]
@@ -153,6 +177,11 @@ class _CaptureTab(QWidget):
 
         if has_new_pkgs:
             cl.addWidget(sep())
+            new_filter = QLineEdit()
+            new_filter.setPlaceholderText(tr("Filter packages…"))
+            new_filter.setMaximumWidth(300)
+            new_filter.textChanged.connect(self._filter_new)
+            cl.addWidget(new_filter)
             for title, items, kind in [(tr("New Basic Packages"), new_basic, "basic"), (tr("New AUR Packages"), new_aur, "aur")]:
                 if not items:
                     continue
@@ -257,9 +286,9 @@ class _CaptureTab(QWidget):
         cl.addStretch()
         self._scroll.setWidget(container)
         self._scroll.show()
-        win = self.window()
-        if hasattr(win, "fit_to_content"):
-            win.fit_to_content()
+        fit = getattr(self.window(), "fit_to_content", None)
+        if callable(fit):
+            fit()
         self._sel_all_btn.setVisible(has_new_pkgs)
         self._add_btn.setVisible(has_new_pkgs)
         if has_new_pkgs:
@@ -273,11 +302,12 @@ class _CaptureTab(QWidget):
         if not pkgs:
             return
         cl.addWidget(sep())
-        n_ok = sum(1 for p in pkgs if p["installed"])
-        n_bad = len(pkgs) - n_ok
+        applicable = [p for p in pkgs if p.get("applicable", True)]
+        n_ok = sum(1 for p in applicable if p["installed"])
+        n_bad = len(applicable) - n_ok
         color = t["error"] if n_bad else t["success"]
         hdr = QLabel(tr("<b>{title}</b>  —  <span style='color:{color};'>{ok}/{total} installed</span>",
-                        title=title, color=color, ok=n_ok, total=len(pkgs)))
+                        title=title, color=color, ok=n_ok, total=len(applicable)))
         hdr.setTextFormat(Qt.TextFormat.RichText)
         hdr.setStyleSheet(f"font-size:{font_sz(1)}px; color:{accent}; padding:2px 0;")
         cl.addWidget(hdr)
@@ -287,10 +317,12 @@ class _CaptureTab(QWidget):
         gl.setSpacing(4)
         for i, p in enumerate(pkgs):
             suffix = suffix_fn(p) if suffix_fn else ""
-            lbl = QLabel(f"{'✅' if p['installed'] else '❌'}  {p['name']}"
+            applies = p.get("applicable", True)
+            icon = ("✅" if p["installed"] else "❌") if applies else "➖"
+            lbl = QLabel(f"{icon}  {p['name']}"
                         + (f"<span style='color:{t['muted']}; font-size:{font_sz(-2)}px;'>{suffix}</span>" if suffix else ""))
             lbl.setTextFormat(Qt.TextFormat.RichText)
-            lbl.setStyleSheet(f"color:{t['success'] if p['installed'] else t['error']};")
+            lbl.setStyleSheet(f"color:{(t['success'] if p['installed'] else t['error']) if applies else t['muted']};")
             gl.addWidget(lbl, i // cols, i % cols)
         cl.addWidget(grid)
 
@@ -347,7 +379,7 @@ class _CaptureTab(QWidget):
         spec_grid = QGridLayout(grid_w)
         spec_grid.setContentsMargins(8, 2, 8, 2)
         spec_grid.setSpacing(3)
-        self._spec_cbs: list[tuple[QCheckBox, str]] = []
+        self._spec_cbs = []
         cols = 4
         for i, name in enumerate(eligible):
             cb = QCheckBox(name)
@@ -470,9 +502,14 @@ class _CaptureTab(QWidget):
 
         return wrapper
 
+    def _filter_new(self, text: str) -> None:
+        lo = text.lower()
+        for cb, name, _kind in self._cbs:
+            cb.setVisible(not lo or lo in name.lower())
+
     def _select_all_new(self) -> None:
         for cb, _, _ in self._cbs:
-            if cb.isEnabled():
+            if cb.isEnabled() and not cb.isHidden():
                 cb.setChecked(True)
 
     def _export_report(self) -> None:
@@ -497,7 +534,7 @@ class _CaptureTab(QWidget):
                 lines.append(f"  {_status}  {detail}")
 
         profile_all = all_profile_pkg_names()
-        _excluded = self._sm_pkgs | _IGNORE_EXACT | self._de_deps
+        _excluded = self._excluded_for(res)
         basic_pkgs = res.get("basic", [])
         aur_pkgs = res.get("aur", [])
         pkg_rows: list[tuple[str, str]] = []
@@ -513,7 +550,8 @@ class _CaptureTab(QWidget):
             pkg_rows.append((status, f"{name} ({tr('aur')})"))
         for p in res.get("specific", []):
             session = p.get("session") or "—"
-            pkg_rows.append(("✓" if p["installed"] else "✗", f"{p['name']} ({tr('specific')} / {session})"))
+            mark = ("✓" if p["installed"] else "✗") if p.get("applicable", True) else "–"
+            pkg_rows.append((mark, f"{p['name']} ({tr('specific')} / {session})"))
         _section(tr("Packages"), pkg_rows)
 
         _status_labels = {"ok": tr("OK"), "changed": tr("Changed"), "dst_missing": tr("Not backed up"),
@@ -529,7 +567,11 @@ class _CaptureTab(QWidget):
         _section(tr("Dotfiles"), _dotfile_rows)
 
         services = res.get("services", [])
-        _section(tr("Services"), [("✓" if s["active"] else "⚠", f"{_unit_name(s['service'])} ({s['op']})") for s in services])
+        _service_rows: list[tuple[str, str]] = []
+        for s in services:
+            _service_icon: str = "✓" if s["active"] else "⚠"
+            _service_rows.append((_service_icon, f"{_unit_name(s['service'])} ({s['op']})"))
+        _section(tr("Services"), _service_rows)
 
         text = "\n".join(lines)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -550,28 +592,13 @@ class _CaptureTab(QWidget):
             QMessageBox.information(self.window(), tr("Nothing Selected"), tr("No packages selected."))
             return
 
-        existing_basic = {p.get("name", "") for p in S.basic_packages if isinstance(p, dict) and p.get("name")}
-        existing_aur = {p.get("name", "") for p in S.aur_packages if isinstance(p, dict) and p.get("name")}
-
-        added = 0
-        for name in new_basic:
-            if name not in existing_basic:
-                S.basic_packages.append({"name": name, "disabled": False})
-                added += 1
-        for name in new_aur:
-            if name not in existing_aur:
-                S.aur_packages.append({"name": name, "disabled": False})
-                added += 1
-
-        sort_pkg_list(S.basic_packages)
-        sort_pkg_list(S.aur_packages)
+        added = _add_pkgs_to_profile(new_basic, new_aur)
 
         if save_profile():
-            for cb, _, _ in self._cbs:
-                if cb.isChecked() and cb.isEnabled():
-                    cb.setText(cb.text() + "  ✓")
-                    cb.setEnabled(False)
+            self._last_result.setdefault("profile_installed_basic", set()).update(new_basic)
+            self._last_result.setdefault("profile_installed_aur", set()).update(new_aur)
             QMessageBox.information(self.window(), tr("Done"), tr("{n} package(s) added to profile and saved.", n=added))
+            self._rerender()
         else:
             QMessageBox.warning(self.window(), tr("Save Failed"), tr("Could not save profile."))
 
@@ -588,22 +615,24 @@ class _CaptureTab(QWidget):
             return
 
         existing_specific = {p.get("package", "") for p in S.specific_packages if isinstance(p, dict)}
-        added = 0
+        added_names: list[str] = []
         for name in selected:
             if name not in existing_specific:
                 S.specific_packages.append({"package": name, "session": session, "disabled": False})
-                S.basic_packages = [p for p in S.basic_packages if p.get("name") != name]
-                added += 1
+                S.basic_packages = [p for p in S.basic_packages
+                                    if not (isinstance(p, dict) and p.get("name") == name)]
+                added_names.append(name)
 
         sort_specific_pkg_list(S.specific_packages)
 
         if save_profile():
-            for cb, name in self._spec_cbs:
-                if cb.isChecked() and cb.isEnabled() and name in selected:
-                    cb.setText(cb.text() + f"  ✓ [{session}]")
-                    cb.setEnabled(False)
+            applies = session == self._helper.detect_session()
+            specific_res = self._last_result.setdefault("specific", [])
+            for name in added_names:
+                specific_res.append({"name": name, "session": session, "installed": True, "applicable": applies})
             QMessageBox.information(self.window(), tr("Done"),
-                                    tr("{n} package(s) added as Specific for session '{s}'.", n=added, s=session))
+                                    tr("{n} package(s) added as Specific for session '{s}'.", n=len(added_names), s=session))
+            self._rerender()
         else:
             QMessageBox.warning(self.window(), tr("Save Failed"), tr("Could not save profile."))
 
@@ -619,11 +648,11 @@ class _CaptureTab(QWidget):
                 S.system_manager_ops.append(op)
                 added += 1
         if save_profile():
-            for cb, op, _svc in self._svc_cbs:
-                if cb.isChecked() and cb.isEnabled() and op in selected_ops:
-                    cb.setText(cb.text() + "  ✓")
-                    cb.setEnabled(False)
+            for svc_info in self._last_result.get("services", []):
+                if svc_info.get("op") in selected_ops:
+                    svc_info["in_profile"] = True
             QMessageBox.information(self.window(), tr("Done"),
                                     tr("{n} service operation(s) added to System Manager profile.", n=added))
+            self._rerender()
         else:
             QMessageBox.warning(self.window(), tr("Save Failed"), tr("Could not save profile."))

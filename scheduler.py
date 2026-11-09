@@ -330,7 +330,12 @@ class SchedulerDialog(_StandardKeysMixin, QDialog):
 
         lay.addWidget(QLabel(tr("Include backup groups:")))
         self._checks: list[tuple[QCheckBox, str]] = []
-        headers = sorted({e.get("header", "") for e in S.entries if e.get("header")})
+        header_set: set[str] = set()
+        for e in S.entries:
+            entry_header = str(e.get("header") or "")
+            if entry_header:
+                header_set.add(entry_header)
+        headers: list[str] = sorted(header_set)
         for h in headers:
             cb = QCheckBox(h)
             cb.setChecked(True)

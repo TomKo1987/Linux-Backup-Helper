@@ -2264,10 +2264,10 @@ class SystemManagerThread(QThread):
         _go_dirs = (_HOME / ".config" / "go", _HOME / "go")
         _rust_dirs = (_HOME / ".cargo" / "registry", _HOME / ".cargo" / "git")
         _preexisting = {str(d) for d in (*_go_dirs, *_rust_dirs) if d.exists()}
-        for msg, cmd, kw in [(tr("Cloning {helper}…", helper=helper), ["git", "clone", repo_url], {"cwd": str(build_root)}),
-                             (tr("Building {helper}…", helper=helper), ["makepkg", "-c", "--noconfirm"], {"cwd": str(target_dir)})]:
+        for msg, cmd, step_cwd in [(tr("Cloning {helper}…", helper=helper), ["git", "clone", repo_url], str(build_root)),
+                                   (tr("Building {helper}…", helper=helper), ["makepkg", "-c", "--noconfirm"], str(target_dir))]:
             self.outputReceived.emit(msg, "subprocess")
-            if self._exec(cmd, stream=True, **kw).returncode != 0:
+            if self._exec(cmd, stream=True, cwd=step_cwd).returncode != 0:
                 shutil.rmtree(target_dir, ignore_errors=True)
                 return False
 
@@ -2348,8 +2348,9 @@ class SystemManagerThread(QThread):
         if not all(results):
             return False
         if self.distro.family() == "debian" and results:
-            store_plugin = {"GNOME": "gnome-software-plugin-flatpak",
-                            "KDE": "plasma-discover-backend-flatpak"}.get(self.distro.detect_session() or "")
+            store_plugins: dict[str, str] = {"GNOME": "gnome-software-plugin-flatpak",
+                                             "KDE": "plasma-discover-backend-flatpak"}
+            store_plugin = store_plugins.get(str(self.distro.detect_session() or ""))
             if store_plugin and not self._install_pkg(store_plugin, tr("Flatpak")):
                 self.outputReceived.emit(
                     tr("Optional package '{p}' could not be installed — continuing", p=store_plugin), "warning")

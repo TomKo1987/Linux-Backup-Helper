@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from sudo_password import SecureString
@@ -119,10 +119,10 @@ class SystemManagerOptions(_AurHelperCacheMixin, _OpsEditorMixin, _DotfilesEdito
         t = current_theme()
 
         if is_specific:
-            from collections import defaultdict
-            groups: dict = defaultdict(list)
+            groups: dict[str, list[tuple[Any, Any]]] = {}
             for p, cb in zip(packages, checkboxes, strict=True):
-                groups[p.get("session", "") if isinstance(p, dict) else ""].append((cb, p))
+                group_key = str(p.get("session", "")) if isinstance(p, dict) else ""
+                groups.setdefault(group_key, []).append((cb, p))
             row = 0
             for idx, sess in enumerate(sorted(groups)):
                 hdr = QLabel(sess or tr("Unknown"))

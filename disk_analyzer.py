@@ -823,11 +823,10 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
         menu.addSeparator()
         act_copy   = menu.addAction(tr("📋  Copy path"))
         act_size   = menu.addAction(tr("📊  Size: {size}", size=size_str))
-        act_size.setEnabled(False)
+        if act_size is not None:
+            act_size.setEnabled(False)
 
         global_pos = self._list.mapToGlobal(pos)
-        if hasattr(global_pos, "toPoint"):
-            global_pos = global_pos.toPoint()
 
         chosen = menu.exec(global_pos)
         if act_drill and chosen == act_drill:
@@ -844,7 +843,9 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
         elif chosen == act_term:
             self._open_terminal(target)
         elif chosen == act_copy:
-            QApplication.clipboard().setText(str(path))
+            clipboard = QApplication.clipboard()
+            if clipboard is not None:
+                clipboard.setText(str(path))
 
     def _open_terminal(self, path: Path) -> None:
         import shlex
@@ -893,7 +894,9 @@ class DiskAnalyzerDialog(_StandardKeysMixin, QDialog):
                 name = str(path)
             kind = tr("mount") if is_mount else (tr("dir") if is_dir else tr("file"))
             w.writerow([name, str(path), size, format_size(size), kind, file_count])
-        QApplication.clipboard().setText(buf.getvalue())
+        clipboard = QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(buf.getvalue())
         self._status.setText(tr("✓ Results copied to clipboard as CSV"))
 
     def closeEvent(self, a0: QCloseEvent | None) -> None:

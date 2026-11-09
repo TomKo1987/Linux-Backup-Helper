@@ -110,7 +110,6 @@ def _simple_value_diff(name_a: str, name_b: str, label_a: str, label_b: str,
     return w
 
 
-# noinspection PyUnresolvedReferences
 class ProfileCompareDialog(_StandardKeysMixin, QDialog):
 
     def __init__(self, parent=None) -> None:

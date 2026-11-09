@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
 from dotfiles_manager import first_path
 from drive_utils import check_drives_to_mount, mount_required_drives
 from linux_distro_helper import LinuxDistroHelper, USER_SHELLS, ARCH_KERNEL_VARIANTS
-from state import S, logger, active_pkg_names, active_dotfiles, frozen_safe_env
+from state import S, logger, active_pkg_names, active_dotfiles, frozen_safe_env, sort_pkg_list
 from themes import current_theme, font_sz
 from translations import tr
 from ui_utils import color_style
@@ -118,8 +118,58 @@ _IGNORE_PREFIXES: tuple[str, ...] = (
 )
 
 
+_FAMILY_NOISE: dict[str, tuple[frozenset[str], tuple[str, ...]]] = {
+    "debian": (frozenset({"base-files", "base-passwd", "network-manager", "gdm3", "sddm", "lightdm", "grub-pc",
+                          "shim-signed", "ubuntu-minimal", "ubuntu-standard", "ubuntu-server"}),
+               ("linux-image-", "linux-headers-", "linux-modules-", "linux-tools-", "linux-generic",
+                "grub-efi", "task-")),
+    "fedora": (frozenset({"kernel", "kernel-core", "kernel-modules", "kernel-modules-core", "kernel-modules-extra",
+                          "NetworkManager"}),
+               ("kernel-", "grub2-", "shim-", "fedora-release")),
+    "suse": (frozenset({"kernel-default", "kernel-default-base", "NetworkManager", "grub2"}),
+             ("kernel-", "grub2-", "patterns-", "openSUSE-release")),
+    "alpine": (frozenset({"alpine-base", "alpine-baselayout", "alpine-keys", "alpine-release", "busybox", "musl",
+                          "apk-tools", "openrc", "syslinux", "grub", "grub-efi"}),
+               ("linux-", "alpine-", "musl")),
+    "gentoo": (frozenset({"sys-apps/baselayout", "sys-apps/openrc"}), ("sys-kernel/", "sys-boot/")),
+    "void": (frozenset({"base-system", "linux", "grub", "runit-void"}),
+             ("linux5", "linux6", "linux-headers", "linux-firmware", "base-", "grub-")),
+}
+_FAMILY_NOISE_ALIAS: dict[str, str] = {"fedora-atomic": "fedora", "amazon2": "fedora", "suse-immutable": "suse"}
+
+
+def _family_noise(helper: LinuxDistroHelper, names: "list[str]") -> frozenset[str]:
+    fam = helper.family()
+    exact, prefixes = _FAMILY_NOISE.get(_FAMILY_NOISE_ALIAS.get(fam, fam), (frozenset(), ()))
+    if not exact and not prefixes:
+        return frozenset()
+    return frozenset(n for n in names if n in exact or n.startswith(prefixes))
+
+
+def _specific_applies(entry: dict, session: "str | None") -> bool:
+    return bool(session) and entry.get("session") == session
+
+
+def _add_pkgs_to_profile(basic: "list[str]", aur: "list[str]") -> int:
+    changed = 0
+    for names, target in ((basic, S.basic_packages), (aur, S.aur_packages)):
+        by_name = {p.get("name"): p for p in target if isinstance(p, dict)}
+        for name in names:
+            existing = by_name.get(name)
+            if existing is None:
+                entry = {"name": name, "disabled": False}
+                target.append(entry)
+                by_name[name] = entry
+                changed += 1
+            elif existing.get("disabled"):
+                existing["disabled"] = False
+                changed += 1
+        sort_pkg_list(target)
+    return changed
+
+
 def _get_sm_managed_packages(helper: LinuxDistroHelper) -> frozenset:
-    pkgs: set[str] = {"yay", "paru", "reflector"}
+    pkgs: set[str] = {"yay", "paru", "yay-bin", "paru-bin", "yay-git", "paru-git", "reflector"}
 
     for shell in USER_SHELLS:
         pkgs.add(helper.get_shell_package_name(shell))
@@ -370,9 +420,11 @@ class _CaptureWorker(QThread):
                             isinstance(p, dict) and not p.get("disabled") and p.get("package")]
             spec_names = [p["package"] for p in spec_entries]
             if spec_names:
+                session = self._h.detect_session()
                 missing = set(self._h.filter_not_installed(spec_names))
                 res["specific"] = [
-                    {"name": p["package"], "session": p.get("session", ""), "installed": p["package"] not in missing}
+                    {"name": p["package"], "session": p.get("session", ""), "installed": p["package"] not in missing,
+                     "applicable": _specific_applies(p, session)}
                     for p in spec_entries]
         except Exception as exc:
             logger.warning("CaptureWorker: specific package check failed: %s", exc)
@@ -410,13 +462,19 @@ class _VerifyWorker(QThread):
 
         self.progress.emit(tr("Checking packages…"))
         try:
-            all_pkgs = ([(n, "basic") for n in active_pkg_names(S.basic_packages)] +
-                        [(n, "aur") for n in active_pkg_names(S.aur_packages)] +
-                        [(n, "specific") for n in active_pkg_names(S.specific_packages, is_specific=True)])
+            session = self._h.detect_session()
+            all_pkgs: list[dict] = [{"name": n, "kind": "basic", "applicable": True}
+                                    for n in active_pkg_names(S.basic_packages)]
+            all_pkgs += [{"name": n, "kind": "aur", "applicable": True} for n in active_pkg_names(S.aur_packages)]
+            for p in S.specific_packages:
+                if isinstance(p, dict) and not p.get("disabled") and p.get("package"):
+                    applies = _specific_applies(p, session)
+                    all_pkgs.append({"name": p["package"], "applicable": applies,
+                                     "kind": "specific" if applies else f"specific / {p.get('session') or '—'}"})
             if all_pkgs:
-                names = [n for n, _ in all_pkgs]
-                missing = set(self._h.filter_not_installed(names))
-                res["pkgs"] = [{"name": n, "kind": k, "installed": n not in missing} for n, k in all_pkgs]
+                names = [p["name"] for p in all_pkgs if p["applicable"]]
+                missing = set(self._h.filter_not_installed(names)) if names else set()
+                res["pkgs"] = [{**p, "installed": p["name"] not in missing} for p in all_pkgs]
         except Exception as exc:
             logger.warning("VerifyWorker: package check failed: %s", exc)
 

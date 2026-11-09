@@ -28,7 +28,7 @@ _KEYRING_SERVICE  = "backup-helper-samba"
 _KEYRING_USER_KEY = f"{_USER}__samba_username"
 
 _keyring_init_lock = threading.Lock()
-_keyring_ready     = False
+_keyring_ready     = threading.Event()
 
 
 @lru_cache(maxsize=1)
@@ -37,11 +37,10 @@ def _kwallet_available() -> bool:
 
 
 def _init_keyring() -> None:
-    global _keyring_ready
-    if _keyring_ready:
+    if _keyring_ready.is_set():
         return
     with _keyring_init_lock:
-        if _keyring_ready:
+        if _keyring_ready.is_set():
             return
         try:
             from keyring.backends import SecretService
@@ -49,7 +48,7 @@ def _init_keyring() -> None:
         except Exception as exc:
             logger.debug("Could not set SecretService keyring backend: %s", exc)
         finally:
-            _keyring_ready = True
+            _keyring_ready.set()
 
 
 def _keyring_backend_name() -> str:
@@ -340,6 +339,7 @@ class SambaPasswordDialog(_StandardKeysMixin, QDialog):
 
         layout.addStretch()
 
+        built_fields: dict[str, QLineEdit] = {}
         for label_text, attr, echo, prefill in ((tr("Username:"), "_username_field", QLineEdit.EchoMode.Normal, username),
                                                 (tr("Password:"), "_password_field", QLineEdit.EchoMode.Password, ""),
                                                 (tr("Confirm Password:"), "_confirm_password_field", QLineEdit.EchoMode.Password, "")):
@@ -351,19 +351,26 @@ class SambaPasswordDialog(_StandardKeysMixin, QDialog):
             field.setEchoMode(echo)
             field.setAlignment(Qt.AlignmentFlag.AlignCenter)
             setattr(self, attr, field)
+            built_fields[attr] = field
             layout.addWidget(field)
 
-        self._username_field.returnPressed.connect(self._save_credentials)
-        self._password_field.returnPressed.connect(self._save_credentials)
-        self._confirm_password_field.returnPressed.connect(self._save_credentials)
+        user_field = built_fields["_username_field"]
+        pw_field = built_fields["_password_field"]
+        confirm_field = built_fields["_confirm_password_field"]
+        self._username_field = user_field
+        self._password_field = pw_field
+        self._confirm_password_field = confirm_field
+        user_field.returnPressed.connect(self._save_credentials)
+        pw_field.returnPressed.connect(self._save_credentials)
+        confirm_field.returnPressed.connect(self._save_credentials)
 
         show_pw_cb = QCheckBox(tr("Show password"))
         show_pw_cb.setStyleSheet(f"color:{t['accent']};")
 
         def _toggle_echo(checked: bool) -> None:
             mode = QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password
-            self._password_field.setEchoMode(mode)
-            self._confirm_password_field.setEchoMode(mode)
+            pw_field.setEchoMode(mode)
+            confirm_field.setEchoMode(mode)
 
         show_pw_cb.toggled.connect(_toggle_echo)
         layout.addStretch()
@@ -397,7 +404,7 @@ class SambaPasswordDialog(_StandardKeysMixin, QDialog):
         btn_row.addWidget(save_btn)
 
         layout.addLayout(btn_row)
-        self._password_field.setFocus()
+        pw_field.setFocus()
 
     def _save_credentials(self) -> None:
         if self._username_field is None or self._password_field is None or self._confirm_password_field is None:
@@ -443,6 +450,8 @@ class SambaPasswordDialog(_StandardKeysMixin, QDialog):
                 pw_buf[i] = 0
 
     def _delete_credentials(self) -> None:
+        if self._username_field is None:
+            return
         username = self._username_field.text().strip()
         try:
             if self._manager.delete_credentials(username):

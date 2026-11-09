@@ -117,8 +117,9 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
     def _extra_top_widgets(self) -> list: return []
 
     def _setup_ui(self) -> None:
-        if self.scroll_area.widget():
-            self.scroll_area.widget().deleteLater()
+        old_content = self.scroll_area.widget()
+        if old_content is not None:
+            old_content.deleteLater()
         self.checkbox_dirs.clear()
         self._rebuild_top_controls()
 
@@ -145,7 +146,7 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
 
         while self._top_hbox.count():
             item = self._top_hbox.takeAt(0)
-            if w := item.widget():
+            if item is not None and (w := item.widget()) is not None:
                 w.deleteLater()
 
         next_cols = _COLS_NARROW if self.cols == _COLS_WIDE else _COLS_WIDE
@@ -164,7 +165,7 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
         self._top_hbox.addWidget(self._col_btn)
 
     def _populate_checkboxes(self, grid: QGridLayout) -> int:
-        tips = self._tips()
+        tips = self._tips() or {}
         fs = font_scale()
 
         grouped: dict[str, list] = {}
@@ -234,6 +235,8 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
         return row
 
     def _toggle_all(self) -> None:
+        if self._selectall is None:
+            return
         checked = self._selectall.isChecked()
         for cb, *_ in self.checkbox_dirs:
             cb.setChecked(checked)
@@ -286,11 +289,11 @@ class _BaseCheckboxWindow(_StandardKeysMixin, QDialog):
         super().closeEvent(a0)
 
 
-class _CopyMixin:
+class _CopyMixin(_BaseCheckboxWindow):
     _op_label: str = ""
     _is_restore: bool = False
 
-    def _start_copy(self: "_BaseCheckboxWindow") -> None:
+    def _start_copy(self) -> None:
         from copy_worker_gui import CopyDialog
         from drive_utils import check_drives_to_mount, mount_required_drives, task_paths
         from advanced_copy import restore_exclude_paths
@@ -299,7 +302,7 @@ class _CopyMixin:
         for cb, src, dst, title, entry in self.checkbox_dirs:
             if cb.isChecked():
                 details = entry.get("details", {})
-                excl = restore_exclude_paths(entry) if self._is_restore else details.get("exclude_paths", {})  # type: ignore[attr-defined]
+                excl = restore_exclude_paths(entry) if self._is_restore else details.get("exclude_paths", {})
                 pre_hooks = details.get("pre_hooks", [])
                 post_hooks = details.get("post_hooks", [])
                 selected.append((src, dst, title, excl, pre_hooks, post_hooks, details))
@@ -317,20 +320,20 @@ class _CopyMixin:
         if not mount_required_drives(check_drives_to_mount(task_paths(selected)), self):
             return
 
-        dlg_copy = CopyDialog(self, selected, self._op_label,  # type: ignore[attr-defined]
-                              op_kind="restore" if self._is_restore else "backup",  # type: ignore[attr-defined]
-                              advanced=True, is_restore=self._is_restore)  # type: ignore[attr-defined]
+        dlg_copy = CopyDialog(self, selected, self._op_label,
+                              op_kind="restore" if self._is_restore else "backup",
+                              advanced=True, is_restore=self._is_restore)
         dlg_copy.exec()
 
-    def _add_action_buttons(self: "_BaseCheckboxWindow", grid: QGridLayout, row: int) -> None:
+    def _add_action_buttons(self, grid: QGridLayout, row: int) -> None:
         fs          = font_scale()
         btn_style   = f"font-size:{fs['xl']}px;font-weight:bold;"
         close_style = f"font-size:{fs['xl']}px;"
 
-        action_btn = QPushButton(tr(self._op_label))  # type: ignore[attr-defined]
+        action_btn = QPushButton(tr(self._op_label))
         action_btn.setMinimumHeight(30)
         action_btn.setStyleSheet(btn_style)
-        action_btn.clicked.connect(self._start_copy)  # type: ignore[attr-defined]
+        action_btn.clicked.connect(self._start_copy)
 
         close_btn = QPushButton(tr("Close"))
         close_btn.setMinimumHeight(30)
@@ -381,7 +384,7 @@ class SettingsWindow(_BaseCheckboxWindow):
         t = current_theme()
         fs = font_scale()
         path = (str(_PROFILES_DIR / f"{S.profile_name}.json") if S.profile_name else str(_PROFILES_DIR))
-        lbl = QLabel(f"<span style='font-size:{fs['lg']}px;color:{t['accent2']}'> 󰔨   {apply_replacements(path)}</span>")  # noqa: E501
+        lbl = QLabel(f"<span style='font-size:{fs['lg']}px;color:{t['accent2']}'> 󰔨   {apply_replacements(path)}</span>")
         lbl.setTextFormat(Qt.TextFormat.RichText)
         apply_tooltip(lbl, copy_logic_tooltip())
         return lbl

@@ -723,9 +723,10 @@ class _ShareProcessor:
                     continue
                 key  = j.remote_path.replace("\\", "/").lstrip("/")
                 meta = ri.get(key)
-                same_size = (meta and isinstance(meta, (tuple, list)) and len(meta) > 0
-                            and local_sz == meta[0])
-                remote_mtime = meta[1] if (meta and isinstance(meta, (tuple, list)) and len(meta) > 1) else -1
+                meta_seq: list = list(meta) if isinstance(meta, (tuple, list)) else []
+                same_size = len(meta_seq) > 0 and local_sz == meta_seq[0]
+                mtime_raw: object = meta_seq[1] if len(meta_seq) > 1 else -1
+                remote_mtime = mtime_raw if isinstance(mtime_raw, int) else -1
                 if j.local_mtime >= 0:
                     local_mt = j.local_mtime
                 else:
@@ -802,8 +803,11 @@ class _ShareProcessor:
                 safe.append(j)
         return safe, errors
 
-    def _remote_index(self, put_jobs: list) -> "dict | None":
-        needed = {(os.path.dirname(j.remote_path).replace("\\", "/") or "").split("/")[0] for j in put_jobs}
+    def _remote_index(self, put_jobs: "list[_SmbJob]") -> "dict | None":
+        needed: set[str] = set()
+        for pj in put_jobs:
+            rdir: str = os.path.dirname(pj.remote_path).replace("\\", "/")
+            needed.add(rdir.split("/")[0])
         merged: dict = {}
         for top in needed:
             key = f"{self.host}:{self.share}:{top}"

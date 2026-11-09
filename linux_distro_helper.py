@@ -86,8 +86,6 @@ def _run_capture(cmd: list[str], timeout: int = 25) -> list[str]:
 
 
 def is_valid_pkg_name(name: str) -> bool:
-    if not isinstance(name, str):
-        return False
     stripped = name.strip()
     return bool(stripped) and len(stripped) <= 255 and bool(PKG_NAME_RE.match(stripped))
 
@@ -579,7 +577,7 @@ class LinuxDistroHelper:
     def _read_os_release() -> tuple[str, str, str, str]:
         d_id = d_pretty = d_like = d_version_id = ""
         parsed = False
-        last_exc: Exception | None
+        read_errors: list[Exception] = []
 
         for path in ("/etc/os-release", "/usr/lib/os-release"):
             try:
@@ -599,14 +597,12 @@ class LinuxDistroHelper:
                         elif k == "VERSION_ID":
                             d_version_id = v
                 parsed = True
-                last_exc = None
                 break
             except Exception as exc:
-                last_exc = exc
-                continue
+                read_errors.append(exc)
 
         if not parsed:
-            logger.error("os-release: %s", last_exc)
+            logger.error("os-release: %s", read_errors[-1] if read_errors else None)
 
         if not d_pretty:
             d_pretty = d_id.capitalize() if d_id else tr("Unknown Linux Distribution")
@@ -939,7 +935,81 @@ class LinuxDistroHelper:
             return False
         return not any(self.distro_id_raw.startswith(d) for d in self._CUSTOM_KERNEL_DISTROS)
 
+    _EMPTY_RESULT_OK = frozenset({"fedora-atomic", "nixos"})
+    _GENTOO_ATOM_RE = re.compile(r"^([<>=~!]*)([^:\[\s]+)")
+    _GENTOO_VERSION_RE = re.compile(r"-\d[\w.]*(?:-r\d+)?\*?$")
+    _ALPINE_CONSTRAINT_RE = re.compile(r"[<>=~@]")
+
     def get_explicitly_installed_packages(self) -> tuple[list[str], list[str]]:
+        basic, aur = self._collect_explicit_packages()
+        basic_clean = sorted({n.strip() for n in basic if self.valid(n)})
+        aur_clean = sorted({n.strip() for n in aur if self.valid(n)})
+        if not basic_clean and not aur_clean and self.family() not in self._EMPTY_RESULT_OK:
+            raise RuntimeError(tr("Could not read the list of installed packages ({pm}).", pm=self.pkg_manager_name()))
+        return basic_clean, aur_clean
+
+    @staticmethod
+    def _read_lines(path: str) -> list[str] | None:
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                return [ln.strip() for ln in fh if ln.strip() and not ln.lstrip().startswith("#")]
+        except OSError:
+            return None
+
+    @staticmethod
+    def _ostree_layered_packages() -> list[str] | None:
+        if _which("rpm-ostree") is None:
+            return None
+        raw = _run_capture(["rpm-ostree", "status", "--json"], timeout=40)
+        try:
+            data = json.loads("\n".join(raw))
+        except ValueError:
+            return None
+        deployments = data.get("deployments") if isinstance(data, dict) else None
+        if not isinstance(deployments, list):
+            return None
+        for dep in deployments:
+            if isinstance(dep, dict) and dep.get("booted"):
+                requested = dep.get("requested-packages")
+                if isinstance(requested, list):
+                    return sorted({str(p) for p in requested})
+        return None
+
+    def _alpine_world_packages(self) -> list[str] | None:
+        lines = self._read_lines("/etc/apk/world")
+        if lines is None:
+            return None
+        names: set[str] = set()
+        for line in lines:
+            for token in line.split():
+                if token.startswith("!"):
+                    continue
+                name = self._ALPINE_CONSTRAINT_RE.split(token, maxsplit=1)[0].strip()
+                if name and ":" not in name:
+                    names.add(name)
+        return sorted(names)
+
+    def _gentoo_world_packages(self) -> list[str] | None:
+        lines = self._read_lines("/var/lib/portage/world")
+        if lines is None:
+            return None
+        names: set[str] = set()
+        for line in lines:
+            if line.startswith("@"):
+                continue
+            m = self._GENTOO_ATOM_RE.match(line)
+            if not m:
+                continue
+            op, atom = m.groups()
+            if op.startswith("!"):
+                continue
+            if op:
+                atom = self._GENTOO_VERSION_RE.sub("", atom)
+            if "/" in atom:
+                names.add(atom)
+        return sorted(names)
+
+    def _collect_explicit_packages(self) -> tuple[list[str], list[str]]:
         fam = self.family()
 
         if fam == "arch":
@@ -953,8 +1023,12 @@ class LinuxDistroHelper:
             return sorted(_run_capture(["apt-mark", "showmanual"])), []
 
         if fam in ("fedora", "fedora-atomic"):
+            if fam == "fedora-atomic":
+                layered = self._ostree_layered_packages()
+                if layered is not None:
+                    return layered, []
             raw = _run_capture(["sh", "-c",
-                                "dnf repoquery --userinstalled -q --qf '%{name}\\n' 2>/dev/null"])
+                                "dnf repoquery --userinstalled -q --queryformat '%{name}\\n' 2>/dev/null"], timeout=90)
             if not raw:
                 raw = _run_capture(["sh", "-c", "rpm -qa --qf '%{NAME}\\n' 2>/dev/null"])
             return sorted(set(raw)), []
@@ -990,9 +1064,15 @@ class LinuxDistroHelper:
             return sorted(_VER_PKG.sub("", entry).strip() for entry in raw if entry), []
 
         if fam == "alpine":
+            world = self._alpine_world_packages()
+            if world:
+                return world, []
             return sorted(_run_capture(["apk", "info"])), []
 
         if fam == "gentoo":
+            world = self._gentoo_world_packages()
+            if world:
+                return world, []
             return sorted(_run_capture(["sh", "-c", "qlist -I -C 2>/dev/null"])), []
 
         if fam == "nixos":

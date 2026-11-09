@@ -349,7 +349,6 @@ _STATFS_BUF_SIZE = 256
 
 _perm_caps: dict[int, int] = {}
 _perm_caps_lock = threading.Lock()
-_statfs_fn: Callable[..., int] | bool | None = None
 
 _MTIME_UNITS_NS: tuple[int, ...] = (2_000_000_000, 1_000_000_000, 10_000_000, 1_000, 100)
 _MTIME_PROBE_NS = 1_700_000_001_123_456_789
@@ -424,17 +423,15 @@ def _source_tolerance_ns(src: str, dev: int) -> int:
         return _src_tol_cache.setdefault(dev, tolerance)
 
 
-def _get_statfs():
-    global _statfs_fn
-    if _statfs_fn is None:
-        try:
-            fn = ctypes.CDLL(None, use_errno=True).statfs
-            fn.argtypes = [ctypes.c_char_p, ctypes.c_void_p]
-            fn.restype = ctypes.c_int
-            _statfs_fn = fn
-        except (OSError, AttributeError):
-            _statfs_fn = False
-    return _statfs_fn
+@lru_cache(maxsize=1)
+def _get_statfs() -> Callable[..., int] | None:
+    try:
+        fn = ctypes.CDLL(None, use_errno=True).statfs
+        fn.argtypes = [ctypes.c_char_p, ctypes.c_void_p]
+        fn.restype = ctypes.c_int
+    except (OSError, AttributeError):
+        return None
+    return fn
 
 
 def _fs_magic(path: str) -> int:
@@ -506,20 +503,15 @@ def _drop_perm_caps(dev: int, lost: int) -> None:
         _perm_caps[dev] = _perm_caps.get(dev, _CAP_ALL) & ~lost
 
 
-_syncfs_fn: Callable[..., int] | bool | None = None
-
-
-def _get_syncfs():
-    global _syncfs_fn
-    if _syncfs_fn is None:
-        try:
-            fn = ctypes.CDLL(None, use_errno=True).syncfs
-            fn.argtypes = [ctypes.c_int]
-            fn.restype = ctypes.c_int
-            _syncfs_fn = fn
-        except (OSError, AttributeError):
-            _syncfs_fn = False
-    return _syncfs_fn
+@lru_cache(maxsize=1)
+def _get_syncfs() -> Callable[..., int] | None:
+    try:
+        fn = ctypes.CDLL(None, use_errno=True).syncfs
+        fn.argtypes = [ctypes.c_int]
+        fn.restype = ctypes.c_int
+    except (OSError, AttributeError):
+        return None
+    return fn
 
 
 def sync_destinations(paths: Iterable[str]) -> list[tuple[str, str]]:

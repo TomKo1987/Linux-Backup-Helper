@@ -89,12 +89,15 @@ class _VerifyTab(QWidget):
 
         pkgs = res.get("pkgs", [])
         if pkgs:
-            n_ok = sum(1 for p in pkgs if p["installed"])
-            n_bad = len(pkgs) - n_ok
+            applicable = [p for p in pkgs if p.get("applicable", True)]
+            n_ok = sum(1 for p in applicable if p["installed"])
+            n_bad = len(applicable) - n_ok
             total_issues += n_bad
-            sec = _Section("📦", tr("Packages"), n_ok, len(pkgs), t["success"], t["error"])
+            sec = _Section("📦", tr("Packages"), n_ok, len(applicable), t["success"], t["error"])
             for p in pkgs:
-                if p["installed"]:
+                if not p.get("applicable", True):
+                    sec.add_row("➖", p["name"], tr("Skipped — other session  ({k})", k=p["kind"]), t["muted"])
+                elif p["installed"]:
                     sec.add_row("✅", p["name"], tr("Installed  ({k})", k=p['kind']), t["success"])
                 else:
                     sec.add_row("❌", p["name"], tr("Missing  ({k})", k=p['kind']), t["error"])
@@ -168,9 +171,9 @@ class _VerifyTab(QWidget):
         cl.addStretch()
         self._scroll.setWidget(container)
         self._scroll.show()
-        win = self.window()
-        if hasattr(win, "fit_to_content"):
-            win.fit_to_content()
+        fit = getattr(self.window(), "fit_to_content", None)
+        if callable(fit):
+            fit()
 
         if total_issues == 0:
             self._show_summary(tr("✅  Everything looks good — system matches profile."), t["success"])

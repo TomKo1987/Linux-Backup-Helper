@@ -26,20 +26,20 @@ _orphaned_threads: "set[QThread]" = set()
 def stop_thread(worker: "QThread | None", timeout_ms: int = 3000) -> bool:
     if worker is None or not worker.isRunning():
         return True
-    worker.requestInterruption()
-    if worker.wait(timeout_ms):
+    target: QThread = worker
+    target.requestInterruption()
+    if target.wait(timeout_ms):
         return True
 
     logger.warning("stop_thread: %s did not stop within %d ms — keeping it alive until it finishes",
-                   type(worker).__name__, timeout_ms)
-    _orphaned_threads.add(worker)
+                   type(target).__name__, timeout_ms)
+    _orphaned_threads.add(target)
 
     def _reap() -> None:
-        if worker is not None and worker.isRunning():
+        if target.isRunning():
             QTimer.singleShot(1000, _reap)
         else:
-            if worker is not None:
-                _orphaned_threads.discard(worker)
+            _orphaned_threads.discard(target)
 
     QTimer.singleShot(1000, _reap)
     return False
@@ -257,7 +257,7 @@ def size_to_screen(
 
     screen = QApplication.primaryScreen()
     geo = screen.availableGeometry() if screen else None
-    if geo:
+    if geo is not None:
         widget.setMinimumSize(
             min(max_w, int(geo.width() * fraction)),
             min(max_h, int(geo.height() * fraction)),

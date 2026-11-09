@@ -980,6 +980,8 @@ class DryRunDialog(_StandardKeysMixin, QDialog):
         idx = self._tabs.count() - 1
 
         tab_bar = self._tabs.tabBar()
+        if tab_bar is None:
+            return
         if n_err:
             tab_bar.setTabTextColor(idx, QColor(t["error"]))
         elif n_copy:

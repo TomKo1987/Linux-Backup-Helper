@@ -368,10 +368,10 @@ class _SummaryWidget(QWidget):
         metrics_lay = QHBoxLayout()
         metrics_lay.setSpacing(12)
 
-        kw = {"size_title": font_sz(2), "size_val": font_sz(10)}
-        self._card_elapsed = _make_stat_card(None, tr("⏲️ Elapsed"), "--:--", **kw)
-        self._card_speed   = _make_stat_card(None, tr("🚤 Speed"),   "---",   **kw)
-        self._card_eta     = _make_stat_card(None, tr("🏁 ETA"),     "--:--", **kw)
+        _sz_title, _sz_val = font_sz(2), font_sz(10)
+        self._card_elapsed = _make_stat_card(None, tr("⏲️ Elapsed"), "--:--", size_title=_sz_title, size_val=_sz_val)
+        self._card_speed   = _make_stat_card(None, tr("🚤 Speed"),   "---",   size_title=_sz_title, size_val=_sz_val)
+        self._card_eta     = _make_stat_card(None, tr("🏁 ETA"),     "--:--", size_title=_sz_title, size_val=_sz_val)
 
         for card in (self._card_elapsed, self._card_speed, self._card_eta):
             metrics_lay.addWidget(card.frame)
@@ -1225,7 +1225,10 @@ class CopyDialog(_StandardKeysMixin, QDialog):
         return title, icon, title, t["cyan"], t["accent"], title
 
     def _snapshot(self) -> Snapshot:
-        return self.worker.meter.snapshot()
+        worker = self.worker
+        if worker is None:
+            raise RuntimeError("no active copy worker")
+        return worker.meter.snapshot()
 
     def _absorb(self, snap: Snapshot) -> None:
         self.copied, self.skipped, self.errors, self.deleted = snap.copied, snap.skipped, snap.errors, snap.deleted

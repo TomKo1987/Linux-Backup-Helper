@@ -79,7 +79,7 @@ def _make_icon() -> QIcon:
         logger.debug("Icon could not be decoded: %s", e)
         return QIcon()
 
-_TERMINATED = False
+_TERMINATED = threading.Event()
 
 
 def _install_signal_handlers(app) -> None:
@@ -87,8 +87,7 @@ def _install_signal_handlers(app) -> None:
     from copy_worker_gui import CopyDialog
 
     def _handle(_signum, _frame) -> None:
-        global _TERMINATED
-        _TERMINATED = True
+        _TERMINATED.set()
         for worker in list(CopyDialog.active_workers):
             worker.cancel()
         for worker in list(CopyDialog.active_workers):
@@ -293,12 +292,17 @@ class MainWindow(_StandardKeysMixin, QMainWindow):
         menu.addAction(show_act)
         menu.addSeparator()
 
-        headers = sorted({e.get("header", "") for e in S.entries if e.get("header")})
+        header_set: set[str] = set()
+        for e in S.entries:
+            h = str(e.get("header") or "")
+            if h:
+                header_set.add(h)
+        headers: list[str] = sorted(header_set)
         if headers:
             quick_menu = QMenu(tr("⚡ Quick Backup"), menu)
             for hdr in headers:
                 act = QAction(hdr, self)
-                act.triggered.connect(lambda checked=False, h=hdr: self._quick_backup(h))
+                act.triggered.connect(lambda checked=False, _h=hdr: self._quick_backup(_h))
                 quick_menu.addAction(act)
             all_act = QAction(tr("▶ All groups"), self)
             all_act.triggered.connect(lambda: self._quick_backup(None))
@@ -578,7 +582,7 @@ def main():
             dlg = CopyDialog(None, tasks, tr("Backup (scheduled)"), op_kind="backup",
                              headless=True, advanced=True)
             dlg.exec()
-            if _TERMINATED:
+            if _TERMINATED.is_set():
                 exit_code = 143
             elif getattr(dlg, "_lock_denied", False):
                 exit_code = 75

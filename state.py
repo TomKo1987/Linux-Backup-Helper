@@ -44,14 +44,13 @@ def frozen_safe_env(extra: "dict[str, str] | None" = None) -> "dict[str, str]":
     return env
 
 
-_popen_hardened = False
+_popen_hardened = threading.Event()
 
 
 def harden_subprocess() -> None:
-    global _popen_hardened
-    if _popen_hardened:
+    if _popen_hardened.is_set():
         return
-    _popen_hardened = True
+    _popen_hardened.set()
     original_init = subprocess.Popen.__init__
 
     def _init(self, *args, **kwargs):
@@ -288,10 +287,13 @@ def _is_valid_pkg_name(name) -> bool:
 
 
 def _normalise_pkg_generic(p, key: str, extra_defaults: dict) -> dict | None:
-    name = p if isinstance(p, str) else p.get(key, "") if isinstance(p, dict) else None
-    if name is None:
+    if isinstance(p, str):
+        name: Any = p
+    elif isinstance(p, dict):
+        name = p.get(key, "")
+    else:
         return None
-    if not _is_valid_pkg_name(name):
+    if not isinstance(name, str) or not _is_valid_pkg_name(name):
         logger.warning("Dropping invalid %s name from profile: %r", key, name)
         return None
     if isinstance(p, str):
@@ -345,7 +347,7 @@ def _norm_paths(raw: Any) -> list[str]:
 def _valid_hex_color(value: Any) -> bool: return isinstance(value, str) and bool(_HEX_COLOR_RE.match(value))
 
 
-def _parse_entry(raw: dict) -> dict | None:
+def _parse_entry(raw: Any) -> dict | None:
     if not isinstance(raw, dict):
         return None
     header = raw.get("header", "")

@@ -2,6 +2,7 @@ import os
 import stat
 import time
 from pathlib import Path
+from typing import TypedDict
 
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtGui import QCloseEvent
@@ -21,7 +22,15 @@ from copy_worker_core import _is_skipped_name
 __all__ = ["IntegrityCheckerDialog"]
 
 
-def _quick_scan(path_str: str, excluded: "frozenset[str]" = frozenset()) -> dict | None:
+class _ScanInfo(TypedDict):
+    file_count: int
+    dir_count: int
+    total_size: int
+    mtime_newest: float
+    names: set[str]
+
+
+def _quick_scan(path_str: str, excluded: "frozenset[str]" = frozenset()) -> "_ScanInfo | None":
     root = Path(os.path.expanduser(path_str))
     try:
         root_st = root.stat()

@@ -1738,6 +1738,7 @@ class CopyWorker(QThread):
                         last_sfl = time.monotonic()
                     try:
                         emit = False
+                        emit_files = emit_work = emit_size = 0
                         now = time.monotonic()
                         with pend_lock:
                             if now - last_emit[0] >= _SCAN_EMIT_SECS:
